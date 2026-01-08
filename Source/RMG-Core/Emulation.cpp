@@ -133,7 +133,8 @@ static void KailleraPifSyncCallback(struct pif* pif)
         int ret = CoreModifyKailleraPlayValues(sync_buffer, sizeof(uint32_t));
 
         if (ret <= 0) {
-            // Network error - cache zeros to avoid garbage data
+            // Game ended or network error - cache zeros and continue
+            // Don't stop emulation - let user click Start to restart or manually stop
             s_CachedNumReceived = 0;
             for (int i = 0; i < MAX_PLAYERS; i++) {
                 s_CachedSyncBuffer[i] = 0;
@@ -522,8 +523,8 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         // Check if we used Kaillera or legacy netplay
         if (address == "KAILLERA")
         {
-            CoreEndKailleraGame();
-            CoreShutdownKaillera();
+            // Don't shutdown Kaillera here - keep connection alive for restart
+            // Kaillera will be shutdown when user leaves the server dialog
         }
         else
         {

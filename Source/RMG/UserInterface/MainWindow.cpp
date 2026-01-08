@@ -2142,6 +2142,21 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
         return;
     }
 
+    // Wait for any previous emulation to finish
+    // This is needed when restarting after Drop
+    if (this->emulationThread->isRunning())
+    {
+        CoreStopEmulation();
+        // Wait for thread to finish with timeout
+        // Use a simple loop since we're in Kaillera's message pump context
+        int timeout = 5000;
+        while (this->emulationThread->isRunning() && timeout > 0)
+        {
+            Sleep(10);
+            timeout -= 10;
+        }
+    }
+
     // Launch emulation with Kaillera marker
     this->emulationThread->SetRomFile(romFile);
     this->emulationThread->SetDiskFile("");
@@ -2158,28 +2173,27 @@ void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
 
 void MainWindow::on_Kaillera_PlayerDropped(QString nickname, int playerNum)
 {
-    // Show notification
-    OnScreenDisplaySetMessage(nickname.toStdString() + " has disconnected.");
+    // Show notification based on who dropped
+    if (playerNum == 1)
+    {
+        OnScreenDisplaySetMessage("Host " + nickname.toStdString() + " dropped - game ending.");
+    }
+    else
+    {
+        OnScreenDisplaySetMessage(nickname.toStdString() + " (P" + std::to_string(playerNum) + ") dropped.");
+    }
 
-    // Note: If we're the one who dropped, on_Kaillera_GameEnded will be called automatically
+    // Note: Emulation stop is handled by gameEnded signal from KailleraSessionManager
+    // Player 1 drop = everyone stops, Players 2-4 drop = only they stop
 }
 
 void MainWindow::on_Kaillera_GameEnded(void)
 {
-    // Stop emulation if running
-    if (CoreIsEmulationRunning())
+    // Stop emulation when game ends
+    if (this->emulationThread->isRunning())
     {
         CoreStopEmulation();
     }
-
-    // Clean up Kaillera session manager
-    if (this->kailleraSessionManager != nullptr)
-    {
-        delete this->kailleraSessionManager;
-        this->kailleraSessionManager = nullptr;
-    }
-
-    CoreShutdownKaillera();
 }
 
 QString MainWindow::findRomByName(QString gameName)

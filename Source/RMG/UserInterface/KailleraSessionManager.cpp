@@ -158,13 +158,32 @@ void KailleraSessionManager::handlePlayerDropped(QString nick, int playerNum)
 {
     emit playerDropped(nick, playerNum);
 
-    // If we're the one who dropped, end the game
+    if (!m_gameActive)
+    {
+        return;
+    }
+
+    // Player 1 (host) dropping ends the game for everyone
+    if (playerNum == 1)
+    {
+        m_gameActive = false;
+        emit gameEnded();
+        return;
+    }
+
+    // Players 2-4 dropping only ends the game for themselves
+    // If it's the local player who dropped, end our game
     if (playerNum == m_playerNumber)
     {
         m_gameActive = false;
-        m_currentGame.clear();
-        m_playerNumber = -1;
-        m_totalPlayers = 0;
         emit gameEnded();
+        return;
+    }
+
+    // Remote non-host player dropped - game continues without them
+    // Just update total players count
+    if (m_totalPlayers > 1)
+    {
+        m_totalPlayers--;
     }
 }

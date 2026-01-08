@@ -75,16 +75,19 @@ static int WINAPI GameCallbackBridge(char *game, int player, int numplayers)
     s_PlayerNumber = player;
     s_NumPlayers = numplayers;
 
+    // Set game active BEFORE callback so emulation thread sees it immediately
+    s_GameActive = true;
+
     if (s_GameStartCallback)
     {
         try
         {
             s_GameStartCallback(std::string(game), player, numplayers);
-            s_GameActive = true;
             return 0; // Success
         }
         catch (...)
         {
+            s_GameActive = false;
             return -1; // Error
         }
     }
