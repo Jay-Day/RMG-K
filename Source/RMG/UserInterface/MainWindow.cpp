@@ -2083,7 +2083,7 @@ void MainWindow::on_Action_Netplay_BrowseSessions(void)
     }
 
     // Set Kaillera app info (app name and game list)
-    std::string appName = "RMG v" + CoreGetVersion();
+    std::string appName = "RMG-K " + CoreGetVersion();
     // Build game list from ROM browser (null-terminated strings with double-null at end)
     // Must use std::string directly to preserve embedded null characters
     std::string gameList;
