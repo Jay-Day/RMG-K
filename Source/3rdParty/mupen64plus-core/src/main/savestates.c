@@ -30,7 +30,6 @@
 #include <SDL_thread.h>
 #endif
 #include <inttypes.h>
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -131,21 +130,6 @@ static uint64_t rollback_perf_us(uint64_t start, uint64_t end)
 {
     uint64_t frequency = SDL_GetPerformanceFrequency();
     return ((end - start) * 1000000) / frequency;
-}
-
-static uint32_t rollback_state_crc32(const unsigned char *data, size_t len)
-{
-    uLong crc = crc32(0L, Z_NULL, 0);
-
-    while (len > 0)
-    {
-        uInt chunk = len > UINT_MAX ? UINT_MAX : (uInt)len;
-        crc = crc32(crc, (const Bytef *)data, chunk);
-        data += chunk;
-        len -= chunk;
-    }
-
-    return (uint32_t)crc;
 }
 
 /* Returns the malloc'd full path of the currently selected savestate. */
@@ -2332,7 +2316,6 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     {
         int *rollback_header = (int *)save->data;
         size_t rollback_buffer_len = save->size + (size_t)rollback_state_header_size;
-        uint32_t rollback_checksum;
 
         rollback_header[0] = rollback_state_header_magic;
         rollback_header[1] = rollback_state_header_size;
@@ -2341,10 +2324,8 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         rollback_header[4] = rollback_state_flag_omit_tlb_lut;
         rollback_header[5] = 0;
 
-        rollback_checksum = rollback_state_crc32((const unsigned char *)save->data, rollback_buffer_len);
-
         if (rollback_save_buffer_checksum != NULL)
-            *rollback_save_buffer_checksum = (int)(rollback_checksum & 0x7fffffffu);
+            *rollback_save_buffer_checksum = 0;
         if (rollback_save_buffer_len != NULL)
             *rollback_save_buffer_len = (int)rollback_buffer_len;
         if (rollback_save_buffer != NULL)
