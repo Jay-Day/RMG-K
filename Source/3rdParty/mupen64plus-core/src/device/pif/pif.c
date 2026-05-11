@@ -94,6 +94,11 @@ static int rollback_channel_has_command(const struct pif_channel* channel)
         && channel->rx_buf != NULL;
 }
 
+static int rollback_channel_rx_len(const struct pif_channel* channel)
+{
+    return rollback_channel_has_command(channel) ? (*channel->rx & 0x3f) : 0;
+}
+
 static void rollback_force_controller_present(struct pif_channel* channel)
 {
     if (!rollback_channel_has_command(channel)) {
@@ -119,6 +124,79 @@ static void rollback_force_controller_present(struct pif_channel* channel)
         break;
     default:
         break;
+    }
+}
+
+static int rollback_ensure_input_values(void)
+{
+    uint32_t input_values[ROLLBACK_INPUT_PLAYERS] = { 0 };
+
+    if (l_rollback_input_callback == NULL || l_rollback_input_players <= 0) {
+        return 0;
+    }
+
+    if (l_rollback_input_valid) {
+        return 1;
+    }
+
+    if (!l_rollback_input_callback(input_values, sizeof(input_values[0]), l_rollback_input_players)) {
+        return 0;
+    }
+
+    memcpy(l_rollback_input_values, input_values, sizeof(l_rollback_input_values));
+    l_rollback_input_valid = 1;
+    return 1;
+}
+
+static int rollback_process_channel(struct pif_channel* channel, size_t player)
+{
+    if (l_rollback_input_callback == NULL
+    || player >= (size_t)l_rollback_input_players
+    || player >= PIF_CHANNELS_COUNT
+    || !rollback_channel_has_command(channel)) {
+        return 0;
+    }
+
+    *channel->tx &= 0x3f;
+    *channel->rx &= 0x3f;
+
+    switch (channel->tx_buf[0])
+    {
+    case JCMD_STATUS:
+    case JCMD_RESET:
+        if (rollback_channel_rx_len(channel) < 3) {
+            return 0;
+        }
+        rollback_force_controller_present(channel);
+        return 1;
+
+    case JCMD_CONTROLLER_READ:
+        if (rollback_channel_rx_len(channel) < 4) {
+            return 0;
+        }
+        if (!rollback_ensure_input_values()) {
+            return 0;
+        }
+        *channel->rx &= (uint8_t)~0xc0;
+        rollback_write_controller_input(channel->rx_buf, l_rollback_input_values[player]);
+        return 1;
+
+    case JCMD_PAK_READ:
+        if (rollback_channel_rx_len(channel) < 33) {
+            return 0;
+        }
+        rollback_force_controller_present(channel);
+        return 1;
+
+    case JCMD_PAK_WRITE:
+        if (rollback_channel_rx_len(channel) < 1) {
+            return 0;
+        }
+        rollback_force_controller_present(channel);
+        return 1;
+
+    default:
+        return 0;
     }
 }
 
@@ -520,7 +598,9 @@ void update_pif_ram(struct pif* pif)
 
     /* perform PIF/Channel communications */
     for (k = 0; k < PIF_CHANNELS_COUNT; ++k) {
-        process_channel(&pif->channels[k]);
+        if (!rollback_process_channel(&pif->channels[k], k)) {
+            process_channel(&pif->channels[k]);
+        }
     }
 
     /* Zilmar-Spec plugin expect a call with control_id = -1 when RAM processing is done */
