@@ -150,9 +150,15 @@ static int rollback_ensure_input_values(void)
 
 static int rollback_process_channel(struct pif_channel* channel, size_t player)
 {
+    /* RawData plugins own PIF channel processing. During rollback, use the
+     * already-sampled rollback input instead of letting raw plugins do
+     * device I/O again from the PIF path. Non-raw plugins still need normal
+     * core controller processing for pak/hotkey bookkeeping before the
+     * rollback input overwrite below. */
     if (l_rollback_input_callback == NULL
     || player >= (size_t)l_rollback_input_players
-    || player >= PIF_CHANNELS_COUNT
+    || player >= NUM_CONTROLLER
+    || !Controls[player].RawData
     || !rollback_channel_has_command(channel)) {
         return 0;
     }
