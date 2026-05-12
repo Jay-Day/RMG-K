@@ -317,7 +317,7 @@ bool save_gekko_state(const PendingGekkoSave& save)
 {
     const auto beginTime = std::chrono::steady_clock::now();
     CoreRollbackState state;
-    const int coreFrame = std::max(0, save.frame);
+    const int coreFrame = save.frame;
     if (g_GekkoLogEnabled)
     {
         std::ostringstream stream;
@@ -334,17 +334,6 @@ bool save_gekko_state(const PendingGekkoSave& save)
         write_gekko_log("save_state result=fail reason=null_event_buffer");
         CoreSetError("GekkoNet save event did not provide a state buffer");
         return false;
-    }
-
-    if (save.frame < 0)
-    {
-        *save.stateLen = 0;
-        if (save.checksum != nullptr)
-        {
-            *save.checksum = 0;
-        }
-        write_gekko_log("save_state result=skipped reason=pre_frame_baseline");
-        return true;
     }
 
     if (!CoreRollbackSaveGameStateInto(state, save.state, static_cast<int>(kGekkoStateCapacity), coreFrame))

@@ -271,6 +271,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     uint64_t rollback_finalize_end = 0;
     int rollback_tlb_lut_skipped = 0;
     int rollback_tlb_lut_omitted = 0;
+    int rollback_state_frame = 0;
     unsigned char *rollback_lut_r_data = NULL;
     unsigned char *rollback_lut_w_data = NULL;
     struct tlb_entry rollback_old_tlb_entries[32];
@@ -312,6 +313,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
 
             memory_data = rollback_load_buffer + header_size;
             memory_size = rollback_load_buffer_size - header_size;
+            rollback_state_frame = rollback_header[3];
             rollback_tlb_lut_omitted =
                 rollback_header[0] == rollback_state_header_magic &&
                 (rollback_header[4] & rollback_state_flag_omit_tlb_lut) != 0;
@@ -742,7 +744,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         rollback_tlb_end = SDL_GetPerformanceCounter();
     }
 
-    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t), memory_data == NULL);
+    /* The rollback pre-frame baseline can jump behind the dynarec's current code path. */
+    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t), memory_data == NULL || rollback_state_frame < 0);
 
     *r4300_cp0_next_interrupt(&dev->r4300.cp0) = GETDATA(curr, uint32_t);
     curr += 4; /* here there used to be next_vi */
