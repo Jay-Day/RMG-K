@@ -194,16 +194,15 @@ bool k_socket::check_sockets(int secs, int ms){
 }
 
 bool k_socket::Initialize(){
-#if !defined(linux)
+#ifdef _WIN32
 	WSAData ws;
 	return (WSAStartup(0x0202, &ws)==0);
 #else
 	return true;
 #endif
-	
 }
 void k_socket::Cleanup(){
-#if !defined(linux)
+#ifdef _WIN32
 	WSACleanup();
 #endif
 }

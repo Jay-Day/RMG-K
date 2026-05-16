@@ -344,36 +344,44 @@ static l_Setting get_setting(SettingsID settingId)
         break;
 
     case SettingsID::Core_GFX_Plugin:
-        setting = {SETTING_SECTION_CORE, "GFX_Plugin", 
+        setting = {SETTING_SECTION_CORE, "GFX_Plugin",
 #ifdef _WIN32
                     std::string("mupen64plus-video-GLideN64.dll"),
+#elif __APPLE__
+                    std::string("mupen64plus-video-GLideN64.dylib"),
 #else
                     std::string("mupen64plus-video-GLideN64.so"),
 #endif // _WIN32
                   };
         break;
     case SettingsID::Core_AUDIO_Plugin:
-        setting = {SETTING_SECTION_CORE, "AUDIO_Plugin", 
+        setting = {SETTING_SECTION_CORE, "AUDIO_Plugin",
 #ifdef _WIN32
                     std::string("RMG-Audio.dll"),
+#elif __APPLE__
+                    std::string("RMG-Audio.dylib"),
 #else
                     std::string("RMG-Audio.so"),
 #endif // _WIN32
                   };
         break;
     case SettingsID::Core_INPUT_Plugin:
-        setting = {SETTING_SECTION_CORE, "INPUT_Plugin", 
+        setting = {SETTING_SECTION_CORE, "INPUT_Plugin",
 #ifdef _WIN32
                     std::string("RMG-Input.dll"),
+#elif __APPLE__
+                    std::string("RMG-Input.dylib"),
 #else
                     std::string("RMG-Input.so"),
 #endif // _WIN32
                   };
         break;
     case SettingsID::Core_RSP_Plugin:
-        setting = {SETTING_SECTION_CORE, "RSP_Plugin", 
+        setting = {SETTING_SECTION_CORE, "RSP_Plugin",
 #ifdef _WIN32
                     std::string("mupen64plus-rsp-hle.dll"),
+#elif __APPLE__
+                    std::string("mupen64plus-rsp-hle.dylib"),
 #else
                     std::string("mupen64plus-rsp-hle.so"),
 #endif // _WIN32
@@ -785,6 +793,8 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_RSP, "RspFallback", CoreGetPluginDirectory().string() +
 #ifdef _WIN32
                     "\\RSP\\mupen64plus-rsp-parallel.dll",
+#elif __APPLE__
+                    "/RSP/mupen64plus-rsp-parallel.dylib",
 #else
                     "/RSP/mupen64plus-rsp-parallel.so",
 #endif // _WIN32

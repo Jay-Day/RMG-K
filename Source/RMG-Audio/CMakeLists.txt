@@ -29,6 +29,7 @@ add_library(RMG-Audio SHARED ${RMG_AUDIO_SOURCES})
 
 set_target_properties(RMG-Audio PROPERTIES PREFIX "")
 
+target_link_directories(RMG-Audio PRIVATE ${SPEEX_LIBRARY_DIRS} ${SAMPLERATE_LIBRARY_DIRS})
 target_link_libraries(RMG-Audio
     RMG-Core
     SDL3::SDL3

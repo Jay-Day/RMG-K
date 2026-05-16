@@ -8,6 +8,9 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "VidExt.hpp"
+#ifdef __APPLE__
+#include "VidExtMac.hpp"
+#endif
 
 #include <RMG-Core/Callback.hpp>
 #include <RMG-Core/Netplay.hpp>
@@ -16,7 +19,9 @@
 
 #include "OnScreenDisplay.hpp"
 
+#if QT_CONFIG(vulkan)
 #include <QVulkanInstance>
+#endif
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QApplication>
@@ -37,9 +42,11 @@ static bool l_OsdInitialized                            = false;
 static QSurfaceFormat l_SurfaceFormat;
 static m64p_render_mode l_RenderMode;
 
+#if QT_CONFIG(vulkan)
 static QVulkanInstance l_VulkanInstance;
 static QVulkanInfoVector<QVulkanExtension> l_VulkanExtensions;
 static QVector<const char*> l_VulkanExtensionList;
+#endif
 
 static void VidExt_UpdateOsdDisplaySize(void)
 {
@@ -149,6 +156,7 @@ static m64p_error VidExt_Quit(void)
     }
     else
     {
+#if QT_CONFIG(vulkan)
         // remove vulkan instance from widget
         // and destroy the instance
         (*l_VulkanWidget)->setVulkanInstance(nullptr);
@@ -156,6 +164,7 @@ static m64p_error VidExt_Quit(void)
         {
             l_VulkanInstance.destroy();
         }
+#endif
     }
     l_EmuThread->on_VidExt_Quit();
 
@@ -432,6 +441,7 @@ static uint32_t VidExt_GLGetDefaultFramebuffer(void)
     return (*l_OGLWidget)->GetContext()->defaultFramebufferObject();
 }
 
+#if QT_CONFIG(vulkan)
 static m64p_error VidExt_VK_GetSurface(void** Surface, void* Instance)
 {
     if (l_RenderMode != M64P_RENDER_VULKAN)
@@ -495,14 +505,28 @@ static m64p_error VidExt_VK_GetInstanceExtensions(const char** Extensions[], uin
     *NumExtensions = l_VulkanExtensionList.size();
     return M64ERR_SUCCESS;
 }
+#else
+static m64p_error VidExt_VK_GetSurface(void** Surface, void* Instance)
+{
+    return M64ERR_UNSUPPORTED;
+}
+
+static m64p_error VidExt_VK_GetInstanceExtensions(const char** Extensions[], uint32_t* NumExtensions)
+{
+    return M64ERR_UNSUPPORTED;
+}
+#endif
 
 //
 // Exported Functions
 //
 
-bool SetupVidExt(Thread::EmulationThread* emuThread, UserInterface::MainWindow* mainWindow, 
+bool SetupVidExt(Thread::EmulationThread* emuThread, UserInterface::MainWindow* mainWindow,
     UserInterface::Widget::OGLWidget** oglWidget, UserInterface::Widget::VKWidget** vulkanWidget)
 {
+#ifdef __APPLE__
+    VidExtMac_InstallThreadSafeSetView();
+#endif
     l_EmuThread    = emuThread;
     l_MainWindow   = mainWindow;
     l_OGLWidget    = oglWidget;

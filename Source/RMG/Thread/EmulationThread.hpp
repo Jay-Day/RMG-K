@@ -10,7 +10,7 @@
 #ifndef EMULATIONTHREAD_HPP
 #define EMULATIONTHREAD_HPP
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
 #include <QDBusInterface>
 #endif
 #include <QSurfaceFormat>
@@ -47,7 +47,7 @@ class EmulationThread : public QThread
     QString address;
     int port   = -1;
     int player = -1;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
     uint32_t dbusCookieId = 0;
     QDBusInterface* dbusInterface = nullptr;
 #endif

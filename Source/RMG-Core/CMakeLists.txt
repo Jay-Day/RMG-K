@@ -76,8 +76,11 @@ endif(UNIX)
 
 if(WIN32)
     target_link_libraries(RMG-Core PRIVATE wsock32 ws2_32 ${ICONV_LIBRARIES})
-endif(WIN32)
+elseif(APPLE)
+    target_link_libraries(RMG-Core PRIVATE iconv)
+endif()
 
+target_link_directories(RMG-Core PRIVATE ${MINIZIP_LIBRARY_DIRS})
 target_link_libraries(RMG-Core PRIVATE
     ${MINIZIP_LIBRARIES}
     lzma

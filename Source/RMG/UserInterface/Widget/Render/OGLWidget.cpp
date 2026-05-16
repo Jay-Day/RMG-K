@@ -40,9 +40,12 @@ OGLWidget::~OGLWidget(void)
     this->openGLcontext->deleteLater();
 }
 
-void OGLWidget::MoveContextToThread(QThread* thread)
+void OGLWidget::MoveContextToThread(QThread* thread, const QSurfaceFormat& format)
 {
     this->GetContext()->doneCurrent();
+    // only apply the format when explicitly provided (non-default major version)
+    if (format.majorVersion() > 2 || format.profile() != QSurfaceFormat::NoProfile)
+        this->GetContext()->setFormat(format);
     this->GetContext()->create();
     this->GetContext()->moveToThread(thread);
 }

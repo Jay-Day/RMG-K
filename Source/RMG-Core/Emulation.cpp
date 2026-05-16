@@ -325,11 +325,8 @@ static void apply_game_coresettings_overlay(void)
 // so the setting takes effect when plugins are loaded
 static void apply_kaillera_rsp_override(void)
 {
-#ifdef _WIN32
-    CoreSettingsSetValue(SettingsID::Core_RSP_Plugin, std::string("mupen64plus-rsp-hle.dll"));
-#else
-    CoreSettingsSetValue(SettingsID::Core_RSP_Plugin, std::string("mupen64plus-rsp-hle.so"));
-#endif
+    CoreSettingsSetValue(SettingsID::Core_RSP_Plugin,
+        std::string("mupen64plus-rsp-hle") + CORE_LIBRARY_EXT_STR);
 }
 
 // Force deterministic settings for Kaillera netplay to prevent desync
