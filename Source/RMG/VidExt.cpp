@@ -83,21 +83,34 @@ static bool VidExt_OglSetup(void)
 {
     l_EmuThread->on_VidExt_SetupOGL(l_SurfaceFormat, QThread::currentThread());
 
-    while (!(*l_OGLWidget)->isVisible())
+    // isExposed() is required on macOS: isVisible() returns true before the
+    // NSView has an actual drawable surface, causing makeCurrent() to fail
+    constexpr int kTimeoutMs = 5000;
+    int waited = 0;
+    while (!(*l_OGLWidget)->isVisible() || !(*l_OGLWidget)->isExposed())
     {
-        continue;
+        QThread::msleep(1);
+        if (++waited >= kTimeoutMs)
+        {
+            CoreAddCallbackMessage(CoreDebugMessageType::Error,
+                std::string("Timed out waiting for OpenGL widget to become ready"
+                    " (visible=") + ((*l_OGLWidget)->isVisible() ? "true" : "false") +
+                    " exposed=" + ((*l_OGLWidget)->isExposed() ? "true" : "false") + ")");
+            return false;
+        }
     }
 
     if (!(*l_OGLWidget)->GetContext()->isValid())
     {
-        if (QSurfaceFormat::defaultFormat().renderableType() == QSurfaceFormat::OpenGLES)
-        {
-            CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL ES context");
-        }
-        else
-        {
-            CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL context");
-        }
+        QSurfaceFormat got = (*l_OGLWidget)->GetContext()->format();
+        CoreAddCallbackMessage(CoreDebugMessageType::Error,
+            std::string("OpenGL context invalid — requested ") +
+            std::to_string(l_SurfaceFormat.majorVersion()) + "." +
+            std::to_string(l_SurfaceFormat.minorVersion()) +
+            (l_SurfaceFormat.profile() == QSurfaceFormat::CoreProfile ? " Core" : " Compat") +
+            ", got " + std::to_string(got.majorVersion()) + "." +
+            std::to_string(got.minorVersion()) +
+            (got.profile() == QSurfaceFormat::CoreProfile ? " Core" : " Compat"));
         return false;
     }
 

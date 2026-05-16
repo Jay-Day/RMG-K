@@ -340,7 +340,12 @@ static void apply_kaillera_deterministic_settings(void)
 
     // Use dynamic recompiler for best performance
     // Value 0 = Pure Interpreter, 1 = Cached Interpreter, 2 = Dynamic Recompiler
+    // macOS: dynarec disabled (arm64 asm uses ELF directives, incompatible with Mach-O)
+#ifdef __APPLE__
+    CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 1);
+#else
     CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+#endif
 
     // Set consistent CountPerOp values for deterministic timing
     CoreSettingsSetValue(SettingsID::Core_CountPerOp, 0);
@@ -556,7 +561,11 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             }
             else
             {
+#ifdef __APPLE__
+                CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 1);
+#else
                 CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+#endif
                 netplay_ret = rmgk_gekko::start_p2p_session("rmgk-gekko",
                     2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
                     remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
@@ -591,7 +600,11 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         }
         else
         {
+#ifdef __APPLE__
+            CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 1);
+#else
             CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+#endif
             netplay_ret = rmgk_gekko::start_local_session("rmgk-gekko-local",
                 2, static_cast<int>(sizeof(uint32_t)), 0);
             rollbackExecute = netplay_ret;
