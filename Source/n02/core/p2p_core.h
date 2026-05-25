@@ -24,6 +24,7 @@ void p2p_drop_game();
 void p2p_set_ready(bool bx);
 void p2p_ping();
 void p2p_send_chat(char * xxx);
+bool p2p_kick_peer();
 bool p2p_disconnect();
 void p2p_step();
 bool p2p_is_connected();

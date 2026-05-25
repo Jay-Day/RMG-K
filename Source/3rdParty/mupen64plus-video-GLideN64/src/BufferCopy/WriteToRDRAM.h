@@ -4,6 +4,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
 
 #include "../Types.h"
 
@@ -18,6 +24,66 @@ static inline bool rollbackVerboseGlideInputLoggingEnabled()
 	return value != nullptr && value[0] == '1';
 }
 
+static inline const char* rollbackLogPathSeparator(const char* _directory)
+{
+	if (_directory == nullptr)
+		return "";
+
+	const size_t length = strlen(_directory);
+	if (length == 0)
+		return "";
+
+	const char last = _directory[length - 1];
+	return last == '/' || last == '\\' ? "" : "/";
+}
+
+static inline void rollbackCreateLogDirectory(const char* _directory)
+{
+#ifdef _WIN32
+	_mkdir(_directory);
+#else
+	mkdir(_directory, 0700);
+#endif
+}
+
+static inline FILE* rollbackOpenLogFile(const char* _suffix)
+{
+	const char* directory = getenv("RMGK_ROLLBACK_LOG_DIR");
+	const char* prefix = getenv("RMGK_ROLLBACK_LOG_PREFIX");
+	char path[4096];
+
+	if (directory != nullptr && directory[0] != '\0' && prefix != nullptr && prefix[0] != '\0') {
+		rollbackCreateLogDirectory(directory);
+		const int written = snprintf(path, sizeof(path), "%s%s%s_%s.log",
+			directory,
+			rollbackLogPathSeparator(directory),
+			prefix,
+			_suffix);
+		if (written > 0 && static_cast<size_t>(written) < sizeof(path)) {
+			FILE* file = fopen(path, "a");
+			if (file != nullptr)
+				return file;
+		}
+	}
+
+	rollbackCreateLogDirectory("Logs");
+	int written = snprintf(path, sizeof(path), "Logs%srollback_%s.log", rollbackLogPathSeparator("Logs"), _suffix);
+	if (written > 0 && static_cast<size_t>(written) < sizeof(path)) {
+		FILE* file = fopen(path, "a");
+		if (file != nullptr)
+			return file;
+	}
+
+	rollbackCreateLogDirectory("Bin/Release/Logs");
+	written = snprintf(path, sizeof(path), "Bin/Release/Logs%srollback_%s.log",
+		rollbackLogPathSeparator("Bin/Release/Logs"),
+		_suffix);
+	if (written > 0 && static_cast<size_t>(written) < sizeof(path))
+		return fopen(path, "a");
+
+	return nullptr;
+}
+
 template <typename TDst>
 static inline void rollbackLogWriteToRdram(const char* _source, u32 _address, TDst _oldValue, TDst _newValue)
 {
@@ -26,9 +92,7 @@ static inline void rollbackLogWriteToRdram(const char* _source, u32 _address, TD
 	if (!rollbackWatchRdramAddress(_address, sizeof(TDst)))
 		return;
 
-	file = fopen("rollback_rdram_watch.log", "a");
-	if (file == nullptr)
-		file = fopen("Bin/Release/rollback_rdram_watch.log", "a");
+	file = rollbackOpenLogFile("rdram_watch");
 	if (file == nullptr)
 		return;
 

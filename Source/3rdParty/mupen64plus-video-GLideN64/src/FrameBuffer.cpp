@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <math.h>
 #include <algorithm>
+#include <cstdlib>
 #include <vector>
 #include "FrameBuffer.h"
 #include "DepthBuffer.h"
@@ -30,6 +31,15 @@
 
 using namespace std;
 using namespace graphics;
+
+static bool _isRmgNativeWglPresenter()
+{
+#if defined(OS_WINDOWS)
+	return std::getenv("RMG_NATIVE_WGL_DRAWABLE_WIDTH") != nullptr;
+#else
+	return false;
+#endif
+}
 
 FrameBuffer::FrameBuffer()
 	: m_copyFBO(ObjectHandle::defaultFramebuffer)
@@ -1121,8 +1131,14 @@ void FrameBufferList::_renderScreenSizeBuffer()
 	blitParams.combiner = downscale ? CombinerInfo::get().getTexrectDownscaleCopyProgram() :
 		CombinerInfo::get().getTexrectUpscaleCopyProgram();
 	blitParams.readBuffer = pFilteredBuffer->m_FBO;
+	blitParams.drawBuffer = ObjectHandle::defaultFramebuffer;
 
-	drawer.blitOrCopyTexturedRect(blitParams);
+	if (_isRmgNativeWglPresenter()) {
+		gfxContext.bindFramebuffer(bufferTarget::DRAW_FRAMEBUFFER, ObjectHandle::defaultFramebuffer);
+		drawer.copyTexturedRect(blitParams);
+	} else {
+		drawer.blitOrCopyTexturedRect(blitParams);
+	}
 
 	gfxContext.bindFramebuffer(bufferTarget::READ_FRAMEBUFFER, ObjectHandle::defaultFramebuffer);
 

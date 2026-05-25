@@ -6,20 +6,48 @@ build_config="Debug"
 threads="$(nproc)"
 kaillera_app_version_override=""
 generator="Unix Makefiles"
+install_cheats="ON"
+bundle_dependencies="ON"
+use_angrylion="ON"
 
 if [[ "$1" = "--help" ]] || [[ "$1" = "-h" ]]; then
-    echo "$0 [Build Config] [Thread Count] [--kaillera-app-version <version>]"
+    echo "$0 [Build Config] [Thread Count] [--kaillera-app-version <version>] [--no-cheats] [--no-angrylion] [--no-bundle-dependencies] [--fast-dev]"
+    echo ""
+    echo "Options:"
+    echo "  --no-cheats              Skip installing bundled cheat files"
+    echo "  --no-angrylion           Skip building/installing the angrylion video plugin"
+    echo "  --no-bundle-dependencies Skip Windows dependency bundling"
+    echo "  --fast-dev               Equivalent to --no-cheats --no-angrylion --no-bundle-dependencies"
     echo ""
     echo "Examples:"
     echo "  $0 Release"
     echo "  $0 Release 12"
     echo "  $0 Release --kaillera-app-version v0.8.21"
+    echo "  $0 Release --fast-dev"
     exit
 fi
 
 positionals=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --no-cheats)
+            install_cheats="OFF"
+            shift
+            ;;
+        --no-angrylion)
+            use_angrylion="OFF"
+            shift
+            ;;
+        --no-bundle-dependencies)
+            bundle_dependencies="OFF"
+            shift
+            ;;
+        --fast-dev)
+            install_cheats="OFF"
+            bundle_dependencies="OFF"
+            use_angrylion="OFF"
+            shift
+            ;;
         --kaillera-app-version)
             kaillera_app_version_override="${2:-}"
             if [[ -z "$kaillera_app_version_override" ]]; then
@@ -54,7 +82,8 @@ mkdir -p "$build_dir"
 cmake_args=(
     -DCMAKE_BUILD_TYPE="$build_config"
     -DPORTABLE_INSTALL=ON
-    -DUSE_ANGRYLION=ON
+    -DUSE_ANGRYLION="$use_angrylion"
+    -DINSTALL_CHEATS="$install_cheats"
 )
 if [[ -n "$kaillera_app_version_override" ]]; then
     cmake_args+=(-DKAILLERA_APP_VERSION_OVERRIDE="$kaillera_app_version_override")
@@ -72,7 +101,7 @@ else
     cmake --install "$build_dir" --strip --prefix="$toplvl_dir"
 fi
 
-if [[ $(uname -s) = *MINGW64* ]]
+if [[ $(uname -s) = *MINGW64* ]] && [[ "$bundle_dependencies" = "ON" ]]
 then
     cmake --build "$build_dir" --target=bundle_dependencies
 fi

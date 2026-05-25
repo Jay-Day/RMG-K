@@ -247,6 +247,36 @@ bool p2p_disconnect(){
 	}
 }
 
+bool p2p_kick_peer(){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	n02_TRACE();
+	if (!P2PCORE.HOST || !P2PCORE.CONNECTED || P2PCORE.status > 1 || P2PCORE.connection == 0) {
+		return false;
+	}
+
+	P2PCORE.connection->send_tinst(EXIT, 0);
+	P2PCORE.CONNECTED = false;
+	P2PCORE.status = 1;
+	P2PCORE.ping = -1;
+	P2PCORE.USERREADY = false;
+	P2PCORE.PEERREADY = false;
+	P2PCORE.last_ping_sent_time = 0;
+	P2PCORE.last_ping_echo_time = 0;
+	p2p_clear_rollback_packets_locked(false);
+	p2p_peer_left_callback();
+
+	delete P2PCORE.connection;
+	P2PCORE.connection = new p2p_message;
+	if (!P2PCORE.connection->initialize(P2PCORE.PORT)){
+		p2p_core_debug("Error initializing socket at specified port");
+		P2PCORE.status = 0;
+		return false;
+	}
+
+	P2PCORE.PORT = P2PCORE.connection->get_port();
+	return true;
+}
+
 bool p2p_core_initialize(bool host, int port, char * appname, char * gamename, char * username){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
 	n02_TRACE();//TRACE_INIT();
@@ -416,6 +446,9 @@ void p2p_set_ready(bool bx){
 
 void p2p_ping(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	if (!p2p_core_initialized || P2PCORE.connection == 0 || !P2PCORE.CONNECTED)
+		return;
+
 	p2p_instruction kx;
 	kx.inst.type = PING;
 	kx.inst.flags = PING_PING;
@@ -455,16 +488,26 @@ void p2p_send_chat(char * xxx){
 
 
 
+inline bool p2p_is_internal_rmgk_chat_message(const char* msg) {
+	return msg != nullptr && strncmp(msg, "RMGK:", 5) == 0;
+}
+
 inline void p2p_handle_chat_instruction(p2p_instruction * ki){
+	int crframeno = ki->load_int();
+	char msg[251] = {};
+	ki->load_vstring(msg, (unsigned int)sizeof(msg));
+
+	if (p2p_is_internal_rmgk_chat_message(msg)) {
+		p2p_chat_callback(P2PCORE.PEERNAME, msg);
+		return;
+	}
+
 	p2p_chatstruct * pc = &p2p_chat_cache.items[p2p_chat_cache.length];
-
-	pc->crframeno = ki->load_int();
-
-	pc->local = false;
-
-	ki->load_vstring(pc->msg, (unsigned int)sizeof(pc->msg));
-
+	pc->crframeno = crframeno;
 	p2p_chat_cache.length++;
+	pc->local = false;
+	strncpy(pc->msg, msg, sizeof(pc->msg) - 1);
+	pc->msg[sizeof(pc->msg) - 1] = 0;
 
 	if (p2p_chat_cache.length>0)
 		P2PCORE.crframeno = p2p_chat_cache.items[0].crframeno;
@@ -824,9 +867,6 @@ void p2p_step(){
 							P2PCORE.connection->send_instruction(&kx);
 							p2p_PING_TIME = p2p_GetTime();
 							P2PCORE.last_ping_sent_time = p2p_PING_TIME;
-							
-							p2p_send_chat("Using version: " P2P_VERSION " - Things may behave in an unexpected manner if different versions are used");
-							
 							if (P2PCORE.USERREADY) {
 								p2p_instruction kxx;
 								kxx.inst.type = PREADY;
@@ -872,9 +912,6 @@ void p2p_step(){
 									P2PCORE.connection->send_instruction(&kxx);
 									p2p_PING_TIME = p2p_GetTime();
 									P2PCORE.last_ping_sent_time = p2p_PING_TIME;
-									
-									p2p_send_chat("Using version: " P2P_VERSION);
-
 									p2p_peer_joined_callback();
 									
 								}

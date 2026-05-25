@@ -199,6 +199,20 @@
                 </widget>
                </item>
                <item>
+                <widget class="QCheckBox" name="pauseEmulationOnFocusCheckbox">
+                 <property name="text">
+                  <string>Pause emulation on focus loss</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="resumeEmulationOnFocusCheckBox">
+                 <property name="text">
+                  <string>Resume emulation on focus gain</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <widget class="QCheckBox" name="automaticFullscreenCheckbox">
                  <property name="text">
                   <string>Automatically switch to fullscreen on emulation start</string>
@@ -215,6 +229,19 @@
                    <widget class="QCheckBox" name="exclusiveFullscreenCheckBox">
                     <property name="text">
                      <string>Use exclusive fullscreen instead of borderless</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QCheckBox" name="betaFullscreenBackendCheckBox">
+                    <property name="enabled">
+                     <bool>false</bool>
+                    </property>
+                    <property name="toolTip">
+                     <string>This fullscreen mode is beta and does not support toggling fullscreen or OSD messages.</string>
+                    </property>
+                    <property name="text">
+                     <string>Use experimental fullscreen mode</string>
                     </property>
                    </widget>
                   </item>

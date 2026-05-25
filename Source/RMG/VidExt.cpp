@@ -10,7 +10,10 @@
 #include "VidExt.hpp"
 
 #include <RMG-Core/Callback.hpp>
+#include <RMG-Core/Emulation.hpp>
+#include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Netplay.hpp>
+#include <RMG-Core/Settings.hpp>
 #include <RMG-Core/VidExt.hpp>
 #include <RMG-Core/Video.hpp>
 
@@ -20,8 +23,22 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QApplication>
+#include <QByteArray>
 #include <QThread>
 #include <QScreen>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <GL/gl.h>
+
+#include <string>
+#endif
 
 //
 // Local Variables
@@ -36,6 +53,489 @@ static bool l_OpenGLInitialized                         = false;
 static bool l_OsdInitialized                            = false;
 static QSurfaceFormat l_SurfaceFormat;
 static m64p_render_mode l_RenderMode;
+
+#ifdef _WIN32
+static constexpr int WGL_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
+static constexpr int WGL_CONTEXT_MINOR_VERSION_ARB = 0x2092;
+static constexpr int WGL_CONTEXT_PROFILE_MASK_ARB  = 0x9126;
+static constexpr int WGL_CONTEXT_CORE_PROFILE_BIT_ARB = 0x00000001;
+static constexpr int WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB = 0x00000002;
+
+using PFNWGLCREATECONTEXTATTRIBSARBPROC = HGLRC(WINAPI *)(HDC, HGLRC, const int *);
+using PFNWGLSWAPINTERVALEXTPROC = BOOL(WINAPI *)(int);
+
+struct NativeWglState
+{
+    HWND hwnd = nullptr;
+    HDC hdc = nullptr;
+    HGLRC context = nullptr;
+    int width = 0;
+    int height = 0;
+    bool displayModeChanged = false;
+    std::wstring displayDevice;
+};
+
+static NativeWglState l_NativeWgl;
+static bool l_NativeWglStopRequested = false;
+static bool l_NativeWglRefocusRequested = false;
+
+static bool VidExt_NativeWglShouldIgnoreAltEnter(void)
+{
+    return CoreHasInitNetplay() ||
+        (CoreHasInitKaillera() && !CoreIsKailleraPlaybackMode());
+}
+
+static LRESULT CALLBACK VidExt_NativeWglWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_CLOSE:
+        l_NativeWglStopRequested = true;
+        return 0;
+    case WM_MOUSEACTIVATE:
+        return MA_ACTIVATE;
+    case WM_LBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+        if (GetForegroundWindow() != hwnd)
+        {
+            BringWindowToTop(hwnd);
+            SetForegroundWindow(hwnd);
+            SetActiveWindow(hwnd);
+            SetFocus(hwnd);
+        }
+        return 0;
+    case WM_ACTIVATEAPP:
+        if (wParam != FALSE)
+        {
+            l_NativeWglRefocusRequested = true;
+        }
+        else
+        {
+            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE || wParam == VK_F12)
+        {
+            l_NativeWglStopRequested = true;
+            return 0;
+        }
+        break;
+    case WM_SYSKEYDOWN:
+        if (wParam == VK_RETURN)
+        {
+            if (VidExt_NativeWglShouldIgnoreAltEnter())
+            {
+                return 0;
+            }
+            l_NativeWglStopRequested = true;
+            return 0;
+        }
+        break;
+    default:
+        break;
+    }
+
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+static std::wstring VidExt_Utf8ToWide(const std::string& text)
+{
+    if (text.empty())
+    {
+        return {};
+    }
+
+    int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    if (size <= 0)
+    {
+        return {};
+    }
+
+    std::wstring wide(static_cast<size_t>(size - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), size);
+    return wide;
+}
+
+static bool VidExt_NativeWglRegisterClass(void)
+{
+    static bool registered = false;
+    if (registered)
+    {
+        return true;
+    }
+
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(wc);
+    wc.style = CS_OWNDC;
+    wc.lpfnWndProc = VidExt_NativeWglWndProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.lpszClassName = L"RMGKNativeWglFullscreen";
+
+    if (RegisterClassExW(&wc) == 0)
+    {
+        return false;
+    }
+
+    registered = true;
+    return true;
+}
+
+static RECT VidExt_NativeWglTargetRect(LPCWSTR deviceName)
+{
+    DEVMODEW devmode = {};
+    devmode.dmSize = sizeof(devmode);
+    if (EnumDisplaySettingsW(deviceName, ENUM_CURRENT_SETTINGS, &devmode))
+    {
+        return {
+            devmode.dmPosition.x,
+            devmode.dmPosition.y,
+            devmode.dmPosition.x + static_cast<LONG>(devmode.dmPelsWidth),
+            devmode.dmPosition.y + static_cast<LONG>(devmode.dmPelsHeight)
+        };
+    }
+
+    return {
+        0,
+        0,
+        GetSystemMetrics(SM_CXSCREEN),
+        GetSystemMetrics(SM_CYSCREEN)
+    };
+}
+
+static bool VidExt_NativeWglApplyDisplayMode(LPCWSTR deviceName)
+{
+    std::string resolution = CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenResolution);
+    int refreshRate = CoreSettingsGetIntValue(SettingsID::GUI_ExclusiveFullscreenRefreshRate);
+    if (resolution.empty() && refreshRate == 0)
+    {
+        return true;
+    }
+
+    DEVMODEW devmode = {};
+    devmode.dmSize = sizeof(devmode);
+    if (!EnumDisplaySettingsW(deviceName, ENUM_CURRENT_SETTINGS, &devmode))
+    {
+        return false;
+    }
+
+    if (!resolution.empty())
+    {
+        size_t xPos = resolution.find('x');
+        if (xPos != std::string::npos)
+        {
+            devmode.dmPelsWidth  = static_cast<DWORD>(std::stoul(resolution.substr(0, xPos)));
+            devmode.dmPelsHeight = static_cast<DWORD>(std::stoul(resolution.substr(xPos + 1)));
+            devmode.dmFields |= DM_PELSWIDTH | DM_PELSHEIGHT;
+        }
+    }
+
+    if (refreshRate > 0)
+    {
+        devmode.dmDisplayFrequency = static_cast<DWORD>(refreshRate);
+        devmode.dmFields |= DM_DISPLAYFREQUENCY;
+    }
+
+    LONG result = (deviceName != nullptr) ?
+        ChangeDisplaySettingsExW(deviceName, &devmode, nullptr, CDS_FULLSCREEN, nullptr) :
+        ChangeDisplaySettingsW(&devmode, CDS_FULLSCREEN);
+    if (result != DISP_CHANGE_SUCCESSFUL)
+    {
+        return false;
+    }
+
+    l_NativeWgl.displayModeChanged = true;
+    if (deviceName != nullptr)
+    {
+        l_NativeWgl.displayDevice = deviceName;
+    }
+    return true;
+}
+
+static void VidExt_NativeWglRestoreDisplayMode(void)
+{
+    if (l_NativeWgl.displayModeChanged && !l_NativeWgl.displayDevice.empty())
+    {
+        ChangeDisplaySettingsExW(l_NativeWgl.displayDevice.c_str(), nullptr, nullptr, 0, nullptr);
+    }
+    else if (l_NativeWgl.displayModeChanged)
+    {
+        ChangeDisplaySettingsW(nullptr, 0);
+    }
+
+    l_NativeWgl.displayModeChanged = false;
+    l_NativeWgl.displayDevice.clear();
+}
+
+static m64p_function VidExt_NativeWglGetProcAddress(const char* proc)
+{
+    PROC address = wglGetProcAddress(proc);
+    if (address != nullptr)
+    {
+        return reinterpret_cast<m64p_function>(address);
+    }
+
+    HMODULE module = GetModuleHandleW(L"opengl32.dll");
+    if (module == nullptr)
+    {
+        module = LoadLibraryW(L"opengl32.dll");
+    }
+    if (module == nullptr)
+    {
+        return nullptr;
+    }
+
+    return reinterpret_cast<m64p_function>(GetProcAddress(module, proc));
+}
+
+static bool VidExt_NativeWglCreateContext(HDC hdc)
+{
+    HGLRC legacyContext = wglCreateContext(hdc);
+    if (legacyContext == nullptr || !wglMakeCurrent(hdc, legacyContext))
+    {
+        if (legacyContext != nullptr)
+        {
+            wglDeleteContext(legacyContext);
+        }
+        return false;
+    }
+
+    auto createContextAttribs = reinterpret_cast<PFNWGLCREATECONTEXTATTRIBSARBPROC>(
+        wglGetProcAddress("wglCreateContextAttribsARB"));
+    if (createContextAttribs != nullptr)
+    {
+        int profile = (l_SurfaceFormat.profile() == QSurfaceFormat::CoreProfile) ?
+            WGL_CONTEXT_CORE_PROFILE_BIT_ARB :
+            WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
+        int attribs[] = {
+            WGL_CONTEXT_MAJOR_VERSION_ARB, l_SurfaceFormat.majorVersion(),
+            WGL_CONTEXT_MINOR_VERSION_ARB, l_SurfaceFormat.minorVersion(),
+            WGL_CONTEXT_PROFILE_MASK_ARB, profile,
+            0
+        };
+
+        HGLRC context = createContextAttribs(hdc, nullptr, attribs);
+        if (context != nullptr)
+        {
+            wglMakeCurrent(nullptr, nullptr);
+            wglDeleteContext(legacyContext);
+            if (!wglMakeCurrent(hdc, context))
+            {
+                wglDeleteContext(context);
+                return false;
+            }
+            l_NativeWgl.context = context;
+        }
+    }
+
+    if (l_NativeWgl.context == nullptr)
+    {
+        l_NativeWgl.context = legacyContext;
+    }
+
+    auto swapInterval = reinterpret_cast<PFNWGLSWAPINTERVALEXTPROC>(
+        wglGetProcAddress("wglSwapIntervalEXT"));
+    if (swapInterval != nullptr)
+    {
+        swapInterval(0);
+    }
+
+    return true;
+}
+
+static void VidExt_NativeWglReassertFullscreen(void)
+{
+    if (l_NativeWgl.hwnd == nullptr || l_NativeWgl.hdc == nullptr || l_NativeWgl.context == nullptr)
+    {
+        return;
+    }
+
+    LPCWSTR deviceName = l_NativeWgl.displayDevice.empty() ? nullptr : l_NativeWgl.displayDevice.c_str();
+    RECT rect = VidExt_NativeWglTargetRect(deviceName);
+    SetWindowPos(l_NativeWgl.hwnd, HWND_TOPMOST,
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+        SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
+    BringWindowToTop(l_NativeWgl.hwnd);
+    SetForegroundWindow(l_NativeWgl.hwnd);
+    SetActiveWindow(l_NativeWgl.hwnd);
+    SetFocus(l_NativeWgl.hwnd);
+
+    if (wglMakeCurrent(l_NativeWgl.hdc, l_NativeWgl.context))
+    {
+        glViewport(0, 0, l_NativeWgl.width, l_NativeWgl.height);
+        auto swapInterval = reinterpret_cast<PFNWGLSWAPINTERVALEXTPROC>(
+            wglGetProcAddress("wglSwapIntervalEXT"));
+        if (swapInterval != nullptr)
+        {
+            swapInterval(0);
+        }
+    }
+}
+
+static void VidExt_NativeWglDestroy(void)
+{
+    if (l_NativeWgl.context != nullptr)
+    {
+        wglMakeCurrent(nullptr, nullptr);
+        wglDeleteContext(l_NativeWgl.context);
+        l_NativeWgl.context = nullptr;
+    }
+
+    if (l_NativeWgl.hdc != nullptr && l_NativeWgl.hwnd != nullptr)
+    {
+        ReleaseDC(l_NativeWgl.hwnd, l_NativeWgl.hdc);
+        l_NativeWgl.hdc = nullptr;
+    }
+
+    if (l_NativeWgl.hwnd != nullptr)
+    {
+        DestroyWindow(l_NativeWgl.hwnd);
+        l_NativeWgl.hwnd = nullptr;
+    }
+    l_NativeWgl.width = 0;
+    l_NativeWgl.height = 0;
+    l_NativeWglStopRequested = false;
+    l_NativeWglRefocusRequested = false;
+    qunsetenv("RMG_NATIVE_WGL_DRAWABLE_WIDTH");
+    qunsetenv("RMG_NATIVE_WGL_DRAWABLE_HEIGHT");
+
+    VidExt_NativeWglRestoreDisplayMode();
+}
+
+static void VidExt_NativeWglPollEvents(void)
+{
+    MSG message = {};
+    while (PeekMessageW(&message, l_NativeWgl.hwnd, 0, 0, PM_REMOVE))
+    {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+
+    if (l_NativeWglStopRequested)
+    {
+        l_NativeWglStopRequested = false;
+        CoreStopEmulation();
+    }
+
+    if (l_NativeWglRefocusRequested)
+    {
+        l_NativeWglRefocusRequested = false;
+        VidExt_NativeWglReassertFullscreen();
+    }
+}
+
+static bool VidExt_NativeWglSetup(void)
+{
+    if (l_NativeWgl.hwnd != nullptr)
+    {
+        return true;
+    }
+
+    if (!VidExt_NativeWglRegisterClass())
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to register native WGL fullscreen window class");
+        return false;
+    }
+
+    std::wstring deviceNameString = VidExt_Utf8ToWide(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenMonitor));
+    LPCWSTR deviceName = deviceNameString.empty() ? nullptr : deviceNameString.c_str();
+    l_NativeWgl.displayDevice = deviceNameString;
+    if (!VidExt_NativeWglApplyDisplayMode(deviceName))
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning, "Failed to apply exclusive fullscreen display mode; using current mode");
+    }
+
+    RECT rect = VidExt_NativeWglTargetRect(deviceName);
+    HWND hwnd = CreateWindowExW(
+        WS_EX_TOPMOST,
+        L"RMGKNativeWglFullscreen",
+        L"RMG-K",
+        WS_POPUP | WS_VISIBLE,
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+        nullptr,
+        nullptr,
+        GetModuleHandleW(nullptr),
+        nullptr);
+    if (hwnd == nullptr)
+    {
+        VidExt_NativeWglRestoreDisplayMode();
+        CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to create native WGL fullscreen window");
+        return false;
+    }
+
+    HDC hdc = GetDC(hwnd);
+    if (hdc == nullptr)
+    {
+        DestroyWindow(hwnd);
+        VidExt_NativeWglRestoreDisplayMode();
+        CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to get native WGL fullscreen device context");
+        return false;
+    }
+
+    PIXELFORMATDESCRIPTOR pfd = {};
+    pfd.nSize = sizeof(pfd);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    pfd.cDepthBits = static_cast<BYTE>(l_SurfaceFormat.depthBufferSize() > 0 ? l_SurfaceFormat.depthBufferSize() : 24);
+    pfd.cStencilBits = 8;
+    pfd.iLayerType = PFD_MAIN_PLANE;
+
+    int pixelFormat = ChoosePixelFormat(hdc, &pfd);
+    if (pixelFormat == 0 || !SetPixelFormat(hdc, pixelFormat, &pfd))
+    {
+        ReleaseDC(hwnd, hdc);
+        DestroyWindow(hwnd);
+        VidExt_NativeWglRestoreDisplayMode();
+        CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to set native WGL fullscreen pixel format");
+        return false;
+    }
+
+    l_NativeWgl.hwnd = hwnd;
+    l_NativeWgl.hdc = hdc;
+    RECT clientRect = {};
+    if (GetClientRect(hwnd, &clientRect))
+    {
+        l_NativeWgl.width = static_cast<int>(clientRect.right - clientRect.left);
+        l_NativeWgl.height = static_cast<int>(clientRect.bottom - clientRect.top);
+        qputenv("RMG_NATIVE_WGL_DRAWABLE_WIDTH", QByteArray::number(l_NativeWgl.width));
+        qputenv("RMG_NATIVE_WGL_DRAWABLE_HEIGHT", QByteArray::number(l_NativeWgl.height));
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            "Native WGL drawable size " + std::to_string(l_NativeWgl.width) + "x" + std::to_string(l_NativeWgl.height));
+    }
+    if (!VidExt_NativeWglCreateContext(hdc))
+    {
+        VidExt_NativeWglDestroy();
+        CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to create native WGL fullscreen context");
+        return false;
+    }
+
+    ShowWindow(hwnd, SW_SHOW);
+    BringWindowToTop(hwnd);
+    SetForegroundWindow(hwnd);
+    SetActiveWindow(hwnd);
+    SetFocus(hwnd);
+    CoreAddCallbackMessage(CoreDebugMessageType::Info, "Using native WGL exclusive fullscreen presenter");
+    return true;
+}
+
+static bool VidExt_NativeWglActive(void)
+{
+    return l_NativeWgl.hwnd != nullptr && l_NativeWgl.context != nullptr;
+}
+#endif
 
 static QVulkanInstance l_VulkanInstance;
 static QVulkanInfoVector<QVulkanExtension> l_VulkanExtensions;
@@ -72,8 +572,19 @@ static void VidExt_UpdateOsdDisplaySize(void)
 // VidExt Functions
 //
 
-static bool VidExt_OglSetup(void)
+static bool VidExt_OglSetup(int screenMode)
 {
+#ifdef _WIN32
+    if (screenMode == M64VIDEO_FULLSCREEN &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen) &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend) &&
+        VidExt_NativeWglSetup())
+    {
+        l_OpenGLInitialized = true;
+        return true;
+    }
+#endif
+
     l_EmuThread->on_VidExt_SetupOGL(l_SurfaceFormat, QThread::currentThread());
 
     while (!(*l_OGLWidget)->isVisible())
@@ -144,8 +655,17 @@ static m64p_error VidExt_Quit(void)
 
     if (l_RenderMode == M64P_RENDER_OPENGL)
     {
+#ifdef _WIN32
+        if (VidExt_NativeWglActive())
+        {
+            VidExt_NativeWglDestroy();
+        }
+        else
+#endif
+        {
         // move OpenGL context back to the GUI thread
         (*l_OGLWidget)->MoveContextToThread(QApplication::instance()->thread());
+        }
     }
     else
     {
@@ -181,14 +701,20 @@ static m64p_error VidExt_SetMode(int Width, int Height, int BitsPerPixel, int Sc
     // is OpenGL and not Vulkan
     if (l_RenderMode == M64P_RENDER_OPENGL)
     {
-        if (!l_OpenGLInitialized && !VidExt_OglSetup())
+        if (!l_OpenGLInitialized && !VidExt_OglSetup(ScreenMode))
         {
             return M64ERR_SYSTEM_FAIL;
         }
 
         // try to initialize the OSD
         // when opengl 3 is used
-        if (l_SurfaceFormat.majorVersion() == 3 &&
+#ifdef _WIN32
+        bool nativeWglActive = VidExt_NativeWglActive();
+#else
+        bool nativeWglActive = false;
+#endif
+        if (!nativeWglActive &&
+            l_SurfaceFormat.majorVersion() == 3 &&
             !l_OsdInitialized)
         {
             if (!OnScreenDisplayInit())
@@ -208,9 +734,30 @@ static m64p_error VidExt_SetMode(int Width, int Height, int BitsPerPixel, int Sc
         case M64VIDEO_NONE:
             return M64ERR_INPUT_INVALID;
         case M64VIDEO_WINDOWED:
+#ifdef _WIN32
+            if (VidExt_NativeWglActive())
+            {
+                CoreAddCallbackMessage(CoreDebugMessageType::Info, "Leaving native WGL fullscreen by stopping emulation");
+                CoreStopEmulation();
+                return M64ERR_SUCCESS;
+            }
+#endif
             l_EmuThread->on_VidExt_SetWindowedMode(Width, Height, BitsPerPixel, Flags);
             break;
         case M64VIDEO_FULLSCREEN:
+#ifdef _WIN32
+            if (VidExt_NativeWglActive())
+            {
+                if (l_NativeWgl.width > 0 && l_NativeWgl.height > 0)
+                {
+                    Width = l_NativeWgl.width;
+                    Height = l_NativeWgl.height;
+                    glViewport(0, 0, l_NativeWgl.width, l_NativeWgl.height);
+                    OnScreenDisplaySetDisplaySize(l_NativeWgl.width, l_NativeWgl.height);
+                }
+                break;
+            }
+#endif
             l_EmuThread->on_VidExt_SetFullscreenMode(Width, Height, BitsPerPixel, Flags);
             break;
     }
@@ -230,6 +777,13 @@ static m64p_function VidExt_GLGetProc(const char *Proc)
     {
         return nullptr;
     }
+
+#ifdef _WIN32
+    if (VidExt_NativeWglActive())
+    {
+        return VidExt_NativeWglGetProcAddress(Proc);
+    }
+#endif
 
     return (*l_OGLWidget)->GetContext()->getProcAddress(Proc);
 }
@@ -379,6 +933,15 @@ static m64p_error VidExt_GLSwapBuf(void)
         return M64ERR_UNSUPPORTED;
     }
 
+#ifdef _WIN32
+    if (VidExt_NativeWglActive())
+    {
+        VidExt_NativeWglPollEvents();
+        SwapBuffers(l_NativeWgl.hdc);
+        return M64ERR_SUCCESS;
+    }
+#endif
+
     VidExt_UpdateOsdDisplaySize();
     OnScreenDisplayRender();
 
@@ -396,6 +959,19 @@ static m64p_error VidExt_SetCaption(const char *Title)
 
 static m64p_error VidExt_ToggleFS(void)
 {
+#ifdef _WIN32
+    if (VidExt_NativeWglActive())
+    {
+        if (VidExt_NativeWglShouldIgnoreAltEnter())
+        {
+            return M64ERR_SUCCESS;
+        }
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, "Leaving native WGL fullscreen by stopping emulation");
+        CoreStopEmulation();
+        return M64ERR_SUCCESS;
+    }
+#endif
+
     CoreVideoMode videoMode;
 
     if (!CoreGetVideoMode(videoMode))
@@ -428,6 +1004,13 @@ static uint32_t VidExt_GLGetDefaultFramebuffer(void)
     {
         return 0;
     }
+
+#ifdef _WIN32
+    if (VidExt_NativeWglActive())
+    {
+        return 0;
+    }
+#endif
 
     return (*l_OGLWidget)->GetContext()->defaultFramebufferObject();
 }
@@ -531,4 +1114,3 @@ bool SetupVidExt(Thread::EmulationThread* emuThread, UserInterface::MainWindow* 
 
     return CoreSetupVidExt(vidext_funcs);
 }
-

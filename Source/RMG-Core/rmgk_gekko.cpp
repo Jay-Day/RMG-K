@@ -11,6 +11,7 @@
 #include "rmgk_gekko.hpp"
 
 #include "Cheats.hpp"
+#include "Directories.hpp"
 #include "Error.hpp"
 #include "Library.hpp"
 #include "Settings.hpp"
@@ -31,9 +32,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <map>
@@ -53,6 +56,12 @@ constexpr double kGekkoTimesyncStrength = 0.002;
 constexpr double kGekkoTimesyncMinScale = 0.99;
 constexpr double kGekkoTimesyncMaxScale = 1.01;
 constexpr double kGekkoTimesyncLerp = 0.15;
+// Sample gekko_frames_ahead() this often when recomputing the target
+// emulation speed. Mirrors Slippi's SLIPPI_ONLINE_LOCKSTEP_INTERVAL (30
+// frames @ 60Hz = once per ~500ms) — single-frame jitter spikes no
+// longer kick the speed scale around; the lerp keeps speed_scale
+// converging toward the cached target on every frame in between.
+constexpr int kGekkoTimesyncIntervalFrames = 30;
 constexpr size_t kGekkoClientReplayFrames = 600;
 
 #ifdef RMGK_HAVE_GEKKONET
@@ -92,6 +101,8 @@ std::atomic_bool g_GekkoExecuting{false};
 std::atomic_bool g_GekkoStopRequested{false};
 std::vector<PendingGekkoSave> g_GekkoPendingSaves;
 std::mutex g_GekkoLogMutex;
+std::filesystem::path g_GekkoLogDirectory;
+std::string g_GekkoLogPrefix;
 int g_GekkoLogFrames = 0;
 uint32_t g_GekkoLastSubmittedInput = 0xffffffffu;
 std::vector<unsigned char> g_GekkoLastLatchedInput;
@@ -99,6 +110,11 @@ int g_GekkoWaitingLoops = 0;
 int g_GekkoLocalInputLogRepeats = 0;
 int g_GekkoPacingLogFrames = 0;
 double g_GekkoSpeedScale = 1.0;
+// Timesync sample state. Counter wraps every kGekkoTimesyncIntervalFrames
+// to trigger a fresh frames_ahead sample. TargetScale is what g_GekkoSpeedScale
+// lerps toward between samples.
+int g_GekkoTimesyncSampleCounter = 0;
+double g_GekkoTimesyncTargetScale = 1.0;
 bool g_GekkoLogEnabled = false;
 bool g_GekkoPreserveLogOnNextReset = false;
 std::mutex g_GekkoClientReplayMutex;
@@ -133,8 +149,97 @@ std::string hex_input(uint32_t value)
     return stream.str();
 }
 
+void set_environment_value(const char* name, const std::string& value)
+{
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
+std::string make_rollback_log_prefix()
+{
+    static unsigned int sessionCounter = 0;
+
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) %
+        std::chrono::seconds(1);
+    std::tm localTime = {};
+
+#ifdef _WIN32
+    localtime_s(&localTime, &nowTime);
+#else
+    localtime_r(&nowTime, &localTime);
+#endif
+
+    std::ostringstream stream;
+    stream << "rollback_"
+           << std::put_time(&localTime, "%Y%m%d_%H%M%S")
+           << "_"
+           << std::setw(3) << std::setfill('0') << nowMs.count()
+           << "_"
+           << ++sessionCounter;
+    return stream.str();
+}
+
+std::filesystem::path create_rollback_log_directory()
+{
+    std::error_code errorCode;
+    std::filesystem::path directory = CoreGetLibraryDirectory() / "Logs";
+
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    errorCode.clear();
+    directory = "Logs";
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    return std::filesystem::path();
+}
+
+void reset_rollback_log_session()
+{
+    g_GekkoLogDirectory = create_rollback_log_directory();
+    g_GekkoLogPrefix = make_rollback_log_prefix();
+
+    set_environment_value("RMGK_ROLLBACK_LOG_DIR", g_GekkoLogDirectory.string());
+    set_environment_value("RMGK_ROLLBACK_LOG_PREFIX", g_GekkoLogPrefix);
+}
+
+std::filesystem::path get_gekko_log_path()
+{
+    if (g_GekkoLogPrefix.empty())
+    {
+        reset_rollback_log_session();
+    }
+
+    std::string filename = g_GekkoLogPrefix;
+    filename += g_GekkoLocalPlayer == 2 ? "_gekko_client.log" : "_gekko_host.log";
+
+    if (!g_GekkoLogDirectory.empty())
+    {
+        return g_GekkoLogDirectory / filename;
+    }
+
+    return std::filesystem::path(filename);
+}
+
 void reset_gekko_log()
 {
+    if (!g_GekkoPreserveLogOnNextReset)
+    {
+        reset_rollback_log_session();
+    }
+
     const char* logEnv = std::getenv("RMGK_GEKKO_LOG");
     g_GekkoLogEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats) ||
         (logEnv != nullptr && std::strcmp(logEnv, "0") != 0);
@@ -147,6 +252,8 @@ void reset_gekko_log()
         g_GekkoLocalInputLogRepeats = 0;
         g_GekkoPacingLogFrames = 0;
         g_GekkoSpeedScale = 1.0;
+        g_GekkoTimesyncSampleCounter = 0;
+        g_GekkoTimesyncTargetScale = 1.0;
         g_GekkoLastLoadStateUs = 0;
         g_GekkoLastSaveStateUs = 0;
         g_GekkoLastRunFrameUs = 0;
@@ -155,7 +262,7 @@ void reset_gekko_log()
     }
 
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
-    const char* path = g_GekkoLocalPlayer == 2 ? "rollback_gekko_client.log" : "rollback_gekko_host.log";
+    const std::filesystem::path path = get_gekko_log_path();
     std::ofstream file(path, std::ios::out | (g_GekkoPreserveLogOnNextReset ? std::ios::app : std::ios::trunc));
     if (!g_GekkoPreserveLogOnNextReset)
     {
@@ -169,6 +276,8 @@ void reset_gekko_log()
     g_GekkoLocalInputLogRepeats = 0;
     g_GekkoPacingLogFrames = 0;
     g_GekkoSpeedScale = 1.0;
+    g_GekkoTimesyncSampleCounter = 0;
+    g_GekkoTimesyncTargetScale = 1.0;
     g_GekkoLastLoadStateUs = 0;
     g_GekkoLastSaveStateUs = 0;
     g_GekkoLastRunFrameUs = 0;
@@ -183,7 +292,7 @@ void write_gekko_log(const std::string& message)
     }
 
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
-    const char* path = g_GekkoLocalPlayer == 2 ? "rollback_gekko_client.log" : "rollback_gekko_host.log";
+    const std::filesystem::path path = get_gekko_log_path();
     std::ofstream file(path, std::ios::out | std::ios::app);
     file << "core_frame=" << CoreGetCurrentFrameCount() << " " << message << "\n";
 }
@@ -776,24 +885,36 @@ bool process_pending_saves()
 
 void apply_gekko_frame_pacing()
 {
+    // Read frames_ahead every call (cheap, just a member access in
+    // GekkoSession) but only recompute the target scale once per
+    // sampling interval. The per-frame lerp below carries the speed scale
+    // toward the cached target between samples.
     const float framesAhead = gekko_frames_ahead(g_GekkoSession);
-    double targetScale = 1.0;
-    if (framesAhead >= kGekkoTimesyncDeadzone || framesAhead <= -kGekkoTimesyncDeadzone)
+    const bool isSampleFrame =
+        (g_GekkoTimesyncSampleCounter % kGekkoTimesyncIntervalFrames) == 0;
+    if (isSampleFrame)
     {
-        targetScale = 1.0 - (static_cast<double>(framesAhead) * kGekkoTimesyncStrength);
-        targetScale = std::clamp(targetScale, kGekkoTimesyncMinScale, kGekkoTimesyncMaxScale);
+        double newTarget = 1.0;
+        if (framesAhead >= kGekkoTimesyncDeadzone || framesAhead <= -kGekkoTimesyncDeadzone)
+        {
+            newTarget = 1.0 - (static_cast<double>(framesAhead) * kGekkoTimesyncStrength);
+            newTarget = std::clamp(newTarget, kGekkoTimesyncMinScale, kGekkoTimesyncMaxScale);
+        }
+        g_GekkoTimesyncTargetScale = newTarget;
     }
+    g_GekkoTimesyncSampleCounter++;
 
-    g_GekkoSpeedScale += (targetScale - g_GekkoSpeedScale) * kGekkoTimesyncLerp;
+    g_GekkoSpeedScale += (g_GekkoTimesyncTargetScale - g_GekkoSpeedScale) * kGekkoTimesyncLerp;
     CoreRollbackSetTimesyncScale(g_GekkoSpeedScale);
 
     g_GekkoPacingLogFrames++;
     if (g_GekkoLogEnabled &&
-        (targetScale != 1.0 || g_GekkoPacingLogFrames <= 10 || (g_GekkoPacingLogFrames % 60) == 0))
+        (g_GekkoTimesyncTargetScale != 1.0 || g_GekkoPacingLogFrames <= 10 || (g_GekkoPacingLogFrames % 60) == 0))
     {
         std::ostringstream stream;
         stream << "pacing frames_ahead=" << std::fixed << std::setprecision(2) << framesAhead
-               << " target_scale=" << std::setprecision(4) << targetScale
+               << " sample=" << (isSampleFrame ? 1 : 0)
+               << " target_scale=" << std::setprecision(4) << g_GekkoTimesyncTargetScale
                << " speed_scale=" << g_GekkoSpeedScale;
 
         if (g_GekkoRemoteHandle >= 0)
@@ -1565,7 +1686,7 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     }
 
     const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
-    const int predictionWindow = 4;
+    const int predictionWindow = 7;
 
     GekkoConfig config = {};
     config.num_players = static_cast<unsigned char>(players);
@@ -1676,6 +1797,8 @@ CORE_EXPORT void rmgk_gekko::close_session()
         g_GekkoClientReplayIndex = 0;
     }
     g_GekkoSpeedScale = 1.0;
+    g_GekkoTimesyncSampleCounter = 0;
+    g_GekkoTimesyncTargetScale = 1.0;
     CoreRollbackSetTimesyncScale(1.0);
 #ifdef RMGK_HAVE_P2P_TRANSPORT
     g_GekkoP2PRemoteAddress.clear();

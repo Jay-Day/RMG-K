@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <cstdlib>
+#include <cstring>
 #include <Graphics/Context.h>
 #include <Graphics/OpenGLContext/GLFunctions.h>
 #include <Graphics/OpenGLContext/opengl_Utils.h>
@@ -8,6 +9,7 @@
 #include <GLideN64.h>
 #include <Config.h>
 #include <N64.h>
+#include <gDP.h>
 #include <gSP.h>
 #include <Log.h>
 #include <Revision.h>
@@ -92,6 +94,21 @@ bool DisplayWindowMupen64plus::_start()
 	m_bFullscreen = config.video.fullscreen > 0;
 	m_screenWidth = config.video.windowedWidth;
 	m_screenHeight = config.video.windowedHeight;
+#if defined(OS_WINDOWS)
+	const char * rmgStartFullscreen = std::getenv("RMG_GLIDEN64_START_FULLSCREEN");
+	const bool rmgStartNativeFullscreen = rmgStartFullscreen != nullptr && std::strcmp(rmgStartFullscreen, "1") == 0;
+	if (rmgStartNativeFullscreen) {
+		m_bFullscreen = true;
+		const char * rmgStartFullscreenWidth = std::getenv("RMG_GLIDEN64_START_FULLSCREEN_WIDTH");
+		const char * rmgStartFullscreenHeight = std::getenv("RMG_GLIDEN64_START_FULLSCREEN_HEIGHT");
+		const int width = rmgStartFullscreenWidth != nullptr ? std::atoi(rmgStartFullscreenWidth) : 0;
+		const int height = rmgStartFullscreenHeight != nullptr ? std::atoi(rmgStartFullscreenHeight) : 0;
+		if (width > 0 && height > 0) {
+			m_screenWidth = width;
+			m_screenHeight = height;
+		}
+	}
+#endif
 	m_screenRefresh = config.video.fullscreenRefresh;
 
 	_getDisplaySize();
@@ -114,6 +131,40 @@ bool DisplayWindowMupen64plus::_start()
 		FunctionWrapper::CoreVideo_Quit();
 		return false;
 	}
+
+#if defined(OS_WINDOWS)
+	GLint viewport[4] = {};
+	glGetIntegerv(GL_VIEWPORT, viewport);
+	const int viewportWidth = viewport[2];
+	const int viewportHeight = viewport[3];
+	if (m_bFullscreen && viewportWidth > 0 && viewportHeight > 0) {
+		if (static_cast<int>(m_screenWidth) != viewportWidth || static_cast<int>(m_screenHeight) != viewportHeight) {
+			m_screenWidth = static_cast<u32>(viewportWidth);
+			m_screenHeight = static_cast<u32>(viewportHeight);
+			m_heightOffset = 0;
+			_setBufferSize();
+			updateScale();
+			gSP.changed |= CHANGED_VIEWPORT;
+			gDP.changed |= CHANGED_SCISSOR;
+		}
+	}
+#endif
+
+#if defined(OS_WINDOWS)
+	const char * rmgNativeWglWidth = std::getenv("RMG_NATIVE_WGL_DRAWABLE_WIDTH");
+	const char * rmgNativeWglHeight = std::getenv("RMG_NATIVE_WGL_DRAWABLE_HEIGHT");
+	const int nativeWglWidth = rmgNativeWglWidth != nullptr ? std::atoi(rmgNativeWglWidth) : 0;
+	const int nativeWglHeight = rmgNativeWglHeight != nullptr ? std::atoi(rmgNativeWglHeight) : 0;
+	if (nativeWglWidth > 0 && nativeWglHeight > 0) {
+		m_screenWidth = nativeWglWidth;
+		m_screenHeight = nativeWglHeight;
+		m_heightOffset = 0;
+		_setBufferSize();
+		updateScale();
+		gSP.changed |= CHANGED_VIEWPORT;
+		gDP.changed |= CHANGED_SCISSOR;
+	}
+#endif
 
 	char caption[128];
 #ifdef PLUGIN_REVISION

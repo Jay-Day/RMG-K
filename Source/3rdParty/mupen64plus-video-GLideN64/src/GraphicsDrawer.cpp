@@ -1943,6 +1943,8 @@ void GraphicsDrawer::_initStates()
 	DisplayWindow & wnd = DisplayWindow::get();
 	gfxContext.setViewport(0, static_cast<s32>(wnd.getHeightOffset()),
 						   static_cast<s32>(wnd.getScreenWidth()), static_cast<s32>(wnd.getScreenHeight()));
+	gfxContext.setScissor(0, static_cast<s32>(wnd.getHeightOffset()),
+						  static_cast<s32>(wnd.getScreenWidth()), static_cast<s32>(wnd.getScreenHeight()));
 
 	gfxContext.clearColorBuffer(0.0f, 0.0f, 0.0f, 0.0f);
 

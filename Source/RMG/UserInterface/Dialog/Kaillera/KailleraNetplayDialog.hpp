@@ -66,6 +66,7 @@ private slots:
 
     // P2P tab
     void onP2PHost();
+    void onP2PHostPrivate();
     void onP2PJoin();
     void onP2PPasteAndGo();
     void onP2PStoredRightClicked(const QPoint& pos);
@@ -126,7 +127,8 @@ private:
     void handleP2PWaitingGamesReply(QNetworkReply* reply);
     void populateP2PWaitingGames(const QByteArray& data);
     void useP2PWaitingGameRow(int row, bool connectNow);
-    void connectRollbackSessionLaunch(KailleraP2PDialog& p2pDialog, bool& rollbackLaunched);
+    void connectRollbackSessionLaunch(KailleraP2PDialog& p2pDialog, bool& rollbackSessionActive);
+    void hostP2P(bool showOnPublicList);
 
     // State machine timer (replaces blocking KSSDFA loop)
     QTimer* m_stateMachineTimer = nullptr;
@@ -154,6 +156,7 @@ private:
     QLabel* m_p2pCodeStatusLabel = nullptr;
     QComboBox* m_p2pGameCombo = nullptr;
     QPushButton* m_btnP2PHost = nullptr;
+    QPushButton* m_btnP2PHostPrivate = nullptr;
 
     // P2P connect controls
     QLineEdit* m_p2pHostEdit = nullptr;
@@ -193,6 +196,7 @@ private:
     QTimer* m_p2pAutoClaimTimeoutTimer = nullptr;
     bool m_p2pAutoClaimAttempted = false;
     bool m_p2pHostLaunchQueued = false;
+    bool m_p2pHostLaunchQueuedPublic = true;
     bool m_p2pAutoClaimAwaitingAck = false;
     QString m_p2pAutoClaimPendingCode;
     QString m_p2pAutoClaimPendingToken;

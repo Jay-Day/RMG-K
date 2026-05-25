@@ -112,7 +112,7 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
         if (predictionSeparator == std::string::npos)
         {
             frameDelay = std::stoi(address.substr(delaySeparator + 1));
-            predictionWindow = 4;
+            predictionWindow = 7;
         }
         else
         {
@@ -585,7 +585,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             std::string remoteAddress;
             int remotePort = 0;
             int frameDelay = 0;
-            int predictionWindow = 4;
+            int predictionWindow = 7;
             if (!parse_gekko_address(address, remoteAddress, remotePort, frameDelay, predictionWindow))
             {
                 CoreSetError("CoreStartEmulation: invalid GekkoNet session parameters");

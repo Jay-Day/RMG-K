@@ -11,6 +11,7 @@ option(NETPLAY          "Enables netplay" ON)
 option(USE_CCACHE       "Enables usage of ccache when ccache has been found" ON)
 option(NO_ASM           "Disables the usage of assembly in the mupen64plus-core" OFF)
 option(USE_ANGRYLION    "Enables building angrylion-rdp-plus which uses a non-GPL compliant license" OFF)
+option(INSTALL_CHEATS   "Installs bundled cheat files" ON)
 set(KAILLERA_APP_VERSION_OVERRIDE "" CACHE STRING "Override Kaillera app version string advertised by RMG-K (dev/testing)")
 
 project(RMG)
@@ -170,11 +171,13 @@ install(FILES ${MUPEN64PLUSCORE_INI} Data/font.ttf
 install(FILES ${SDL_GAMECONTROLLERDB} ${CMAKE_SOURCE_DIR}/Data/InputProfileDB.json
     DESTINATION ${DATA_INSTALL_PATH}
 )
-file(GLOB GENERATED_CHEAT_FILES ${CMAKE_SOURCE_DIR}/Data/Cheats/Generated/*.cht)
-file(GLOB CUSTOM_CHEAT_FILES ${CMAKE_SOURCE_DIR}/Data/Cheats/Custom/*.cht)
-install(FILES ${GENERATED_CHEAT_FILES} ${CUSTOM_CHEAT_FILES}
-    DESTINATION ${DATA_INSTALL_PATH}/Cheats
-)
+if (INSTALL_CHEATS)
+    file(GLOB GENERATED_CHEAT_FILES ${CMAKE_SOURCE_DIR}/Data/Cheats/Generated/*.cht)
+    file(GLOB CUSTOM_CHEAT_FILES ${CMAKE_SOURCE_DIR}/Data/Cheats/Custom/*.cht)
+    install(FILES ${GENERATED_CHEAT_FILES} ${CUSTOM_CHEAT_FILES}
+        DESTINATION ${DATA_INSTALL_PATH}/Cheats
+    )
+endif(INSTALL_CHEATS)
 install(FILES ${MUPEN64PLUS_PLUGIN_RSP_CXD4}
     DESTINATION ${PLUGIN_INSTALL_PATH}/RSP
     PERMISSIONS ${LIB_PERMISSIONS}

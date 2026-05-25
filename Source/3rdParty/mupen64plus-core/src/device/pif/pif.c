@@ -38,6 +38,7 @@
 #include "plugin/plugin.h"
 #include "main/netplay.h"
 #include "main/pif_sync_callback.h"
+#include "osal/files.h"
 
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
@@ -102,6 +103,66 @@ static int rollback_verbose_pif_input_logging_enabled(void)
     return value != NULL && value[0] == '1';
 }
 
+static const char* rollback_log_path_separator(const char* directory)
+{
+    size_t length;
+    char last;
+
+    if (directory == NULL) {
+        return "";
+    }
+
+    length = strlen(directory);
+    if (length == 0) {
+        return "";
+    }
+
+    last = directory[length - 1];
+    return (last == '/' || last == '\\') ? "" : "/";
+}
+
+static FILE* rollback_open_log_file(const char* suffix)
+{
+    const char* directory = getenv("RMGK_ROLLBACK_LOG_DIR");
+    const char* prefix = getenv("RMGK_ROLLBACK_LOG_PREFIX");
+    char path[PATH_MAX];
+    int written;
+    FILE* file;
+
+    if (directory != NULL && directory[0] != '\0' && prefix != NULL && prefix[0] != '\0') {
+        written = snprintf(path, sizeof(path), "%s%s%s_%s.log",
+            directory,
+            rollback_log_path_separator(directory),
+            prefix,
+            suffix);
+        if (written > 0 && (size_t)written < sizeof(path)) {
+            file = fopen(path, "a");
+            if (file != NULL) {
+                return file;
+            }
+        }
+    }
+
+    osal_mkdirp("Logs", 0700);
+    written = snprintf(path, sizeof(path), "Logs%srollback_%s.log", rollback_log_path_separator("Logs"), suffix);
+    if (written > 0 && (size_t)written < sizeof(path)) {
+        file = fopen(path, "a");
+        if (file != NULL) {
+            return file;
+        }
+    }
+
+    osal_mkdirp("Bin/Release/Logs", 0700);
+    written = snprintf(path, sizeof(path), "Bin/Release/Logs%srollback_%s.log",
+        rollback_log_path_separator("Bin/Release/Logs"),
+        suffix);
+    if (written > 0 && (size_t)written < sizeof(path)) {
+        return fopen(path, "a");
+    }
+
+    return NULL;
+}
+
 static void rollback_log_pif_channel(const char* phase, size_t index, const struct pif_channel* channel)
 {
     FILE* file;
@@ -110,10 +171,7 @@ static void rollback_log_pif_channel(const char* phase, size_t index, const stru
         return;
     }
 
-    file = fopen("rollback_pif.log", "a");
-    if (file == NULL) {
-        file = fopen("Bin/Release/rollback_pif.log", "a");
-    }
+    file = rollback_open_log_file("pif");
     if (file == NULL) {
         return;
     }
