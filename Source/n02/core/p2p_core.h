@@ -35,6 +35,10 @@ void p2p_fodipp_callback(char * host);
 int p2p_modify_play_values(void *values, int size);
 int p2p_core_get_port();
 bool p2p_core_get_peer_endpoint(char *ip, int ip_len, int *port);
+int p2p_core_get_rollback_room_player_count();
+int p2p_core_get_rollback_room_local_player();
+int p2p_core_get_rollback_room_remote_count();
+bool p2p_core_get_rollback_room_remote(int index, int *player, char *ip, int ip_len, int *port);
 void p2p_hosted_game_callback(char * game);
 void p2p_ping_callback(int PING);
 

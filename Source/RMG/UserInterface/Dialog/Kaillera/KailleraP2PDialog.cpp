@@ -2871,19 +2871,28 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
             return;
         }
 
-        char peerIp[128] = {};
-        int peerP2PPort = 0;
         const int localP2PPort = p2p_core_get_port();
+        const int roomPlayerCount = p2p_core_get_rollback_room_player_count();
+        const int localPlayer = p2p_core_get_rollback_room_local_player();
+        const int remoteCount = p2p_core_get_rollback_room_remote_count();
         const int frameDelay = effectiveRollbackFrameDelay();
         const int predictionWindow = effectiveRollbackPredictionWindow();
-        if (!p2p_core_get_peer_endpoint(peerIp, sizeof(peerIp), &peerP2PPort))
+        QStringList remotePlayers;
+        for (int i = 0; i < remoteCount; i++)
         {
-            appendChatError("Could not get rollback peer endpoint.");
-            return;
+            int remotePlayer = 0;
+            char peerIp[128] = {};
+            int peerP2PPort = 0;
+            if (!p2p_core_get_rollback_room_remote(i, &remotePlayer, peerIp, sizeof(peerIp), &peerP2PPort))
+            {
+                appendChatError("Could not get rollback room peer endpoint.");
+                return;
+            }
+            remotePlayers << (QString::number(remotePlayer) + "@" + QString::fromUtf8(peerIp) + ":" + QString::number(peerP2PPort));
         }
-        if (localP2PPort <= 0 || peerP2PPort <= 0)
+        if (localP2PPort <= 0 || roomPlayerCount < 2 || roomPlayerCount > 4 || localPlayer <= 0 || remotePlayers.size() != roomPlayerCount - 1)
         {
-            appendChatError("Could not get rollback game ports.");
+            appendChatError("Could not get rollback room parameters.");
             return;
         }
 
@@ -2892,10 +2901,7 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         m_gameActive = true;
         applyGameLayerUI();
         appendChatStatus("Rollback game started: " + game, "green", true);
-        const int remotePlayer = player == 1 ? 2 : 1;
-        QStringList remotePlayers;
-        remotePlayers << (QString::number(remotePlayer) + "@" + QString::fromUtf8(peerIp) + ":" + QString::number(peerP2PPort));
-        emit rollbackSessionReady(game, remotePlayers, maxPlayers, localP2PPort, player, frameDelay, predictionWindow);
+        emit rollbackSessionReady(game, remotePlayers, roomPlayerCount, localP2PPort, localPlayer, frameDelay, predictionWindow);
         return;
     }
 

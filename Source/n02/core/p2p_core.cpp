@@ -62,10 +62,41 @@ struct P2PCORESTAT {
 	bool PEERLOADED;
 } P2PCORE;
 
-//void __cdecl kprintf(char * arg_0, ...);
-
 bool p2p_core_initialized = false;
 static std::recursive_mutex p2p_transport_mutex;
+
+struct P2PRollbackRoomPeer {
+	int player;
+	char ip[128];
+	int port;
+};
+
+static P2PRollbackRoomPeer p2p_rollback_room_peers[3];
+static int p2p_rollback_room_peer_count = 0;
+
+static void p2p_clear_rollback_room(){
+	memset(p2p_rollback_room_peers, 0, sizeof(p2p_rollback_room_peers));
+	p2p_rollback_room_peer_count = 0;
+}
+
+static void p2p_set_rollback_room_single_peer(){
+	p2p_clear_rollback_room();
+	if (!p2p_core_initialized || P2PCORE.connection == 0 || !P2PCORE.CONNECTED)
+		return;
+
+	const char *ip = inet_ntoa(P2PCORE.connection->addr.sin_addr);
+	const int port = ntohs(P2PCORE.connection->addr.sin_port);
+	if (ip == 0 || port <= 0)
+		return;
+
+	p2p_rollback_room_peers[0].player = P2PCORE.HOST ? 2 : 1;
+	strncpy(p2p_rollback_room_peers[0].ip, ip, sizeof(p2p_rollback_room_peers[0].ip) - 1);
+	p2p_rollback_room_peers[0].ip[sizeof(p2p_rollback_room_peers[0].ip) - 1] = 0;
+	p2p_rollback_room_peers[0].port = port;
+	p2p_rollback_room_peer_count = 1;
+}
+
+//void __cdecl kprintf(char * arg_0, ...);
 
 
 void p2p_send_ssrv_packet(char * cmd, int len, char * host, int port){
@@ -233,6 +264,7 @@ bool p2p_core_cleanup(){
 	n02_TRACE();//TRACE_TERM();
 	//kprintf(__FILE__ ":%i", __LINE__);
 	if (p2p_core_initialized){
+		p2p_clear_rollback_room();
 
 		//kprintf(__FILE__ ":%i", __LINE__);
 
@@ -267,6 +299,7 @@ bool p2p_disconnect(){
 			P2PCORE.connection->send_tinst(EXIT, 0);
 			P2PCORE.status = 0;
 			P2PCORE.CONNECTED = false;
+			p2p_clear_rollback_room();
 
 			return true;
 		}
@@ -289,6 +322,7 @@ bool p2p_kick_peer(){
 	P2PCORE.ping = -1;
 	P2PCORE.USERREADY = false;
 	P2PCORE.PEERREADY = false;
+	p2p_clear_rollback_room();
 	P2PCORE.last_ping_sent_time = 0;
 	P2PCORE.last_ping_echo_time = 0;
 	p2p_clear_rollback_packets_locked(false);
@@ -366,6 +400,39 @@ bool p2p_core_get_peer_endpoint(char *ip, int ip_len, int *port){
 	ip[ip_len - 1] = 0;
 	*port = ntohs(P2PCORE.connection->addr.sin_port);
 	return *port > 0;
+}
+
+int p2p_core_get_rollback_room_player_count(){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	if (p2p_rollback_room_peer_count <= 0)
+		p2p_set_rollback_room_single_peer();
+	return p2p_rollback_room_peer_count + 1;
+}
+
+int p2p_core_get_rollback_room_local_player(){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	return P2PCORE.HOST ? 1 : 2;
+}
+
+int p2p_core_get_rollback_room_remote_count(){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	if (p2p_rollback_room_peer_count <= 0)
+		p2p_set_rollback_room_single_peer();
+	return p2p_rollback_room_peer_count;
+}
+
+bool p2p_core_get_rollback_room_remote(int index, int *player, char *ip, int ip_len, int *port){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	if (p2p_rollback_room_peer_count <= 0)
+		p2p_set_rollback_room_single_peer();
+	if (index < 0 || index >= p2p_rollback_room_peer_count || player == 0 || ip == 0 || ip_len <= 0 || port == 0)
+		return false;
+
+	*player = p2p_rollback_room_peers[index].player;
+	strncpy(ip, p2p_rollback_room_peers[index].ip, ip_len - 1);
+	ip[ip_len - 1] = 0;
+	*port = p2p_rollback_room_peers[index].port;
+	return *player > 0 && ip[0] != 0 && *port > 0;
 }
 
 bool p2p_core_connect(char * ip, int port){
@@ -886,6 +953,7 @@ void p2p_step(){
 						}
 						if (P2PCORE.ping == 0 && ki.inst.flags == LOGN_RPOS) {
 							P2PCORE.CONNECTED = true;
+							p2p_set_rollback_room_single_peer();
 							P2PCORE.last_ping_echo_time = p2p_GetTime();
 							p2p_core_debug("Peer reconfirmed connection");
 							
@@ -920,6 +988,7 @@ void p2p_step(){
 									p2p_peer_info_callback(P2PCORE.PEERNAME, P2PCORE.APP);
 									
 									P2PCORE.CONNECTED = true;
+									p2p_set_rollback_room_single_peer();
 									P2PCORE.last_ping_echo_time = p2p_GetTime();
 
 									p2p_hosted_game_callback(P2PCORE.GAME);
