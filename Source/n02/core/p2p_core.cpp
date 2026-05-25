@@ -137,6 +137,11 @@ void p2p_rollback_transport_clear(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
 	p2p_clear_rollback_packets_locked(true);
 }
+
+bool p2p_rollback_transport_connected(){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	return p2p_core_initialized && P2PCORE.connection != 0 && P2PCORE.CONNECTED;
+}
 //===========================================================
 //===========================================================
 //===========================================================

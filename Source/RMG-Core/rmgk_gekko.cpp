@@ -1542,7 +1542,6 @@ CORE_EXPORT bool rmgk_gekko::sync_prematch_manifest(int localPlayer)
     constexpr int kManifestPacketMagicLen = 12;
     constexpr const char* kAckPacketMagic = "RMGKPMANACK1";
     constexpr int kAckPacketMagicLen = 12;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(localPlayer == 1 ? 8 : 12);
 
     g_GekkoLocalPlayer = localPlayer;
     reset_gekko_log();
@@ -1570,10 +1569,34 @@ CORE_EXPORT bool rmgk_gekko::sync_prematch_manifest(int localPlayer)
                    << " cheats=" << cheatCount;
             write_gekko_log(stream.str());
         }
+        p2p_core_debug((char*)"Waiting for pre-match sync ACK from peer...");
 
-        do
+        auto nextStatus = std::chrono::steady_clock::now();
+
+        for (;;)
         {
-            p2p_rollback_transport_send(packet.data(), static_cast<int>(packet.size()));
+            if (!p2p_rollback_transport_connected())
+            {
+                CoreSetError("Pre-match sync failed: peer disconnected before ACK");
+                write_gekko_log("prematch_manifest_ack role=host result=fail reason=disconnected");
+                return false;
+            }
+
+            p2p_rollback_process_control();
+            if (!p2p_rollback_transport_connected())
+            {
+                CoreSetError("Pre-match sync failed: peer disconnected before ACK");
+                write_gekko_log("prematch_manifest_ack role=host result=fail reason=disconnected");
+                return false;
+            }
+
+            const bool sent = p2p_rollback_transport_send(packet.data(), static_cast<int>(packet.size()));
+            if (!sent)
+            {
+                CoreSetError("Pre-match sync failed: could not send manifest");
+                write_gekko_log("prematch_manifest_send role=host result=fail reason=send_failed");
+                return false;
+            }
 
             for (int i = 0; i < 5; i++)
             {
@@ -1605,15 +1628,36 @@ CORE_EXPORT bool rmgk_gekko::sync_prematch_manifest(int localPlayer)
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-        } while (std::chrono::steady_clock::now() < deadline);
 
-        CoreSetError("Pre-match sync timed out waiting for client ACK");
-        write_gekko_log("prematch_manifest_ack role=host result=fail reason=timeout");
-        return false;
+            if (std::chrono::steady_clock::now() >= nextStatus)
+            {
+                p2p_core_debug((char*)"Still waiting for pre-match sync ACK from peer...");
+                write_gekko_log("prematch_manifest_wait role=host state=waiting_for_ack");
+                nextStatus = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            }
+        }
     }
+
+    p2p_core_debug((char*)"Waiting for pre-match manifest from host...");
+    auto nextStatus = std::chrono::steady_clock::now();
 
     for (;;)
     {
+        if (!p2p_rollback_transport_connected())
+        {
+            CoreSetError("Pre-match sync failed: peer disconnected before manifest");
+            write_gekko_log("prematch_manifest_recv role=client result=fail reason=disconnected");
+            return false;
+        }
+
+        p2p_rollback_process_control();
+        if (!p2p_rollback_transport_connected())
+        {
+            CoreSetError("Pre-match sync failed: peer disconnected before manifest");
+            write_gekko_log("prematch_manifest_recv role=client result=fail reason=disconnected");
+            return false;
+        }
+
         char data[65536];
         char addr[128];
         const int len = p2p_rollback_transport_receive(data, static_cast<int>(sizeof(data)), addr, static_cast<int>(sizeof(addr)));
@@ -1646,11 +1690,11 @@ CORE_EXPORT bool rmgk_gekko::sync_prematch_manifest(int localPlayer)
             return true;
         }
 
-        if (std::chrono::steady_clock::now() >= deadline)
+        if (std::chrono::steady_clock::now() >= nextStatus)
         {
-            CoreSetError("Pre-match sync timed out waiting for host manifest");
-            write_gekko_log("prematch_manifest_recv role=client result=fail reason=timeout");
-            return false;
+            p2p_core_debug((char*)"Still waiting for pre-match manifest from host...");
+            write_gekko_log("prematch_manifest_wait role=client state=waiting_for_manifest");
+            nextStatus = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
