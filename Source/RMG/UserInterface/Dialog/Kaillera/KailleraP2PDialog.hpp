@@ -28,6 +28,7 @@
 
 class QAction;
 class QResizeEvent;
+class QVBoxLayout;
 
 class KailleraP2PDialog : public QDialog
 {
@@ -94,6 +95,8 @@ private:
     void updateRollbackDelayControls();
     void updateRollbackPredictionControls();
     void updatePeerConnectionUI();
+    void clearRollbackPeerCards();
+    void refreshRollbackPeerCards();
     void updateNetcodeModeStatus();
     void setPingLabelText(const QString& text);
     void setPingLabelFromValue(int ping);
@@ -126,6 +129,17 @@ private:
     {
         QString html;
         bool debug = false;
+    };
+
+    struct RollbackPeerCard
+    {
+        int player = 0;
+        QString name;
+        bool ready = false;
+        bool local = false;
+        QFrame* card = nullptr;
+        QLabel* nameLabel = nullptr;
+        QLabel* readyLabel = nullptr;
     };
 
     // NAT traversal helpers
@@ -174,6 +188,7 @@ private:
 
     // Players
     QFrame* m_hostPlayerCard = nullptr;
+    QVBoxLayout* m_playersLayout = nullptr;
     QLabel* m_hostPlayerNameLabel = nullptr;
     QFrame* m_hostConnectCodeBadge = nullptr;
     QLabel* m_hostConnectCodeLabel = nullptr;
@@ -183,6 +198,7 @@ private:
     QFrame* m_playerCard = nullptr;
     QLabel* m_playerNameLabel = nullptr;
     QLabel* m_playerReadyLabel = nullptr;
+    QVector<RollbackPeerCard> m_rollbackPeerCards;
 
     // Chat area
     QGroupBox* m_chatGroup = nullptr;

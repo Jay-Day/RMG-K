@@ -34,6 +34,11 @@
 
 #define PING_PING 0
 #define PING_ECHO 1
+#define PING_ROOM_START 2
+#define PING_ROOM_PROBE 3
+#define PING_ROOM_PROBE_ECHO 4
+#define PING_ROOM_REPORT 5
+#define PING_ROOM_DATA_REPORT 6
 
 #define PREADY_READY 0
 #define PREADY_NREADY 1

@@ -53,6 +53,7 @@ class p2p_message : public k_socket {
 	std::deque<rollback_packet> rollback_cache;
 	std::vector<sockaddr_in> rollback_peers;
 	sockaddr_in      last_packet_addr;
+	bool rollback_accept_any = false;
 
 	bool is_peer_packet(const sockaddr_in& packet_addr) const {
 		return addr.sin_addr.s_addr != 0 &&
@@ -99,7 +100,7 @@ class p2p_message : public k_socket {
 		last_packet_addr = packet_addr;
 
 		if (is_rollback_packet(buff, bufflen)) {
-			if (is_rollback_peer_packet(packet_addr))
+			if (rollback_accept_any || is_rollback_peer_packet(packet_addr))
 				queue_rollback_packet(buff, bufflen, packet_addr);
 			return true;
 		}
@@ -519,5 +520,9 @@ public:
 			}
 			rollback_peers.push_back(peer);
 		}
+	}
+
+	void set_rollback_accept_any(bool accept_any) {
+		rollback_accept_any = accept_any;
 	}
 };

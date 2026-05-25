@@ -1072,6 +1072,7 @@ void KailleraP2PDialog::setupUI()
     playersGroup->setObjectName("KailleraP2PGroup");
     playersGroup->setMinimumHeight(150);
     auto* playersLayout = new QVBoxLayout(playersGroup);
+    m_playersLayout = playersLayout;
     playersLayout->setContentsMargins(9, 10, 9, 9);
     playersLayout->setSpacing(8);
 
@@ -1124,6 +1125,7 @@ void KailleraP2PDialog::setupUI()
     connect(m_btnKickPeer, &QPushButton::clicked, this, &KailleraP2PDialog::onKickPeer);
     playerCardLayout->addWidget(m_btnKickPeer, 0, Qt::AlignVCenter);
     playersLayout->addWidget(m_playerCard);
+    m_playerCard->setVisible(false);
     rightLayout->addWidget(playersGroup, 0);
 
     m_hostGroup = new QGroupBox("Session Settings", rightWidget);
@@ -1477,7 +1479,7 @@ bool KailleraP2PDialog::isRollbackMode() const
 
 bool KailleraP2PDialog::canEditRollbackDelaySettings() const
 {
-    return m_isHost || !m_hasRemoteRollbackDelaySettings;
+    return true;
 }
 
 bool KailleraP2PDialog::canEditRollbackPredictionSettings() const
@@ -1746,11 +1748,6 @@ int KailleraP2PDialog::calculatedRollbackFrameDelay() const
 
 int KailleraP2PDialog::effectiveRollbackFrameDelay() const
 {
-    if (!m_isHost && m_hasRemoteRollbackDelaySettings)
-    {
-        return clampRollbackFrameDelay(m_rollbackFrameDelay);
-    }
-
     return calculatedRollbackFrameDelay();
 }
 
@@ -1797,28 +1794,9 @@ bool KailleraP2PDialog::parseRollbackPredictionMessage(const QString& message, i
 
 void KailleraP2PDialog::sendRollbackDelaySettings(bool force)
 {
-    if (!m_isHost || !isRollbackMode() || !p2p_is_connected() ||
-        m_rollbackGameActive || n02::isGameRunning())
-    {
-        return;
-    }
-
-    const int delay = effectiveRollbackFrameDelay();
-    if (!force && m_hasSentRollbackDelaySettings &&
-        m_lastSentRollbackDelayMode == m_rollbackDelayMode &&
-        m_lastSentRollbackFrameDelay == delay)
-    {
-        return;
-    }
-
-    QByteArray message = QByteArray(kRollbackDelayMessagePrefix) +
-        QByteArray::number(m_rollbackDelayMode) + ":" +
-        QByteArray::number(delay);
-    p2p_send_chat(message.data());
-
-    m_hasSentRollbackDelaySettings = true;
-    m_lastSentRollbackDelayMode = m_rollbackDelayMode;
-    m_lastSentRollbackFrameDelay = delay;
+    (void)force;
+    // Rollback input delay is local-only for P4P. The host must not push a
+    // room-wide delay because the worst path can be between two non-host peers.
 }
 
 void KailleraP2PDialog::sendRollbackPredictionSettings(bool force)
@@ -2054,9 +2032,7 @@ void KailleraP2PDialog::setPingLabelFromValue(int ping)
 void KailleraP2PDialog::updatePeerConnectionUI()
 {
     const QString localName = m_username.trimmed().isEmpty() ? "You" : m_username.trimmed();
-    const QString remoteName = m_peerName.trimmed().isEmpty() ? "Opponent" : m_peerName.trimmed();
     const QString hostName = m_isHost ? localName : (m_peerName.trimmed().isEmpty() ? "Host" : m_peerName.trimmed());
-    const QString playerName = m_isHost ? remoteName : localName;
 
     QString hostCode;
     if (!m_travCode.isEmpty())
@@ -2082,7 +2058,7 @@ void KailleraP2PDialog::updatePeerConnectionUI()
     }
     if (m_hostPlayerNameLabel != nullptr)
     {
-        m_hostPlayerNameLabel->setText(hostName + " (Host)");
+        m_hostPlayerNameLabel->setText(hostName + " (P1 Host)");
     }
     updateReadyBadge(m_hostReadyLabel, m_isHost ? m_ready : m_peerReady);
     if (m_hostConnectCodeLabel != nullptr)
@@ -2104,27 +2080,9 @@ void KailleraP2PDialog::updatePeerConnectionUI()
     }
     if (m_playerCard != nullptr)
     {
-        m_playerCard->setVisible(m_peerConnected);
+        m_playerCard->setVisible(false);
     }
-    if (m_playersEmptyLabel != nullptr)
-    {
-        m_playersEmptyLabel->setVisible(!m_peerConnected);
-        if (!m_peerName.trimmed().isEmpty())
-        {
-            m_playersEmptyLabel->setText("Opponent left");
-            m_playersEmptyLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
-        }
-        else
-        {
-            m_playersEmptyLabel->setText(m_isHost ? "Waiting for opponent" : "Opponent not connected");
-            m_playersEmptyLabel->setStyleSheet("color: #a66a00; font-weight: 700;");
-        }
-    }
-    if (m_playerNameLabel != nullptr)
-    {
-        m_playerNameLabel->setText(m_isHost ? playerName : playerName + " (You)");
-    }
-    updateReadyBadge(m_playerReadyLabel, m_isHost ? m_peerReady : m_ready);
+    refreshRollbackPeerCards();
     if (m_btnKickPeer != nullptr)
     {
         const bool inGame = (isRollbackMode() && m_rollbackGameActive) || n02::isGameRunning();
@@ -2133,6 +2091,128 @@ void KailleraP2PDialog::updatePeerConnectionUI()
         m_btnKickPeer->setEnabled(showKick);
     }
     updateLobbyStatusLabel();
+}
+
+void KailleraP2PDialog::clearRollbackPeerCards()
+{
+    for (const RollbackPeerCard& peerCard : m_rollbackPeerCards)
+    {
+        if (peerCard.card != nullptr)
+        {
+            if (m_playersLayout != nullptr)
+            {
+                m_playersLayout->removeWidget(peerCard.card);
+            }
+            peerCard.card->deleteLater();
+        }
+    }
+    m_rollbackPeerCards.clear();
+}
+
+void KailleraP2PDialog::refreshRollbackPeerCards()
+{
+    clearRollbackPeerCards();
+
+    if (m_playersLayout == nullptr)
+    {
+        return;
+    }
+
+    QWidget* parentWidget = m_playersLayout->parentWidget();
+    QVector<RollbackPeerCard> cards;
+    const QString localName = m_username.trimmed().isEmpty() ? "You" : m_username.trimmed();
+    const int localPlayer = p2p_core_get_rollback_room_local_player();
+    const int remoteCount = p2p_core_get_rollback_room_remote_count();
+    bool allRemoteReady = remoteCount > 0;
+
+    if (!m_isHost && localPlayer > 1)
+    {
+        RollbackPeerCard localCard;
+        localCard.player = localPlayer;
+        localCard.name = localName;
+        localCard.ready = m_ready;
+        localCard.local = true;
+        cards.push_back(localCard);
+    }
+
+    for (int i = 0; i < remoteCount; i++)
+    {
+        int player = 0;
+        char name[32] = {};
+        bool ready = false;
+        char ip[128] = {};
+        int port = 0;
+        if (!p2p_core_get_rollback_room_remote_info(i, &player, name, sizeof(name), &ready, ip, sizeof(ip), &port))
+        {
+            continue;
+        }
+        if (!m_isHost && player == 1)
+        {
+            m_peerReady = ready;
+            continue;
+        }
+
+        RollbackPeerCard peerCard;
+        peerCard.player = player;
+        peerCard.name = QString::fromUtf8(name).trimmed();
+        if (peerCard.name.isEmpty())
+        {
+            peerCard.name = QString("Player %1").arg(player);
+        }
+        peerCard.ready = ready;
+        cards.push_back(peerCard);
+        if (!ready)
+        {
+            allRemoteReady = false;
+        }
+    }
+
+    m_peerConnected = remoteCount > 0;
+    if (m_isHost)
+    {
+        m_peerReady = allRemoteReady;
+    }
+
+    if (m_playersEmptyLabel != nullptr)
+    {
+        m_playersEmptyLabel->setVisible(cards.isEmpty());
+        if (!m_peerName.trimmed().isEmpty() && !m_peerConnected)
+        {
+            m_playersEmptyLabel->setText("Peer left");
+            m_playersEmptyLabel->setStyleSheet("color: #c03a3a; font-weight: 700;");
+        }
+        else
+        {
+            m_playersEmptyLabel->setText(m_isHost ? "Waiting for players" : "Waiting for host");
+            m_playersEmptyLabel->setStyleSheet("color: #a66a00; font-weight: 700;");
+        }
+    }
+
+    for (RollbackPeerCard& peerCard : cards)
+    {
+        peerCard.card = new QFrame(parentWidget);
+        peerCard.card->setObjectName("KailleraP2PPlayerCard");
+        auto* layout = new QHBoxLayout(peerCard.card);
+        layout->setContentsMargins(10, 8, 8, 8);
+        layout->setSpacing(8);
+
+        peerCard.nameLabel = new QLabel(peerCard.card);
+        peerCard.nameLabel->setObjectName("KailleraP2PPlayerName");
+        const QString suffix = peerCard.local ? QString(" (P%1 You)").arg(peerCard.player) : QString(" (P%1)").arg(peerCard.player);
+        peerCard.nameLabel->setText(peerCard.name + suffix);
+        layout->addWidget(peerCard.nameLabel, 1);
+
+        peerCard.readyLabel = new QLabel(peerCard.card);
+        updateReadyBadge(peerCard.readyLabel, peerCard.ready);
+        layout->addWidget(peerCard.readyLabel, 0, Qt::AlignVCenter);
+
+        auto* kickPlaceholder = new QWidget(peerCard.card);
+        kickPlaceholder->setFixedSize(kP2PPlayerKickButtonSize, kP2PPlayerKickButtonSize);
+        layout->addWidget(kickPlaceholder, 0, Qt::AlignVCenter);
+
+        m_playersLayout->addWidget(peerCard.card);
+        m_rollbackPeerCards.push_back(peerCard);
+    }
 }
 
 void KailleraP2PDialog::resetReadyState()
@@ -2837,13 +2917,8 @@ void KailleraP2PDialog::onChatReceived(QString nick, QString message)
     int rollbackFrameDelay = kDefaultRollbackFrameDelay;
     if (parseRollbackDelayMessage(message, rollbackDelayMode, rollbackFrameDelay))
     {
-        if (!m_isHost)
-        {
-            m_rollbackDelayMode = rollbackDelayMode;
-            m_rollbackFrameDelay = rollbackFrameDelay;
-            m_hasRemoteRollbackDelaySettings = true;
-            updateRollbackDelayControls();
-        }
+        (void)rollbackDelayMode;
+        (void)rollbackFrameDelay;
         return;
     }
 
@@ -2864,6 +2939,13 @@ void KailleraP2PDialog::onChatReceived(QString nick, QString message)
 
 void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
 {
+    const bool rollbackRoomStart = p2p_core_is_rollback_room_start();
+    if (rollbackRoomStart && !isRollbackMode())
+    {
+        m_gameLayer = GameLayer::Rollback;
+        applyGameLayerUI();
+    }
+
     if (isRollbackMode())
     {
         if (m_rollbackGameActive)
@@ -2871,10 +2953,16 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
             return;
         }
 
-        const int localP2PPort = p2p_core_get_port();
+        const int localP2PPort = p2p_core_get_rollback_data_port();
         const int roomPlayerCount = p2p_core_get_rollback_room_player_count();
         const int localPlayer = p2p_core_get_rollback_room_local_player();
         const int remoteCount = p2p_core_get_rollback_room_remote_count();
+        const int measuredPing = p2p_core_get_rollback_room_ping();
+        if (measuredPing >= 0 && m_rollbackDelayMode != kRollbackDelayModeCustom)
+        {
+            m_autoRollbackFrameDelay = automaticRollbackFrameDelayForPing(measuredPing);
+            updateRollbackDelayControls();
+        }
         const int frameDelay = effectiveRollbackFrameDelay();
         const int predictionWindow = effectiveRollbackPredictionWindow();
         QStringList remotePlayers;
@@ -3070,24 +3158,6 @@ void KailleraP2PDialog::onPingUpdated(int ping)
     m_lastPing = ping;
     setPingLabelFromValue(ping);
 
-    bool autoDelayUpdated = false;
-    const bool canUpdateAutomaticDelay =
-        isRollbackMode() && canEditRollbackDelaySettings() &&
-        !m_rollbackGameActive && !n02::isGameRunning();
-    if (canUpdateAutomaticDelay)
-    {
-        recordRollbackDelayPingSample(ping);
-        autoDelayUpdated = maybeUpdateAutomaticRollbackDelay(false);
-    }
-
-    if (isRollbackMode())
-    {
-        if (autoDelayUpdated)
-        {
-            updateRollbackDelayControls();
-            sendRollbackDelaySettings(false);
-        }
-    }
     updatePeerConnectionUI();
 }
 
@@ -3141,9 +3211,12 @@ void KailleraP2PDialog::onPeerJoined()
         }
     }
 
-    // Remove from public game list while peer is connected
-    if (m_isHost && m_enlistCheck && m_enlistCheck->isChecked())
+    // Remove from public game list only when the room is full.
+    if (m_isHost && m_enlistCheck && m_enlistCheck->isChecked() &&
+        p2p_core_get_rollback_room_remote_count() >= 3)
+    {
         unenlistGame();
+    }
 }
 
 void KailleraP2PDialog::onPeerLeft()
@@ -3361,7 +3434,8 @@ void KailleraP2PDialog::onTravTimer()
 
     // Match the old p2p lobby behavior: keep refreshing ping once per second
     // while a peer is in the lobby, but stop once the game has actually started.
-    if (m_peerConnected && !m_gameActive)
+    const bool rollbackReadyToStart = isRollbackMode() && m_ready && m_peerReady;
+    if (m_peerConnected && !m_gameActive && !rollbackReadyToStart)
     {
         p2p_ping();
     }

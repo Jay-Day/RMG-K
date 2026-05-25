@@ -355,6 +355,21 @@ bool read_prematch_u64(const char* data, int len, int offset, uint64_t& value)
     return true;
 }
 
+bool read_prematch_u32_raw(const char* data, int len, int& offset, uint32_t& value)
+{
+    if (data == nullptr || offset < 0 || len < offset + static_cast<int>(sizeof(uint32_t)))
+    {
+        return false;
+    }
+
+    value = static_cast<uint32_t>(static_cast<unsigned char>(data[offset])) |
+        (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 1])) << 8) |
+        (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 2])) << 16) |
+        (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 3])) << 24);
+    offset += static_cast<int>(sizeof(uint32_t));
+    return true;
+}
+
 bool build_prematch_manifest(std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
 {
     std::vector<CoreCheat> cheats;
@@ -374,6 +389,76 @@ bool build_prematch_manifest(std::string& manifest, uint64_t& manifestHash, size
     manifestHash = prematch_hash_bytes(manifest);
     cheatCount = cheats.size();
     return true;
+}
+
+bool build_prematch_manifest_packets(const std::string& manifest, uint64_t manifestHash, std::vector<std::string>& packets)
+{
+    constexpr const char* kChunkPacketMagic = "RMGKPMANCHK1";
+    constexpr int kChunkPacketMagicLen = 12;
+    constexpr size_t kChunkPayloadMax = 1800;
+
+    packets.clear();
+    if (manifest.empty() || manifest.size() > 64u * 1024u * 1024u)
+    {
+        return false;
+    }
+
+    const uint32_t manifestSize = static_cast<uint32_t>(manifest.size());
+    const uint32_t chunkCount = static_cast<uint32_t>((manifest.size() + kChunkPayloadMax - 1) / kChunkPayloadMax);
+    if (chunkCount == 0)
+    {
+        return false;
+    }
+
+    packets.reserve(chunkCount);
+    for (uint32_t chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
+    {
+        const size_t chunkOffset = static_cast<size_t>(chunkIndex) * kChunkPayloadMax;
+        const size_t chunkSize = std::min(kChunkPayloadMax, manifest.size() - chunkOffset);
+        std::string packet;
+        packet.assign(kChunkPacketMagic, kChunkPacketMagicLen);
+        append_prematch_u64(packet, manifestHash);
+        append_prematch_u32(packet, manifestSize);
+        append_prematch_u32(packet, chunkIndex);
+        append_prematch_u32(packet, chunkCount);
+        packet.append(manifest.data() + chunkOffset, chunkSize);
+        packets.push_back(std::move(packet));
+    }
+    return true;
+}
+
+bool parse_prematch_manifest_chunk(const char* data, int len, uint64_t& manifestHash, uint32_t& manifestSize,
+    uint32_t& chunkIndex, uint32_t& chunkCount, const char*& payload, int& payloadLen)
+{
+    constexpr const char* kChunkPacketMagic = "RMGKPMANCHK1";
+    constexpr int kChunkPacketMagicLen = 12;
+
+    if (data == nullptr || len <= kChunkPacketMagicLen ||
+        std::memcmp(data, kChunkPacketMagic, kChunkPacketMagicLen) != 0)
+    {
+        return false;
+    }
+
+    int offset = kChunkPacketMagicLen;
+    if (!read_prematch_u64(data, len, offset, manifestHash))
+    {
+        return false;
+    }
+    offset += static_cast<int>(sizeof(uint64_t));
+    if (!read_prematch_u32_raw(data, len, offset, manifestSize) ||
+        !read_prematch_u32_raw(data, len, offset, chunkIndex) ||
+        !read_prematch_u32_raw(data, len, offset, chunkCount))
+    {
+        return false;
+    }
+    if (manifestSize == 0 || chunkCount == 0 || chunkIndex >= chunkCount || offset > len)
+    {
+        return false;
+    }
+
+    payload = data + offset;
+    payloadLen = len - offset;
+    return payloadLen > 0;
 }
 
 bool apply_prematch_manifest(const std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
@@ -1441,20 +1526,23 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     config.check_distance = 10;
     gekko_start(g_GekkoSession, &config);
 #ifdef RMGK_HAVE_P2P_TRANSPORT
-    p2p_rollback_transport_clear();
-    std::vector<const char*> peerAddresses;
-    peerAddresses.reserve(remotePlayers.size());
-    for (const RemotePlayer& remote : remotePlayers)
     {
-        peerAddresses.push_back(remote.address.c_str());
+        std::vector<const char*> remoteEndpoints;
+        remoteEndpoints.reserve(remotePlayers.size());
+        for (const RemotePlayer& remote : remotePlayers)
+        {
+            remoteEndpoints.push_back(remote.address.c_str());
+        }
+        p2p_rollback_transport_set_peers(remoteEndpoints.data(), static_cast<int>(remoteEndpoints.size()));
+        if (!p2p_rollback_transport_connected())
+        {
+            write_gekko_log("start_p2p_session result=fail reason=p2p_transport_not_connected");
+            CoreSetError("Rollback data transport is not connected");
+            close_session();
+            return false;
+        }
+        gekko_net_adapter_set(g_GekkoSession, &g_GekkoP2PAdapter);
     }
-    p2p_rollback_transport_set_peers(peerAddresses.data(), static_cast<int>(peerAddresses.size()));
-    gekko_net_adapter_set(g_GekkoSession, &g_GekkoP2PAdapter);
-#else
-#ifdef _WIN32
-    CoreSetError("GekkoNet P2P transport is unavailable in this build");
-    close_session();
-    return false;
 #else
     try
     {
@@ -1470,7 +1558,6 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
         close_session();
         return false;
     }
-#endif
 #endif
     gekko_set_runahead(g_GekkoSession, 0);
 
@@ -1581,172 +1668,8 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
 
 CORE_EXPORT bool rmgk_gekko::sync_prematch_manifest(int localPlayer)
 {
-#if !defined(RMGK_HAVE_P2P_TRANSPORT)
     (void)localPlayer;
     return true;
-#else
-    constexpr const char* kManifestPacketMagic = "RMGKPMANPKT1";
-    constexpr int kManifestPacketMagicLen = 12;
-    constexpr const char* kAckPacketMagic = "RMGKPMANACK1";
-    constexpr int kAckPacketMagicLen = 12;
-
-    g_GekkoLocalPlayer = localPlayer;
-    reset_gekko_log();
-    p2p_rollback_transport_clear();
-
-    if (localPlayer == 1)
-    {
-        std::string manifest;
-        std::string packet;
-        uint64_t manifestHash = 0;
-        size_t cheatCount = 0;
-
-        if (!build_prematch_manifest(manifest, manifestHash, cheatCount))
-        {
-            return false;
-        }
-
-        packet.assign(kManifestPacketMagic, kManifestPacketMagicLen);
-        packet.append(manifest);
-
-        {
-            std::ostringstream stream;
-            stream << "prematch_manifest_send role=host hash=" << manifestHash
-                   << " bytes=" << manifest.size()
-                   << " cheats=" << cheatCount;
-            write_gekko_log(stream.str());
-        }
-        p2p_core_debug((char*)"Waiting for pre-match sync ACK from peer...");
-
-        auto nextStatus = std::chrono::steady_clock::now();
-
-        for (;;)
-        {
-            if (!p2p_rollback_transport_connected())
-            {
-                CoreSetError("Pre-match sync failed: peer disconnected before ACK");
-                write_gekko_log("prematch_manifest_ack role=host result=fail reason=disconnected");
-                return false;
-            }
-
-            p2p_rollback_process_control();
-            if (!p2p_rollback_transport_connected())
-            {
-                CoreSetError("Pre-match sync failed: peer disconnected before ACK");
-                write_gekko_log("prematch_manifest_ack role=host result=fail reason=disconnected");
-                return false;
-            }
-
-            const bool sent = p2p_rollback_transport_send(packet.data(), static_cast<int>(packet.size()));
-            if (!sent)
-            {
-                CoreSetError("Pre-match sync failed: could not send manifest");
-                write_gekko_log("prematch_manifest_send role=host result=fail reason=send_failed");
-                return false;
-            }
-
-            for (int i = 0; i < 5; i++)
-            {
-                char data[256];
-                char addr[128];
-                const int len = p2p_rollback_transport_receive(data, static_cast<int>(sizeof(data)), addr, static_cast<int>(sizeof(addr)));
-                if (len == kAckPacketMagicLen + static_cast<int>(sizeof(uint64_t)) &&
-                    std::memcmp(data, kAckPacketMagic, kAckPacketMagicLen) == 0)
-                {
-                    uint64_t ackHash = 0;
-                    if (read_prematch_u64(data, len, kAckPacketMagicLen, ackHash) && ackHash == manifestHash)
-                    {
-                        std::ostringstream stream;
-                        stream << "prematch_manifest_ack role=host result=ok hash=" << ackHash;
-                        write_gekko_log(stream.str());
-                        const bool applied = apply_prematch_manifest(manifest, manifestHash, cheatCount);
-                        if (applied)
-                        {
-                            g_GekkoPreserveLogOnNextReset = true;
-                        }
-                        return applied;
-                    }
-
-                    std::ostringstream stream;
-                    stream << "prematch_manifest_ack role=host result=ignore reason=hash_mismatch"
-                           << " expected=" << manifestHash
-                           << " actual=" << ackHash;
-                    write_gekko_log(stream.str());
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-
-            if (std::chrono::steady_clock::now() >= nextStatus)
-            {
-                p2p_core_debug((char*)"Still waiting for pre-match sync ACK from peer...");
-                write_gekko_log("prematch_manifest_wait role=host state=waiting_for_ack");
-                nextStatus = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            }
-        }
-    }
-
-    p2p_core_debug((char*)"Waiting for pre-match manifest from host...");
-    auto nextStatus = std::chrono::steady_clock::now();
-
-    for (;;)
-    {
-        if (!p2p_rollback_transport_connected())
-        {
-            CoreSetError("Pre-match sync failed: peer disconnected before manifest");
-            write_gekko_log("prematch_manifest_recv role=client result=fail reason=disconnected");
-            return false;
-        }
-
-        p2p_rollback_process_control();
-        if (!p2p_rollback_transport_connected())
-        {
-            CoreSetError("Pre-match sync failed: peer disconnected before manifest");
-            write_gekko_log("prematch_manifest_recv role=client result=fail reason=disconnected");
-            return false;
-        }
-
-        char data[65536];
-        char addr[128];
-        const int len = p2p_rollback_transport_receive(data, static_cast<int>(sizeof(data)), addr, static_cast<int>(sizeof(addr)));
-        if (len > kManifestPacketMagicLen && std::memcmp(data, kManifestPacketMagic, kManifestPacketMagicLen) == 0)
-        {
-            const std::string manifest(data + kManifestPacketMagicLen, data + len);
-            uint64_t manifestHash = 0;
-            size_t cheatCount = 0;
-
-            if (!apply_prematch_manifest(manifest, manifestHash, cheatCount))
-            {
-                return false;
-            }
-
-            std::string ack;
-            ack.assign(kAckPacketMagic, kAckPacketMagicLen);
-            append_prematch_u64(ack, manifestHash);
-            for (int i = 0; i < 8; i++)
-            {
-                p2p_rollback_transport_send(ack.data(), static_cast<int>(ack.size()));
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-
-            std::ostringstream stream;
-            stream << "prematch_manifest_recv role=client result=ok hash=" << manifestHash
-                   << " bytes=" << manifest.size()
-                   << " cheats=" << cheatCount;
-            write_gekko_log(stream.str());
-            g_GekkoPreserveLogOnNextReset = true;
-            return true;
-        }
-
-        if (std::chrono::steady_clock::now() >= nextStatus)
-        {
-            p2p_core_debug((char*)"Still waiting for pre-match manifest from host...");
-            write_gekko_log("prematch_manifest_wait role=client state=waiting_for_manifest");
-            nextStatus = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-#endif
 }
 
 CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int players, int inputSize, int localDelay)
