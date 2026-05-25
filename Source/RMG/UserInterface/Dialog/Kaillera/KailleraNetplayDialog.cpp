@@ -3034,10 +3034,10 @@ void KailleraNetplayDialog::connectRollbackSessionLaunch(KailleraP2PDialog& p2pD
 {
     // Track whether rollback is active at dialog close, not whether it was ever launched.
     connect(&p2pDialog, &KailleraP2PDialog::rollbackSessionReady, this,
-        [this, &rollbackSessionActive](QString game, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow) {
+        [this, &rollbackSessionActive](QString game, QStringList remotePlayers, int playerCount, int localPort, int localPlayer, int frameDelay, int predictionWindow) {
             rollbackSessionActive = true;
             emit rollbackSessionPreparing();
-            emit rollbackSessionRequested(game, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+            emit rollbackSessionRequested(game, remotePlayers, playerCount, localPort, localPlayer, frameDelay, predictionWindow);
         },
         Qt::DirectConnection);
     connect(&p2pDialog, &KailleraP2PDialog::rollbackSessionEnded, this,

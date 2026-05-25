@@ -4488,7 +4488,7 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
 
-void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow)
+void MainWindow::on_Rollback_SessionRequested(QString gameName, QStringList remotePlayers, int playerCount, int localPort, int localPlayer, int frameDelay, int predictionWindow)
 {
     QString romFile = this->findRomByName(gameName);
     if (romFile.isEmpty())
@@ -4502,9 +4502,9 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
     {
         CoreStopEmulation();
         QTimer::singleShot(50, this,
-            [this, gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow]()
+            [this, gameName, remotePlayers, playerCount, localPort, localPlayer, frameDelay, predictionWindow]()
             {
-                this->on_Rollback_SessionRequested(gameName, remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+                this->on_Rollback_SessionRequested(gameName, remotePlayers, playerCount, localPort, localPlayer, frameDelay, predictionWindow);
             });
         return;
     }
@@ -4523,9 +4523,9 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
     }
 
 #ifdef _WIN32
-    OnScreenDisplaySetKailleraPortLabels(2, GetLiveKailleraPortLabelNames());
+    OnScreenDisplaySetKailleraPortLabels(playerCount, GetLiveKailleraPortLabelNames());
 #endif
-    this->emulationThread->SetGekkoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
+    this->emulationThread->SetGekkoNetplay(remotePlayers, playerCount, localPort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
 

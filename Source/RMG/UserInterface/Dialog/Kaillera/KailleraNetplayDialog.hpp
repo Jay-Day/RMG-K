@@ -21,6 +21,7 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QColor>
+#include <QStringList>
 #include <QPushButton>
 #include <QLabel>
 #include <QNetworkAccessManager>
@@ -51,7 +52,7 @@ public:
 
 signals:
     void rollbackSessionPreparing();
-    void rollbackSessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    void rollbackSessionRequested(QString gameName, QStringList remotePlayers, int playerCount, int localPort, int localPlayer, int frameDelay, int predictionWindow);
 
 private slots:
     void onStateMachineTimer();

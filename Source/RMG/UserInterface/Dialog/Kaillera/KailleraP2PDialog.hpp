@@ -23,6 +23,7 @@
 #include <QGroupBox>
 #include <QFrame>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 class QAction;
@@ -42,7 +43,7 @@ public:
 
 signals:
     void peerNicknameResolved(QString nickname);
-    void rollbackSessionReady(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    void rollbackSessionReady(QString gameName, QStringList remotePlayers, int playerCount, int localPort, int localPlayer, int frameDelay, int predictionWindow);
     void rollbackSessionEnded();
 
 protected:

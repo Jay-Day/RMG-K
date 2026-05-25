@@ -14,15 +14,25 @@
 #include "RollbackNetcode.hpp"
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 class rmgk_gekko
 {
   public:
+    struct RemotePlayer
+    {
+        int player = 0;
+        std::string address;
+    };
+
     using InputProvider = bool (*)(uint32_t* inputs, int players, void* userData);
     using FrameCallback = bool (*)(void* userData);
 
     static bool start_p2p_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow);
+    static bool start_p2p_session(const char* gameName, int players, int inputSize,
+        int localPlayer, unsigned short localPort, const std::vector<RemotePlayer>& remotePlayers, int localDelay, int predictionWindow);
     static bool sync_prematch_manifest(int localPlayer);
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     static void close_session();

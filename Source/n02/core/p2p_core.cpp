@@ -8,6 +8,8 @@
 #include <cstring>
 #include <cstdio>
 #include <mutex>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -108,6 +110,13 @@ bool p2p_rollback_transport_send(const char *data, int len){
 	return P2PCORE.connection->send_rollback_packet(data, len);
 }
 
+bool p2p_rollback_transport_send_to(const char *addr, const char *data, int len){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	if (!p2p_core_initialized || P2PCORE.connection == 0 || !P2PCORE.CONNECTED)
+		return false;
+	return P2PCORE.connection->send_rollback_packet_to_endpoint(addr, data, len);
+}
+
 int p2p_rollback_transport_receive(char *data, int data_len, char *addr, int addr_len){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
 	if (!p2p_core_initialized || P2PCORE.connection == 0 || data == 0 || data_len <= 0)
@@ -131,6 +140,21 @@ int p2p_rollback_transport_receive(char *data, int data_len, char *addr, int add
 	}
 
 	return len;
+}
+
+void p2p_rollback_transport_set_peers(const char **addrs, int count){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	if (!p2p_core_initialized || P2PCORE.connection == 0)
+		return;
+
+	std::vector<std::string> endpoints;
+	if (addrs != 0 && count > 0){
+		for (int i = 0; i < count; i++){
+			if (addrs[i] != 0 && addrs[i][0] != 0)
+				endpoints.push_back(addrs[i]);
+		}
+	}
+	P2PCORE.connection->set_rollback_peers(endpoints);
 }
 
 void p2p_rollback_transport_clear(){

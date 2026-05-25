@@ -12,6 +12,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 //
@@ -53,7 +54,7 @@ signals:
 
     // Emitted when the rollback tab requests a rollback P2P game launch
     void rollbackSessionPreparing();
-    void rollbackSessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    void rollbackSessionRequested(QString gameName, QStringList remotePlayers, int playerCount, int localPort, int localPlayer, int frameDelay, int predictionWindow);
 
 public slots:
     // Send a chat message to other players

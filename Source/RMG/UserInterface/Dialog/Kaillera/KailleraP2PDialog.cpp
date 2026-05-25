@@ -2892,7 +2892,10 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         m_gameActive = true;
         applyGameLayerUI();
         appendChatStatus("Rollback game started: " + game, "green", true);
-        emit rollbackSessionReady(game, QString::fromUtf8(peerIp), localP2PPort, peerP2PPort, player, frameDelay, predictionWindow);
+        const int remotePlayer = player == 1 ? 2 : 1;
+        QStringList remotePlayers;
+        remotePlayers << (QString::number(remotePlayer) + "@" + QString::fromUtf8(peerIp) + ":" + QString::number(peerP2PPort));
+        emit rollbackSessionReady(game, remotePlayers, maxPlayers, localP2PPort, player, frameDelay, predictionWindow);
         return;
     }
 

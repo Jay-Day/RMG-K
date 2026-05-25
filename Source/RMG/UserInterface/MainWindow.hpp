@@ -287,7 +287,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Kaillera_PlayerDropped(QString nickname, int playerNum);
     void on_Kaillera_GameEnded(void);
     void on_Kaillera_RecordingFileClosed(void);
-    void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    void on_Rollback_SessionRequested(QString gameName, QStringList remotePlayers, int playerCount, int localPort, int localPlayer, int frameDelay, int predictionWindow);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 

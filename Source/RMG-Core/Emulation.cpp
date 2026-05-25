@@ -27,6 +27,8 @@
 #include "m64p/Api.hpp"
 
 #include <cstdlib>
+#include <string>
+#include <vector>
 
 // Windows/POSIX dynamic loading
 #ifdef _WIN32
@@ -84,7 +86,33 @@ extern "C" {
     typedef void (*pif_sync_callback_t)(struct pif*);
 }
 
-static bool parse_gekko_address(const std::string& address, std::string& remoteAddress, int& remotePort, int& frameDelay, int& predictionWindow)
+struct GekkoSessionParams
+{
+    int playerCount = 2;
+    int localPlayer = 1;
+    int frameDelay = 0;
+    int predictionWindow = 7;
+    std::vector<rmgk_gekko::RemotePlayer> remotePlayers;
+};
+
+static std::vector<std::string> split_string(const std::string& value, char separator)
+{
+    std::vector<std::string> parts;
+    size_t start = 0;
+    for (;;)
+    {
+        const size_t end = value.find(separator, start);
+        parts.push_back(value.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos)
+        {
+            break;
+        }
+        start = end + 1;
+    }
+    return parts;
+}
+
+static bool parse_gekko_address(const std::string& address, GekkoSessionParams& params)
 {
     constexpr const char* prefix = "GEKKO|";
     if (address.rfind(prefix, 0) != 0)
@@ -93,6 +121,68 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
     }
 
     const size_t remoteStart = std::char_traits<char>::length(prefix);
+    constexpr const char* roomPrefix = "ROOM|";
+    if (address.compare(remoteStart, std::char_traits<char>::length(roomPrefix), roomPrefix) == 0)
+    {
+        const std::vector<std::string> parts = split_string(address.substr(remoteStart + std::char_traits<char>::length(roomPrefix)), '|');
+        if (parts.size() != 5)
+        {
+            return false;
+        }
+
+        try
+        {
+            params.playerCount = std::stoi(parts[0]);
+            params.localPlayer = std::stoi(parts[1]);
+            params.frameDelay = std::stoi(parts[2]);
+            params.predictionWindow = std::stoi(parts[3]);
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        if (params.playerCount < 2 || params.playerCount > 4 || params.localPlayer < 1 ||
+            params.localPlayer > params.playerCount || params.frameDelay < 0 || params.predictionWindow < 1)
+        {
+            return false;
+        }
+
+        const std::vector<std::string> remotes = split_string(parts[4], ',');
+        for (const std::string& remoteSpec : remotes)
+        {
+            if (remoteSpec.empty())
+            {
+                continue;
+            }
+            const size_t at = remoteSpec.find('@');
+            if (at == std::string::npos)
+            {
+                return false;
+            }
+            rmgk_gekko::RemotePlayer remote;
+            try
+            {
+                remote.player = std::stoi(remoteSpec.substr(0, at));
+            }
+            catch (...)
+            {
+                return false;
+            }
+            remote.address = remoteSpec.substr(at + 1);
+            if (remote.player < 1 || remote.player > params.playerCount || remote.player == params.localPlayer ||
+                remote.address.empty())
+            {
+                return false;
+            }
+            params.remotePlayers.push_back(remote);
+        }
+
+        return static_cast<int>(params.remotePlayers.size()) == params.playerCount - 1;
+    }
+
+    std::string remoteAddress;
+    int remotePort = 0;
     const size_t portSeparator = address.find('|', remoteStart);
     if (portSeparator == std::string::npos)
     {
@@ -111,13 +201,13 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
         remotePort = std::stoi(address.substr(portSeparator + 1, delaySeparator - portSeparator - 1));
         if (predictionSeparator == std::string::npos)
         {
-            frameDelay = std::stoi(address.substr(delaySeparator + 1));
-            predictionWindow = 7;
+            params.frameDelay = std::stoi(address.substr(delaySeparator + 1));
+            params.predictionWindow = 7;
         }
         else
         {
-            frameDelay = std::stoi(address.substr(delaySeparator + 1, predictionSeparator - delaySeparator - 1));
-            predictionWindow = std::stoi(address.substr(predictionSeparator + 1));
+            params.frameDelay = std::stoi(address.substr(delaySeparator + 1, predictionSeparator - delaySeparator - 1));
+            params.predictionWindow = std::stoi(address.substr(predictionSeparator + 1));
         }
     }
     catch (...)
@@ -125,7 +215,13 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
         return false;
     }
 
-    return !remoteAddress.empty() && remotePort > 0 && remotePort <= 65535 && frameDelay >= 0 && predictionWindow >= 1;
+    params.playerCount = 2;
+    params.localPlayer = 0;
+    rmgk_gekko::RemotePlayer remote;
+    remote.player = 0;
+    remote.address = remoteAddress + ":" + std::to_string(remotePort);
+    params.remotePlayers.push_back(remote);
+    return !remoteAddress.empty() && remotePort > 0 && remotePort <= 65535 && params.frameDelay >= 0 && params.predictionWindow >= 1;
 }
 
 //
@@ -582,11 +678,8 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         }
         else if (address.rfind("GEKKO|", 0) == 0)
         {
-            std::string remoteAddress;
-            int remotePort = 0;
-            int frameDelay = 0;
-            int predictionWindow = 7;
-            if (!parse_gekko_address(address, remoteAddress, remotePort, frameDelay, predictionWindow))
+            GekkoSessionParams gekkoParams;
+            if (!parse_gekko_address(address, gekkoParams))
             {
                 CoreSetError("CoreStartEmulation: invalid GekkoNet session parameters");
                 m64p_ret = M64ERR_INPUT_INVALID;
@@ -600,9 +693,20 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             else
             {
                 CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+                if (gekkoParams.localPlayer == 0)
+                {
+                    gekkoParams.localPlayer = player;
+                    for (rmgk_gekko::RemotePlayer& remote : gekkoParams.remotePlayers)
+                    {
+                        if (remote.player == 0)
+                        {
+                            remote.player = player == 1 ? 2 : 1;
+                        }
+                    }
+                }
                 netplay_ret = rmgk_gekko::start_p2p_session("rmgk-gekko",
-                    2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
-                    remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
+                    gekkoParams.playerCount, static_cast<int>(sizeof(uint32_t)), gekkoParams.localPlayer, static_cast<unsigned short>(port),
+                    gekkoParams.remotePlayers, gekkoParams.frameDelay, gekkoParams.predictionWindow);
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())

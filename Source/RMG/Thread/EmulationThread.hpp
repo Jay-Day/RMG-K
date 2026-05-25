@@ -15,6 +15,7 @@
 #endif
 #include <QSurfaceFormat>
 #include <QString>
+#include <QStringList>
 #include <QThread>
 
 enum class VidExtRenderMode
@@ -38,6 +39,7 @@ class EmulationThread : public QThread
     void SetDiskFile(QString);
     void SetNetplay(QString address, int port, int player);
     void SetGekkoNetplay(QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
+    void SetGekkoNetplay(QStringList remotePlayers, int playerCount, int localPort, int localPlayer, int frameDelay, int predictionWindow);
 
     void run(void) override;
 

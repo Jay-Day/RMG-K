@@ -62,6 +62,14 @@ void EmulationThread::SetGekkoNetplay(QString remoteAddress, int localPort, int 
     this->player = localPlayer;
 }
 
+void EmulationThread::SetGekkoNetplay(QStringList remotePlayers, int playerCount, int localPort, int localPlayer, int frameDelay, int predictionWindow)
+{
+    this->address = "GEKKO|ROOM|" + QString::number(playerCount) + "|" + QString::number(localPlayer) + "|" +
+        QString::number(frameDelay) + "|" + QString::number(predictionWindow) + "|" + remotePlayers.join(",");
+    this->port = localPort;
+    this->player = localPlayer;
+}
+
 void EmulationThread::run(void)
 {
     this->inhibitScreensaver();

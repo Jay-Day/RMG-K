@@ -13,6 +13,7 @@
 #include <deque>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #define ICACHESIZE 32
@@ -50,6 +51,7 @@ class p2p_message : public k_socket {
 	};
 
 	std::deque<rollback_packet> rollback_cache;
+	std::vector<sockaddr_in> rollback_peers;
 	sockaddr_in      last_packet_addr;
 
 	bool is_peer_packet(const sockaddr_in& packet_addr) const {
@@ -57,6 +59,17 @@ class p2p_message : public k_socket {
 			addr.sin_port != 0 &&
 			packet_addr.sin_addr.s_addr == addr.sin_addr.s_addr &&
 			packet_addr.sin_port == addr.sin_port;
+	}
+
+	bool is_rollback_peer_packet(const sockaddr_in& packet_addr) const {
+		if (rollback_peers.empty())
+			return is_peer_packet(packet_addr);
+		for (const sockaddr_in& peer : rollback_peers) {
+			if (peer.sin_addr.s_addr == packet_addr.sin_addr.s_addr &&
+				peer.sin_port == packet_addr.sin_port)
+				return true;
+		}
+		return false;
 	}
 
 	bool is_rollback_packet(const char* buf, int len) const {
@@ -86,7 +99,7 @@ class p2p_message : public k_socket {
 		last_packet_addr = packet_addr;
 
 		if (is_rollback_packet(buff, bufflen)) {
-			if (is_peer_packet(packet_addr))
+			if (is_rollback_peer_packet(packet_addr))
 				queue_rollback_packet(buff, bufflen, packet_addr);
 			return true;
 		}
@@ -361,15 +374,48 @@ public:
     }
 
 	bool send_rollback_packet(const char* data, int len) {
+		return send_rollback_packet_to_addr(&addr, data, len);
+	}
+
+	bool send_rollback_packet_to_endpoint(const char* endpoint, const char* data, int len) {
+		if (endpoint == NULL)
+			return false;
+		std::string value(endpoint);
+		const size_t separator = value.rfind(':');
+		if (separator == std::string::npos)
+			return false;
+		std::string host = value.substr(0, separator);
+		int port = atoi(value.substr(separator + 1).c_str());
+		if (host.empty() || port <= 0 || port > 65535)
+			return false;
+
+		sockaddr_in target = {};
+		target.sin_family = AF_INET;
+		target.sin_port = htons((u_short)port);
+		target.sin_addr.s_addr = inet_addr(host.c_str());
+		if (target.sin_addr.s_addr == INADDR_NONE) {
+			hostent* resolved = gethostbyname(host.c_str());
+			if (resolved == NULL)
+				return false;
+			target.sin_addr = *(struct in_addr*)(resolved->h_addr_list[0]);
+		}
+		return send_rollback_packet_to_addr(&target, data, len);
+	}
+
+	bool send_rollback_packet_to_addr(const sockaddr_in* target, const char* data, int len) {
 		static const char prefix[] = { (char)0xff, 'R', 'M', 'G', 'K', 'R', 'B', '1' };
-		if (data == NULL || len <= 0 || len > 2000)
+		if (target == NULL || data == NULL || len <= 0 || len > 2000)
 			return false;
 		char buf[2024];
 		if ((int)sizeof(prefix) + len > (int)sizeof(buf))
 			return false;
 		memcpy(buf, prefix, sizeof(prefix));
 		memcpy(buf + sizeof(prefix), data, len);
-		return k_socket::send(buf, (int)sizeof(prefix) + len);
+		sockaddr_in saved = addr;
+		set_addr((sockaddr_in*)target);
+		const bool sent = k_socket::send(buf, (int)sizeof(prefix) + len);
+		set_addr(&saved);
+		return sent;
 	}
 
 	bool poll_raw_socket() {
@@ -392,5 +438,29 @@ public:
 
 	void clear_rollback_packets() {
 		rollback_cache.clear();
+	}
+
+	void set_rollback_peers(const std::vector<std::string>& endpoints) {
+		rollback_peers.clear();
+		for (const std::string& endpoint : endpoints) {
+			const size_t separator = endpoint.rfind(':');
+			if (separator == std::string::npos)
+				continue;
+			std::string host = endpoint.substr(0, separator);
+			int port = atoi(endpoint.substr(separator + 1).c_str());
+			if (host.empty() || port <= 0 || port > 65535)
+				continue;
+			sockaddr_in peer = {};
+			peer.sin_family = AF_INET;
+			peer.sin_port = htons((u_short)port);
+			peer.sin_addr.s_addr = inet_addr(host.c_str());
+			if (peer.sin_addr.s_addr == INADDR_NONE) {
+				hostent* resolved = gethostbyname(host.c_str());
+				if (resolved == NULL)
+					continue;
+				peer.sin_addr = *(struct in_addr*)(resolved->h_addr_list[0]);
+			}
+			rollback_peers.push_back(peer);
+		}
 	}
 };
