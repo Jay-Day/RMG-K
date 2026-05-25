@@ -24,6 +24,7 @@
 #include <fstream>
 #include <sstream>
 #include <format>
+#include <cstring>
 
 //
 // Local Structs
@@ -43,6 +44,79 @@ static CoreCheatFile l_SharedCheatFile;
 static CoreCheatFile l_UserCheatFile;
 static std::vector<l_LoadedCheat> l_LoadedCheats;
 static std::vector<CoreCheat> l_NetplayCheats;
+
+static void append_u32(std::string& data, uint32_t value)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        data.push_back(static_cast<char>((value >> (i * 8)) & 0xff));
+    }
+}
+
+static void append_i32(std::string& data, int32_t value)
+{
+    append_u32(data, static_cast<uint32_t>(value));
+}
+
+static void append_bool(std::string& data, bool value)
+{
+    data.push_back(value ? 1 : 0);
+}
+
+static void append_string(std::string& data, const std::string& value)
+{
+    append_u32(data, static_cast<uint32_t>(value.size()));
+    data.append(value);
+}
+
+static bool read_u32(const std::string& data, size_t& offset, uint32_t& value)
+{
+    if (offset + 4 > data.size())
+    {
+        return false;
+    }
+
+    value = 0;
+    for (int i = 0; i < 4; i++)
+    {
+        value |= static_cast<uint32_t>(static_cast<unsigned char>(data[offset++])) << (i * 8);
+    }
+    return true;
+}
+
+static bool read_i32(const std::string& data, size_t& offset, int32_t& value)
+{
+    uint32_t raw;
+    if (!read_u32(data, offset, raw))
+    {
+        return false;
+    }
+    value = static_cast<int32_t>(raw);
+    return true;
+}
+
+static bool read_bool(const std::string& data, size_t& offset, bool& value)
+{
+    if (offset + 1 > data.size())
+    {
+        return false;
+    }
+    value = data[offset++] != 0;
+    return true;
+}
+
+static bool read_string(const std::string& data, size_t& offset, std::string& value)
+{
+    uint32_t length;
+    if (!read_u32(data, offset, length) || offset + length > data.size())
+    {
+        return false;
+    }
+
+    value.assign(data.data() + offset, data.data() + offset + length);
+    offset += length;
+    return true;
+}
 
 //
 // Local Functions
@@ -1053,6 +1127,147 @@ CORE_EXPORT bool CoreClearCheats(void)
 CORE_EXPORT bool CoreSetNetplayCheats(const std::vector<CoreCheat>& cheats)
 {
     l_NetplayCheats = cheats;
+    return true;
+}
+
+CORE_EXPORT bool CoreGetEnabledNetplayCheats(std::filesystem::path file, std::vector<CoreCheat>& enabledCheats)
+{
+    std::vector<CoreCheat> cheats;
+    CoreCheatOption cheatOption;
+
+    enabledCheats.clear();
+    if (!CoreGetCurrentCheats(file, cheats))
+    {
+        return false;
+    }
+
+    for (CoreCheat cheat : cheats)
+    {
+        if (!CoreIsCheatEnabled(file, cheat))
+        {
+            continue;
+        }
+
+        if (cheat.HasOptions)
+        {
+            if (!CoreGetCheatOption(file, cheat, cheatOption))
+            {
+                continue;
+            }
+            cheat.CheatOptions.clear();
+            cheat.CheatOptions.push_back(cheatOption);
+        }
+
+        enabledCheats.push_back(cheat);
+    }
+
+    return true;
+}
+
+CORE_EXPORT bool CoreSerializeNetplayCheats(const std::vector<CoreCheat>& cheats, std::string& data)
+{
+    data.clear();
+    data.append("RMGKCHT1", 8);
+    append_u32(data, static_cast<uint32_t>(cheats.size()));
+
+    for (const CoreCheat& cheat : cheats)
+    {
+        append_string(data, cheat.Name);
+        append_string(data, cheat.Author);
+        append_string(data, cheat.Note);
+        append_bool(data, cheat.HasOptions);
+        append_u32(data, static_cast<uint32_t>(cheat.CheatOptions.size()));
+        for (const CoreCheatOption& option : cheat.CheatOptions)
+        {
+            append_string(data, option.Name);
+            append_u32(data, option.Value);
+            append_i32(data, option.Size);
+        }
+        append_u32(data, static_cast<uint32_t>(cheat.CheatCodes.size()));
+        for (const CoreCheatCode& code : cheat.CheatCodes)
+        {
+            append_u32(data, code.Address);
+            append_i32(data, code.Value);
+            append_bool(data, code.UseOptions);
+            append_i32(data, code.OptionIndex);
+            append_i32(data, code.OptionSize);
+        }
+    }
+
+    return true;
+}
+
+CORE_EXPORT bool CoreDeserializeNetplayCheats(const std::string& data, std::vector<CoreCheat>& cheats)
+{
+    size_t offset = 8;
+    uint32_t cheatCount;
+
+    cheats.clear();
+    if (data.size() < 8 || std::memcmp(data.data(), "RMGKCHT1", 8) != 0 || !read_u32(data, offset, cheatCount))
+    {
+        CoreSetError("CoreDeserializeNetplayCheats: invalid cheat manifest");
+        return false;
+    }
+
+    for (uint32_t i = 0; i < cheatCount; i++)
+    {
+        CoreCheat cheat;
+        uint32_t optionCount;
+        uint32_t codeCount;
+
+        if (!read_string(data, offset, cheat.Name) ||
+            !read_string(data, offset, cheat.Author) ||
+            !read_string(data, offset, cheat.Note) ||
+            !read_bool(data, offset, cheat.HasOptions) ||
+            !read_u32(data, offset, optionCount))
+        {
+            CoreSetError("CoreDeserializeNetplayCheats: truncated cheat manifest");
+            return false;
+        }
+
+        for (uint32_t j = 0; j < optionCount; j++)
+        {
+            CoreCheatOption option;
+            if (!read_string(data, offset, option.Name) ||
+                !read_u32(data, offset, option.Value) ||
+                !read_i32(data, offset, option.Size))
+            {
+                CoreSetError("CoreDeserializeNetplayCheats: truncated cheat option");
+                return false;
+            }
+            cheat.CheatOptions.push_back(option);
+        }
+
+        if (!read_u32(data, offset, codeCount))
+        {
+            CoreSetError("CoreDeserializeNetplayCheats: truncated cheat code count");
+            return false;
+        }
+
+        for (uint32_t j = 0; j < codeCount; j++)
+        {
+            CoreCheatCode code;
+            if (!read_u32(data, offset, code.Address) ||
+                !read_i32(data, offset, code.Value) ||
+                !read_bool(data, offset, code.UseOptions) ||
+                !read_i32(data, offset, code.OptionIndex) ||
+                !read_i32(data, offset, code.OptionSize))
+            {
+                CoreSetError("CoreDeserializeNetplayCheats: truncated cheat code");
+                return false;
+            }
+            cheat.CheatCodes.push_back(code);
+        }
+
+        cheats.push_back(cheat);
+    }
+
+    if (offset != data.size())
+    {
+        CoreSetError("CoreDeserializeNetplayCheats: trailing cheat manifest data");
+        return false;
+    }
+
     return true;
 }
 

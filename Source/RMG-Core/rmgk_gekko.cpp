@@ -10,6 +10,7 @@
 #define CORE_INTERNAL
 #include "rmgk_gekko.hpp"
 
+#include "Cheats.hpp"
 #include "Error.hpp"
 #include "Library.hpp"
 #include "Settings.hpp"
@@ -99,6 +100,7 @@ int g_GekkoLocalInputLogRepeats = 0;
 int g_GekkoPacingLogFrames = 0;
 double g_GekkoSpeedScale = 1.0;
 bool g_GekkoLogEnabled = false;
+bool g_GekkoPreserveLogOnNextReset = false;
 std::mutex g_GekkoClientReplayMutex;
 ClientInputReplayMode g_GekkoClientReplayMode = ClientInputReplayMode::Off;
 std::vector<uint32_t> g_GekkoClientReplayInputs;
@@ -154,8 +156,12 @@ void reset_gekko_log()
 
     std::lock_guard<std::mutex> lock(g_GekkoLogMutex);
     const char* path = g_GekkoLocalPlayer == 2 ? "rollback_gekko_client.log" : "rollback_gekko_host.log";
-    std::ofstream file(path, std::ios::out | std::ios::trunc);
-    file << "RMG-K GekkoNet input log\n";
+    std::ofstream file(path, std::ios::out | (g_GekkoPreserveLogOnNextReset ? std::ios::app : std::ios::trunc));
+    if (!g_GekkoPreserveLogOnNextReset)
+    {
+        file << "RMG-K GekkoNet input log\n";
+    }
+    g_GekkoPreserveLogOnNextReset = false;
     g_GekkoLogFrames = 0;
     g_GekkoLastSubmittedInput = 0xffffffffu;
     g_GekkoLastLatchedInput.clear();
@@ -180,6 +186,116 @@ void write_gekko_log(const std::string& message)
     const char* path = g_GekkoLocalPlayer == 2 ? "rollback_gekko_client.log" : "rollback_gekko_host.log";
     std::ofstream file(path, std::ios::out | std::ios::app);
     file << "core_frame=" << CoreGetCurrentFrameCount() << " " << message << "\n";
+}
+
+uint64_t prematch_hash_bytes(const std::string& data)
+{
+    uint64_t hash = 1469598103934665603ull;
+    for (unsigned char byte : data)
+    {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+void append_prematch_u32(std::string& data, uint32_t value)
+{
+    data.push_back(static_cast<char>(value & 0xffu));
+    data.push_back(static_cast<char>((value >> 8) & 0xffu));
+    data.push_back(static_cast<char>((value >> 16) & 0xffu));
+    data.push_back(static_cast<char>((value >> 24) & 0xffu));
+}
+
+void append_prematch_u64(std::string& data, uint64_t value)
+{
+    for (int i = 0; i < 8; i++)
+    {
+        data.push_back(static_cast<char>((value >> (i * 8)) & 0xffu));
+    }
+}
+
+bool read_prematch_u32(const std::string& data, size_t& offset, uint32_t& value)
+{
+    if (offset + sizeof(uint32_t) > data.size())
+    {
+        return false;
+    }
+
+    value = static_cast<uint32_t>(static_cast<unsigned char>(data[offset])) |
+        (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 1])) << 8) |
+        (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 2])) << 16) |
+        (static_cast<uint32_t>(static_cast<unsigned char>(data[offset + 3])) << 24);
+    offset += sizeof(uint32_t);
+    return true;
+}
+
+bool read_prematch_u64(const char* data, int len, int offset, uint64_t& value)
+{
+    if (data == nullptr || offset < 0 || len < offset + static_cast<int>(sizeof(uint64_t)))
+    {
+        return false;
+    }
+
+    value = 0;
+    for (int i = 0; i < 8; i++)
+    {
+        value |= static_cast<uint64_t>(static_cast<unsigned char>(data[offset + i])) << (i * 8);
+    }
+    return true;
+}
+
+bool build_prematch_manifest(std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
+{
+    std::vector<CoreCheat> cheats;
+    std::string cheatManifest;
+
+    if (!CoreGetEnabledNetplayCheats("", cheats) || !CoreSerializeNetplayCheats(cheats, cheatManifest))
+    {
+        return false;
+    }
+
+    manifest.clear();
+    manifest.append("RMGKPMAN", 8);
+    append_prematch_u32(manifest, 1);
+    append_prematch_u32(manifest, 1);
+    append_prematch_u32(manifest, static_cast<uint32_t>(cheatManifest.size()));
+    manifest.append(cheatManifest);
+    manifestHash = prematch_hash_bytes(manifest);
+    cheatCount = cheats.size();
+    return true;
+}
+
+bool apply_prematch_manifest(const std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
+{
+    size_t offset = 8;
+    uint32_t version = 0;
+    uint32_t sectionMask = 0;
+    uint32_t cheatManifestLen = 0;
+    std::vector<CoreCheat> cheats;
+
+    manifestHash = prematch_hash_bytes(manifest);
+    cheatCount = 0;
+
+    if (manifest.size() < 8 || std::memcmp(manifest.data(), "RMGKPMAN", 8) != 0 ||
+        !read_prematch_u32(manifest, offset, version) ||
+        !read_prematch_u32(manifest, offset, sectionMask) ||
+        version != 1 || (sectionMask & ~1u) != 0 ||
+        !read_prematch_u32(manifest, offset, cheatManifestLen) ||
+        offset + cheatManifestLen != manifest.size())
+    {
+        CoreSetError("Pre-match sync: invalid manifest");
+        return false;
+    }
+
+    const std::string cheatManifest(manifest.data() + offset, manifest.data() + offset + cheatManifestLen);
+    if (!CoreDeserializeNetplayCheats(cheatManifest, cheats))
+    {
+        return false;
+    }
+
+    cheatCount = cheats.size();
+    return CoreSetNetplayCheats(cheats);
 }
 
 #ifdef RMGK_HAVE_P2P_TRANSPORT
@@ -1292,6 +1408,132 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     }
     write_gekko_log("install_core_input_callback result=ok");
     return true;
+#endif
+}
+
+CORE_EXPORT bool rmgk_gekko::sync_prematch_manifest(int localPlayer)
+{
+#if !defined(RMGK_HAVE_P2P_TRANSPORT)
+    (void)localPlayer;
+    return true;
+#else
+    constexpr const char* kManifestPacketMagic = "RMGKPMANPKT1";
+    constexpr int kManifestPacketMagicLen = 12;
+    constexpr const char* kAckPacketMagic = "RMGKPMANACK1";
+    constexpr int kAckPacketMagicLen = 12;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(localPlayer == 1 ? 8 : 12);
+
+    g_GekkoLocalPlayer = localPlayer;
+    reset_gekko_log();
+    p2p_rollback_transport_clear();
+
+    if (localPlayer == 1)
+    {
+        std::string manifest;
+        std::string packet;
+        uint64_t manifestHash = 0;
+        size_t cheatCount = 0;
+
+        if (!build_prematch_manifest(manifest, manifestHash, cheatCount))
+        {
+            return false;
+        }
+
+        packet.assign(kManifestPacketMagic, kManifestPacketMagicLen);
+        packet.append(manifest);
+
+        {
+            std::ostringstream stream;
+            stream << "prematch_manifest_send role=host hash=" << manifestHash
+                   << " bytes=" << manifest.size()
+                   << " cheats=" << cheatCount;
+            write_gekko_log(stream.str());
+        }
+
+        do
+        {
+            p2p_rollback_transport_send(packet.data(), static_cast<int>(packet.size()));
+
+            for (int i = 0; i < 5; i++)
+            {
+                char data[256];
+                char addr[128];
+                const int len = p2p_rollback_transport_receive(data, static_cast<int>(sizeof(data)), addr, static_cast<int>(sizeof(addr)));
+                if (len == kAckPacketMagicLen + static_cast<int>(sizeof(uint64_t)) &&
+                    std::memcmp(data, kAckPacketMagic, kAckPacketMagicLen) == 0)
+                {
+                    uint64_t ackHash = 0;
+                    if (read_prematch_u64(data, len, kAckPacketMagicLen, ackHash) && ackHash == manifestHash)
+                    {
+                        std::ostringstream stream;
+                        stream << "prematch_manifest_ack role=host result=ok hash=" << ackHash;
+                        write_gekko_log(stream.str());
+                        const bool applied = apply_prematch_manifest(manifest, manifestHash, cheatCount);
+                        if (applied)
+                        {
+                            g_GekkoPreserveLogOnNextReset = true;
+                        }
+                        return applied;
+                    }
+
+                    std::ostringstream stream;
+                    stream << "prematch_manifest_ack role=host result=ignore reason=hash_mismatch"
+                           << " expected=" << manifestHash
+                           << " actual=" << ackHash;
+                    write_gekko_log(stream.str());
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        } while (std::chrono::steady_clock::now() < deadline);
+
+        CoreSetError("Pre-match sync timed out waiting for client ACK");
+        write_gekko_log("prematch_manifest_ack role=host result=fail reason=timeout");
+        return false;
+    }
+
+    for (;;)
+    {
+        char data[65536];
+        char addr[128];
+        const int len = p2p_rollback_transport_receive(data, static_cast<int>(sizeof(data)), addr, static_cast<int>(sizeof(addr)));
+        if (len > kManifestPacketMagicLen && std::memcmp(data, kManifestPacketMagic, kManifestPacketMagicLen) == 0)
+        {
+            const std::string manifest(data + kManifestPacketMagicLen, data + len);
+            uint64_t manifestHash = 0;
+            size_t cheatCount = 0;
+
+            if (!apply_prematch_manifest(manifest, manifestHash, cheatCount))
+            {
+                return false;
+            }
+
+            std::string ack;
+            ack.assign(kAckPacketMagic, kAckPacketMagicLen);
+            append_prematch_u64(ack, manifestHash);
+            for (int i = 0; i < 8; i++)
+            {
+                p2p_rollback_transport_send(ack.data(), static_cast<int>(ack.size()));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+
+            std::ostringstream stream;
+            stream << "prematch_manifest_recv role=client result=ok hash=" << manifestHash
+                   << " bytes=" << manifest.size()
+                   << " cheats=" << cheatCount;
+            write_gekko_log(stream.str());
+            g_GekkoPreserveLogOnNextReset = true;
+            return true;
+        }
+
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            CoreSetError("Pre-match sync timed out waiting for host manifest");
+            write_gekko_log("prematch_manifest_recv role=client result=fail reason=timeout");
+            return false;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 #endif
 }
 

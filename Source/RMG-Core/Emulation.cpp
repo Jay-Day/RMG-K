@@ -495,6 +495,15 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         return false;
     }
 
+    const bool gekkoNetplay = netplay && address.rfind("GEKKO|", 0) == 0;
+    if (gekkoNetplay && !rmgk_gekko::sync_prematch_manifest(player))
+    {
+        CoreDetachPlugins();
+        CoreApplyPluginSettings();
+        CoreCloseRom();
+        return false;
+    }
+
     if (netplay)
     { // netplay cheats
         if (!CoreApplyNetplayCheats())

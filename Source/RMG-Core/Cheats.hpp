@@ -149,6 +149,15 @@ bool CoreClearCheats(void);
 // attempts to set netplay cheats
 bool CoreSetNetplayCheats(const std::vector<CoreCheat>& cheats);
 
+// attempts to retrieve enabled local cheats in netplay-ready form
+bool CoreGetEnabledNetplayCheats(std::filesystem::path file, std::vector<CoreCheat>& cheats);
+
+// attempts to serialize netplay cheats
+bool CoreSerializeNetplayCheats(const std::vector<CoreCheat>& cheats, std::string& data);
+
+// attempts to deserialize netplay cheats
+bool CoreDeserializeNetplayCheats(const std::string& data, std::vector<CoreCheat>& cheats);
+
 // attempts to apply the enabled netplay cheats
 bool CoreApplyNetplayCheats(void);
 

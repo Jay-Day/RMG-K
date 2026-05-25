@@ -23,6 +23,7 @@ class rmgk_gekko
 
     static bool start_p2p_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow);
+    static bool sync_prematch_manifest(int localPlayer);
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     static void close_session();
     static void request_stop();
