@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <algorithm>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -60,6 +61,8 @@ struct P2PCORESTAT {
 	int last_ping_echo_time;
 	bool USERLOADED;
 	bool PEERLOADED;
+	int LOCALPLAYER;
+	int ROOMPLAYERS;
 } P2PCORE;
 
 bool p2p_core_initialized = false;
@@ -69,14 +72,257 @@ struct P2PRollbackRoomPeer {
 	int player;
 	char ip[128];
 	int port;
+	char name[32];
+	char app[128];
+	bool ready;
+	bool connected;
+	sockaddr_in addr;
+	unsigned char tx_serial;
 };
 
 static P2PRollbackRoomPeer p2p_rollback_room_peers[3];
 static int p2p_rollback_room_peer_count = 0;
 
+inline void p2p_handle_chat_instruction(p2p_instruction * ki);
+
 static void p2p_clear_rollback_room(){
 	memset(p2p_rollback_room_peers, 0, sizeof(p2p_rollback_room_peers));
 	p2p_rollback_room_peer_count = 0;
+}
+
+static int p2p_find_rollback_peer_by_addr(const sockaddr_in& addr){
+	for (int i = 0; i < p2p_rollback_room_peer_count; i++){
+		if (p2p_rollback_room_peers[i].addr.sin_addr.s_addr == addr.sin_addr.s_addr &&
+			p2p_rollback_room_peers[i].addr.sin_port == addr.sin_port)
+			return i;
+	}
+	return -1;
+}
+
+static bool p2p_addr_to_endpoint(const sockaddr_in& addr, char *ip, int ip_len, int *port){
+	if (ip == 0 || ip_len <= 0 || port == 0)
+		return false;
+	const char *value = inet_ntoa(addr.sin_addr);
+	if (value == 0 || value[0] == 0)
+		return false;
+	strncpy(ip, value, ip_len - 1);
+	ip[ip_len - 1] = 0;
+	*port = ntohs(addr.sin_port);
+	return ip[0] != 0 && *port > 0;
+}
+
+static bool p2p_add_rollback_room_peer(const sockaddr_in& addr, const char *name, const char *app){
+	int index = p2p_find_rollback_peer_by_addr(addr);
+	if (index < 0){
+		if (p2p_rollback_room_peer_count >= 3)
+			return false;
+		index = p2p_rollback_room_peer_count++;
+		memset(&p2p_rollback_room_peers[index], 0, sizeof(p2p_rollback_room_peers[index]));
+		p2p_rollback_room_peers[index].player = index + 2;
+		p2p_rollback_room_peers[index].addr = addr;
+		p2p_rollback_room_peers[index].tx_serial = 0;
+	}
+
+	P2PRollbackRoomPeer& peer = p2p_rollback_room_peers[index];
+	peer.connected = true;
+	if (name != 0){
+		strncpy(peer.name, name, sizeof(peer.name) - 1);
+		peer.name[sizeof(peer.name) - 1] = 0;
+	}
+	if (app != 0){
+		strncpy(peer.app, app, sizeof(peer.app) - 1);
+		peer.app[sizeof(peer.app) - 1] = 0;
+	}
+	return p2p_addr_to_endpoint(addr, peer.ip, sizeof(peer.ip), &peer.port);
+}
+
+static bool p2p_all_rollback_peers_ready(){
+	if (!P2PCORE.USERREADY || p2p_rollback_room_peer_count <= 0)
+		return false;
+	for (int i = 0; i < p2p_rollback_room_peer_count; i++){
+		if (!p2p_rollback_room_peers[i].connected || !p2p_rollback_room_peers[i].ready)
+			return false;
+	}
+	return true;
+}
+
+static std::string p2p_build_rollback_room_manifest(){
+	std::string manifest = std::to_string(p2p_rollback_room_peer_count + 1);
+	manifest += ";";
+	manifest += "1@";
+	manifest += "HOST";
+	manifest += ":";
+	manifest += std::to_string(P2PCORE.PORT);
+	for (int i = 0; i < p2p_rollback_room_peer_count; i++){
+		manifest += ",";
+		manifest += std::to_string(p2p_rollback_room_peers[i].player);
+		manifest += "@";
+		manifest += p2p_rollback_room_peers[i].ip;
+		manifest += ":";
+		manifest += std::to_string(p2p_rollback_room_peers[i].port);
+	}
+	return manifest;
+}
+
+static bool p2p_apply_rollback_room_manifest(const char *manifest){
+	if (manifest == 0 || manifest[0] == 0)
+		return false;
+	p2p_clear_rollback_room();
+
+	std::string value(manifest);
+	const size_t semicolon = value.find(';');
+	if (semicolon == std::string::npos)
+		return false;
+	const int player_count = atoi(value.substr(0, semicolon).c_str());
+	if (player_count < 2 || player_count > 4)
+		return false;
+
+	std::string entries = value.substr(semicolon + 1);
+	size_t start = 0;
+	for (;;){
+		const size_t end = entries.find(',', start);
+		const std::string entry = entries.substr(start, end == std::string::npos ? std::string::npos : end - start);
+		const size_t at = entry.find('@');
+		const size_t colon = entry.rfind(':');
+		if (at != std::string::npos && colon != std::string::npos && colon > at){
+			const int player = atoi(entry.substr(0, at).c_str());
+			const std::string ip = entry.substr(at + 1, colon - at - 1);
+			const int port = atoi(entry.substr(colon + 1).c_str());
+			if (player > 0 && player != P2PCORE.LOCALPLAYER && player <= player_count && port > 0 &&
+				p2p_rollback_room_peer_count < 3){
+				P2PRollbackRoomPeer& peer = p2p_rollback_room_peers[p2p_rollback_room_peer_count++];
+				memset(&peer, 0, sizeof(peer));
+				peer.player = player;
+				if (ip == "HOST" && P2PCORE.connection != 0){
+					p2p_addr_to_endpoint(P2PCORE.connection->addr, peer.ip, sizeof(peer.ip), &peer.port);
+				} else {
+					strncpy(peer.ip, ip.c_str(), sizeof(peer.ip) - 1);
+					peer.port = port;
+				}
+				peer.connected = true;
+			}
+		}
+		if (end == std::string::npos)
+			break;
+		start = end + 1;
+	}
+	return p2p_rollback_room_peer_count == player_count - 1;
+}
+
+static void p2p_send_instruction_to_rollback_peer(int index, p2p_instruction *instruction){
+	if (index < 0 || index >= p2p_rollback_room_peer_count || instruction == 0 || P2PCORE.connection == 0)
+		return;
+	P2PCORE.connection->send_instruction_to_addr(instruction, &p2p_rollback_room_peers[index].addr,
+		&p2p_rollback_room_peers[index].tx_serial);
+}
+
+static void p2p_broadcast_rollback_room_instruction(p2p_instruction *instruction){
+	for (int i = 0; i < p2p_rollback_room_peer_count; i++)
+		p2p_send_instruction_to_rollback_peer(i, instruction);
+}
+
+static void p2p_start_rollback_room_if_ready(){
+	if (!p2p_all_rollback_peers_ready())
+		return;
+
+	P2PCORE.ROOMPLAYERS = p2p_rollback_room_peer_count + 1;
+	const std::string manifest = p2p_build_rollback_room_manifest();
+	p2p_instruction load(LOAD, LOAD_LOAD);
+	load.store_string(manifest.c_str());
+	p2p_broadcast_rollback_room_instruction(&load);
+
+	Sleep(P2P_GAMECB_WAIT);
+	memset(recording_player_names, 0, sizeof(recording_player_names));
+	strncpy(recording_player_names[0], P2PCORE.USERNAME, 31);
+	for (int i = 0; i < p2p_rollback_room_peer_count && i + 1 < 4; i++)
+		strncpy(recording_player_names[i + 1], p2p_rollback_room_peers[i].name, 31);
+	p2p_game_callback(P2PCORE.GAME, 1, P2PCORE.ROOMPLAYERS);
+}
+
+static bool p2p_process_host_room_packet(){
+	if (!P2PCORE.HOST || P2PCORE.connection == 0 || !P2PCORE.connection->has_data_waiting)
+		return false;
+
+	p2p_instruction ki;
+	sockaddr_in source;
+	if (!P2PCORE.connection->receive_raw_instruction(&ki, &source))
+		return false;
+
+	switch (ki.inst.type){
+	case LOGN:
+		if (ki.inst.flags == LOGN_REQ && P2PCORE.status == 1){
+			char peer_name[32] = {};
+			char peer_app[128] = {};
+			ki.load_sstring(peer_name);
+			ki.load_string(peer_app);
+			if (!p2p_add_rollback_room_peer(source, peer_name, peer_app)){
+				p2p_instruction reject(LOGN, LOGN_RNEG);
+				unsigned char serial = 0;
+				P2PCORE.connection->send_instruction_to_addr(&reject, &source, &serial);
+				p2p_core_debug("Connection rejected: rollback room is full");
+				return true;
+			}
+
+			const int peer_index = p2p_find_rollback_peer_by_addr(source);
+			P2PCORE.CONNECTED = true;
+			P2PCORE.ROOMPLAYERS = p2p_rollback_room_peer_count + 1;
+			strncpy(P2PCORE.PEERNAME, peer_name, sizeof(P2PCORE.PEERNAME) - 1);
+			P2PCORE.PEERNAME[sizeof(P2PCORE.PEERNAME) - 1] = 0;
+			p2p_peer_info_callback(peer_name, peer_app);
+
+			p2p_instruction accept(LOGN, LOGN_RPOS);
+			accept.store_sstring(P2PCORE.USERNAME);
+			accept.store_string(P2PCORE.GAME);
+			accept.store_int(p2p_rollback_room_peers[peer_index].player);
+			accept.store_int(P2PCORE.ROOMPLAYERS);
+			p2p_send_instruction_to_rollback_peer(peer_index, &accept);
+			p2p_core_debug("Peer joined rollback room: %s as P%i", peer_name, p2p_rollback_room_peers[peer_index].player);
+			p2p_peer_joined_callback();
+			if (P2PCORE.USERREADY){
+				p2p_instruction ready(PREADY, PREADY_READY);
+				p2p_send_instruction_to_rollback_peer(peer_index, &ready);
+			}
+			return true;
+		}
+		if (ki.inst.flags == LOGN_RPOS){
+			const int peer_index = p2p_find_rollback_peer_by_addr(source);
+			if (peer_index >= 0)
+				p2p_rollback_room_peers[peer_index].connected = true;
+			return true;
+		}
+		break;
+	case PREADY:
+		{
+			const int peer_index = p2p_find_rollback_peer_by_addr(source);
+			if (peer_index >= 0){
+				p2p_rollback_room_peers[peer_index].ready = (ki.inst.flags == PREADY_READY);
+				p2p_core_debug("%s is %s", p2p_rollback_room_peers[peer_index].name,
+					p2p_rollback_room_peers[peer_index].ready ? "ready" : "not ready");
+				p2p_start_rollback_room_if_ready();
+			}
+			return true;
+		}
+	case CHAT:
+		p2p_handle_chat_instruction(&ki);
+		return true;
+	case EXIT:
+		{
+			const int peer_index = p2p_find_rollback_peer_by_addr(source);
+			if (peer_index >= 0){
+				p2p_client_dropped_callback(p2p_rollback_room_peers[peer_index].name,
+					p2p_rollback_room_peers[peer_index].player);
+				for (int i = peer_index; i + 1 < p2p_rollback_room_peer_count; i++)
+					p2p_rollback_room_peers[i] = p2p_rollback_room_peers[i + 1];
+				p2p_rollback_room_peer_count--;
+				P2PCORE.ROOMPLAYERS = p2p_rollback_room_peer_count + 1;
+				P2PCORE.CONNECTED = p2p_rollback_room_peer_count > 0;
+			}
+			return true;
+		}
+	default:
+		break;
+	}
+	return true;
 }
 
 static void p2p_set_rollback_room_single_peer(){
@@ -93,6 +339,8 @@ static void p2p_set_rollback_room_single_peer(){
 	strncpy(p2p_rollback_room_peers[0].ip, ip, sizeof(p2p_rollback_room_peers[0].ip) - 1);
 	p2p_rollback_room_peers[0].ip[sizeof(p2p_rollback_room_peers[0].ip) - 1] = 0;
 	p2p_rollback_room_peers[0].port = port;
+	p2p_rollback_room_peers[0].connected = true;
+	p2p_rollback_room_peers[0].addr = P2PCORE.connection->addr;
 	p2p_rollback_room_peer_count = 1;
 }
 
@@ -370,6 +618,8 @@ bool p2p_core_initialize(bool host, int port, char * appname, char * gamename, c
 	P2PCORE.throughput = 3;
 	P2PCORE.USERREADY = false;
 	P2PCORE.PEERREADY = false;
+	P2PCORE.LOCALPLAYER = P2PCORE.HOST ? 1 : 0;
+	P2PCORE.ROOMPLAYERS = 1;
 	P2PCORE.last_ping_sent_time = 0;
 	P2PCORE.last_ping_echo_time = 0;
 	P2PCORE.connection->dsc = 0;
@@ -406,11 +656,13 @@ int p2p_core_get_rollback_room_player_count(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
 	if (p2p_rollback_room_peer_count <= 0)
 		p2p_set_rollback_room_single_peer();
-	return p2p_rollback_room_peer_count + 1;
+	return std::max(P2PCORE.ROOMPLAYERS, p2p_rollback_room_peer_count + 1);
 }
 
 int p2p_core_get_rollback_room_local_player(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	if (P2PCORE.LOCALPLAYER > 0)
+		return P2PCORE.LOCALPLAYER;
 	return P2PCORE.HOST ? 1 : 2;
 }
 
@@ -533,7 +785,13 @@ void p2p_set_ready(bool bx){
 	if (P2PCORE.USERREADY != bx) {
 		P2PCORE.USERREADY = bx;
 		if (P2PCORE.connection && P2PCORE.CONNECTED){
-			P2PCORE.connection->send_tinst(PREADY, bx? PREADY_READY:PREADY_NREADY);
+			if (P2PCORE.HOST && p2p_rollback_room_peer_count > 0){
+				p2p_instruction ready(PREADY, bx ? PREADY_READY : PREADY_NREADY);
+				p2p_broadcast_rollback_room_instruction(&ready);
+				p2p_start_rollback_room_if_ready();
+			} else {
+				P2PCORE.connection->send_tinst(PREADY, bx? PREADY_READY:PREADY_NREADY);
+			}
 		}
 		p2p_core_debug("You are marked as %s", bx? "ready":"not ready");
 	}
@@ -910,6 +1168,10 @@ void p2p_step(){
 	// Non-blocking poll: Qt timer provides 1ms polling interval.
 	k_socket::check_sockets(0,0);
 	while (P2PCORE.connection && P2PCORE.connection->has_data()){
+		if (P2PCORE.HOST && P2PCORE.status == 1 && p2p_process_host_room_packet()){
+			k_socket::check_sockets(0,0);
+			continue;
+		}
 		//p2p_core_debug(__FILE__ ":%i, %i", __LINE__, p2p_GetTime());
 		p2p_instruction ki;
 		sockaddr_in saddr;
@@ -984,6 +1246,14 @@ void p2p_step(){
 								if (P2PCORE.ping == -1 && ki.inst.flags == LOGN_RPOS) {
 									ki.load_sstring(P2PCORE.PEERNAME);
 									ki.load_string(P2PCORE.GAME);
+									if (ki.pos < ki.len)
+										P2PCORE.LOCALPLAYER = ki.load_int();
+									if (ki.pos < ki.len)
+										P2PCORE.ROOMPLAYERS = ki.load_int();
+									if (P2PCORE.LOCALPLAYER <= 0)
+										P2PCORE.LOCALPLAYER = 2;
+									if (P2PCORE.ROOMPLAYERS < 2)
+										P2PCORE.ROOMPLAYERS = 2;
 									p2p_core_debug("Peer replied: %s (%s)", P2PCORE.PEERNAME, P2PCORE.GAME);
 									p2p_peer_info_callback(P2PCORE.PEERNAME, P2PCORE.APP);
 									
@@ -1057,11 +1327,16 @@ void p2p_step(){
 				}
 				break;
 			case LOAD:
+					if (!P2PCORE.HOST && ki.pos < ki.len){
+						char manifest[256] = {};
+						ki.load_string(manifest);
+						p2p_apply_rollback_room_manifest(manifest);
+					}
 					Sleep(P2P_GAMECB_WAIT);
 					memset(recording_player_names, 0, sizeof(recording_player_names));
 					strncpy(recording_player_names[0], P2PCORE.HOST ? P2PCORE.USERNAME : P2PCORE.PEERNAME, 31);
 					strncpy(recording_player_names[1], P2PCORE.HOST ? P2PCORE.PEERNAME : P2PCORE.USERNAME, 31);
-					p2p_game_callback(P2PCORE.GAME, P2PCORE.HOST? 1:2, 2);
+					p2p_game_callback(P2PCORE.GAME, p2p_core_get_rollback_room_local_player(), p2p_core_get_rollback_room_player_count());
 					break;
 			case EXIT:
 					p2p_peer_left_callback();

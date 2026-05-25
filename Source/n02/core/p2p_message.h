@@ -200,6 +200,27 @@ public:
 		//arg_0->to_string();
     }
 
+	bool send_instruction_to_addr(p2p_instruction *instruction, sockaddr_in *target, unsigned char *serial){
+		if (instruction == NULL || target == NULL || serial == NULL)
+			return false;
+		char body[256];
+		const int body_len = instruction->write_to_message(body);
+		if (body_len < 0 || body_len > 256)
+			return false;
+		char buf[1 + sizeof(p2p_instruction_head) + 256];
+		buf[0] = 1;
+		p2p_instruction_head head;
+		head.serial = (*serial)++;
+		head.length = (unsigned char)body_len;
+		memcpy(buf + 1, &head, sizeof(head));
+		memcpy(buf + 1 + sizeof(head), body, body_len);
+		sockaddr_in saved = addr;
+		set_addr(target);
+		const bool sent = k_socket::send(buf, 1 + (int)sizeof(head) + body_len);
+		set_addr(&saved);
+		return sent;
+	}
+
 	void send_tinst(int type, int flags){
 		p2p_instruction kx(type, flags);
         p2p_message::send((char*)&kx, kx.size());
@@ -310,6 +331,42 @@ public:
         }
 		return false;
     }
+
+	bool receive_raw_instruction(p2p_instruction *instruction, sockaddr_in *source) {
+		if (!has_data_waiting || instruction == NULL)
+			return false;
+
+		sockaddr_in packet_addr;
+		char packet[2024];
+		int packet_len = 2024;
+		if (!k_socket::check_recv(packet, &packet_len, false, &packet_addr))
+			return false;
+		last_packet_addr = packet_addr;
+
+		if (is_rollback_packet(packet, packet_len)) {
+			if (is_rollback_peer_packet(packet_addr))
+				queue_rollback_packet(packet, packet_len, packet_addr);
+			return false;
+		}
+
+		if (packet_len <= 1)
+			return false;
+		const unsigned char instruction_count = (unsigned char)packet[0];
+		if (instruction_count == 0 || instruction_count >= 15)
+			return false;
+		if ((size_t)(packet_len - 1) < sizeof(p2p_instruction_head))
+			return false;
+
+		char *ptr = packet + 1;
+		p2p_instruction_head *head = (p2p_instruction_head*)ptr;
+		ptr += sizeof(p2p_instruction_head);
+		if ((size_t)(packet + packet_len - ptr) < head->length)
+			return false;
+		instruction->read_from_message(ptr, head->length);
+		if (source != NULL)
+			*source = packet_addr;
+		return true;
+	}
 
 	bool receive_instructionx(p2p_instruction * arg_0) {
         char var_8000[1024];
