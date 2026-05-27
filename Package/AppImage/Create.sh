@@ -48,9 +48,9 @@ then
 	lib_dir="/usr/lib/$arch-linux-gnu/"
 fi
 
-cp "$bin_dir/usr/share/applications/com.github.Rosalie241.RMG.desktop" "$bin_dir"
-cp "$bin_dir/usr/share/icons/hicolor/scalable/apps/com.github.Rosalie241.RMG.svg" "$bin_dir"
-ln -s com.github.Rosalie241.RMG.svg "$bin_dir"/.DirIcon
+cp "$bin_dir/usr/share/applications/com.github.JayDay.RMG-K.desktop" "$bin_dir"
+cp "$bin_dir/usr/share/icons/hicolor/scalable/apps/com.github.JayDay.RMG-K.svg" "$bin_dir"
+ln -s com.github.JayDay.RMG-K.svg "$bin_dir"/.DirIcon
 mv "$bin_dir/usr/share" "$bin_dir/share"
 mv "$bin_dir/usr" "$bin_dir/shared"
 

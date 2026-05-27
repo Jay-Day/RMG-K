@@ -184,7 +184,7 @@ int main(int argc, char **argv)
     // ensure that the desktop file is correctly
     // specified, else the window icon will be
     // the generic wayland icon on wayland
-    QGuiApplication::setDesktopFileName("com.github.Rosalie241.RMG");
+    QGuiApplication::setDesktopFileName("com.github.JayDay.RMG-K");
 #endif
 
     QApplication app(argc, argv);
