@@ -32,7 +32,7 @@ ScriptingConsoleDialog::ScriptingConsoleDialog(QWidget* parent) : QDialog(parent
     QVBoxLayout* rootLayout = new QVBoxLayout(this);
 
     // ── Available scripts ────────────────────────────────────────────────────
-    rootLayout->addWidget(new QLabel("Available scripts (Data/Scripts/*.lua)", this));
+    rootLayout->addWidget(new QLabel("Available scripts (Data/Scripts/*.js)", this));
 
     this->availableListWidget = new QListWidget(this);
     this->availableListWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -127,7 +127,7 @@ void ScriptingConsoleDialog::refreshAvailableList()
         return;
     }
 
-    QFileInfoList files = scriptsDir.entryInfoList(QStringList() << "*.lua", QDir::Files, QDir::Name);
+    QFileInfoList files = scriptsDir.entryInfoList(QStringList() << "*.js", QDir::Files, QDir::Name);
     for (const QFileInfo& fileInfo : files)
     {
         QListWidgetItem* item = new QListWidgetItem(fileInfo.fileName(), this->availableListWidget);

@@ -12,318 +12,246 @@
 #include "../RMG-Core/m64p/Handle.hpp"
 #include "../RMG-Core/m64p/api/m64p_types.h"
 
-#include <lua.hpp>
+#include <quickjs.h>
 
 #include <cstring>
+#include <cstdint>
 
 namespace RMGScript {
 
-// Forward declare the memory functions to register.
-// Naming: N64/MIPS convention (byte=8, half/word=16, word/dword=32) is confusing,
-// so we expose clear numeric names (read8/read16/read32) as the primary API and
-// keep the old names as aliases for compatibility.
-static const luaL_Reg memoryLib[] = {
-    // Primary names
-    {"read8",            MemoryModule::ReadByte},
-    {"read16",           MemoryModule::ReadWord},
-    {"read32",           MemoryModule::ReadDword},
-    {"read8s",           MemoryModule::ReadByteSigned},
-    {"read16s",          MemoryModule::ReadWordSigned},
-    {"read32s",          MemoryModule::ReadDwordSigned},
-    {"readfloat",        MemoryModule::ReadFloat},
-    {"readdouble",       MemoryModule::ReadDouble},
-    {"write8",           MemoryModule::WriteByte},
-    {"write16",          MemoryModule::WriteWord},
-    {"write32",          MemoryModule::WriteDword},
-    {"writefloat",       MemoryModule::WriteFloat},
-    {"writedouble",      MemoryModule::WriteDouble},
-    // Legacy aliases (kept for backwards compatibility)
-    {"readbyte",         MemoryModule::ReadByte},
-    {"readbytesigned",   MemoryModule::ReadByteSigned},
-    {"readword",         MemoryModule::ReadWord},
-    {"readwordsigned",   MemoryModule::ReadWordSigned},
-    {"readdword",        MemoryModule::ReadDword},
-    {"readdwordsigned",  MemoryModule::ReadDwordSigned},
-    {"readsize",         MemoryModule::ReadSize},
-    {"writebyte",        MemoryModule::WriteByte},
-    {"writeword",        MemoryModule::WriteWord},
-    {"writedword",       MemoryModule::WriteDword},
-    {"writesize",        MemoryModule::WriteSize},
-    {NULL, NULL}
-};
-
-void RegisterMemoryModule(lua_State* L) {
-    // Create memory table
-    lua_newtable(L);
-    
-    // Register all memory functions
-    luaL_setfuncs(L, memoryLib, 0);
-    
-    // Set as global "memory"
-    lua_setglobal(L, "memory");
-}
+// ─── RDRAM access helpers ────────────────────────────────────────────────────
 
 template <typename T>
-static T LoadCoreSymbol(const char* name) {
-    CoreLibraryHandle coreHandle = CoreGetM64PCoreHandle();
-    if (!coreHandle) return nullptr;
-    return reinterpret_cast<T>(CoreGetLibrarySymbol(coreHandle, name));
+static T LoadCoreSymbol(const char* name)
+{
+    CoreLibraryHandle h = CoreGetM64PCoreHandle();
+    if (!h) return nullptr;
+    return reinterpret_cast<T>(CoreGetLibrarySymbol(h, name));
 }
 
-static uint32_t NormalizeAddress(uint32_t address) {
-    // Allow scripts to pass RDRAM offsets directly (0..0x7FFFFF)
-    if (address < 0x00800000) {
-        return 0x80000000u + address;
-    }
-    return address;
-}
-
-uint8_t* MemoryModule::GetRDRAM() {
+uint8_t* GetRDRAM()
+{
     // DebugMemGetPointer is exported unconditionally (no DBG guard in core source).
-    using ptr_DebugMemGetPointer = void* (*)(m64p_dbg_memptr_type);
-    static ptr_DebugMemGetPointer getPtr = nullptr;
-    if (!getPtr) {
-        getPtr = LoadCoreSymbol<ptr_DebugMemGetPointer>("DebugMemGetPointer");
-    }
+    using Fn = void* (*)(m64p_dbg_memptr_type);
+    static Fn getPtr = nullptr;
+    if (!getPtr) getPtr = LoadCoreSymbol<Fn>("DebugMemGetPointer");
     if (!getPtr) return nullptr;
     return static_cast<uint8_t*>(getPtr(M64P_DBG_PTR_RDRAM));
 }
 
-// Read a single N64 big-endian byte from the raw RDRAM buffer.
-// mupen64plus stores RDRAM as uint32_t[] in host byte order; each uint32_t holds
-// 4 N64 bytes with byte 0 in the MSB (big-endian).  Reading through uint8_t* on a
-// little-endian host gives the bytes in reversed order, so we must realign.
-static inline uint8_t RdramReadByte(const uint8_t* rdram, uint32_t off) {
+// Map N64 virtual address to RDRAM byte offset.
+// Accepts bare RDRAM offsets (< 0x800000) or full KSEG0/KSEG1 addresses.
+static uint32_t ToRdramOffset(uint32_t addr)
+{
+    if (addr < 0x00800000u) return addr;                 // bare offset
+    if ((addr >> 24) == 0x80 || (addr >> 24) == 0xa0)   // KSEG0/KSEG1
+        return addr & 0x007FFFFFu;
+    return addr & 0x007FFFFFu;                           // best-effort
+}
+
+// mupen64plus stores RDRAM as uint32_t[] in host (little-endian on x86) byte
+// order. Each uint32_t IS the N64 big-endian 32-bit value. Byte/halfword reads
+// must extract from the uint32 using big-endian bit shifts.
+
+static inline uint8_t RdramRead8(const uint8_t* rdram, uint32_t off)
+{
     uint32_t word;
-    std::memcpy(&word, rdram + (off & ~3u), 4);
+    memcpy(&word, rdram + (off & ~3u), 4);
     return static_cast<uint8_t>((word >> ((3u - (off & 3u)) * 8u)) & 0xFFu);
 }
 
-// Helper function to safely get a memory value with bounds checking
-static inline uint32_t SafeMemoryRead(uint32_t address, size_t size) {
-    address = NormalizeAddress(address);
-
-    // Only RDRAM (KSEG0 0x80000000-0x807FFFFF) is supported via direct pointer.
-    // Other regions would need the debugger API which requires DBG build flag.
-    uint8_t* rdram = MemoryModule::GetRDRAM();
-    if (!rdram) return 0;
-    if ((address & 0xFF800000u) != 0x80000000u) return 0;
-    uint32_t off = address & 0x007FFFFFu;
-    if (off + size > 0x00800000u) return 0;
-
-    if (size == 4) {
-        // memcpy of 4 bytes gives the uint32_t in host byte order, which equals the
-        // N64 big-endian 32-bit value directly.
-        uint32_t value;
-        std::memcpy(&value, rdram + off, 4);
-        return value;
-    }
-    if (size == 1) {
-        return RdramReadByte(rdram, off);
-    }
-    if (size == 2) {
-        return (static_cast<uint32_t>(RdramReadByte(rdram, off)) << 8) |
-                static_cast<uint32_t>(RdramReadByte(rdram, off + 1));
-    }
-    return 0;
+static inline uint16_t RdramRead16(const uint8_t* rdram, uint32_t off)
+{
+    return static_cast<uint16_t>(
+        (static_cast<uint32_t>(RdramRead8(rdram, off))     << 8) |
+         static_cast<uint32_t>(RdramRead8(rdram, off + 1)));
 }
 
-static inline void RdramWriteByte(uint8_t* rdram, uint32_t off, uint8_t byte) {
+static inline uint32_t RdramRead32(const uint8_t* rdram, uint32_t off)
+{
+    uint32_t v;
+    memcpy(&v, rdram + off, 4);
+    return v;
+}
+
+static inline float RdramReadFloat(const uint8_t* rdram, uint32_t off)
+{
+    uint32_t bits = RdramRead32(rdram, off);
+    float v;
+    memcpy(&v, &bits, 4);
+    return v;
+}
+
+static inline void RdramWrite8(uint8_t* rdram, uint32_t off, uint8_t byte)
+{
     uint32_t word;
-    uint32_t aligned_off = off & ~3u;
-    std::memcpy(&word, rdram + aligned_off, 4);
+    uint32_t a = off & ~3u;
+    memcpy(&word, rdram + a, 4);
     uint32_t shift = (3u - (off & 3u)) * 8u;
     word = (word & ~(0xFFu << shift)) | (static_cast<uint32_t>(byte) << shift);
-    std::memcpy(rdram + aligned_off, &word, 4);
+    memcpy(rdram + a, &word, 4);
 }
 
-// Helper function to safely write to memory
-static inline void SafeMemoryWrite(uint32_t address, uint32_t value, size_t size) {
-    address = NormalizeAddress(address);
-
-    uint8_t* rdram = MemoryModule::GetRDRAM();
-    if (!rdram) return;
-    if ((address & 0xFF800000u) != 0x80000000u) return;
-    uint32_t off = address & 0x007FFFFFu;
-    if (off + size > 0x00800000u) return;
-
-    if (size == 4) {
-        std::memcpy(rdram + off, &value, 4);
-    } else if (size == 1) {
-        RdramWriteByte(rdram, off, static_cast<uint8_t>(value & 0xFF));
-    } else if (size == 2) {
-        RdramWriteByte(rdram, off,     static_cast<uint8_t>((value >> 8) & 0xFF));
-        RdramWriteByte(rdram, off + 1, static_cast<uint8_t>(value & 0xFF));
-    }
+static inline void RdramWrite16(uint8_t* rdram, uint32_t off, uint16_t val)
+{
+    RdramWrite8(rdram, off,     static_cast<uint8_t>(val >> 8));
+    RdramWrite8(rdram, off + 1, static_cast<uint8_t>(val & 0xFF));
 }
 
-int MemoryModule::ReadByte(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    uint32_t value = SafeMemoryRead(address, 1);
-    lua_pushinteger(L, value);
-    return 1;
+static inline void RdramWrite32(uint8_t* rdram, uint32_t off, uint32_t val)
+{
+    memcpy(rdram + off, &val, 4);
 }
 
-int MemoryModule::ReadByteSigned(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    int8_t value = static_cast<int8_t>(SafeMemoryRead(address, 1));
-    lua_pushinteger(L, value);
-    return 1;
+// ─── JS glue helpers ─────────────────────────────────────────────────────────
+
+// Returns nullptr and throws a JS TypeError if RDRAM is unavailable.
+static uint8_t* RequireRDRAM(JSContext* ctx)
+{
+    uint8_t* rdram = GetRDRAM();
+    if (!rdram)
+        JS_ThrowTypeError(ctx, "RDRAM not available (emulation not running)");
+    return rdram;
 }
 
-int MemoryModule::ReadWord(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    uint32_t value = SafeMemoryRead(address, 2);
-    lua_pushinteger(L, value);
-    return 1;
+// Reads the first argument as a uint32_t address.
+static bool GetAddress(JSContext* ctx, JSValue arg, uint32_t* out)
+{
+    uint32_t v;
+    if (JS_ToUint32(ctx, &v, arg) != 0) return false;
+    *out = ToRdramOffset(v);
+    return true;
 }
 
-int MemoryModule::ReadWordSigned(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    int16_t value = static_cast<int16_t>(SafeMemoryRead(address, 2));
-    lua_pushinteger(L, value);
-    return 1;
+// ─── memory.read* ────────────────────────────────────────────────────────────
+
+static JSValue Mem_Read8(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 1) return JS_ThrowTypeError(ctx, "read8(addr)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    return JS_NewUint32(ctx, RdramRead8(rdram, off));
 }
 
-int MemoryModule::ReadDword(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    uint32_t value = SafeMemoryRead(address, 4);
-    lua_pushinteger(L, value);
-    return 1;
+static JSValue Mem_Read8s(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 1) return JS_ThrowTypeError(ctx, "read8s(addr)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    return JS_NewInt32(ctx, static_cast<int8_t>(RdramRead8(rdram, off)));
 }
 
-int MemoryModule::ReadDwordSigned(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    int32_t value = static_cast<int32_t>(SafeMemoryRead(address, 4));
-    lua_pushinteger(L, value);
-    return 1;
+static JSValue Mem_Read16(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 1) return JS_ThrowTypeError(ctx, "read16(addr)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    return JS_NewUint32(ctx, RdramRead16(rdram, off));
 }
 
-int MemoryModule::ReadFloat(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    uint32_t bits = SafeMemoryRead(address, 4);
-    float value = 0.0f;
-    static_assert(sizeof(float) == sizeof(uint32_t));
-    std::memcpy(&value, &bits, sizeof(value));
-    lua_pushnumber(L, static_cast<double>(value));
-    return 1;
+static JSValue Mem_Read16s(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 1) return JS_ThrowTypeError(ctx, "read16s(addr)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    return JS_NewInt32(ctx, static_cast<int16_t>(RdramRead16(rdram, off)));
 }
 
-int MemoryModule::ReadDouble(lua_State* L) {
-    uint32_t address = NormalizeAddress(luaL_checkinteger(L, 1));
-    uint32_t hi = SafeMemoryRead(address, 4);
-    uint32_t lo = SafeMemoryRead(address + 4, 4);
-    uint64_t bits = (static_cast<uint64_t>(hi) << 32) | lo;
-    double value = 0.0;
-    static_assert(sizeof(double) == sizeof(uint64_t));
-    std::memcpy(&value, &bits, sizeof(value));
-    lua_pushnumber(L, value);
-    return 1;
+static JSValue Mem_Read32(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 1) return JS_ThrowTypeError(ctx, "read32(addr)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    // Return as double to handle unsigned 32-bit range without sign issues.
+    return JS_NewFloat64(ctx, static_cast<double>(RdramRead32(rdram, off)));
 }
 
-int MemoryModule::ReadSize(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    int size = luaL_checkinteger(L, 2);
-    
-    switch (size) {
-        case 1:
-            lua_pushinteger(L, SafeMemoryRead(address, 1));
-            break;
-        case 2:
-            lua_pushinteger(L, SafeMemoryRead(address, 2));
-            break;
-        case 4:
-            lua_pushinteger(L, SafeMemoryRead(address, 4));
-            break;
-        case -1:
-            lua_pushinteger(L, static_cast<int8_t>(SafeMemoryRead(address, 1)));
-            break;
-        case -2:
-            lua_pushinteger(L, static_cast<int16_t>(SafeMemoryRead(address, 2)));
-            break;
-        case -4:
-            lua_pushinteger(L, static_cast<int32_t>(SafeMemoryRead(address, 4)));
-            break;
-        default:
-            luaL_error(L, "size must be 1, 2, 4, -1, -2, or -4");
-            break;
-    }
-    
-    return 1;
+static JSValue Mem_Read32s(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 1) return JS_ThrowTypeError(ctx, "read32s(addr)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    return JS_NewInt32(ctx, static_cast<int32_t>(RdramRead32(rdram, off)));
 }
 
-int MemoryModule::WriteByte(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    uint32_t value = luaL_checkinteger(L, 2);
-    SafeMemoryWrite(address, value, 1);
-    return 0;
+static JSValue Mem_ReadFloat(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 1) return JS_ThrowTypeError(ctx, "readFloat(addr)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    return JS_NewFloat64(ctx, static_cast<double>(RdramReadFloat(rdram, off)));
 }
 
-int MemoryModule::WriteWord(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    uint32_t value = luaL_checkinteger(L, 2);
-    SafeMemoryWrite(address, value, 2);
-    return 0;
+// ─── memory.write* ───────────────────────────────────────────────────────────
+
+static JSValue Mem_Write8(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 2) return JS_ThrowTypeError(ctx, "write8(addr, val)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint32_t v; if (JS_ToUint32(ctx, &v, argv[1]) != 0) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    RdramWrite8(rdram, off, static_cast<uint8_t>(v));
+    return JS_UNDEFINED;
 }
 
-int MemoryModule::WriteDword(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    uint32_t value = luaL_checkinteger(L, 2);
-    SafeMemoryWrite(address, value, 4);
-    return 0;
+static JSValue Mem_Write16(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 2) return JS_ThrowTypeError(ctx, "write16(addr, val)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint32_t v; if (JS_ToUint32(ctx, &v, argv[1]) != 0) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    RdramWrite16(rdram, off, static_cast<uint16_t>(v));
+    return JS_UNDEFINED;
 }
 
-int MemoryModule::WriteFloat(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    float fvalue = luaL_checknumber(L, 2);
-    uint32_t value = 0;
-    static_assert(sizeof(float) == sizeof(uint32_t));
-    std::memcpy(&value, &fvalue, sizeof(value));
-    SafeMemoryWrite(address, value, 4);
-    return 0;
+static JSValue Mem_Write32(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 2) return JS_ThrowTypeError(ctx, "write32(addr, val)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    uint32_t v; if (JS_ToUint32(ctx, &v, argv[1]) != 0) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    RdramWrite32(rdram, off, v);
+    return JS_UNDEFINED;
 }
 
-int MemoryModule::WriteDouble(lua_State* L) {
-    double dvalue = luaL_checknumber(L, 2);
-    uint32_t address = NormalizeAddress(luaL_checkinteger(L, 1));
-    uint64_t bits = 0;
-    static_assert(sizeof(double) == sizeof(uint64_t));
-    std::memcpy(&bits, &dvalue, sizeof(bits));
-    SafeMemoryWrite(address,     static_cast<uint32_t>(bits >> 32),         4);
-    SafeMemoryWrite(address + 4, static_cast<uint32_t>(bits & 0xFFFFFFFFu), 4);
-    return 0;
+static JSValue Mem_WriteFloat(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 2) return JS_ThrowTypeError(ctx, "writeFloat(addr, val)");
+    uint32_t off; if (!GetAddress(ctx, argv[0], &off)) return JS_EXCEPTION;
+    double d; if (JS_ToFloat64(ctx, &d, argv[1]) != 0) return JS_EXCEPTION;
+    uint8_t* rdram = RequireRDRAM(ctx); if (!rdram) return JS_EXCEPTION;
+    float fv = static_cast<float>(d);
+    uint32_t bits; memcpy(&bits, &fv, 4);
+    RdramWrite32(rdram, off, bits);
+    return JS_UNDEFINED;
 }
 
-int MemoryModule::WriteSize(lua_State* L) {
-    uint32_t address = luaL_checkinteger(L, 1);
-    int size = luaL_checkinteger(L, 2);
-    uint32_t value = luaL_checkinteger(L, 3);
-    
-    switch (size) {
-        case 1:
-            SafeMemoryWrite(address, value, 1);
-            break;
-        case 2:
-            SafeMemoryWrite(address, value, 2);
-            break;
-        case 4:
-            SafeMemoryWrite(address, value, 4);
-            break;
-        case -1:
-            SafeMemoryWrite(address, static_cast<uint32_t>(static_cast<int8_t>(value)), 1);
-            break;
-        case -2:
-            SafeMemoryWrite(address, static_cast<uint32_t>(static_cast<int16_t>(value)), 2);
-            break;
-        case -4:
-            SafeMemoryWrite(address, static_cast<uint32_t>(static_cast<int32_t>(value)), 4);
-            break;
-        default:
-            luaL_error(L, "size must be 1, 2, 4, -1, -2, or -4");
-            break;
-    }
-    
-    return 0;
+// ─── Registration ─────────────────────────────────────────────────────────────
+
+void RegisterMemoryModule(JSContext* ctx)
+{
+    JSValue mem = JS_NewObject(ctx);
+
+#define SET(name, fn, nargs) \
+    JS_SetPropertyStr(ctx, mem, name, JS_NewCFunction(ctx, fn, name, nargs))
+
+    SET("read8",       Mem_Read8,      1);
+    SET("read8s",      Mem_Read8s,     1);
+    SET("read16",      Mem_Read16,     1);
+    SET("read16s",     Mem_Read16s,    1);
+    SET("read32",      Mem_Read32,     1);
+    SET("read32s",     Mem_Read32s,    1);
+    SET("readFloat",   Mem_ReadFloat,  1);
+    SET("write8",      Mem_Write8,     2);
+    SET("write16",     Mem_Write16,    2);
+    SET("write32",     Mem_Write32,    2);
+    SET("writeFloat",  Mem_WriteFloat, 2);
+
+#undef SET
+
+    JSValue global = JS_GetGlobalObject(ctx);
+    JS_SetPropertyStr(ctx, global, "memory", mem);
+    JS_FreeValue(ctx, global);
 }
 
 } // namespace RMGScript

@@ -10,358 +10,241 @@
 #include "ScriptEngine.hpp"
 #include "MemoryModule.hpp"
 #include "EventModule.hpp"
+#include "NetworkModule.hpp"
 
-#include <lua.hpp>
+#include <quickjs.h>
+#include <quickjs-libc.h>
 
 #include <iostream>
-#include <chrono>
-#include <condition_variable>
+#include <fstream>
+#include <sstream>
 
-static constexpr const char* kRegistryScriptEngineKey = "RMG_SCRIPT_ENGINE";
-
-static int LuaPrint(lua_State* L)
+ScriptEngine* GetEngineFromContext(JSContext* ctx)
 {
-    lua_getfield(L, LUA_REGISTRYINDEX, kRegistryScriptEngineKey);
-    auto* engine = static_cast<ScriptEngine*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    if (engine == nullptr)
-    {
-        return 0;
-    }
+    return static_cast<ScriptEngine*>(JS_GetContextOpaque(ctx));
+}
 
-    const int nargs = lua_gettop(L);
+// ─── print / console.log ─────────────────────────────────────────────────────
+
+static std::string ArgsToString(JSContext* ctx, int argc, JSValue* argv)
+{
     std::string line;
-    for (int i = 1; i <= nargs; i++)
-    {
-        size_t len = 0;
-        const char* str = luaL_tolstring(L, i, &len);
-        if (str != nullptr)
-        {
-            if (!line.empty())
-            {
-                line += "\t";
-            }
-            line.append(str, len);
+    for (int i = 0; i < argc; i++) {
+        if (i > 0) line += ' ';
+        // JS_ToString before ToCString to ensure ropes are linearised first.
+        JSValue str = JS_ToString(ctx, argv[i]);
+        if (!JS_IsException(str)) {
+            const char* s = JS_ToCString(ctx, str);
+            if (s) { line += s; JS_FreeCString(ctx, s); }
+            JS_FreeValue(ctx, str);
+        } else {
+            JS_FreeValue(ctx, JS_GetException(ctx));
         }
-        lua_pop(L, 1);
     }
-
-    engine->EmitOutput(line);
-    return 0;
+    return line;
 }
 
-ScriptEngine::ScriptEngine() 
-    : m_lua(nullptr), m_running(false), m_executorRunning(false) {
+static JSValue JS_Print(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    std::string line = ArgsToString(ctx, argc, argv);
+    ScriptEngine* engine = GetEngineFromContext(ctx);
+    if (engine) engine->EmitOutput(line);
+    else        std::cerr << line << '\n';
+    return JS_UNDEFINED;
 }
 
-ScriptEngine::~ScriptEngine() {
-    Shutdown();
+static JSValue JS_ConsoleLog(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    return JS_Print(ctx, JS_UNDEFINED, argc, argv);
 }
 
-bool ScriptEngine::Initialize() {
-    if (m_running) {
-        return true;
-    }
 
-    // Create Lua state
-    m_lua = luaL_newstate();
-    if (!m_lua) {
-        std::cerr << "Failed to create Lua state" << std::endl;
+// ─── ScriptEngine ────────────────────────────────────────────────────────────
+
+ScriptEngine::ScriptEngine() = default;
+ScriptEngine::~ScriptEngine() { Shutdown(); }
+
+bool ScriptEngine::Initialize()
+{
+    if (m_running) return true;
+
+    m_rt  = JS_NewRuntime();
+    m_ctx = JS_NewContext(m_rt);
+    if (!m_rt || !m_ctx) {
+        std::cerr << "ScriptEngine: failed to create JS runtime/context\n";
         return false;
     }
 
-    // Open standard libraries
-    luaL_openlibs(m_lua);
+    JS_SetContextOpaque(m_ctx, this);
 
-    // Store ScriptEngine pointer in registry so C modules can access it
-    lua_pushlightuserdata(m_lua, this);
-    lua_setfield(m_lua, LUA_REGISTRYINDEX, kRegistryScriptEngineKey);
+    // Register quickjs-libc std/os modules and their module loader.
+    js_std_init_handlers(m_rt);
+    js_init_module_std(m_ctx, "std");
+    js_init_module_os(m_ctx, "os");
+    JS_SetModuleLoaderFunc2(m_rt, nullptr, js_module_loader,
+                             js_module_check_attributes, nullptr);
 
-    // Replace Lua global print() so script output can be shown in the UI.
-    lua_pushcfunction(m_lua, LuaPrint);
-    lua_setglobal(m_lua, "print");
+    // Expose std and os as globals so scripts don't need import syntax.
+    // Evaluated as a module so the import resolves, then stored on globalThis.
+    {
+        const char* bootstrap =
+            "import * as _std from 'std';\n"
+            "import * as _os  from 'os';\n"
+            "globalThis.std = _std;\n"
+            "globalThis.os  = _os;\n";
+        JSValue p = JS_Eval(m_ctx, bootstrap, strlen(bootstrap),
+                            "<bootstrap>", JS_EVAL_TYPE_MODULE);
+        if (!JS_IsException(p))
+            js_std_loop(m_ctx); // run event loop until module resolves
+        else
+            JS_FreeValue(m_ctx, JS_GetException(m_ctx));
+        JS_FreeValue(m_ctx, p);
+    }
 
-    // Register custom modules
-    RMGScript::RegisterMemoryModule(m_lua);
-    RMGScript::RegisterEventModule(m_lua);
+    // Our print / console.log override (routes to the UI output panel).
+    JSValue global = JS_GetGlobalObject(m_ctx);
+    JS_SetPropertyStr(m_ctx, global, "print",
+        JS_NewCFunction(m_ctx, JS_Print, "print", 1));
+
+    JSValue console = JS_NewObject(m_ctx);
+    JS_SetPropertyStr(m_ctx, console, "log",   JS_NewCFunction(m_ctx, JS_ConsoleLog, "log",   1));
+    JS_SetPropertyStr(m_ctx, console, "warn",  JS_NewCFunction(m_ctx, JS_ConsoleLog, "warn",  1));
+    JS_SetPropertyStr(m_ctx, console, "error", JS_NewCFunction(m_ctx, JS_ConsoleLog, "error", 1));
+    JS_SetPropertyStr(m_ctx, global, "console", console);
+    JS_FreeValue(m_ctx, global);
+
+    RMGScript::RegisterMemoryModule(m_ctx);
+    RMGScript::RegisterEventModule(m_ctx);
+    RMGScript::RegisterNetworkModule(m_ctx);
 
     m_running = true;
-    m_executorRunning = true;
-    m_executorThread = std::thread(&ScriptEngine::ExecutorThreadMain, this);
-
     return true;
 }
 
-bool ScriptEngine::LoadScript(const std::string& filepath) {
-    if (!m_lua) {
-        return false;
-    }
+bool ScriptEngine::LoadScript(const std::string& filepath)
+{
+    if (!m_ctx) return false;
 
-    std::lock_guard<std::mutex> luaLock(m_luaMutex);
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file) { EmitOutput("Failed to open: " + filepath); return false; }
+    std::ostringstream ss; ss << file.rdbuf();
+    std::string src = ss.str();
 
-    // Load the Lua file
-    if (luaL_loadfile(m_lua, filepath.c_str()) != LUA_OK) {
-        EmitOutput(std::string("Failed to load Lua script: ") + lua_tostring(m_lua, -1));
-        lua_pop(m_lua, 1);
-        return false;
-    }
+    std::lock_guard<std::mutex> lock(m_jsMutex);
+    // Re-anchor the stack limit to the current (UI) thread before evaluating.
+    JS_UpdateStackTop(m_rt);
 
-    // Execute the script (this defines functions but doesn't call them)
-    if (lua_pcall(m_lua, 0, 0, 0) != LUA_OK) {
-        EmitOutput(std::string("Failed to execute Lua script: ") + lua_tostring(m_lua, -1));
-        lua_pop(m_lua, 1);
-        return false;
-    }
-
-    return true;
+    JSValue result = JS_Eval(m_ctx, src.c_str(), src.size(),
+                             filepath.c_str(), JS_EVAL_TYPE_GLOBAL);
+    bool ok = !JS_IsException(result);
+    if (!ok) ReportException("LoadScript");
+    JS_FreeValue(m_ctx, result);
+    return ok;
 }
 
-bool ScriptEngine::ExecuteFunction(const std::string& functionName) {
-    if (!m_lua) {
-        return false;
-    }
-
-    ScriptJob job;
-    job.type = ScriptJob::EXECUTE_FUNCTION;
-    job.functionName = functionName;
-
-    {
-        std::lock_guard<std::mutex> lock(m_jobMutex);
-        m_jobQueue.push(job);
-    }
-
-    return true;
+void ScriptEngine::RegisterJSFrameCallback(JSValue fn)
+{
+    // Called from JS code running on the load thread — no extra lock needed
+    // because we're already inside the m_jsMutex via LoadScript.
+    m_frameCallbackRefs.push_back(fn);
 }
 
-void ScriptEngine::RegisterFrameCallback(FrameCallbackFunc callback) {
-    std::lock_guard<std::mutex> lock(m_callbacksMutex);
-    m_frameCallbacks.push_back(callback);
+void ScriptEngine::RegisterJSBreakpointCallback(uint32_t address, JSValue fn)
+{
+    m_bpCallbackRefs[address].push_back(fn);
 }
 
-void ScriptEngine::RegisterBreakpointCallback(uint32_t address, BreakpointCallbackFunc callback) {
-    // TODO: Implement breakpoint callback registration
-    (void)address;
-    (void)callback;
-}
+void ScriptEngine::FireFrameCallbacks()
+{
+    if (m_frameCallbackRefs.empty()) return;
 
-void ScriptEngine::RegisterLuaFrameCallback(int luaFuncRef) {
-    std::lock_guard<std::mutex> lock(m_callbacksMutex);
-    m_luaFrameCallbackRefs.push_back(luaFuncRef);
-}
+    std::lock_guard<std::mutex> lock(m_jsMutex);
+    // Re-anchor stack limit to the calling (emulation) thread's stack.
+    JS_UpdateStackTop(m_rt);
 
-void ScriptEngine::RegisterLuaBreakpointCallback(uint32_t address, int luaFuncRef) {
-    std::lock_guard<std::mutex> lock(m_callbacksMutex);
-    m_luaBreakpointCallbackRefs[address].push_back(luaFuncRef);
-}
-
-void ScriptEngine::FireFrameCallbacks() {
-    ScriptJob job;
-    job.type = ScriptJob::CALL_FRAME_CALLBACKS;
-    
-    {
-        std::lock_guard<std::mutex> lock(m_jobMutex);
-        m_jobQueue.push(job);
+    for (JSValue fn : m_frameCallbackRefs) {
+        JSValue ret = JS_Call(m_ctx, fn, JS_UNDEFINED, 0, nullptr);
+        if (JS_IsException(ret)) ReportException("on_frame");
+        JS_FreeValue(m_ctx, ret);
     }
 }
 
-void ScriptEngine::FireBreakpointCallback(uint32_t pc) {
-    ScriptJob job;
-    job.type = ScriptJob::CALL_BREAKPOINT_CALLBACKS;
-    job.pc = pc;
+void ScriptEngine::FireBreakpointCallback(uint32_t pc)
+{
+    auto it = m_bpCallbackRefs.find(pc);
+    if (it == m_bpCallbackRefs.end()) return;
 
-    {
-        std::lock_guard<std::mutex> lock(m_jobMutex);
-        m_jobQueue.push(job);
+    std::lock_guard<std::mutex> lock(m_jsMutex);
+    JS_UpdateStackTop(m_rt);
+
+    JSValue pcVal = JS_NewUint32(m_ctx, pc);
+    for (JSValue fn : it->second) {
+        JSValue ret = JS_Call(m_ctx, fn, JS_UNDEFINED, 1, &pcVal);
+        if (JS_IsException(ret)) ReportException("on_breakpoint");
+        JS_FreeValue(m_ctx, ret);
     }
+    JS_FreeValue(m_ctx, pcVal);
 }
 
-void ScriptEngine::Shutdown() {
-    if (!m_running) {
-        return;
-    }
-
+void ScriptEngine::Shutdown()
+{
+    if (!m_running) return;
     m_running = false;
-    m_executorRunning = false;
 
-    // Send shutdown job
-    {
-        std::lock_guard<std::mutex> lock(m_jobMutex);
-        ScriptJob shutdownJob;
-        shutdownJob.type = ScriptJob::SHUTDOWN;
-        m_jobQueue.push(shutdownJob);
-    }
-
-    // Wait for executor thread to finish
-    if (m_executorThread.joinable()) {
-        m_executorThread.join();
-    }
-
-    // Close Lua state
-    if (m_lua) {
-        lua_close(m_lua);
-        m_lua = nullptr;
-    }
+    std::lock_guard<std::mutex> lock(m_jsMutex);
+    FreeCallbackRefs();
+    JS_FreeContext(m_ctx); m_ctx = nullptr;
+    js_std_free_handlers(m_rt);
+    JS_FreeRuntime(m_rt);  m_rt  = nullptr;
 }
 
-void ScriptEngine::ProcessJobs() {
-    // This is currently unused as jobs are processed in the executor thread
-    // But kept for potential future use for UI thread processing
-}
-
-void ScriptEngine::SetOutputCallback(ScriptOutputCallbackFunc callback)
+void ScriptEngine::SetOutputCallback(ScriptOutputCallbackFunc cb)
 {
     std::lock_guard<std::mutex> lock(m_outputMutex);
-    m_outputCallback = std::move(callback);
-}
-
-bool ScriptEngine::CallLuaFunction(const std::string& functionName) {
-    if (!m_lua) {
-        return false;
-    }
-
-    std::lock_guard<std::mutex> luaLock(m_luaMutex);
-
-    // Get the function from the global table
-    lua_getglobal(m_lua, functionName.c_str());
-    
-    if (!lua_isfunction(m_lua, -1)) {
-        lua_pop(m_lua, 1);
-        return false;
-    }
-
-    // Call the function with no arguments and no return values
-    if (lua_pcall(m_lua, 0, 0, 0) != LUA_OK) {
-        EmitOutput(std::string("Error calling Lua function '") + functionName +
-                   "': " + lua_tostring(m_lua, -1));
-        lua_pop(m_lua, 1);
-        return false;
-    }
-
-    return true;
-}
-
-static bool CallLuaRef(lua_State* L, ScriptEngine* engine, int ref, uint32_t pc, bool passPc) {
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-    if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 1);
-        return false;
-    }
-
-    if (passPc) {
-        lua_pushinteger(L, pc);
-        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-            if (engine != nullptr) {
-                engine->EmitOutput(std::string("Error calling Lua callback: ") + lua_tostring(L, -1));
-            }
-            lua_pop(L, 1);
-            return false;
-        }
-    } else {
-        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            if (engine != nullptr) {
-                engine->EmitOutput(std::string("Error calling Lua callback: ") + lua_tostring(L, -1));
-            }
-            lua_pop(L, 1);
-            return false;
-        }
-    }
-
-    return true;
+    m_outputCallback = std::move(cb);
 }
 
 void ScriptEngine::EmitOutput(const std::string& line)
 {
     ScriptOutputCallbackFunc cb;
-    {
-        std::lock_guard<std::mutex> lock(m_outputMutex);
-        cb = m_outputCallback;
-    }
-
-    if (cb)
-    {
-        cb(line);
-    }
-    else
-    {
-        std::cerr << line << std::endl;
-    }
+    { std::lock_guard<std::mutex> lock(m_outputMutex); cb = m_outputCallback; }
+    if (cb) cb(line);
+    else    std::cerr << line << '\n';
 }
 
-void ScriptEngine::ExecutorThreadMain() {
-    while (m_executorRunning) {
-        ScriptJob job;
-        bool hasJob = false;
+bool ScriptEngine::ReportException(const std::string& ctx_name)
+{
+    JSValue exc = JS_GetException(m_ctx);
 
-        // Check if there's a job to process
-        {
-            std::lock_guard<std::mutex> lock(m_jobMutex);
-            if (!m_jobQueue.empty()) {
-                job = m_jobQueue.front();
-                m_jobQueue.pop();
-                hasJob = true;
-            }
-        }
-
-        if (!hasJob) {
-            // Sleep for a short time to avoid busy-waiting
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        // Process the job
-        switch (job.type) {
-            case ScriptJob::EXECUTE_FUNCTION:
-                CallLuaFunction(job.functionName);
-                break;
-
-            case ScriptJob::CALL_FRAME_CALLBACKS: {
-                std::vector<FrameCallbackFunc> callbacks;
-                std::vector<int> luaRefs;
-                {
-                    std::lock_guard<std::mutex> lock(m_callbacksMutex);
-                    callbacks = m_frameCallbacks;
-                    luaRefs = m_luaFrameCallbackRefs;
-                }
-                
-                for (const auto& callback : callbacks) {
-                    try {
-                        callback();
-                    } catch (const std::exception& e) {
-                        std::cerr << "Exception in frame callback: " << e.what() << std::endl;
-                    }
-                }
-
-                if (!luaRefs.empty() && m_lua) {
-                    std::lock_guard<std::mutex> luaLock(m_luaMutex);
-                    for (int ref : luaRefs) {
-                        CallLuaRef(m_lua, this, ref, 0, false);
-                    }
-                }
-                break;
-            }
-
-            case ScriptJob::CALL_BREAKPOINT_CALLBACKS: {
-                std::vector<int> luaRefs;
-                {
-                    std::lock_guard<std::mutex> lock(m_callbacksMutex);
-                    auto it = m_luaBreakpointCallbackRefs.find(job.pc);
-                    if (it != m_luaBreakpointCallbackRefs.end()) {
-                        luaRefs = it->second;
-                    }
-                }
-
-                if (!luaRefs.empty() && m_lua) {
-                    std::lock_guard<std::mutex> luaLock(m_luaMutex);
-                    for (int ref : luaRefs) {
-                        CallLuaRef(m_lua, this, ref, job.pc, true);
-                    }
-                }
-                break;
-            }
-
-            case ScriptJob::SHUTDOWN:
-                m_executorRunning = false;
-                break;
-        }
+    // Convert to string — use JS_TAG checks to avoid triggering more JS calls
+    // while exception handling might itself be in a bad state.
+    JSValue msg = JS_ToString(m_ctx, exc);
+    if (!JS_IsException(msg)) {
+        const char* str = JS_ToCString(m_ctx, msg);
+        if (str) { EmitOutput(std::string("[error] ") + str); JS_FreeCString(m_ctx, str); }
+        JS_FreeValue(m_ctx, msg);
+    } else {
+        JS_FreeValue(m_ctx, JS_GetException(m_ctx)); // clear secondary exception
+        EmitOutput("[error] (unknown exception in " + ctx_name + ")");
     }
+
+    // Stack trace
+    JSValue stack = JS_GetPropertyStr(m_ctx, exc, "stack");
+    if (!JS_IsException(stack) && !JS_IsUndefined(stack)) {
+        const char* st = JS_ToCString(m_ctx, stack);
+        if (st && st[0] != '\0') { EmitOutput(st); }
+        JS_FreeCString(m_ctx, st);
+    }
+    JS_FreeValue(m_ctx, stack);
+    JS_FreeValue(m_ctx, exc);
+    return false;
+}
+
+void ScriptEngine::FreeCallbackRefs()
+{
+    for (JSValue v : m_frameCallbackRefs) JS_FreeValue(m_ctx, v);
+    m_frameCallbackRefs.clear();
+    for (auto& [addr, refs] : m_bpCallbackRefs)
+        for (JSValue v : refs) JS_FreeValue(m_ctx, v);
+    m_bpCallbackRefs.clear();
 }

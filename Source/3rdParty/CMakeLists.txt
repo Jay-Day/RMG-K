@@ -71,6 +71,8 @@ if (WIN32)
     set(SDL3NET_LDLIBS "${SDL3NET_LDLIBS} -liphlpapi -lws2_32")
 endif (WIN32)
 
+add_subdirectory(quickjs)
+
 if(EXISTS "${CMAKE_SOURCE_DIR}/GekkoNet-main/GekkoLib/CMakeLists.txt")
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build vendored GekkoNet as a static library" FORCE)
     set(BUILD_DOCS OFF CACHE BOOL "Disable GekkoNet docs" FORCE)

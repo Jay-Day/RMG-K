@@ -12,38 +12,15 @@
 
 #include <cstdint>
 
-struct lua_State;
+extern "C" { typedef struct JSContext JSContext; }
 
 namespace RMGScript {
 
-// Register memory module functions to Lua
-void RegisterMemoryModule(lua_State* L);
+// Registers the global `memory` object into the JS context.
+void RegisterMemoryModule(JSContext* ctx);
 
-// Memory access functions (called from Lua)
-class MemoryModule {
-public:
-    // Read functions
-    static int ReadByte(lua_State* L);
-    static int ReadByteSigned(lua_State* L);
-    static int ReadWord(lua_State* L);
-    static int ReadWordSigned(lua_State* L);
-    static int ReadDword(lua_State* L);
-    static int ReadDwordSigned(lua_State* L);
-    static int ReadFloat(lua_State* L);
-    static int ReadDouble(lua_State* L);
-    static int ReadSize(lua_State* L);
-    
-    // Write functions
-    static int WriteByte(lua_State* L);
-    static int WriteWord(lua_State* L);
-    static int WriteDword(lua_State* L);
-    static int WriteFloat(lua_State* L);
-    static int WriteDouble(lua_State* L);
-    static int WriteSize(lua_State* L);
-    
-    // Helper to get RDRAM pointer
-    static uint8_t* GetRDRAM();
-};
+// Returns a pointer to the raw RDRAM buffer (host-side byte array).
+uint8_t* GetRDRAM();
 
 } // namespace RMGScript
 

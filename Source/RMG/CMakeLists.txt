@@ -203,9 +203,7 @@ if (NETPLAY)
 endif(NETPLAY)
 
 if (SCRIPTING)
-    # Link scripting before core to satisfy static library symbol resolution,
-    # and explicitly link Lua for the final executable.
-    target_link_libraries(RMG RMG-Scripting ${LUA_LIBRARIES} RMG-Core)
+    target_link_libraries(RMG RMG-Scripting quickjs RMG-Core)
     target_include_directories(RMG PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Scripting
     )
