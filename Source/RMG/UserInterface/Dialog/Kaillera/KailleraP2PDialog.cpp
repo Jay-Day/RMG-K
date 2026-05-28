@@ -931,7 +931,7 @@ KailleraP2PDialog::KailleraP2PDialog(bool isHost, const QString& gameName,
         m_showDebugMessages = settings.value("P2P_ShowDebugMessages", false).toBool();
         if (m_isHost)
         {
-            m_gameLayer = settings.value("P2P_GameLayer", QString(kGameLayerStandard)).toString() == kGameLayerRollback ?
+            m_gameLayer = settings.value("P2P_GameLayer", QString(kGameLayerRollback)).toString() == kGameLayerRollback ?
                 GameLayer::Rollback : GameLayer::Standard;
         }
     }
