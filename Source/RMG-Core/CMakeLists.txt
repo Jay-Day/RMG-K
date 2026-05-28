@@ -22,6 +22,7 @@ set(RMG_CORE_SOURCES
     m64p/CoreApi.cpp
     m64p/ConfigApi.cpp
     m64p/PluginApi.cpp
+    m64p/Handle.cpp
     CachedRomHeaderAndSettings.cpp
     ConvertStringEncoding.cpp
     SpeedLimiter.cpp

@@ -26,6 +26,10 @@
 
 #include "m64p/Api.hpp"
 
+#ifdef SCRIPTING_ENABLED
+#include "../RMG-Scripting/ScriptManager.hpp"
+#endif
+
 #include <cstdlib>
 
 // Windows/POSIX dynamic loading
@@ -164,6 +168,36 @@ static void FrameCallback(unsigned int frameIndex)
     // Reset sync flag at the start of each new frame
     // This ensures we sync exactly once per frame regardless of PIF polling timing
     s_SyncedThisFrame = false;
+#endif
+    
+#ifdef SCRIPTING_ENABLED
+    // Call script engine frame callbacks (fire on a non-emulation thread)
+    // If the core exports debugger functions, sample the current PC once per frame.
+    uint32_t pc = 0;
+    {
+        using ptr_DebugGetCPUDataPtr = void* (*)(m64p_dbg_cpu_data);
+        static ptr_DebugGetCPUDataPtr getPtr = nullptr;
+        static bool resolved = false;
+        if (!resolved) {
+            void* coreHandle = m64p::Core.GetHandle();
+            if (coreHandle) {
+#ifdef _WIN32
+                getPtr = (ptr_DebugGetCPUDataPtr)GetProcAddress((HMODULE)coreHandle, "DebugGetCPUDataPtr");
+#else
+                getPtr = (ptr_DebugGetCPUDataPtr)dlsym(coreHandle, "DebugGetCPUDataPtr");
+#endif
+            }
+            resolved = true;
+        }
+        if (getPtr) {
+            void* pcPtr = getPtr(M64P_CPU_PC);
+            if (pcPtr) {
+                pc = *static_cast<uint32_t*>(pcPtr);
+            }
+        }
+    }
+
+    ScriptManager::GetInstance().OnFrameUpdate(pc);
 #endif
 }
 
@@ -791,6 +825,10 @@ CORE_EXPORT bool CoreStopEmulation(void)
     CoreSetKailleraPlayerNumber(0);
 #endif
 
+#ifdef SCRIPTING_ENABLED
+    ScriptManager::GetInstance().OnEmulationStop();
+#endif
+
     return ret == M64ERR_SUCCESS;
 }
 
@@ -825,6 +863,13 @@ CORE_EXPORT bool CorePauseEmulation(void)
         CoreSetError(error);
     }
 
+#ifdef SCRIPTING_ENABLED
+    if (ret == M64ERR_SUCCESS)
+    {
+        ScriptManager::GetInstance().OnEmulationPause();
+    }
+#endif
+
     return ret == M64ERR_SUCCESS;
 }
 
@@ -858,6 +903,13 @@ CORE_EXPORT bool CoreResumeEmulation(void)
         error += m64p::Core.ErrorMessage(ret);
         CoreSetError(error);
     }
+
+#ifdef SCRIPTING_ENABLED
+    if (ret == M64ERR_SUCCESS)
+    {
+        ScriptManager::GetInstance().OnEmulationResume();
+    }
+#endif
 
     return ret == M64ERR_SUCCESS;
 }

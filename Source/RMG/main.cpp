@@ -32,6 +32,11 @@
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Version.hpp>
 
+#ifdef SCRIPTING_ENABLED
+#include <RMG-Scripting/ScriptManager.hpp>
+#include <filesystem>
+#endif
+
 //
 // Local Functions
 //
@@ -189,6 +194,14 @@ int main(int argc, char **argv)
 
     QApplication app(argc, argv);
 
+#ifdef SCRIPTING_ENABLED
+    // Optional autorun script (portable-friendly): Data/Scripts/autorun.lua
+    const std::filesystem::path autorun = std::filesystem::path("Data") / "Scripts" / "autorun.lua";
+    if (std::filesystem::is_regular_file(autorun)) {
+        ScriptManager::GetInstance().LoadScript(autorun.string());
+    }
+#endif
+
 #ifdef PORTABLE_INSTALL
     // only change current directory
     // when we're in portable directory mode
@@ -223,6 +236,9 @@ int main(int argc, char **argv)
     QCommandLineOption quitAfterEmulationOption({"q", "quit-after-emulation"}, "Quits RMG when emulation has finished");
     QCommandLineOption loadStateSlot("load-state-slot", "Loads save state slot when launching the ROM", "Slot Number");
     QCommandLineOption diskOption("disk", "64DD Disk to open ROM in combination with", "64DD Disk");
+#ifdef SCRIPTING_ENABLED
+    QCommandLineOption scriptOption("script", "Loads a Lua script file at startup (can be repeated)", "path");
+#endif
     QCommandLineOption exportKrecOption("export-krec", "Internal replay export mode: input .krec file", "path");
     QCommandLineOption exportRomOption("export-rom", "Internal replay export mode: input ROM file", "path");
     QCommandLineOption exportOutputOption("export-output", "Internal replay export mode: output MP4 file", "path");
@@ -254,6 +270,9 @@ int main(int argc, char **argv)
     parser.addOption(quitAfterEmulationOption);
     parser.addOption(loadStateSlot);
     parser.addOption(diskOption);
+#ifdef SCRIPTING_ENABLED
+    parser.addOption(scriptOption);
+#endif
     parser.addOption(exportKrecOption);
     parser.addOption(exportRomOption);
     parser.addOption(exportOutputOption);
@@ -291,6 +310,17 @@ int main(int argc, char **argv)
         CoreSetSharedDataPathOverride(sharedDataPathOverride.toStdString());
     }
 #endif // PORTABLE_INSTALL
+
+#ifdef SCRIPTING_ENABLED
+    const QStringList scripts = parser.values(scriptOption);
+    for (const QString& scriptPath : scripts)
+    {
+        if (!ScriptManager::GetInstance().LoadScript(scriptPath.toStdString()))
+        {
+            std::cerr << "Failed to load Lua script: " << scriptPath.toStdString() << std::endl;
+        }
+    }
+#endif
 
     if (parser.isSet(exportKrecOption))
     {

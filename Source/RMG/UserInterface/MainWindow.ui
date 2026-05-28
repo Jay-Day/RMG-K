@@ -136,6 +136,7 @@
     <addaction name="action_View_ClearRomCache"/>
     <addaction name="separator"/>
     <addaction name="action_View_Log"/>
+    <addaction name="action_View_ScriptingConsole"/>
     <addaction name="separator"/>
     <addaction name="action_View_Search"/>
    </widget>
@@ -556,6 +557,14 @@
    </property>
    <property name="text">
     <string>&amp;Log</string>
+   </property>
+  </action>
+  <action name="action_View_ScriptingConsole">
+   <property name="icon">
+    <iconset theme="terminal-box-line"/>
+   </property>
+   <property name="text">
+    <string>&amp;Scripting Console</string>
    </property>
   </action>
   <action name="action_View_ClearRomCache">
