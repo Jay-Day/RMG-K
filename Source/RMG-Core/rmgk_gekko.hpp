@@ -36,6 +36,18 @@ class rmgk_gekko
     static void set_debug_frame_output(int flags);
     static bool debug_run_frame_with_inputs(const uint32_t* inputs, int players, int flags);
     static bool toggle_client_input_replay();
+
+    // Session state queries (safe to call any time; return 0/false when no session)
+    static int   get_local_player();
+    static int   get_num_players();
+    static int   get_local_delay();
+    static int   get_prediction_window();
+    static bool  is_rolling_back();
+    static float get_frames_ahead();
+    // Transport-layer ping (matches the value shown in the netplay UI).
+    static int   get_transport_ping();
+    // GekkoNet protocol-level stats (avg ping, jitter).
+    static bool  get_network_stats(float& avgPing, float& jitter);
 };
 
 #endif // RMGK_GEKKO_HPP

@@ -14,6 +14,7 @@ set(RMG_SCRIPTING_SOURCES
     MemoryModule.cpp
     EventModule.cpp
     NetworkModule.cpp
+    NetplayModule.cpp
 )
 
 add_library(RMG-Scripting STATIC ${RMG_SCRIPTING_SOURCES})

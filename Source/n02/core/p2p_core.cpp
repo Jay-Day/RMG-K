@@ -228,6 +228,11 @@ int p2p_get_frames_count(){
 	return P2PCORE.frameno;
 }
 
+int p2p_get_last_ping(){
+	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
+	return P2PCORE.ping;
+}
+
 bool p2p_core_cleanup(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
 	n02_TRACE();//TRACE_TERM();

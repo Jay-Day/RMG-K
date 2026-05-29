@@ -11,6 +11,7 @@
 #include "MemoryModule.hpp"
 #include "EventModule.hpp"
 #include "NetworkModule.hpp"
+#include "NetplayModule.hpp"
 
 #include <quickjs.h>
 #include <quickjs-libc.h>
@@ -116,6 +117,7 @@ bool ScriptEngine::Initialize()
     RMGScript::RegisterMemoryModule(m_ctx);
     RMGScript::RegisterEventModule(m_ctx);
     RMGScript::RegisterNetworkModule(m_ctx);
+    RMGScript::RegisterNetplayModule(m_ctx);
 
     m_running = true;
     return true;

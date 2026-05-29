@@ -14,6 +14,7 @@
 #endif
 
 #include <RMG-Core/Kaillera.hpp>
+#include <RMG-Core/Settings.hpp>
 
 #include <QMetaObject>
 #include <QWidget>
@@ -162,6 +163,15 @@ void KailleraSessionManager::handleGameStart(QString game, int player, int numPl
     m_currentGame = game;
     m_playerNumber = player;
     m_totalPlayers = numPlayers;
+
+    // Seed the scripting layer with the local player's name from settings.
+    // Other players' names are not available at game-start time in server mode.
+    CoreNetplayClearPlayerNames();
+    if (player >= 1 && player <= 4)
+    {
+        std::string localName = CoreSettingsGetStringValue(SettingsID::Kaillera_Username);
+        CoreNetplaySetPlayerName(player, localName);
+    }
 
     emit gameStarted(game, player, numPlayers);
 }
