@@ -10,6 +10,7 @@
 #include "ScriptEngine.hpp"
 #include "MemoryModule.hpp"
 #include "EventModule.hpp"
+#include "InputModule.hpp"
 #include "NetworkModule.hpp"
 #include "NetplayModule.hpp"
 
@@ -116,6 +117,7 @@ bool ScriptEngine::Initialize()
 
     RMGScript::RegisterMemoryModule(m_ctx);
     RMGScript::RegisterEventModule(m_ctx);
+    RMGScript::RegisterInputModule(m_ctx);
     RMGScript::RegisterNetworkModule(m_ctx);
     RMGScript::RegisterNetplayModule(m_ctx);
 

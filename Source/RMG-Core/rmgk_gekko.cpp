@@ -1901,7 +1901,7 @@ CORE_EXPORT float rmgk_gekko::get_frames_ahead()
 
 CORE_EXPORT int rmgk_gekko::get_transport_ping()
 {
-#ifdef RMGK_HAVE_GEKKONET
+#ifdef RMGK_HAVE_P2P_TRANSPORT
     return p2p_get_last_ping();
 #else
     return 0;

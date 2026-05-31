@@ -13,6 +13,7 @@ set(RMG_SCRIPTING_SOURCES
     ScriptManager.cpp
     MemoryModule.cpp
     EventModule.cpp
+    InputModule.cpp
     NetworkModule.cpp
     NetplayModule.cpp
 )
