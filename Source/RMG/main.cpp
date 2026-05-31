@@ -194,13 +194,6 @@ int main(int argc, char **argv)
 
     QApplication app(argc, argv);
 
-#ifdef SCRIPTING_ENABLED
-    // Optional autorun script (portable-friendly): Data/Scripts/autorun.js
-    const std::filesystem::path autorun = std::filesystem::path("Data") / "Scripts" / "autorun.js";
-    if (std::filesystem::is_regular_file(autorun)) {
-        ScriptManager::GetInstance().LoadScript(autorun.string());
-    }
-#endif
 
 #ifdef PORTABLE_INSTALL
     // only change current directory

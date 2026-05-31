@@ -11,83 +11,94 @@
 
 #include <RMG-Scripting/ScriptManager.hpp>
 
+#include <QDir>
+#include <QFileInfo>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QIcon>
-#include <QLabel>
 #include <QMetaObject>
+#include <QPainter>
+#include <QPixmap>
+#include <QPolygon>
 #include <QVBoxLayout>
-#include <QDir>
-#include <QFileInfo>
 
 using namespace UserInterface::Dialog;
+
+// Small green play-triangle icon for running scripts.
+QIcon ScriptingConsoleDialog::makePlayIcon()
+{
+    QPixmap pm(14, 14);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setBrush(QColor(0x43, 0xA0, 0x47));
+    p.setPen(Qt::NoPen);
+    QPolygon tri;
+    tri << QPoint(3, 2) << QPoint(3, 12) << QPoint(12, 7);
+    p.drawPolygon(tri);
+    return QIcon(pm);
+}
 
 ScriptingConsoleDialog::ScriptingConsoleDialog(QWidget* parent) : QDialog(parent)
 {
     this->setWindowTitle("Scripting Console");
     this->setWindowIcon(QIcon(":Resource/RMG.png"));
     this->setWindowFlags(this->windowFlags() | Qt::WindowMinimizeButtonHint);
-    this->resize(960, 620);
+    this->resize(960, 580);
 
-    QVBoxLayout* rootLayout = new QVBoxLayout(this);
+    QVBoxLayout* root = new QVBoxLayout(this);
+    root->setContentsMargins(8, 8, 8, 8);
+    root->setSpacing(6);
 
-    // ── Available scripts ────────────────────────────────────────────────────
-    rootLayout->addWidget(new QLabel("Available scripts (Data/Scripts/*.js)", this));
+    // ── Splitter: script list | output ───────────────────────────────────────
+    this->splitter = new QSplitter(Qt::Horizontal, this);
 
-    this->availableListWidget = new QListWidget(this);
-    this->availableListWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    rootLayout->addWidget(this->availableListWidget, 2);
+    this->scriptListWidget = new QListWidget(this->splitter);
+    this->scriptListWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    this->scriptListWidget->setIconSize(QSize(14, 14));
+    this->scriptListWidget->setMinimumWidth(160);
 
-    QHBoxLayout* availBtns = new QHBoxLayout();
-    this->refreshButton     = new QPushButton("Refresh", this);
-    this->runSelectedButton = new QPushButton("Run Selected", this);
-    availBtns->addWidget(this->refreshButton);
-    availBtns->addWidget(this->runSelectedButton);
-    availBtns->addStretch();
-    rootLayout->addLayout(availBtns);
-
-    // ── Running scripts ──────────────────────────────────────────────────────
-    rootLayout->addWidget(new QLabel("Running scripts", this));
-
-    this->runningListWidget = new QListWidget(this);
-    this->runningListWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    rootLayout->addWidget(this->runningListWidget, 1);
-
-    QHBoxLayout* runBtns = new QHBoxLayout();
-    this->stopSelectedButton = new QPushButton("Stop Selected", this);
-    this->stopAllButton      = new QPushButton("Stop All", this);
-    runBtns->addWidget(this->stopSelectedButton);
-    runBtns->addWidget(this->stopAllButton);
-    runBtns->addStretch();
-    rootLayout->addLayout(runBtns);
-
-    // ── Output ───────────────────────────────────────────────────────────────
-    rootLayout->addWidget(new QLabel("Script output", this));
-
-    this->outputTextEdit = new QPlainTextEdit(this);
+    this->outputTextEdit = new QPlainTextEdit(this->splitter);
     this->outputTextEdit->setReadOnly(true);
     QFont mono("monospace");
 #ifdef _WIN32
     mono.setStyleHint(QFont::TypeWriter);
 #endif
     this->outputTextEdit->setFont(mono);
-    rootLayout->addWidget(this->outputTextEdit, 3);
 
-    QHBoxLayout* outBtns = new QHBoxLayout();
-    this->clearOutputButton = new QPushButton("Clear Output", this);
-    outBtns->addStretch();
-    outBtns->addWidget(this->clearOutputButton);
-    rootLayout->addLayout(outBtns);
+    this->splitter->addWidget(this->scriptListWidget);
+    this->splitter->addWidget(this->outputTextEdit);
+    this->splitter->setStretchFactor(0, 1);
+    this->splitter->setStretchFactor(1, 3);
+    root->addWidget(this->splitter, 1);
 
-    // ── Connections ──────────────────────────────────────────────────────────
-    connect(this->refreshButton,      &QPushButton::clicked, this, &ScriptingConsoleDialog::onRefreshScripts);
-    connect(this->runSelectedButton,  &QPushButton::clicked, this, &ScriptingConsoleDialog::onRunSelectedScript);
-    connect(this->stopSelectedButton, &QPushButton::clicked, this, &ScriptingConsoleDialog::onStopSelectedScript);
-    connect(this->stopAllButton,      &QPushButton::clicked, this, &ScriptingConsoleDialog::onStopAllScripts);
-    connect(this->clearOutputButton,  &QPushButton::clicked, this, &ScriptingConsoleDialog::onClearOutput);
+    // ── Bottom buttons ────────────────────────────────────────────────────────
+    QHBoxLayout* btns = new QHBoxLayout();
+    btns->setSpacing(6);
 
-    connect(this->availableListWidget, &QListWidget::itemDoubleClicked, this,
-            [this](QListWidgetItem*) { this->onRunSelectedScript(); });
+    this->runButton     = new QPushButton("▶  Run",     this);
+    this->stopButton    = new QPushButton("■  Stop",    this);
+    this->refreshButton = new QPushButton("⟳  Refresh", this);
+    btns->addWidget(this->runButton);
+    btns->addWidget(this->stopButton);
+    btns->addWidget(this->refreshButton);
+    btns->addStretch();
+    this->stopAllButton = new QPushButton("Stop All",     this);
+    this->clearButton   = new QPushButton("Clear Output", this);
+    btns->addWidget(this->stopAllButton);
+    btns->addWidget(this->clearButton);
+
+    root->addLayout(btns);
+
+    // ── Connections ───────────────────────────────────────────────────────────
+    connect(this->runButton,     &QPushButton::clicked, this, &ScriptingConsoleDialog::onRunSelected);
+    connect(this->stopButton,    &QPushButton::clicked, this, &ScriptingConsoleDialog::onStopSelected);
+    connect(this->refreshButton, &QPushButton::clicked, this, &ScriptingConsoleDialog::onRefresh);
+    connect(this->stopAllButton, &QPushButton::clicked, this, &ScriptingConsoleDialog::onStopAll);
+    connect(this->clearButton,   &QPushButton::clicked, this, &ScriptingConsoleDialog::onClearOutput);
+
+    connect(this->scriptListWidget, &QListWidget::itemDoubleClicked,
+            this, &ScriptingConsoleDialog::onItemDoubleClicked);
 
     ScriptManager::GetInstance().SetOutputCallback([this](const std::string& line) {
         const QString qline = QString::fromStdString(line);
@@ -96,7 +107,7 @@ ScriptingConsoleDialog::ScriptingConsoleDialog(QWidget* parent) : QDialog(parent
         }, Qt::QueuedConnection);
     });
 
-    this->refreshAvailableList();
+    this->refreshList();
 }
 
 ScriptingConsoleDialog::~ScriptingConsoleDialog(void)
@@ -106,36 +117,50 @@ ScriptingConsoleDialog::~ScriptingConsoleDialog(void)
 
 void ScriptingConsoleDialog::RefreshRunningList()
 {
-    this->runningListWidget->clear();
-    for (const std::string& fp : ScriptManager::GetInstance().GetRunningScripts())
-    {
-        QFileInfo fi(QString::fromStdString(fp));
-        QListWidgetItem* item = new QListWidgetItem(fi.fileName(), this->runningListWidget);
-        item->setData(Qt::UserRole, QString::fromStdString(fp));
-        this->runningListWidget->addItem(item);
-    }
+    for (int i = 0; i < this->scriptListWidget->count(); ++i)
+        this->updateItemState(this->scriptListWidget->item(i));
 }
 
-void ScriptingConsoleDialog::refreshAvailableList()
+void ScriptingConsoleDialog::refreshList()
 {
-    this->availableListWidget->clear();
-
+    // Preserve the set of running paths so we can restore their state after re-scanning.
     QDir scriptsDir(QDir::currentPath() + "/Data/Scripts");
+
+    this->scriptListWidget->clear();
+
     if (!scriptsDir.exists())
     {
         this->appendOutputLine("Data/Scripts directory not found.");
         return;
     }
 
-    QFileInfoList files = scriptsDir.entryInfoList(QStringList() << "*.js", QDir::Files, QDir::Name);
-    for (const QFileInfo& fileInfo : files)
-    {
-        QListWidgetItem* item = new QListWidgetItem(fileInfo.fileName(), this->availableListWidget);
-        item->setData(Qt::UserRole, fileInfo.absoluteFilePath());
-        this->availableListWidget->addItem(item);
-    }
+    const QFileInfoList files = scriptsDir.entryInfoList(
+        QStringList() << "*.js", QDir::Files, QDir::Name);
 
-    this->appendOutputLine(QString("Discovered %1 script(s).").arg(files.size()));
+    for (const QFileInfo& fi : files)
+    {
+        QListWidgetItem* item = new QListWidgetItem(fi.fileName(), this->scriptListWidget);
+        item->setData(Qt::UserRole, fi.absoluteFilePath());
+        this->updateItemState(item);
+        this->scriptListWidget->addItem(item);
+    }
+}
+
+void ScriptingConsoleDialog::updateItemState(QListWidgetItem* item)
+{
+    const QString path = item->data(Qt::UserRole).toString();
+    const bool running = ScriptManager::GetInstance().IsScriptRunning(path.toStdString());
+
+    if (running)
+    {
+        item->setIcon(makePlayIcon());
+        item->setBackground(QColor(0x43, 0xA0, 0x47, 55));
+    }
+    else
+    {
+        item->setIcon(QIcon());
+        item->setBackground(QBrush());
+    }
 }
 
 void ScriptingConsoleDialog::appendOutputLine(const QString& line)
@@ -143,56 +168,53 @@ void ScriptingConsoleDialog::appendOutputLine(const QString& line)
     this->outputTextEdit->appendPlainText(line);
 }
 
-void ScriptingConsoleDialog::onRefreshScripts()
+void ScriptingConsoleDialog::onRunSelected()
 {
-    this->refreshAvailableList();
-    this->RefreshRunningList();
-}
-
-void ScriptingConsoleDialog::onRunSelectedScript()
-{
-    QList<QListWidgetItem*> items = this->availableListWidget->selectedItems();
+    const QList<QListWidgetItem*> items = this->scriptListWidget->selectedItems();
     if (items.isEmpty())
     {
         this->appendOutputLine("No script selected.");
         return;
     }
-
     for (QListWidgetItem* item : items)
     {
         const QString path = item->data(Qt::UserRole).toString();
         if (ScriptManager::GetInstance().IsScriptRunning(path.toStdString()))
         {
-            this->appendOutputLine(QString("[already running] %1").arg(path));
+            this->appendOutputLine(QString("[already running] %1").arg(item->text()));
             continue;
         }
         const bool ok = ScriptManager::GetInstance().LoadScript(path.toStdString());
-        this->appendOutputLine(QString("[%1] %2").arg(ok ? "OK" : "FAIL", path));
+        this->appendOutputLine(QString(ok ? "[started] %1" : "[failed] %1").arg(item->text()));
+        this->updateItemState(item);
     }
-
-    this->RefreshRunningList();
 }
 
-void ScriptingConsoleDialog::onStopSelectedScript()
+void ScriptingConsoleDialog::onStopSelected()
 {
-    QList<QListWidgetItem*> items = this->runningListWidget->selectedItems();
+    const QList<QListWidgetItem*> items = this->scriptListWidget->selectedItems();
     if (items.isEmpty())
     {
-        this->appendOutputLine("No running script selected.");
+        this->appendOutputLine("No script selected.");
         return;
     }
-
     for (QListWidgetItem* item : items)
     {
         const QString path = item->data(Qt::UserRole).toString();
+        if (!ScriptManager::GetInstance().IsScriptRunning(path.toStdString()))
+            continue;
         ScriptManager::GetInstance().StopScript(path.toStdString());
-        this->appendOutputLine(QString("[stopped] %1").arg(path));
+        this->appendOutputLine(QString("[stopped] %1").arg(item->text()));
+        this->updateItemState(item);
     }
-
-    this->RefreshRunningList();
 }
 
-void ScriptingConsoleDialog::onStopAllScripts()
+void ScriptingConsoleDialog::onRefresh()
+{
+    this->refreshList();
+}
+
+void ScriptingConsoleDialog::onStopAll()
 {
     ScriptManager::GetInstance().StopAll();
     this->appendOutputLine("[stopped all scripts]");
@@ -202,4 +224,20 @@ void ScriptingConsoleDialog::onStopAllScripts()
 void ScriptingConsoleDialog::onClearOutput()
 {
     this->outputTextEdit->clear();
+}
+
+void ScriptingConsoleDialog::onItemDoubleClicked(QListWidgetItem* item)
+{
+    const QString path = item->data(Qt::UserRole).toString();
+    if (ScriptManager::GetInstance().IsScriptRunning(path.toStdString()))
+    {
+        ScriptManager::GetInstance().StopScript(path.toStdString());
+        this->appendOutputLine(QString("[stopped] %1").arg(item->text()));
+    }
+    else
+    {
+        const bool ok = ScriptManager::GetInstance().LoadScript(path.toStdString());
+        this->appendOutputLine(QString(ok ? "[started] %1" : "[failed] %1").arg(item->text()));
+    }
+    this->updateItemState(item);
 }

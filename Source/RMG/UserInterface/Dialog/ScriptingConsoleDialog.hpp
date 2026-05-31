@@ -14,6 +14,7 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSplitter>
 
 namespace UserInterface
 {
@@ -27,32 +28,33 @@ class ScriptingConsoleDialog : public QDialog
     explicit ScriptingConsoleDialog(QWidget* parent = nullptr);
     ~ScriptingConsoleDialog(void);
 
-    // Call after a script is loaded or stopped externally to refresh the running list.
+    // Refresh the visual state of all script items (called when a script stops externally).
     void RefreshRunningList();
 
   private:
-    // Available scripts panel
-    QListWidget* availableListWidget = nullptr;
-    QPushButton* refreshButton = nullptr;
-    QPushButton* runSelectedButton = nullptr;
+    QSplitter*      splitter         = nullptr;
+    QListWidget*    scriptListWidget = nullptr;
+    QPlainTextEdit* outputTextEdit   = nullptr;
 
-    // Running scripts panel
-    QListWidget* runningListWidget = nullptr;
-    QPushButton* stopSelectedButton = nullptr;
-    QPushButton* stopAllButton = nullptr;
+    QPushButton* runButton      = nullptr;
+    QPushButton* stopButton     = nullptr;
+    QPushButton* refreshButton  = nullptr;
+    QPushButton* stopAllButton  = nullptr;
+    QPushButton* clearButton    = nullptr;
 
-    QPushButton* clearOutputButton = nullptr;
-    QPlainTextEdit* outputTextEdit = nullptr;
+    static QIcon makePlayIcon();
 
-    void refreshAvailableList();
+    void refreshList();
+    void updateItemState(QListWidgetItem* item);
     void appendOutputLine(const QString& line);
 
   private slots:
-    void onRefreshScripts();
-    void onRunSelectedScript();
-    void onStopSelectedScript();
-    void onStopAllScripts();
+    void onRunSelected();
+    void onStopSelected();
+    void onRefresh();
+    void onStopAll();
     void onClearOutput();
+    void onItemDoubleClicked(QListWidgetItem* item);
 };
 } // namespace Dialog
 } // namespace UserInterface
