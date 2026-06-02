@@ -133,6 +133,14 @@ typedef m64p_error (*ptr_CoreGetRomSettings)(m64p_rom_settings *, int, int, int)
 EXPORT m64p_error CALL CoreGetRomSettings(m64p_rom_settings *, int, int, int);
 #endif
 
+/* Per-instruction PC callback for scripting (interpreter modes only) */
+typedef m64p_error (*ptr_SetPCCallback)(void (*)(void *, uint32_t), void *);
+#if defined(M64P_CORE_PROTOTYPES)
+EXPORT m64p_error CALL SetPCCallback(void (*pFunc)(void *, uint32_t), void *Context);
+#endif
+
+/* PCCallback is internal; declared in callbacks.h for interpreter use */
+
 #ifdef __cplusplus
 }
 #endif

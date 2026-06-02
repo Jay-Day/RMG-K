@@ -31,6 +31,7 @@
 #endif
 
 #include <cstdlib>
+#include <iostream>
 
 // Windows/POSIX dynamic loading
 #ifdef _WIN32
@@ -240,6 +241,15 @@ static void FrameCallback(unsigned int frameIndex)
     ScriptManager::GetInstance().OnFrameUpdate(pc);
 #endif
 }
+
+// Per-instruction PC callback (called from mupen64plus-core interpreter loop)
+#ifdef SCRIPTING_ENABLED
+static void ScriptingPCCallback(void* Context, uint32_t pc)
+{
+    (void)Context;
+    ScriptManager::GetInstance().OnPCUpdate(pc);
+}
+#endif
 
 // Kaillera PIF sync callback (called from mupen64plus-core after netplay sync)
 static void KailleraPifSyncCallback(struct pif* pif)
@@ -774,6 +784,24 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #endif
             }
         }
+
+#ifdef SCRIPTING_ENABLED
+        // Register per-instruction PC callback for scripting
+        typedef m64p_error (*set_pc_callback_t)(void (*)(void *, uint32_t), void *);
+        set_pc_callback_t SetPCCallback = nullptr;
+        if (coreHandle)
+        {
+#ifdef _WIN32
+            SetPCCallback = (set_pc_callback_t)GetProcAddress((HMODULE)coreHandle, "SetPCCallback");
+#else
+            SetPCCallback = (set_pc_callback_t)dlsym(coreHandle, "SetPCCallback");
+#endif
+            if (SetPCCallback)
+            {
+                SetPCCallback(ScriptingPCCallback, nullptr);
+            }
+        }
+#endif
 #endif
 
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
@@ -1124,4 +1152,12 @@ CORE_EXPORT bool CoreGetControllerState(int port, bool& connected, bool& valid, 
         rx[3] = snap.data[3];
     }
     return true;
+}
+
+CORE_EXPORT bool CoreAreOnPCHooksSupported(void)
+{
+    // on_pc hooks only work with interpreter modes (0=pure, 1=cached)
+    // JIT/dynarec (2+) doesn't support per-instruction callbacks
+    int cpuEmulator = CoreSettingsGetIntValue(SettingsID::Core_CPU_Emulator);
+    return cpuEmulator < 2;
 }

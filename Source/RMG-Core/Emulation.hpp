@@ -73,4 +73,7 @@ int CoreGetCurrentFrameCount(void);
 // rx receives [buttons_hi, buttons_lo, x_axis, y_axis] when valid is true.
 bool CoreGetControllerState(int port, bool& connected, bool& valid, uint8_t (&rx)[4]);
 
+// returns whether on_pc hooks are supported (interpreter modes only, not JIT/dynarec)
+bool CoreAreOnPCHooksSupported(void);
+
 #endif // CORE_EMULATION_HPP

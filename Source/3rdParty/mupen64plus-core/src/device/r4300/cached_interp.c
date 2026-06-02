@@ -996,6 +996,7 @@ void run_cached_interpreter(struct r4300_core* r4300)
 #ifdef DBG
         if (g_DebuggerActive) update_debugger((*r4300_pc_struct(r4300))->addr);
 #endif
+        PCCallback((*r4300_pc_struct(r4300))->addr);
         (*r4300_pc_struct(r4300))->ops();
     }
 }

@@ -11,6 +11,7 @@
 #include "ScriptEngine.hpp"
 #include "../RMG-Core/Emulation.hpp"
 #include "../RMG-Core/Library.hpp"
+#include "../RMG-Core/Settings.hpp"
 #include "../RMG-Core/m64p/Handle.hpp"
 #include "../RMG-Core/m64p/api/m64p_types.h"
 
@@ -18,6 +19,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <cstdint>
 
 namespace RMGScript {
@@ -179,6 +181,15 @@ static JSValue Emu_OnBreakpoint(JSContext* ctx, JSValue, int argc, JSValue* argv
 {
     if (argc < 2 || !JS_IsFunction(ctx, argv[1]))
         return JS_ThrowTypeError(ctx, "on_pc(addr, callback): expected (number, function)");
+
+    if (!CoreAreOnPCHooksSupported()) {
+        int cpuEmulator = CoreSettingsGetIntValue(SettingsID::Core_CPU_Emulator);
+        std::string modeName = (cpuEmulator == 0) ? "Pure Interpreter" :
+                               (cpuEmulator == 1) ? "Cached Interpreter" : "Dynamic Recompiler";
+        std::string errMsg = std::string("on_pc() requires interpreter mode (Pure Interpreter or Cached Interpreter). "
+            "Current mode is '") + modeName + "' which doesn't support per-instruction hooks.";
+        return JS_ThrowRangeError(ctx, errMsg.c_str());
+    }
 
     uint32_t addr;
     if (JS_ToUint32(ctx, &addr, argv[0]) != 0) return JS_EXCEPTION;

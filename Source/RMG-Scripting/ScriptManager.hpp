@@ -46,6 +46,9 @@ public:
     // Called each frame from emulation.
     void OnFrameUpdate(uint32_t pc = 0);
 
+    // Called per instruction (via PCCallback) — fires PC hooks.
+    void OnPCUpdate(uint32_t pc);
+
     // Called when emulation stops — shuts down all engines.
     void OnEmulationStop();
 

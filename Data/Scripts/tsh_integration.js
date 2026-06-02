@@ -162,41 +162,83 @@ function sendToTSH(team, player, characterName, skin) {
   }
 }
 
-// Winner detection — replicates function 0x801333E4 → 0x8013234C logic.
-// Disassembly uses: lui $at, 0x8014; lw/sw with signed 16-bit offsets.
-// 0x9bd0 (signed) = -0x6430, so address = 0x80140000 - 0x6430 = 0x80139bd0
-// 0x9bb0 (signed) = -0x6450, so address = 0x80140000 - 0x6450 = 0x80139bb0
-// Winner = first player p where flag[p]==1 AND clear[p]==0
-const WINNER_FLAG_BASE  = 0x80139bd0;
-const WINNER_CLEAR_BASE = 0x80139bb0;
+print("[TSH] Script loaded");
 
-function getWinner() {
-  for (let p = 0; p < 4; p++) {
-    if (memory.read32(WINNER_FLAG_BASE  + p * 4) === 1 &&
-        memory.read32(WINNER_CLEAR_BASE + p * 4) === 0) {
-      return p;
-    }
+// Winner detection via PC hook (if supported) or memory polling fallback
+// v0 contains winner ID (0-3) at: 0x80131EB0 + 0x10C
+
+const WINNER_PC_BASE = 0x80131EB0;
+const WINNER_PC_OFFSET = 0x10C;
+
+function reportWinner(winner) {
+  print("[TSH] Winner: player " + (winner + 1));
+  // Score up for the winning team
+  const port = winner + 1; // winner 0-3 maps to port 1-4
+  const mapping = CONFIG.PORT_MAPPING[port];
+  if (mapping) {
+    const scoreupUrl =
+      CONFIG.SERVER_URL +
+      "/scoreboard" +
+      CONFIG.SCOREBOARD +
+      "-team" +
+      mapping.team +
+      "-scoreup";
+    fetch(scoreupUrl);
   }
-  return -1;
 }
 
-// Winner detection via memory polling
-let winnerReported = false;
-let prevScreen = 0;
-emu.on_frame(() => {
-  const screen = memory.read8(0x800a4ad0);
-  if (screen !== 0x18) {
-    if (prevScreen === 0x18) winnerReported = false;
-    prevScreen = screen;
-    return;
+// Try to use on_pc for efficient per-instruction detection
+let useOnPC = true;
+try {
+  emu.on_pc(WINNER_PC_BASE + WINNER_PC_OFFSET, () => {
+    const winner = emu.getReg("v0") | 0;
+    reportWinner(winner);
+  });
+  print("[TSH] Using per-instruction PC hook");
+} catch (e) {
+  print("[TSH] PC hook not supported: " + e.toString());
+  useOnPC = false;
+}
+
+// Fallback: memory polling if on_pc not supported (JIT mode)
+if (!useOnPC) {
+  const WINNER_FLAG_BASE = 0x80139bd0;
+  const WINNER_CLEAR_BASE = 0x80139bb0;
+
+  let winnerReported = false;
+  let prevScreen = 0;
+
+  function getWinner() {
+    for (let p = 0; p < 4; p++) {
+      if (
+        memory.read32(WINNER_FLAG_BASE + p * 4) === 1 &&
+        memory.read32(WINNER_CLEAR_BASE + p * 4) === 0
+      ) {
+        return p;
+      }
+    }
+    return -1;
   }
-  prevScreen = screen;
-  if (winnerReported) return;
-  const w = getWinner();
-  if (w < 0) return;
-  winnerReported = true;
-  print("[TSH] Winner: player " + (w + 1));
-});
+
+  emu.on_frame(() => {
+    const screen = memory.read8(0x800a4ad0);
+    if (screen !== 0x18) {
+      if (prevScreen === 0x18) winnerReported = false;
+      prevScreen = screen;
+      return;
+    }
+    prevScreen = screen;
+
+    if (winnerReported) return;
+
+    const w = getWinner();
+    if (w < 0) return;
+
+    winnerReported = true;
+    reportWinner(w);
+  });
+  print("[TSH] Using memory polling fallback");
+}
 
 // Character/skin updates
 emu.on_frame(() => {

@@ -88,6 +88,12 @@ void ScriptManager::OnFrameUpdate(uint32_t pc) {
     }
 }
 
+void ScriptManager::OnPCUpdate(uint32_t pc) {
+    for (auto& [fp, engine] : m_engines) {
+        engine->FireBreakpointCallback(pc);
+    }
+}
+
 void ScriptManager::OnEmulationStop() {
     StopAll();
 }
