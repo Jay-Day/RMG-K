@@ -227,9 +227,12 @@ static void FrameCallback(unsigned int frameIndex)
             resolved = true;
         }
         if (getPtr) {
-            void* pcPtr = getPtr(M64P_CPU_PC);
-            if (pcPtr) {
-                pc = *static_cast<uint32_t*>(pcPtr);
+            // Read EPC (COP0 register 14): the address where the game was executing
+            // when the VI interrupt fired. M64P_CPU_PC gives the interrupt handler's
+            // PC (always OS kernel code), while EPC gives the interrupted game code.
+            uint32_t* cp0 = static_cast<uint32_t*>(getPtr(M64P_CPU_REG_COP0));
+            if (cp0) {
+                pc = cp0[14]; // CP0_EPC_REG
             }
         }
     }

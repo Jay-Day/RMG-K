@@ -10,12 +10,16 @@
 #ifndef RMGK_EVENT_MODULE_HPP
 #define RMGK_EVENT_MODULE_HPP
 
+#include <cstdint>
 extern "C" { typedef struct JSContext JSContext; }
 
 namespace RMGScript {
 
 // Registers the global `emu` object into the JS context.
 void RegisterEventModule(JSContext* ctx);
+
+// Returns the current R4300 PC (0 if unavailable).
+uint32_t GetCurrentPC();
 
 } // namespace RMGScript
 

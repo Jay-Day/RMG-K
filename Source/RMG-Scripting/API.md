@@ -45,11 +45,27 @@ emu.isRunning(); // → boolean
 emu.isPaused(); // → boolean
 emu.getPC(); // → number — current R4300 program counter
 
+// General-purpose registers (lower 32 bits, unsigned).
+// Accepts a register index (0–31) or MIPS ABI name.
+// Names: zero at v0 v1 a0 a1 a2 a3 t0-t7 s0-s7 t8 t9 k0 k1 gp sp fp ra
+emu.getReg(index_or_name); // → number
+emu.getRegs(); // → object — all 32 GPRs keyed by ABI name
+
+// Multiply result registers.
+emu.getHI(); // → number
+emu.getLO(); // → number
+
+// Floating-point registers (COP1), returned as float values.
+emu.getFReg(index); // → number — f0–f31 (index 0–31)
+emu.getFRegs(); // → object — { f0: ..., f1: ..., ..., f31: ... }
+
 // Register a function to be called every emulated frame.
 emu.on_frame(callback);
 
-// Register a function to be called when the PC reaches a specific address.
-emu.on_breakpoint(addr, callback);
+// Register a function to be called when the PC equals addr at the frame boundary.
+// Checked once per frame via getPC() — fires if the CPU happens to be at that
+// address when the VI interrupt fires.
+emu.on_pc(addr, callback);
 ```
 
 **Example — print a memory value every frame:**
