@@ -26,9 +26,7 @@
 
 #include "m64p/Api.hpp"
 
-#ifdef SCRIPTING_ENABLED
-#include "../RMG-Scripting/ScriptManager.hpp"
-#endif
+#include "ScriptingHooks.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -208,38 +206,36 @@ static void FrameCallback(unsigned int frameIndex)
     s_SyncedThisFrame = false;
 #endif
     
-#ifdef SCRIPTING_ENABLED
-    // Call script engine frame callbacks (fire on a non-emulation thread)
-    // If the core exports debugger functions, sample the current PC once per frame.
-    uint32_t pc = 0;
-    {
-        using ptr_DebugGetCPUDataPtr = void* (*)(m64p_dbg_cpu_data);
-        static ptr_DebugGetCPUDataPtr getPtr = nullptr;
-        static bool resolved = false;
-        if (!resolved) {
-            void* coreHandle = m64p::Core.GetHandle();
-            if (coreHandle) {
+    if (CoreGetScriptingHooks().onFrameUpdate) {
+        // If the core exports debugger functions, sample the current PC once per frame.
+        uint32_t pc = 0;
+        {
+            using ptr_DebugGetCPUDataPtr = void* (*)(m64p_dbg_cpu_data);
+            static ptr_DebugGetCPUDataPtr getPtr = nullptr;
+            static bool resolved = false;
+            if (!resolved) {
+                void* coreHandle = m64p::Core.GetHandle();
+                if (coreHandle) {
 #ifdef _WIN32
-                getPtr = (ptr_DebugGetCPUDataPtr)GetProcAddress((HMODULE)coreHandle, "DebugGetCPUDataPtr");
+                    getPtr = (ptr_DebugGetCPUDataPtr)GetProcAddress((HMODULE)coreHandle, "DebugGetCPUDataPtr");
 #else
-                getPtr = (ptr_DebugGetCPUDataPtr)dlsym(coreHandle, "DebugGetCPUDataPtr");
+                    getPtr = (ptr_DebugGetCPUDataPtr)dlsym(coreHandle, "DebugGetCPUDataPtr");
 #endif
+                }
+                resolved = true;
             }
-            resolved = true;
-        }
-        if (getPtr) {
-            // Read EPC (COP0 register 14): the address where the game was executing
-            // when the VI interrupt fired. M64P_CPU_PC gives the interrupt handler's
-            // PC (always OS kernel code), while EPC gives the interrupted game code.
-            uint32_t* cp0 = static_cast<uint32_t*>(getPtr(M64P_CPU_REG_COP0));
-            if (cp0) {
-                pc = cp0[14]; // CP0_EPC_REG
+            if (getPtr) {
+                // Read EPC (COP0 register 14): the address where the game was executing
+                // when the VI interrupt fired. M64P_CPU_PC gives the interrupt handler's
+                // PC (always OS kernel code), while EPC gives the interrupted game code.
+                uint32_t* cp0 = static_cast<uint32_t*>(getPtr(M64P_CPU_REG_COP0));
+                if (cp0) {
+                    pc = cp0[14]; // CP0_EPC_REG
+                }
             }
         }
+        CoreGetScriptingHooks().onFrameUpdate(pc);
     }
-
-    ScriptManager::GetInstance().OnFrameUpdate(pc);
-#endif
 }
 
 // Per-instruction PC callback (called from mupen64plus-core interpreter loop)
@@ -247,7 +243,8 @@ static void FrameCallback(unsigned int frameIndex)
 static void ScriptingPCCallback(void* Context, uint32_t pc)
 {
     (void)Context;
-    ScriptManager::GetInstance().OnPCUpdate(pc);
+    if (CoreGetScriptingHooks().onPCUpdate)
+        CoreGetScriptingHooks().onPCUpdate(pc);
 }
 #endif
 
@@ -905,9 +902,8 @@ CORE_EXPORT bool CoreStopEmulation(void)
     CoreSetKailleraPlayerNumber(0);
 #endif
 
-#ifdef SCRIPTING_ENABLED
-    ScriptManager::GetInstance().OnEmulationStop();
-#endif
+    if (CoreGetScriptingHooks().onEmulationStop)
+        CoreGetScriptingHooks().onEmulationStop();
 
     return ret == M64ERR_SUCCESS;
 }
@@ -943,12 +939,8 @@ CORE_EXPORT bool CorePauseEmulation(void)
         CoreSetError(error);
     }
 
-#ifdef SCRIPTING_ENABLED
-    if (ret == M64ERR_SUCCESS)
-    {
-        ScriptManager::GetInstance().OnEmulationPause();
-    }
-#endif
+    if (ret == M64ERR_SUCCESS && CoreGetScriptingHooks().onEmulationPause)
+        CoreGetScriptingHooks().onEmulationPause();
 
     return ret == M64ERR_SUCCESS;
 }
@@ -984,12 +976,8 @@ CORE_EXPORT bool CoreResumeEmulation(void)
         CoreSetError(error);
     }
 
-#ifdef SCRIPTING_ENABLED
-    if (ret == M64ERR_SUCCESS)
-    {
-        ScriptManager::GetInstance().OnEmulationResume();
-    }
-#endif
+    if (ret == M64ERR_SUCCESS && CoreGetScriptingHooks().onEmulationResume)
+        CoreGetScriptingHooks().onEmulationResume();
 
     return ret == M64ERR_SUCCESS;
 }

@@ -54,6 +54,7 @@ set(RMG_CORE_SOURCES
     File.cpp
     Key.cpp
     Rom.cpp
+    ScriptingHooks.cpp
 )
 
 if (NETPLAY)

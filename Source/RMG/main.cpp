@@ -34,6 +34,7 @@
 
 #ifdef SCRIPTING_ENABLED
 #include <RMG-Scripting/ScriptManager.hpp>
+#include <RMG-Core/ScriptingHooks.hpp>
 #include <filesystem>
 #endif
 
@@ -206,6 +207,18 @@ int main(int argc, char **argv)
 
     QCoreApplication::setApplicationName("RMG Kaillera Edition");
     QCoreApplication::setApplicationVersion(QString::fromStdString(CoreGetVersion()));
+
+#ifdef SCRIPTING_ENABLED
+    {
+        ScriptingHooks hooks;
+        hooks.onFrameUpdate    = [](uint32_t pc) { ScriptManager::GetInstance().OnFrameUpdate(pc); };
+        hooks.onPCUpdate       = [](uint32_t pc) { ScriptManager::GetInstance().OnPCUpdate(pc); };
+        hooks.onEmulationStop  = []()            { ScriptManager::GetInstance().OnEmulationStop(); };
+        hooks.onEmulationPause = []()            { ScriptManager::GetInstance().OnEmulationPause(); };
+        hooks.onEmulationResume= []()            { ScriptManager::GetInstance().OnEmulationResume(); };
+        CoreSetScriptingHooks(hooks);
+    }
+#endif
 
     // setup commandline parser
     QCommandLineParser parser;
