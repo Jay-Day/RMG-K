@@ -29,8 +29,10 @@ target_link_libraries(RMG-Scripting
 target_include_directories(RMG-Scripting PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../
-    ${CMAKE_SOURCE_DIR}/Source/3rdParty/quickjs
     ${CURL_INCLUDE_DIRS}
+)
+target_include_directories(RMG-Scripting PRIVATE
+    ${CMAKE_SOURCE_DIR}/Source/3rdParty/quickjs
 )
 
 target_include_directories(RMG-Scripting PRIVATE

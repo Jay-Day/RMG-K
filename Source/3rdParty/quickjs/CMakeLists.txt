@@ -11,7 +11,7 @@ set(QUICKJS_SOURCES
 
 add_library(quickjs STATIC ${QUICKJS_SOURCES})
 
-target_include_directories(quickjs PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(quickjs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_compile_definitions(quickjs PRIVATE
     CONFIG_VERSION="2025-04-26"
