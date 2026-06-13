@@ -175,6 +175,11 @@ target_include_directories(RMG PRIVATE
 
 target_link_libraries(RMG Qt6::Gui Qt6::Widgets ${HIDAPI_LIBRARIES})
 
+# RMG sources (e.g. QtKeyToSdl3Key.cpp, VidExtProxy.cpp) include <SDL3/SDL.h>
+# on every platform, so link SDL3 unconditionally. The imported target also
+# carries SDL3's include dirs, which matters when SDL3 is in a custom prefix.
+target_link_libraries(RMG SDL3::SDL3)
+
 if (WIN32)
     target_link_libraries(RMG opengl32 gdi32 user32)
 endif(WIN32)
@@ -194,7 +199,7 @@ endif(KCA_DRAG_DROP)
 if (NETPLAY)
     target_link_libraries(RMG Qt6::WebSockets Qt6::Network)
     if (WIN32)
-        target_link_libraries(RMG SDL3::SDL3 OpenGL::GL)
+        target_link_libraries(RMG OpenGL::GL)
         target_include_directories(RMG PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/../n02
         )
