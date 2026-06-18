@@ -6,7 +6,7 @@
 //
 // Configuration:
 const CONFIG = {
-  SERVER_URL: "http://localhost:5506",
+  SERVER_URL: "http://localhost:5500",
   SCOREBOARD: 1,
   // Map port numbers to team-player coordinates: port 1 -> team 1, player 1, etc.
   PORT_MAPPING: {
@@ -461,8 +461,7 @@ emu.on_frame(() => {
   const screen = memory.read8(CURRENT_SCREEN_ADDR);
   const inBattle = BATTLE_SCREENS.has(screen);
 
-  if (prevInBattle && !inBattle)
-    sendStageToTSH("");
+  if (prevInBattle && !inBattle) sendStageToTSH("");
   prevInBattle = inBattle;
 
   if (frameCount % CONFIG.UPDATE_INTERVAL !== 0) return;
