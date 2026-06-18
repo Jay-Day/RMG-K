@@ -13,6 +13,16 @@
 #include <QString>
 #include "Adapter.hpp"
 
+// Keep the practical default at 100%, with extra headroom up to 200%.
+constexpr double GCA_N64_AXIS_PEAK = 85.0;
+constexpr double GCA_SENSITIVITY_OFFSET = 0.90;
+constexpr double GCA_SENSITIVITY_PER_PERCENT = 0.0045;
+
+inline double GCASensitivityPercentToScale(int sensitivityPercent)
+{
+    return GCA_SENSITIVITY_OFFSET + (static_cast<double>(sensitivityPercent) * GCA_SENSITIVITY_PER_PERCENT);
+}
+
 enum class GCInput : int
 {
     None = -1,

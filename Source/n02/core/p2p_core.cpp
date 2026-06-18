@@ -190,9 +190,38 @@ static void p2p_mark_lobby_ping_alive() {
 	P2PCORE.last_ping_echo_time = now;
 }
 
+static bool p2p_reset_lobby_after_peer_left_locked() {
+	P2PCORE.CONNECTED = false;
+	P2PCORE.status = P2PCORE.HOST ? 1 : 0;
+	P2PCORE.ping = -1;
+	P2PCORE.USERREADY = false;
+	P2PCORE.PEERREADY = false;
+	P2PCORE.USERLOADED = false;
+	P2PCORE.PEERLOADED = false;
+	P2PCORE.last_ping_sent_time = 0;
+	P2PCORE.last_ping_echo_time = 0;
+	p2p_clear_rollback_packets_locked(false);
+
+	if (!P2PCORE.HOST)
+		return true;
+
+	p2p_core_debug("reinitializing server...");
+	delete P2PCORE.connection;
+	P2PCORE.connection = new p2p_message;
+	if (!P2PCORE.connection->initialize(P2PCORE.PORT)){
+		p2p_core_debug("Error initializing socket at specified port");
+		P2PCORE.status = 0;
+		return false;
+	}
+
+	P2PCORE.PORT = P2PCORE.connection->get_port();
+	p2p_core_debug("Done");
+	return true;
+}
+
 bool p2p_is_connected(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
-	return P2PCORE.status != 0 && P2PCORE.ping != -1 && P2PCORE.connection;
+	return P2PCORE.CONNECTED && P2PCORE.status != 0 && P2PCORE.ping != -1 && P2PCORE.connection;
 }
 int p2p_get_frames_count(){
 	std::lock_guard<std::recursive_mutex> lock(p2p_transport_mutex);
@@ -547,11 +576,7 @@ bool p2p_rollback_process_control(){
 			break;
 		case EXIT:
 			p2p_peer_left_callback();
-			P2PCORE.status = P2PCORE.HOST?1:0;
-			P2PCORE.CONNECTED = false;
-			P2PCORE.last_ping_sent_time = 0;
-			P2PCORE.last_ping_echo_time = 0;
-			p2p_clear_rollback_packets_locked(false);
+			p2p_reset_lobby_after_peer_left_locked();
 			p2p_end_game_callback();
 			ended_game = true;
 			break;

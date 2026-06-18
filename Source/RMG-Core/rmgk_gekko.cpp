@@ -50,10 +50,22 @@ namespace
 constexpr unsigned int kGekkoStateCapacity = 24u * 1024u * 1024u;
 constexpr int kGekkoMaxLoggedFrames = 600;
 constexpr int kGekkoWaitSleepUs = 100;
-constexpr float kGekkoTimesyncDeadzone = 0.5f;
-constexpr double kGekkoTimesyncStrength = 0.002;
-constexpr double kGekkoTimesyncMinScale = 0.99;
-constexpr double kGekkoTimesyncMaxScale = 1.01;
+// Slippi-style asymmetric time-sync (see project-slippi Ishiiruka,
+// EXI_DeviceSlippi.cpp shouldAdvanceOnlineFrame). The behind player speeds up
+// at twice the authority the ahead player slows down, and the deadzone is
+// biased so each client happily sits slightly ahead. This keeps the ahead
+// player close to full speed while still shrinking its speculative window, so
+// it sees fewer rollback "teleports" of the remote character.
+//
+// Slippi works in microseconds of clock offset; we work in gekko_frames_ahead()
+// (signed frames, +ve = local ahead), so the windows/deadzones below are the
+// frame-unit equivalents of Slippi's 8000us / -250us deadzone and 3-frame ramp.
+constexpr float  kGekkoTimesyncAheadDeadzone  = 0.48f;  // tolerate being ahead by ~half a frame
+constexpr float  kGekkoTimesyncBehindDeadzone = 0.015f; // but correct almost immediately when behind
+constexpr double kGekkoTimesyncSpeedUpWindow  = 3.0;    // frames behind to reach full speed-up
+constexpr double kGekkoTimesyncSlowDownWindow = 3.0;    // frames ahead to reach full slow-down
+constexpr double kGekkoTimesyncMaxSpeedUp     = 0.01;   // behind: up to +1.0% (scale -> 1.01)
+constexpr double kGekkoTimesyncMaxSlowDown    = 0.005;  // ahead:  up to -0.5% (scale -> 0.995)
 constexpr double kGekkoTimesyncLerp = 0.15;
 // Sample gekko_frames_ahead() this often when recomputing the target
 // emulation speed. Mirrors Slippi's SLIPPI_ONLINE_LOCKSTEP_INTERVAL (30
@@ -761,13 +773,24 @@ void apply_gekko_frame_pacing()
         (g_GekkoTimesyncSampleCounter % kGekkoTimesyncIntervalFrames) == 0;
     if (isSampleFrame)
     {
-        double newTarget = 1.0;
-        if (framesAhead >= kGekkoTimesyncDeadzone || framesAhead <= -kGekkoTimesyncDeadzone)
+        // Asymmetric correction: the behind player speeds up at twice the
+        // authority the ahead player slows down, with a deadzone biased toward
+        // sitting slightly ahead. Ramp linearly to the cap over the configured
+        // frame window, matching Slippi's shouldAdvanceOnlineFrame.
+        double deviation = 0.0;
+        if (framesAhead < -kGekkoTimesyncBehindDeadzone)
         {
-            newTarget = 1.0 - (static_cast<double>(framesAhead) * kGekkoTimesyncStrength);
-            newTarget = std::clamp(newTarget, kGekkoTimesyncMinScale, kGekkoTimesyncMaxScale);
+            const double multiplier =
+                std::min(-static_cast<double>(framesAhead) / kGekkoTimesyncSpeedUpWindow, 1.0);
+            deviation = multiplier * kGekkoTimesyncMaxSpeedUp;
         }
-        g_GekkoTimesyncTargetScale = newTarget;
+        else if (framesAhead > kGekkoTimesyncAheadDeadzone)
+        {
+            const double multiplier =
+                std::min(static_cast<double>(framesAhead) / kGekkoTimesyncSlowDownWindow, 1.0);
+            deviation = multiplier * -kGekkoTimesyncMaxSlowDown;
+        }
+        g_GekkoTimesyncTargetScale = 1.0 + deviation;
     }
     g_GekkoTimesyncSampleCounter++;
 

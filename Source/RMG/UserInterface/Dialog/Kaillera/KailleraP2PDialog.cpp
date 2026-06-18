@@ -1554,12 +1554,27 @@ void KailleraP2PDialog::cleanupSessionForClose()
     m_peerReady = false;
     if (m_btnReady) m_btnReady->setChecked(false);
 
-    if (isRollbackMode() && m_rollbackGameActive)
+    const bool n02GameRunning = n02::isGameRunning();
+    const bool p2pGameStateActive = m_gameActive || m_rollbackGameActive || n02GameRunning;
+    if (p2pGameStateActive)
     {
+        const bool rollbackSessionWasActive = isRollbackMode() && (m_rollbackGameActive || n02GameRunning);
         m_rollbackGameActive = false;
         m_gameActive = false;
-        emit rollbackSessionEnded();
+        if (rollbackSessionWasActive)
+        {
+            emit rollbackSessionEnded();
+        }
+        else
+        {
+            CoreMarkKailleraGameInactive();
+        }
         CoreStopEmulation();
+        n02::resetStateMachine();
+    }
+    else if (n02::getState() != 0)
+    {
+        n02::resetStateMachine();
     }
 
     // Remove from public game list

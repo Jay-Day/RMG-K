@@ -74,6 +74,9 @@ int getState();
 // Set KSSDFA input to trigger state transition
 void setStateInput(int input);
 
+// Reset the n02 state machine to lobby/polling state without emitting game lifecycle callbacks.
+void resetStateMachine();
+
 // Process one step of the state machine (non-blocking)
 // Returns true if state machine is still active (state != 3)
 bool processStateMachineStep();

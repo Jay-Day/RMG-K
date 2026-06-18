@@ -1552,7 +1552,7 @@ static l_Setting get_setting(SettingsID settingId)
         break;
 
     case SettingsID::GCAInput_Deadzone:
-        setting = {SETTING_SECTION_GCA, "Deadzone", 9};
+        setting = {SETTING_SECTION_GCA, "Deadzone", 5};
         break;
     case SettingsID::GCAInput_Sensitivity:
         setting = {SETTING_SECTION_GCA, "Sensitivity", 100};
@@ -2110,6 +2110,29 @@ CORE_EXPORT bool CoreSettingsUpgrade(void)
 
         CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, false);
         CoreSettingsSetValue(SettingsID::Kaillera_FlashOnJoin, true);
+    }
+
+    if (settingsVersion.empty() || settings_version_at_or_before(settingsVersionRaw, 0, 9, 7))
+    {
+        constexpr int oldEquivalentSensitivityAtSliderZero = 90;
+        constexpr int oldEquivalentSensitivityPerHundredSlider = 45;
+        constexpr int minMigratedSensitivity = 100;
+        constexpr int maxMigratedSensitivity = 200;
+        const l_Setting gcaSensitivity = get_setting(SettingsID::GCAInput_Sensitivity);
+
+        if (config_key_exists(gcaSensitivity.Section, gcaSensitivity.Key))
+        {
+            const int sensitivity = CoreSettingsGetIntValue(SettingsID::GCAInput_Sensitivity);
+            if (sensitivity > minMigratedSensitivity)
+            {
+                const int migratedSensitivity =
+                    (((sensitivity - oldEquivalentSensitivityAtSliderZero) * 100) +
+                    (oldEquivalentSensitivityPerHundredSlider / 2)) /
+                    oldEquivalentSensitivityPerHundredSlider;
+                CoreSettingsSetValue(SettingsID::GCAInput_Sensitivity,
+                    std::clamp(migratedSensitivity, minMigratedSensitivity, maxMigratedSensitivity));
+            }
+        }
     }
 
     // save core version

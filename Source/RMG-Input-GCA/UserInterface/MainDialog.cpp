@@ -10,6 +10,7 @@
 #include "MainDialog.hpp"
 
 #include <RMG-Core/Settings.hpp>
+#include <algorithm>
 #include <cmath>
 #include <climits>
 
@@ -325,14 +326,15 @@ void MainDialog::updateAxisReadout()
 
     // Apply deadzone and sensitivity (same formula as main.cpp GetKeys)
     const double deadzone = static_cast<double>(this->deadZoneSlider->value()) / 100.0;
-    const double sensitivity = static_cast<double>(this->sensitivitySlider->value()) / 100.0;
-    const double n64Max = 85.0 * sensitivity;
+    const double sensitivity = GCASensitivityPercentToScale(this->sensitivitySlider->value());
+    const double n64Max = GCA_N64_AXIS_PEAK * sensitivity;
 
     auto scaleAxis = [](double input, double dz, double max) -> int {
         double absInput = std::abs(input);
         if (absInput <= dz) return 0;
         double scaled = (absInput - dz) / (1.0 - dz) * max;
-        int result = static_cast<int>(std::min(scaled, max));
+        double axisMax = std::min(max, static_cast<double>(INT8_MAX));
+        int result = static_cast<int>(std::min(scaled, axisMax));
         return (input >= 0) ? result : -result;
     };
 

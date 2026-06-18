@@ -1,4 +1,4 @@
-# RMG-Gekkonet (Rosalie's Mupen GUI - Gekkonet)
+# RMG-K (Rosalie's Mupen GUI - Kaillera+ GekkoNet)
 
 Rosalie's Mupen GUI is a free and open-source mupen64plus front-end written in C++.
 
@@ -12,11 +12,20 @@ This fork is focused around netplay with the Kaillera protocol, supporting both 
 
 ## Netplay
 
+### Peer-to-Peer (P2P) Mode
+- **NAT traversal via connect codes**: No port forwarding required
+- **Persistent connect codes**: Your code is saved across sessions
+- **Frame delay selector**: Choose Auto or 1-9 frames, with ping-range labels showing the recommended range for each setting
+- **Live ping display**: See your connection quality in real-time
+- **Public game listing**: Optionally list your hosted game on the public waiting-games browser
+- **Ready sync**: Both players must ready up before the game starts
+<img width="676" height="613" alt="image" src="https://github.com/user-attachments/assets/6cf1cfcb-891f-457e-af8d-e348c99c2ffd" />
+<img width="822" height="573" alt="image" src="https://github.com/user-attachments/assets/13915a82-54b5-44ce-bb1a-f0aac5304220" />
+
+
 ### Kaillera Server Mode
 
-<p align="center">
-<img width="494" height="329" alt="image" src="https://github.com/user-attachments/assets/47adbed6-640b-4238-9927-c2114aa48c7d" />
-</p>
+
 
 - **Server browser** with sortable columns, ping, and region info
 - **Favorite servers** with custom server support
@@ -25,17 +34,14 @@ This fork is focused around netplay with the Kaillera protocol, supporting both 
 - **Connection persistence**: Stay connected between games for quick restarts
 - **Beep/flash on join**: Get notified when a player joins your game room
 - **Auto host message**: Configurable message sent to players joining your room
+<p align="center">
+<img width="825" height="593" alt="image" src="https://github.com/user-attachments/assets/d5145a6c-4bc2-4f52-901b-7da7f0f0ae8d" />
+<img width="961" height="620" alt="image" src="https://github.com/user-attachments/assets/549ba26f-03d7-4950-a3cb-7a68cc9e6c98" />
+<img width="283" height="38" alt="image" src="https://github.com/user-attachments/assets/6616186e-ab5d-4598-8b2c-4916d4a54dc4" />
+</p>
 
-  <img width="283" height="38" alt="image" src="https://github.com/user-attachments/assets/6616186e-ab5d-4598-8b2c-4916d4a54dc4" />
 
-### Peer-to-Peer (P2P) Mode
 
-- **NAT traversal via connect codes**: No port forwarding required
-- **Persistent connect codes**: Your code is saved across sessions
-- **Frame delay selector**: Choose Auto or 1-9 frames, with ping-range labels showing the recommended range for each setting
-- **Live ping display**: See your connection quality in real-time
-- **Public game listing**: Optionally list your hosted game on the public waiting-games browser
-- **Ready sync**: Both players must ready up before the game starts
 
 ### In-Game Chat
 - **On-Screen Chat Display**: See what your opponent is saying without alt-tabbing. Customizable or disableable in Settings -> OSD
@@ -48,17 +54,20 @@ This fork is focused around netplay with the Kaillera protocol, supporting both 
 - Playback with pause, resume, and frame-advance controls
 - Player names visible in the replay list
 
-  <img width="604" height="198" alt="image" src="https://github.com/user-attachments/assets/c2b52fb1-6bb4-43a2-b36e-90145a166116" />
+<img width="702" height="482" alt="image" src="https://github.com/user-attachments/assets/99a90662-7cae-400f-b5bf-0831750b8375" />
+
 
 ## Input
 
 ### Raphnet N64 Adapter Support
 - Yes, your N64 controller works :D
+<img width="462" height="604" alt="image" src="https://github.com/user-attachments/assets/c8579f1e-3e0e-4f2d-a1cc-a9e6bf2bdcd9" />
 
 ### GCC Adapter Support
-- OEM Nintendo Gamecube adapter and Input Integrity Lossless adapter tested and working
+- OEM Nintendo / Mayflash / Input Integrity Lossless / HHL GC Pocket+ adapters all have been tested and work online
 
-  <img width="582" height="650" alt="image" src="https://github.com/user-attachments/assets/193d6069-c917-43fc-a557-9b897da273fd" />
+<img width="582" height="754" alt="image" src="https://github.com/user-attachments/assets/54ca80cb-10d7-402a-8c0e-15a0378d5a5f" />
+
 
 ### RMG-Input (pronounced Nrage)
 RMG-Input uses independent per-axis scaling similar to the Ownasaurus [USBtoN64v2](https://github.com/Ownasaurus/USBtoN64v2) adapter and N-Rage input plugin:
@@ -67,7 +76,8 @@ RMG-Input uses independent per-axis scaling similar to the Ownasaurus [USBtoN64v
 - Linear scale: 100% = 127 (protocol max)
 - Per-axis deadzone handling instead of circular deadzone
 
-  <img width="1059" height="736" align="center" alt="Screenshot 2026-01-16 181813" src="https://github.com/user-attachments/assets/eacacb9b-f828-4486-a0f0-a8b539c8951f" />
+<img width="919" height="793" alt="image" src="https://github.com/user-attachments/assets/6192636d-4bcb-4104-b08a-696dcb416e7d" />
+
 
 ## Building
 

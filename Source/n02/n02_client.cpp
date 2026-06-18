@@ -847,6 +847,12 @@ void setStateInput(int input) {
     KSSDFA.input = input;
 }
 
+void resetStateMachine() {
+    close_recording();
+    KSSDFA.state = 0;
+    KSSDFA.input = 0;
+}
+
 void setUICallbacks(const UICallbacks& callbacks) {
     s_uiCallbacks = callbacks;
 }

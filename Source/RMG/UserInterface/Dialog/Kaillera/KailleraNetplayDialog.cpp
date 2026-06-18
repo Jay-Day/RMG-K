@@ -4307,6 +4307,7 @@ void KailleraNetplayDialog::hostP2P(bool showOnPublicList)
     int port = CoreSettingsGetIntValue(SettingsID::Kaillera_Port);
     if (port <= 0 || port > 65535) port = 27886;
 
+    n02::resetStateMachine();
     if (p2p_core_initialize(true, port, APP, gameBytes.data(), usernameBytes.data()))
     {
         const bool stateTimerWasRunning =
@@ -4470,6 +4471,7 @@ void KailleraNetplayDialog::onP2PJoin()
     bool isCode = looksLikeTraversalCode(addrText);
     const QString normalizedCode = isCode ? normalizeTraversalCode(addrText) : QString();
 
+    n02::resetStateMachine();
     if (p2p_core_initialize(false, 0, APP, (char*)"", usernameBytes.data()))
     {
         const bool stateTimerWasRunning =
