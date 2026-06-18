@@ -11,6 +11,7 @@
 
 #include <RMG-Scripting/ScriptManager.hpp>
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QEventLoop>
 #include <QFileInfo>
@@ -162,6 +163,7 @@ ScriptingConsoleDialog::ScriptingConsoleDialog(QWidget* parent) : QDialog(parent
             this->m_inputWaitCV.wait(lock, [this] { return !this->m_inputWaiting.load(); });
             return this->m_inputWaitResult;
         }
+        return {};
     });
 
     this->refreshList();
