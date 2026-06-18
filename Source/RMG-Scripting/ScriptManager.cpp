@@ -10,6 +10,7 @@
 #include "ScriptManager.hpp"
 #include "ScriptEngine.hpp"
 
+#include <filesystem>
 #include <iostream>
 
 ScriptManager& ScriptManager::GetInstance() {
@@ -36,12 +37,24 @@ bool ScriptManager::LoadScript(const std::string& filepath) {
     engine->SetOutputCallback([fp, cb](const std::string& line) {
         if (cb) cb(line);
     });
+    engine->SetInputPromptCallback(m_inputPromptCallback);
 
     if (!engine->LoadScript(filepath)) {
         return false;
     }
 
     m_engines[filepath] = std::move(engine);
+
+    // If the script registered no persistent callbacks it has fully run — clean up immediately.
+    if (!m_engines[filepath]->HasCallbacks()) {
+        m_engines[filepath]->Shutdown();
+        m_engines.erase(filepath);
+        if (m_outputCallback) {
+            std::string name = std::filesystem::path(filepath).filename().string();
+            m_outputCallback("[done] " + name);
+        }
+    }
+
     return true;
 }
 
@@ -95,7 +108,24 @@ void ScriptManager::OnPCUpdate(uint32_t pc) {
 }
 
 void ScriptManager::OnEmulationStop() {
+    for (auto& [fp, engine] : m_engines) {
+        if (m_outputCallback) {
+            std::string name = std::filesystem::path(fp).filename().string();
+            m_outputCallback("[stopped] " + name);
+        }
+    }
     StopAll();
+}
+
+void ScriptManager::SubmitInput(const std::string& text) {
+    for (auto& [fp, engine] : m_engines)
+        engine->FireInputCallback(text);
+}
+
+void ScriptManager::SetInputPromptCallback(std::function<std::string(const std::string&)> callback) {
+    m_inputPromptCallback = std::move(callback);
+    for (auto& [fp, engine] : m_engines)
+        engine->SetInputPromptCallback(m_inputPromptCallback);
 }
 
 void ScriptManager::OnEmulationPause() {

@@ -158,6 +158,27 @@ void ScriptEngine::RegisterJSBreakpointCallback(uint32_t address, JSValue fn)
     m_bpCallbackRefs[address].push_back(fn);
 }
 
+void ScriptEngine::RegisterJSInputCallback(JSValue fn)
+{
+    m_inputCallbackRefs.push_back(fn);
+}
+
+void ScriptEngine::FireInputCallback(const std::string& text)
+{
+    if (m_inputCallbackRefs.empty()) return;
+
+    std::lock_guard<std::mutex> lock(m_jsMutex);
+    JS_UpdateStackTop(m_rt);
+
+    JSValue arg = JS_NewStringLen(m_ctx, text.c_str(), text.size());
+    for (JSValue fn : m_inputCallbackRefs) {
+        JSValue ret = JS_Call(m_ctx, fn, JS_UNDEFINED, 1, &arg);
+        if (JS_IsException(ret)) ReportException("on_input");
+        JS_FreeValue(m_ctx, ret);
+    }
+    JS_FreeValue(m_ctx, arg);
+}
+
 void ScriptEngine::FireFrameCallbacks()
 {
     if (m_frameCallbackRefs.empty()) return;
@@ -208,6 +229,19 @@ void ScriptEngine::SetOutputCallback(ScriptOutputCallbackFunc cb)
     m_outputCallback = std::move(cb);
 }
 
+void ScriptEngine::SetInputPromptCallback(ScriptInputPromptCallbackFunc cb)
+{
+    std::lock_guard<std::mutex> lock(m_inputPromptMutex);
+    m_inputPromptCallback = std::move(cb);
+}
+
+std::string ScriptEngine::DoInputPrompt(const std::string& message)
+{
+    ScriptInputPromptCallbackFunc cb;
+    { std::lock_guard<std::mutex> lock(m_inputPromptMutex); cb = m_inputPromptCallback; }
+    return cb ? cb(message) : "";
+}
+
 void ScriptEngine::EmitOutput(const std::string& line)
 {
     ScriptOutputCallbackFunc cb;
@@ -251,4 +285,6 @@ void ScriptEngine::FreeCallbackRefs()
     for (auto& [addr, refs] : m_bpCallbackRefs)
         for (JSValue v : refs) JS_FreeValue(m_ctx, v);
     m_bpCallbackRefs.clear();
+    for (JSValue v : m_inputCallbackRefs) JS_FreeValue(m_ctx, v);
+    m_inputCallbackRefs.clear();
 }

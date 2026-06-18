@@ -11,10 +11,18 @@
 #define SCRIPTINGCONSOLEDIALOG_HPP
 
 #include <QDialog>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSplitter>
+
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <string>
+
+class QEventLoop;
 
 namespace UserInterface
 {
@@ -35,12 +43,21 @@ class ScriptingConsoleDialog : public QDialog
     QSplitter*      splitter         = nullptr;
     QListWidget*    scriptListWidget = nullptr;
     QPlainTextEdit* outputTextEdit   = nullptr;
+    QLineEdit*      inputLineEdit    = nullptr;
+    QPushButton*    sendButton       = nullptr;
 
     QPushButton* runButton      = nullptr;
     QPushButton* stopButton     = nullptr;
     QPushButton* refreshButton  = nullptr;
     QPushButton* stopAllButton  = nullptr;
     QPushButton* clearButton    = nullptr;
+
+    // State for emu.input() blocking wait
+    std::atomic<bool>       m_inputWaiting{false};
+    QEventLoop*             m_inputWaitLoopPtr{nullptr}; // set on UI thread path
+    std::string             m_inputWaitResult;
+    std::mutex              m_inputWaitMutex;
+    std::condition_variable m_inputWaitCV;
 
     static QIcon makePlayIcon();
 
@@ -54,6 +71,7 @@ class ScriptingConsoleDialog : public QDialog
     void onRefresh();
     void onStopAll();
     void onClearOutput();
+    void onSendInput();
     void onItemDoubleClicked(QListWidgetItem* item);
 };
 } // namespace Dialog

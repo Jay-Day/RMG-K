@@ -36,6 +36,7 @@ static T LoadCoreSymbol(const char* name)
 
 static void* GetCPUData(m64p_dbg_cpu_data type)
 {
+    if (!CoreIsEmulationRunning()) return nullptr;
     using FnPtr = void* (*)(m64p_dbg_cpu_data);
     static FnPtr fn = nullptr;
     if (!fn) fn = LoadCoreSymbol<FnPtr>("DebugGetCPUDataPtr");
@@ -188,7 +189,7 @@ static JSValue Emu_OnBreakpoint(JSContext* ctx, JSValue, int argc, JSValue* argv
                                (cpuEmulator == 1) ? "Cached Interpreter" : "Dynamic Recompiler";
         std::string errMsg = std::string("on_pc() requires interpreter mode (Pure Interpreter or Cached Interpreter). "
             "Current mode is '") + modeName + "' which doesn't support per-instruction hooks.";
-        return JS_ThrowRangeError(ctx, errMsg.c_str());
+        return JS_ThrowRangeError(ctx, "%s", errMsg.c_str());
     }
 
     uint32_t addr;
@@ -198,6 +199,43 @@ static JSValue Emu_OnBreakpoint(JSContext* ctx, JSValue, int argc, JSValue* argv
     if (!engine) return JS_ThrowInternalError(ctx, "script engine unavailable");
 
     engine->RegisterJSBreakpointCallback(addr, JS_DupValue(ctx, argv[1]));
+    return JS_UNDEFINED;
+}
+
+// ─── emu.input(message) — blocking user prompt ───────────────────────────────
+
+static JSValue Emu_Input(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    std::string message;
+    if (argc >= 1) {
+        JSValue str = JS_ToString(ctx, argv[0]);
+        if (!JS_IsException(str)) {
+            const char* s = JS_ToCString(ctx, str);
+            if (s) { message = s; JS_FreeCString(ctx, s); }
+            JS_FreeValue(ctx, str);
+        }
+    }
+
+    ScriptEngine* engine = GetEngineFromContext(ctx);
+    if (!engine)
+        return JS_ThrowInternalError(ctx, "script engine unavailable");
+
+    std::string result = engine->DoInputPrompt(message);
+    return JS_NewStringLen(ctx, result.c_str(), result.size());
+}
+
+// ─── emu.on_input(callback) ──────────────────────────────────────────────────
+
+static JSValue Emu_OnInput(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    if (argc < 1 || !JS_IsFunction(ctx, argv[0]))
+        return JS_ThrowTypeError(ctx, "on_input(callback): expected a function");
+
+    ScriptEngine* engine = GetEngineFromContext(ctx);
+    if (!engine)
+        return JS_ThrowInternalError(ctx, "script engine unavailable");
+
+    engine->RegisterJSInputCallback(JS_DupValue(ctx, argv[0]));
     return JS_UNDEFINED;
 }
 
@@ -231,6 +269,8 @@ void RegisterEventModule(JSContext* ctx)
 
     SET("on_frame",      Emu_OnFrame,      1);
     SET("on_pc",         Emu_OnBreakpoint, 2);
+    SET("on_input",      Emu_OnInput,      1);
+    SET("input",         Emu_Input,        1);
     SET("getPC",         Emu_GetPC,        0);
     SET("getEPC",        Emu_GetEPC,       0);
     SET("isPaused",      Emu_IsPaused,     0);

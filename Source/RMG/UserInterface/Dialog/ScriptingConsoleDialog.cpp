@@ -12,15 +12,19 @@
 #include <RMG-Scripting/ScriptManager.hpp>
 
 #include <QDir>
+#include <QEventLoop>
 #include <QFileInfo>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QLabel>
 #include <QMetaObject>
 #include <QPainter>
 #include <QPixmap>
 #include <QPolygon>
+#include <QThread>
 #include <QVBoxLayout>
+#include <QWidget>
 
 using namespace UserInterface::Dialog;
 
@@ -58,16 +62,36 @@ ScriptingConsoleDialog::ScriptingConsoleDialog(QWidget* parent) : QDialog(parent
     this->scriptListWidget->setIconSize(QSize(14, 14));
     this->scriptListWidget->setMinimumWidth(160);
 
-    this->outputTextEdit = new QPlainTextEdit(this->splitter);
+    // Right panel: output + input row
+    QWidget*     rightPanel  = new QWidget(this->splitter);
+    QVBoxLayout* rightLayout = new QVBoxLayout(rightPanel);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(4);
+
+    this->outputTextEdit = new QPlainTextEdit(rightPanel);
     this->outputTextEdit->setReadOnly(true);
     QFont mono("monospace");
 #ifdef _WIN32
     mono.setStyleHint(QFont::TypeWriter);
 #endif
     this->outputTextEdit->setFont(mono);
+    rightLayout->addWidget(this->outputTextEdit, 1);
+
+    QHBoxLayout* inputRow = new QHBoxLayout();
+    inputRow->setSpacing(4);
+    QLabel* promptLabel = new QLabel(">", rightPanel);
+    promptLabel->setFont(mono);
+    this->inputLineEdit = new QLineEdit(rightPanel);
+    this->inputLineEdit->setFont(mono);
+    this->inputLineEdit->setPlaceholderText("Input...");
+    this->sendButton = new QPushButton("Send", rightPanel);
+    inputRow->addWidget(promptLabel);
+    inputRow->addWidget(this->inputLineEdit, 1);
+    inputRow->addWidget(this->sendButton);
+    rightLayout->addLayout(inputRow);
 
     this->splitter->addWidget(this->scriptListWidget);
-    this->splitter->addWidget(this->outputTextEdit);
+    this->splitter->addWidget(rightPanel);
     this->splitter->setStretchFactor(0, 1);
     this->splitter->setStretchFactor(1, 3);
     root->addWidget(this->splitter, 1);
@@ -100,11 +124,44 @@ ScriptingConsoleDialog::ScriptingConsoleDialog(QWidget* parent) : QDialog(parent
     connect(this->scriptListWidget, &QListWidget::itemDoubleClicked,
             this, &ScriptingConsoleDialog::onItemDoubleClicked);
 
+    connect(this->sendButton,    &QPushButton::clicked, this, &ScriptingConsoleDialog::onSendInput);
+    connect(this->inputLineEdit, &QLineEdit::returnPressed, this, &ScriptingConsoleDialog::onSendInput);
+
     ScriptManager::GetInstance().SetOutputCallback([this](const std::string& line) {
         const QString qline = QString::fromStdString(line);
         QMetaObject::invokeMethod(this, [this, qline]() {
             this->appendOutputLine(qline);
         }, Qt::QueuedConnection);
+    });
+
+    ScriptManager::GetInstance().SetInputPromptCallback([this](const std::string& message) -> std::string {
+        const QString qmsg = QString::fromStdString(message);
+
+        if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
+            // UI thread: print the prompt, then spin a nested event loop so the
+            // input bar stays responsive and we can capture the next submission.
+            this->appendOutputLine(qmsg);
+            QEventLoop loop;
+            this->m_inputWaiting.store(true);
+            this->m_inputWaitLoopPtr = &loop;
+            this->m_inputWaitResult.clear();
+            loop.exec();
+            this->m_inputWaiting.store(false);
+            this->m_inputWaitLoopPtr = nullptr;
+            return this->m_inputWaitResult;
+        } else {
+            // Non-UI thread (e.g. emulation thread): print on UI thread async,
+            // then block with a condition variable until onSendInput delivers.
+            QMetaObject::invokeMethod(this, [this, qmsg]() {
+                this->appendOutputLine(qmsg);
+            }, Qt::QueuedConnection);
+            std::unique_lock<std::mutex> lock(this->m_inputWaitMutex);
+            this->m_inputWaiting.store(true);
+            this->m_inputWaitLoopPtr = nullptr;
+            this->m_inputWaitResult.clear();
+            this->m_inputWaitCV.wait(lock, [this] { return !this->m_inputWaiting.load(); });
+            return this->m_inputWaitResult;
+        }
     });
 
     this->refreshList();
@@ -113,6 +170,7 @@ ScriptingConsoleDialog::ScriptingConsoleDialog(QWidget* parent) : QDialog(parent
 ScriptingConsoleDialog::~ScriptingConsoleDialog(void)
 {
     ScriptManager::GetInstance().SetOutputCallback(nullptr);
+    ScriptManager::GetInstance().SetInputPromptCallback(nullptr);
 }
 
 void ScriptingConsoleDialog::RefreshRunningList()
@@ -185,7 +243,11 @@ void ScriptingConsoleDialog::onRunSelected()
             continue;
         }
         const bool ok = ScriptManager::GetInstance().LoadScript(path.toStdString());
-        this->appendOutputLine(QString(ok ? "[started] %1" : "[failed] %1").arg(item->text()));
+        if (!ok)
+            this->appendOutputLine(QString("[failed] %1").arg(item->text()));
+        else if (ScriptManager::GetInstance().IsScriptRunning(path.toStdString()))
+            this->appendOutputLine(QString("[started] %1").arg(item->text()));
+        // else: script ran to completion with no callbacks — [done] already printed by ScriptManager
         this->updateItemState(item);
     }
 }
@@ -226,6 +288,33 @@ void ScriptingConsoleDialog::onClearOutput()
     this->outputTextEdit->clear();
 }
 
+void ScriptingConsoleDialog::onSendInput()
+{
+    const QString text = this->inputLineEdit->text().trimmed();
+    if (text.isEmpty())
+        return;
+    this->inputLineEdit->clear();
+    this->appendOutputLine("> " + text);
+
+    if (this->m_inputWaiting.load()) {
+        // A script is blocking on emu.input() — deliver to it, don't broadcast.
+        if (this->m_inputWaitLoopPtr) {
+            // UI thread nested event loop path
+            this->m_inputWaitResult = text.toStdString();
+            this->m_inputWaitLoopPtr->quit();
+        } else {
+            // Non-UI thread condition variable path
+            std::lock_guard<std::mutex> lock(this->m_inputWaitMutex);
+            this->m_inputWaitResult = text.toStdString();
+            this->m_inputWaiting.store(false);
+            this->m_inputWaitCV.notify_one();
+        }
+        return;
+    }
+
+    ScriptManager::GetInstance().SubmitInput(text.toStdString());
+}
+
 void ScriptingConsoleDialog::onItemDoubleClicked(QListWidgetItem* item)
 {
     const QString path = item->data(Qt::UserRole).toString();
@@ -237,7 +326,10 @@ void ScriptingConsoleDialog::onItemDoubleClicked(QListWidgetItem* item)
     else
     {
         const bool ok = ScriptManager::GetInstance().LoadScript(path.toStdString());
-        this->appendOutputLine(QString(ok ? "[started] %1" : "[failed] %1").arg(item->text()));
+        if (!ok)
+            this->appendOutputLine(QString("[failed] %1").arg(item->text()));
+        else if (ScriptManager::GetInstance().IsScriptRunning(path.toStdString()))
+            this->appendOutputLine(QString("[started] %1").arg(item->text()));
     }
     this->updateItemState(item);
 }

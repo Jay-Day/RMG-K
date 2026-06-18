@@ -8,11 +8,13 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "NetworkModule.hpp"
+#include "ScriptEngine.hpp"
 
 #include <quickjs.h>
 #include <curl/curl.h>
 
 #include <string>
+#include <thread>
 #include <vector>
 #include <utility>
 
@@ -24,40 +26,48 @@ static size_t CurlWriteCallback(void* data, size_t size, size_t nmemb, std::stri
     return size * nmemb;
 }
 
-// fetch(url [, options]) -> { status, ok, body, headers }
-//
-// options: {
-//   method:  string          (default "GET")
-//   body:    string          (request body)
-//   headers: { key: value }  (extra request headers)
-// }
-static JSValue JS_Fetch(JSContext* ctx, JSValue, int argc, JSValue* argv)
+struct FetchRequest {
+    std::string url;
+    std::string method = "GET";
+    std::string body;
+    std::vector<std::pair<std::string, std::string>> headers;
+};
+
+struct FetchResponse {
+    long        status = 0;
+    bool        ok     = false;
+    std::string body;
+    std::string headers;
+    std::string error; // non-empty on curl failure
+};
+
+// Parse fetch(url [, options]) arguments into a FetchRequest.
+static bool ParseFetchArgs(JSContext* ctx, int argc, JSValue* argv, FetchRequest& req)
 {
-    if (argc < 1)
-        return JS_ThrowTypeError(ctx, "fetch(url[, options])");
+    if (argc < 1) {
+        JS_ThrowTypeError(ctx, "fetch(url[, options])");
+        return false;
+    }
 
     const char* url = JS_ToCString(ctx, argv[0]);
-    if (!url) return JS_EXCEPTION;
+    if (!url) return false;
+    req.url = url;
+    JS_FreeCString(ctx, url);
 
-    std::string method = "GET";
-    std::string reqBody;
-    std::vector<std::pair<std::string, std::string>> reqHeaders;
-
-    // Parse options object
     if (argc >= 2 && JS_IsObject(argv[1])) {
         JSValue opt = argv[1];
 
         JSValue mval = JS_GetPropertyStr(ctx, opt, "method");
         if (!JS_IsUndefined(mval)) {
             const char* m = JS_ToCString(ctx, mval);
-            if (m) { method = m; JS_FreeCString(ctx, m); }
+            if (m) { req.method = m; JS_FreeCString(ctx, m); }
         }
         JS_FreeValue(ctx, mval);
 
         JSValue bval = JS_GetPropertyStr(ctx, opt, "body");
         if (!JS_IsUndefined(bval)) {
             const char* b = JS_ToCString(ctx, bval);
-            if (b) { reqBody = b; JS_FreeCString(ctx, b); }
+            if (b) { req.body = b; JS_FreeCString(ctx, b); }
         }
         JS_FreeValue(ctx, bval);
 
@@ -71,7 +81,7 @@ static JSValue JS_Fetch(JSContext* ctx, JSValue, int argc, JSValue* argv)
                     const char* key = JS_AtomToCString(ctx, props[i].atom);
                     JSValue vv = JS_GetProperty(ctx, hval, props[i].atom);
                     const char* val = JS_ToCString(ctx, vv);
-                    if (key && val) reqHeaders.emplace_back(key, val);
+                    if (key && val) req.headers.emplace_back(key, val);
                     JS_FreeCString(ctx, val);
                     JS_FreeValue(ctx, vv);
                     JS_FreeCString(ctx, key);
@@ -83,67 +93,75 @@ static JSValue JS_Fetch(JSContext* ctx, JSValue, int argc, JSValue* argv)
         JS_FreeValue(ctx, hval);
     }
 
-    // ── libcurl request ──────────────────────────────────────────────────────
+    return true;
+}
+
+// Execute a FetchRequest synchronously (blocks the calling thread).
+static FetchResponse DoFetch(const FetchRequest& req)
+{
+    FetchResponse resp;
 
     CURL* curl = curl_easy_init();
-    if (!curl) {
-        JS_FreeCString(ctx, url);
-        return JS_ThrowInternalError(ctx, "fetch: curl_easy_init failed");
-    }
+    if (!curl) { resp.error = "curl_easy_init failed"; return resp; }
 
-    std::string respBody;
-    std::string respHeaders;
-    long httpCode = 0;
+    curl_easy_setopt(curl, CURLOPT_URL,            req.url.c_str());
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,  1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT,  5L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT,         10L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,   CurlWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,       &resp.body);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION,  CurlWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA,      &resp.headers);
 
-    curl_easy_setopt(curl, CURLOPT_URL,           url);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  CurlWriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBody);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, CurlWriteCallback);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &respHeaders);
-
-    if (method == "POST") {
+    if (req.method == "POST") {
         curl_easy_setopt(curl, CURLOPT_POST,          1L);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS,    reqBody.c_str());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)reqBody.size());
-    } else if (method != "GET") {
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method.c_str());
-        if (!reqBody.empty()) {
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS,    reqBody.c_str());
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)reqBody.size());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS,    req.body.c_str());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)req.body.size());
+    } else if (req.method != "GET") {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
+        if (!req.body.empty()) {
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS,    req.body.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)req.body.size());
         }
     }
 
     struct curl_slist* headerList = nullptr;
-    for (auto& [k, v] : reqHeaders) {
+    for (auto& [k, v] : req.headers)
         headerList = curl_slist_append(headerList, (k + ": " + v).c_str());
-    }
     if (headerList)
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerList);
 
-    CURLcode res = curl_easy_perform(curl);
-    if (res == CURLE_OK)
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-
-    const char* curlErr = (res != CURLE_OK) ? curl_easy_strerror(res) : nullptr;
+    CURLcode rc = curl_easy_perform(curl);
+    if (rc == CURLE_OK) {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.status);
+        resp.ok = (resp.status >= 200 && resp.status < 300);
+    } else {
+        resp.error = curl_easy_strerror(rc);
+    }
 
     if (headerList) curl_slist_free_all(headerList);
     curl_easy_cleanup(curl);
-    JS_FreeCString(ctx, url);
+    return resp;
+}
 
-    if (curlErr)
-        return JS_ThrowInternalError(ctx, "fetch: %s", curlErr);
+// fetch(url [, options]) → { status, ok, body, headers, json() }
+// Blocking — use fetchAsync() inside on_frame to avoid stalling emulation.
+static JSValue JS_Fetch(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    FetchRequest req;
+    if (!ParseFetchArgs(ctx, argc, argv, req)) return JS_EXCEPTION;
 
-    // ── Build response object ─────────────────────────────────────────────────
+    FetchResponse resp = DoFetch(req);
 
-    JSValue resp = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, resp, "status",  JS_NewInt32(ctx, (int)httpCode));
-    JS_SetPropertyStr(ctx, resp, "ok",      JS_NewBool(ctx, httpCode >= 200 && httpCode < 300));
-    JS_SetPropertyStr(ctx, resp, "body",    JS_NewStringLen(ctx, respBody.c_str(), respBody.size()));
-    JS_SetPropertyStr(ctx, resp, "headers", JS_NewStringLen(ctx, respHeaders.c_str(), respHeaders.size()));
-    // json() helper: parses body as JSON
-    JS_SetPropertyStr(ctx, resp, "json",
+    if (!resp.error.empty())
+        return JS_ThrowInternalError(ctx, "fetch: %s", resp.error.c_str());
+
+    JSValue obj = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, obj, "status",  JS_NewInt32(ctx, (int)resp.status));
+    JS_SetPropertyStr(ctx, obj, "ok",      JS_NewBool(ctx, resp.ok));
+    JS_SetPropertyStr(ctx, obj, "body",    JS_NewStringLen(ctx, resp.body.c_str(), resp.body.size()));
+    JS_SetPropertyStr(ctx, obj, "headers", JS_NewStringLen(ctx, resp.headers.c_str(), resp.headers.size()));
+    JS_SetPropertyStr(ctx, obj, "json",
         JS_NewCFunction(ctx,
             [](JSContext* c, JSValue thisVal, int, JSValue*) -> JSValue {
                 JSValue bodyStr = JS_GetPropertyStr(c, thisVal, "body");
@@ -155,14 +173,37 @@ static JSValue JS_Fetch(JSContext* ctx, JSValue, int argc, JSValue* argv)
                 return parsed;
             },
             "json", 0));
-    return resp;
+    return obj;
+}
+
+// fetchAsync(url [, options])
+// Fires the request on a background thread and returns immediately.
+// Use this inside on_frame callbacks to avoid blocking emulation.
+static JSValue JS_FetchAsync(JSContext* ctx, JSValue, int argc, JSValue* argv)
+{
+    FetchRequest req;
+    if (!ParseFetchArgs(ctx, argc, argv, req)) return JS_EXCEPTION;
+
+    ScriptOutputCallbackFunc cb;
+    ScriptEngine* engine = GetEngineFromContext(ctx);
+    if (engine) cb = engine->CopyOutputCallback();
+
+    std::thread([req = std::move(req), cb]() {
+        FetchResponse resp = DoFetch(req);
+        if (!resp.error.empty() && cb)
+            cb("[fetchAsync error] " + resp.error);
+    }).detach();
+
+    return JS_UNDEFINED;
 }
 
 void RegisterNetworkModule(JSContext* ctx)
 {
     JSValue global = JS_GetGlobalObject(ctx);
     JS_SetPropertyStr(ctx, global, "fetch",
-        JS_NewCFunction(ctx, JS_Fetch, "fetch", 1));
+        JS_NewCFunction(ctx, JS_Fetch,      "fetch",      1));
+    JS_SetPropertyStr(ctx, global, "fetchAsync",
+        JS_NewCFunction(ctx, JS_FetchAsync, "fetchAsync", 1));
     JS_FreeValue(ctx, global);
 }
 

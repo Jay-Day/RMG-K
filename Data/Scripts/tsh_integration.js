@@ -6,7 +6,7 @@
 //
 // Configuration:
 const CONFIG = {
-  SERVER_URL: "http://localhost:5505",
+  SERVER_URL: "http://localhost:5506",
   SCOREBOARD: 1,
   // Map port numbers to team-player coordinates: port 1 -> team 1, player 1, etc.
   PORT_MAPPING: {
@@ -312,20 +312,20 @@ const OFF_DMG = 0x2c;
 
 // CSS player struct layout (CharacterSelect.asm)
 const CSS_OFF_CHAR_ID = 0x48; // word — selected character ID
-const CSS_OFF_COSTUME = 0x4C; // word — selected costume index
-const CSS_OFF_TYPE    = 0x84; // word — panel state: 0=human, 1=CPU, 2=closed
+const CSS_OFF_COSTUME = 0x4c; // word — selected costume index
+const CSS_OFF_TYPE = 0x84; // word — panel state: 0=human, 1=CPU, 2=closed
 
 // Per-screen CSS struct base addresses and strides (CharacterSelect.asm constants)
 const CSS_STRUCTS = {
-  [SCREENS.VS_CSS]:       { base: 0x8013BA88, stride: 0xBC },
-  [SCREENS.CSS_1P]:       { base: 0x80138EC0, stride: 0xB8 },
-  [SCREENS.TRAINING_CSS]: { base: 0x80138558, stride: 0xB8 },
-  [SCREENS.BONUS_1_CSS]:  { base: 0x80137620, stride: 0xB8 },
-  [SCREENS.BONUS_2_CSS]:  { base: 0x80137620, stride: 0xB8 },
+  [SCREENS.VS_CSS]: { base: 0x8013ba88, stride: 0xbc },
+  [SCREENS.CSS_1P]: { base: 0x80138ec0, stride: 0xb8 },
+  [SCREENS.TRAINING_CSS]: { base: 0x80138558, stride: 0xb8 },
+  [SCREENS.BONUS_1_CSS]: { base: 0x80137620, stride: 0xb8 },
+  [SCREENS.BONUS_2_CSS]: { base: 0x80137620, stride: 0xb8 },
 };
 
 let frameCount = 0;
-let lastStageId = -1;
+let prevInBattle = false;
 
 function getCharacterCodename(charId) {
   return CHARACTER_CODENAMES[charId] || null;
@@ -357,29 +357,7 @@ function sendToTSH(team, player, codename, skin) {
     headers: { "Content-Type": "application/json" },
   };
 
-  const response = fetch(endpoint, options);
-  if (response.ok) {
-    console.log(
-      "TSH Update sent: Team " +
-        team +
-        ", Player " +
-        player +
-        " -> " +
-        codename +
-        " (skin " +
-        skin +
-        ")",
-    );
-  } else {
-    console.log(
-      "TSH Update failed (HTTP " +
-        response.status +
-        "): Team " +
-        team +
-        ", Player " +
-        player,
-    );
-  }
+  fetchAsync(endpoint, options);
 }
 
 function sendStageToTSH(codename) {
@@ -395,14 +373,7 @@ function sendStageToTSH(codename) {
     headers: { "Content-Type": "application/json" },
   };
 
-  const response = fetch(endpoint, options);
-  if (response.ok) {
-    console.log("[TSH] Stage set: " + codename);
-  } else {
-    console.log(
-      "[TSH] Stage update failed (HTTP " + response.status + "): " + codename,
-    );
-  }
+  fetchAsync(endpoint, options);
 }
 
 print("[TSH] Script loaded");
@@ -425,7 +396,7 @@ function reportWinner(winner) {
       "-team" +
       mapping.team +
       "-scoreup";
-    fetch(scoreupUrl);
+    fetchAsync(scoreupUrl);
   }
 }
 
@@ -488,20 +459,19 @@ emu.on_frame(() => {
   frameCount++;
 
   const screen = memory.read8(CURRENT_SCREEN_ADDR);
+  const inBattle = BATTLE_SCREENS.has(screen);
 
-  // Track stage during matches only
-  if (BATTLE_SCREENS.has(screen)) {
-    const stageId = memory.read8(STAGE_ID_ADDR);
-    if (stageId !== lastStageId) {
-      lastStageId = stageId;
-      const codename = getStageName(stageId);
-      if (codename) sendStageToTSH(codename);
-    }
-  }
+  if (prevInBattle && !inBattle)
+    sendStageToTSH("");
+  prevInBattle = inBattle;
 
   if (frameCount % CONFIG.UPDATE_INTERVAL !== 0) return;
 
-  if (BATTLE_SCREENS.has(screen)) {
+  if (inBattle) {
+    // Send stage every interval (not just on change)
+    const stageId = memory.read8(STAGE_ID_ADDR);
+    const stageName = getStageName(stageId);
+    if (stageName) sendStageToTSH(stageName);
     // Read characters from in-battle player struct linked list
     let nodeAddr = memory.read32(P_STRUCT_HEAD);
     let port = 1;
@@ -532,10 +502,10 @@ emu.on_frame(() => {
         const type = memory.read32(base + CSS_OFF_TYPE);
         if (type === 2) continue; // closed slot
 
-        const charId  = memory.read32(base + CSS_OFF_CHAR_ID);
-        const costume = memory.read32(base + CSS_OFF_COSTUME) & 0xFF;
+        const charId = memory.read32(base + CSS_OFF_CHAR_ID);
+        const costume = memory.read32(base + CSS_OFF_COSTUME) & 0xff;
         const codename = getCharacterCodename(charId);
-        const mapping  = CONFIG.PORT_MAPPING[port];
+        const mapping = CONFIG.PORT_MAPPING[port];
         if (mapping && codename) {
           sendToTSH(mapping.team, mapping.player, codename, costume);
         }

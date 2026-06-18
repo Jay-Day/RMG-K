@@ -66,6 +66,17 @@ emu.on_frame(callback);
 // Checked once per frame via getPC() — fires if the CPU happens to be at that
 // address when the VI interrupt fires.
 emu.on_pc(addr, callback);
+
+// Register a function to be called when the user submits text via the input bar
+// at the bottom of the Scripting Console. The callback receives the text as a string.
+// Multiple scripts can each register their own on_input handler.
+emu.on_input(callback);
+
+// Block script execution, print message to the output panel, and wait for the
+// user to submit text via the input bar. Returns the submitted string, or ""
+// if the bar was submitted empty. Safe to call from any context (frame
+// callbacks, on_input handlers, or top-level script code).
+emu.input(message); // → string
 ```
 
 **Example — print a memory value every frame:**
@@ -75,6 +86,29 @@ emu.on_frame(() => {
   const hp = memory.read8(0x8033b21d);
   print("HP:", hp);
 });
+```
+
+**Example — interactive memory read/write from the console input bar:**
+
+```js
+emu.on_input((text) => {
+  const parts = text.trim().split(/\s+/);
+  if (parts[0] === "read") {
+    const addr = parseInt(parts[1], 16);
+    print("0x" + memory.read32(addr).toString(16).padStart(8, "0"));
+  } else if (parts[0] === "write") {
+    memory.write32(parseInt(parts[1], 16), parseInt(parts[2], 16));
+    print("done");
+  }
+});
+```
+
+**Example — blocking input prompt:**
+
+```js
+const a = parseInt(emu.input("First number:"),  10);
+const b = parseInt(emu.input("Second number:"), 10);
+print(a + " + " + b + " = " + (a + b));
 ```
 
 ---
@@ -229,23 +263,28 @@ emu.on_frame(() => {
 
 ---
 
-## `fetch` — HTTP requests
-
-Follows the browser `fetch` API (blocking, runs synchronously).
+## `fetch` / `fetchAsync` — HTTP requests
 
 ```js
-const res = await fetch("https://example.com/api");
-const data = res.json();
-
-// With options
-const res2 = await fetch("https://example.com/api", {
+// Blocking — waits for the response before continuing.
+// Use for scripts that need the result (e.g. reading data from a server).
+const res = fetch("https://example.com/api");
+const res2 = fetch("https://example.com/api", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ key: "value" }),
 });
+if (res2.ok) print(res2.body);
+
+// Non-blocking — fires the request on a background thread and returns immediately.
+// Use inside on_frame or anywhere you don't need the response.
+fetchAsync("https://example.com/api");
+fetchAsync("https://example.com/api", { method: "POST", body: "data" });
 ```
 
-Response object fields: `status`, `ok`, `body` (string), `headers` (object), `json()` method.
+`fetch()` response object fields: `status`, `ok`, `body` (string), `headers` (string), `json()` method.
+
+`fetchAsync()` returns `undefined`. On network failure, a `[fetchAsync error]` line is printed to the script's output panel.
 
 ---
 
@@ -272,6 +311,8 @@ See `Data/Scripts/` for ready-to-load example scripts:
 | `example_frame_logger.js`     | Per-frame hook, memory reads, file output                     |
 | `example_breakpoint_watch.js` | PC breakpoint and register inspection                         |
 | `example_input_state.js`      | Read the current virtual controller state for all four ports  |
+| `example_console_input.js`    | Interactive `on_input` handler — read/write memory, dump regs |
+| `example_input_prompt.js`     | `emu.input()` — asks for two numbers and prints their sum     |
 
 ---
 
@@ -279,6 +320,9 @@ See `Data/Scripts/` for ready-to-load example scripts:
 
 - Scripts are evaluated once when loaded. Use `emu.on_frame` for per-frame logic.
 - All JS runs on the emulation thread during frame callbacks — keep callbacks fast.
+- `emu.on_input` callbacks fire when the user presses Enter in the input bar; they are safe to call any time (emulation running or stopped).
+- `emu.input(msg)` prints the message then waits for the next input bar submission. Subsequent submissions are delivered to `on_input` handlers as usual once the wait completes.
+- Input from the bar is broadcast to every running script that has registered an `on_input` handler, unless a script is currently blocking in `emu.input()`.
 - `fetch` makes real network requests; use sparingly inside `on_frame`.
 - Player name availability by mode:
   - **Rollback P2P**: both local and remote player names are set at session start.

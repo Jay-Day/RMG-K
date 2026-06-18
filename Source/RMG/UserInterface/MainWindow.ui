@@ -561,7 +561,7 @@
   </action>
   <action name="action_View_ScriptingConsole">
    <property name="icon">
-    <iconset theme="terminal-box-line"/>
+    <iconset theme="code-box-line"/>
    </property>
    <property name="text">
     <string>&amp;Scripting Console</string>
