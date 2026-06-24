@@ -150,6 +150,8 @@ rmgk_gekko::FrameCallback g_GekkoDebugBeginFrame = nullptr;
 rmgk_gekko::FrameCallback g_GekkoDebugEndFrame = nullptr;
 void* g_GekkoDebugUserData = nullptr;
 int g_GekkoDebugFrameOutput = -1;
+int g_GekkoSessionLocalDelay = 0;
+int g_GekkoSessionPredictionWindow = 0;
 #endif
 
 int rmgk_gekko_core_input_callback(void* values, int size, int players)
@@ -1280,6 +1282,9 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
     const int clampedPredictionWindow = std::clamp(predictionWindow, 1, 10);
 
+    g_GekkoSessionLocalDelay = clampedLocalDelay;
+    g_GekkoSessionPredictionWindow = clampedPredictionWindow;
+
     GekkoConfig config = {};
     config.num_players = static_cast<unsigned char>(players);
     config.max_spectators = 0;
@@ -1453,6 +1458,9 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
 
     const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
     const int predictionWindow = 7;
+
+    g_GekkoSessionLocalDelay = clampedLocalDelay;
+    g_GekkoSessionPredictionWindow = predictionWindow;
 
     GekkoConfig config = {};
     config.num_players = static_cast<unsigned char>(players);
@@ -1831,6 +1839,87 @@ CORE_EXPORT bool rmgk_gekko::toggle_client_input_replay()
     write_gekko_log("client_input_replay mode=off");
     return true;
 #else
+    return false;
+#endif
+}
+
+CORE_EXPORT int rmgk_gekko::get_local_player()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    return g_GekkoLocalPlayer;
+#else
+    return 0;
+#endif
+}
+
+CORE_EXPORT int rmgk_gekko::get_num_players()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    return g_GekkoPlayers;
+#else
+    return 0;
+#endif
+}
+
+CORE_EXPORT int rmgk_gekko::get_local_delay()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    return g_GekkoSessionLocalDelay;
+#else
+    return 0;
+#endif
+}
+
+CORE_EXPORT int rmgk_gekko::get_prediction_window()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    return g_GekkoSessionPredictionWindow;
+#else
+    return 0;
+#endif
+}
+
+CORE_EXPORT bool rmgk_gekko::is_rolling_back()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    return g_GekkoLatchedRunningAhead;
+#else
+    return false;
+#endif
+}
+
+CORE_EXPORT float rmgk_gekko::get_frames_ahead()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    if (g_GekkoSession == nullptr)
+        return 0.0f;
+    return static_cast<float>(gekko_frames_ahead(g_GekkoSession));
+#else
+    return 0.0f;
+#endif
+}
+
+CORE_EXPORT int rmgk_gekko::get_transport_ping()
+{
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    return p2p_get_last_ping();
+#else
+    return 0;
+#endif
+}
+
+CORE_EXPORT bool rmgk_gekko::get_network_stats(float& avgPing, float& jitter)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    if (g_GekkoSession == nullptr || g_GekkoRemoteHandle < 0)
+        return false;
+    GekkoNetworkStats stats = {};
+    gekko_network_stats(g_GekkoSession, g_GekkoRemoteHandle, &stats);
+    avgPing = stats.avg_ping;
+    jitter  = stats.jitter;
+    return true;
+#else
+    (void)avgPing; (void)jitter;
     return false;
 #endif
 }

@@ -8,6 +8,7 @@ option(UPDATER          "Enables updater" ${WIN32})
 option(APPIMAGE_UPDATER "Enables AppImage updater" OFF)
 option(KCA_DRAG_DROP    "Enables drag and drop using KCoreAddons" OFF) # https://bugreports.qt.io/browse/QTBUG-91357
 option(NETPLAY          "Enables netplay" ON)
+option(SCRIPTING        "Enables JavaScript scripting support" ON)
 option(USE_CCACHE       "Enables usage of ccache when ccache has been found" ON)
 option(NO_ASM           "Disables the usage of assembly in the mupen64plus-core" OFF)
 option(USE_ANGRYLION    "Enables building angrylion-rdp-plus which uses a non-GPL compliant license" OFF)
@@ -15,6 +16,10 @@ option(INSTALL_CHEATS   "Installs bundled cheat files" ON)
 set(KAILLERA_APP_VERSION_OVERRIDE "" CACHE STRING "Override Kaillera app version string advertised by RMG-K (dev/testing)")
 
 project(RMG)
+
+if (SCRIPTING)
+    add_definitions(-DSCRIPTING_ENABLED)
+endif()
 
 find_package(Git)
 if (GIT_FOUND)
@@ -122,6 +127,9 @@ if (NETPLAY)
     add_subdirectory(Source/n02)
 endif()
 add_subdirectory(Source/RMG-Core)
+if (SCRIPTING)
+    add_subdirectory(Source/RMG-Scripting)
+endif()
 add_subdirectory(Source/RMG)
 add_subdirectory(Source/RMG-Audio)
 if (WIN32 AND NETPLAY)
@@ -171,6 +179,12 @@ install(FILES ${MUPEN64PLUSCORE_INI} Data/font.ttf
 install(FILES ${SDL_GAMECONTROLLERDB} ${CMAKE_SOURCE_DIR}/Data/InputProfileDB.json
     DESTINATION ${DATA_INSTALL_PATH}
 )
+if (SCRIPTING)
+    file(GLOB SCRIPT_JS_FILES ${CMAKE_SOURCE_DIR}/Data/Scripts/*.js)
+    install(FILES ${SCRIPT_JS_FILES}
+        DESTINATION ${DATA_INSTALL_PATH}/Scripts
+    )
+endif(SCRIPTING)
 if (INSTALL_CHEATS)
     file(GLOB GENERATED_CHEAT_FILES ${CMAKE_SOURCE_DIR}/Data/Cheats/Generated/*.cht)
     file(GLOB CUSTOM_CHEAT_FILES ${CMAKE_SOURCE_DIR}/Data/Cheats/Custom/*.cht)

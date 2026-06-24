@@ -109,4 +109,11 @@ CORE_EXPORT uint64_t CoreGetKailleraRecordingStorageBytes(void);
 // user setting && !(cap enabled && cached over-cap state)
 CORE_EXPORT bool CoreGetKailleraEffectiveRecordingDefault(void);
 
+// Set/get player display names for the current netplay session.
+// playerNumber is 1-indexed (1-4). Unknown players default to "Player N".
+// Call CoreNetplayClearPlayerNames() when a session ends.
+CORE_EXPORT void CoreNetplaySetPlayerName(int playerNumber, std::string name);
+CORE_EXPORT std::string CoreNetplayGetPlayerName(int playerNumber);
+CORE_EXPORT void CoreNetplayClearPlayerNames(void);
+
 #endif // CORE_KAILLERA_HPP

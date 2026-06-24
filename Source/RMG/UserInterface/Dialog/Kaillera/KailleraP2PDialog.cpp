@@ -3117,6 +3117,17 @@ void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
         m_gameActive = true;
         applyGameLayerUI();
         appendChatStatus("Rollback game started: " + game, "green", true);
+
+        // Set the local player name. Don't touch the peer slot here — onPeerInfo
+        // owns it and may fire before or after onGameStarted. Clearing here
+        // would race against it; we clear in onGameEnded instead.
+        {
+            QString localName = m_username.trimmed();
+            if (localName.isEmpty())
+                localName = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_Username));
+            CoreNetplaySetPlayerName(player, localName.toStdString());
+        }
+
         emit rollbackSessionReady(game, QString::fromUtf8(peerIp), localP2PPort, peerP2PPort, player, frameDelay, predictionWindow);
         return;
     }
@@ -3133,6 +3144,8 @@ void KailleraP2PDialog::onGameEnded()
     if (isRollbackMode())
     {
         const bool wasActive = m_rollbackGameActive;
+        if (wasActive)
+            CoreNetplayClearPlayerNames();
         const bool wasReady = m_ready || (m_btnReady != nullptr && m_btnReady->isChecked());
         m_rollbackGameActive = false;
         resetAutomaticRollbackDelaySamples();
@@ -3454,6 +3467,15 @@ void KailleraP2PDialog::onPeerLeft()
 void KailleraP2PDialog::onPeerInfo(QString name, QString app)
 {
     m_peerName = name.trimmed();
+
+    // Keep the scripting layer in sync. onPeerInfo may fire after onGameStarted
+    // (the queued signal ordering is not guaranteed across connection paths), so
+    // update the peer slot here as well so the name is always correct by the
+    // time any script reads it. Host is always P1, so peer is P2 for hosts and
+    // P1 for clients.
+    if (!m_peerName.isEmpty())
+        CoreNetplaySetPlayerName(m_isHost ? 2 : 1, m_peerName.toStdString());
+
     updatePeerConnectionUI();
     emit peerNicknameResolved(name);
     if (m_peerConnected)

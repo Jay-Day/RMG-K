@@ -579,3 +579,31 @@ CORE_EXPORT bool CoreGetKailleraEffectiveRecordingDefault(void)
 }
 
 #endif // NETPLAY
+
+//
+// Player name storage — platform-independent, used by both Kaillera server
+// and GekkoNet rollback sessions so the scripting layer can query names.
+//
+
+static std::string s_NetplayPlayerNames[5]; // 1-indexed; index 0 unused
+
+CORE_EXPORT void CoreNetplaySetPlayerName(int playerNumber, std::string name)
+{
+    if (playerNumber >= 1 && playerNumber <= 4)
+        s_NetplayPlayerNames[playerNumber] = std::move(name);
+}
+
+CORE_EXPORT std::string CoreNetplayGetPlayerName(int playerNumber)
+{
+    if (playerNumber >= 1 && playerNumber <= 4 && !s_NetplayPlayerNames[playerNumber].empty())
+        return s_NetplayPlayerNames[playerNumber];
+    if (playerNumber >= 1 && playerNumber <= 4)
+        return "Player " + std::to_string(playerNumber);
+    return "";
+}
+
+CORE_EXPORT void CoreNetplayClearPlayerNames(void)
+{
+    for (int i = 1; i <= 4; i++)
+        s_NetplayPlayerNames[i].clear();
+}

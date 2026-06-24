@@ -35,6 +35,10 @@
 #include "Callbacks.hpp"
 #include "VidExt.hpp"
 
+#ifdef SCRIPTING_ENABLED
+#include <RMG-Scripting/ScriptManager.hpp>
+#endif
+
 #ifdef UPDATER
 #include <QNetworkAccessManager>
 #include <QJsonDocument>
@@ -3007,6 +3011,9 @@ void MainWindow::configureActions(void)
         // View actions
         this->action_View_Fullscreen, this->action_View_RefreshRoms,
         this->action_View_Log,
+#ifdef SCRIPTING_ENABLED
+        this->action_View_ScriptingConsole,
+#endif
         // Help actions
         this->action_Help_Github, this->action_Help_About,
     });
@@ -3153,6 +3160,9 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_View_RefreshRoms, &QAction::triggered, this, &MainWindow::on_Action_View_RefreshRoms);
     connect(this->action_View_ClearRomCache, &QAction::triggered, this, &MainWindow::on_Action_View_ClearRomCache);
     connect(this->action_View_Log, &QAction::triggered, this, &MainWindow::on_Action_View_Log);
+#ifdef SCRIPTING_ENABLED
+    connect(this->action_View_ScriptingConsole, &QAction::triggered, this, &MainWindow::on_Action_View_ScriptingConsole);
+#endif
     connect(this->action_View_Search, &QAction::triggered, this, &MainWindow::on_Action_View_Search);
 
     connect(this->action_Netplay_BrowseSessions, &QAction::triggered, this, &MainWindow::on_Action_Netplay_BrowseSessions);
@@ -4288,6 +4298,20 @@ void MainWindow::on_Action_View_Log(void)
 {
     this->logDialog.show();
 }
+
+#ifdef SCRIPTING_ENABLED
+void MainWindow::on_Action_View_ScriptingConsole(void)
+{
+    if (this->scriptingConsoleDialog == nullptr)
+    {
+        this->scriptingConsoleDialog = new Dialog::ScriptingConsoleDialog(this);
+    }
+
+    this->scriptingConsoleDialog->show();
+    this->scriptingConsoleDialog->activateWindow();
+    this->scriptingConsoleDialog->raise();
+}
+#endif
 
 void MainWindow::on_Action_View_Search(void)
 {

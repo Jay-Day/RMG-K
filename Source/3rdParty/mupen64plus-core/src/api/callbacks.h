@@ -38,8 +38,10 @@
 /* Functions for use by the Core, to send information back to the front-end app */
 extern m64p_error SetDebugCallback(ptr_DebugCallback pFunc, void *Context);
 extern m64p_error SetStateCallback(ptr_StateCallback pFunc, void *Context);
+extern m64p_error SetPCCallback(void (*pFunc)(void *Context, uint32_t pc), void *Context);
 extern void       DebugMessage(int level, const char *message, ...) ATTR_FMT(2,3);
 extern void       StateChanged(m64p_core_param param_type, int new_value);
+extern void       PCCallback(uint32_t pc);
 
 #endif /* API_CALLBACKS_H */
 

@@ -43,6 +43,7 @@ void p2p_ssrv_packet_recv_callback(char *cmd, int len, void*sadr);
 
 void p2p_send_ssrv_packet(char * cmd, int len, void * sadr);
 
+int  p2p_get_last_ping();
 bool p2p_rollback_transport_send(const char *data, int len);
 int p2p_rollback_transport_receive(char *data, int data_len, char *addr, int addr_len);
 void p2p_rollback_transport_clear();

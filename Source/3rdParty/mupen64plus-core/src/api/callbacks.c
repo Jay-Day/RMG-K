@@ -34,8 +34,10 @@
 /* local variables */
 static ptr_DebugCallback pDebugFunc = NULL;
 static ptr_StateCallback pStateFunc = NULL;
+static void (*pPCFunc)(void *Context, uint32_t pc) = NULL;
 static void *            DebugContext = NULL;
 static void *            StateContext = NULL;
+static void *            PCContext = NULL;
 
 /* global Functions for use by the Core */
 m64p_error SetDebugCallback(ptr_DebugCallback pFunc, void *Context)
@@ -74,6 +76,21 @@ void StateChanged(m64p_core_param param_type, int new_value)
         return;
 
     (*pStateFunc)(StateContext, param_type, new_value);
+}
+
+EXPORT m64p_error CALL SetPCCallback(void (*pFunc)(void *Context, uint32_t pc), void *Context)
+{
+    pPCFunc = pFunc;
+    PCContext = Context;
+    return M64ERR_SUCCESS;
+}
+
+EXPORT void CALL PCCallback(uint32_t pc)
+{
+    if (pPCFunc == NULL)
+        return;
+
+    (*pPCFunc)(PCContext, pc);
 }
 
 

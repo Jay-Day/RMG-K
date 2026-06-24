@@ -26,7 +26,10 @@
 
 #include "m64p/Api.hpp"
 
+#include "ScriptingHooks.hpp"
+
 #include <cstdlib>
+#include <iostream>
 
 // Windows/POSIX dynamic loading
 #ifdef _WIN32
@@ -135,6 +138,51 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
 // Frame counter for Kaillera sync (updated via frame callback)
 static int s_CurrentFrame = 0;
 
+static bool pif_channel_has_command(const pif_channel& channel)
+{
+    return channel.tx != nullptr &&
+           channel.rx != nullptr &&
+           channel.tx_buf != nullptr &&
+           channel.rx_buf != nullptr;
+}
+
+// Snapshot of controller channel data captured on each PIF read.
+// Populated by SnapshotPifChannels; consumed by CoreGetControllerState.
+struct PifControllerSnapshot {
+    bool valid = false;
+    bool connected = false;
+    uint8_t data[4] = {};  // [buttons_hi][buttons_lo][x][y]
+};
+static PifControllerSnapshot s_ControllerSnapshot[PIF_CONTROLLER_CHANNELS_COUNT] = {};
+
+static void SnapshotPifChannels(struct pif* pif)
+{
+    for (int i = 0; i < PIF_CONTROLLER_CHANNELS_COUNT; i++) {
+        const pif_channel& ch = pif->channels[i];
+        const bool has = pif_channel_has_command(ch);
+        // Bit 0x80 of the rx length byte is the JoyBus "device not present" error flag.
+        // It is set by the core when no controller is connected on this channel.
+        const bool connected = has && (*ch.rx & 0x80) == 0;
+        s_ControllerSnapshot[i].connected = connected;
+        if (connected && ch.tx_buf[0] == JCMD_CONTROLLER_READ) {
+            s_ControllerSnapshot[i].valid = true;
+            s_ControllerSnapshot[i].data[0] = ch.rx_buf[0];
+            s_ControllerSnapshot[i].data[1] = ch.rx_buf[1];
+            s_ControllerSnapshot[i].data[2] = ch.rx_buf[2];
+            s_ControllerSnapshot[i].data[3] = ch.rx_buf[3];
+        } else {
+            s_ControllerSnapshot[i].valid = false;
+        }
+    }
+}
+
+#ifdef SCRIPTING_ENABLED
+static void ScriptingPifCallback(struct pif* pif)
+{
+    SnapshotPifChannels(pif);
+}
+#endif
+
 #ifdef NETPLAY
 // Maximum players supported by Kaillera
 #define MAX_PLAYERS 8
@@ -147,14 +195,6 @@ static int s_CachedNumReceived = 0;
 // Track whether we've already synced since the last frame advance
 // This is more reliable than comparing frame numbers due to callback timing
 static bool s_SyncedThisFrame = false;
-
-static bool pif_channel_has_command(const pif_channel& channel)
-{
-    return channel.tx != nullptr &&
-           channel.rx != nullptr &&
-           channel.tx_buf != nullptr &&
-           channel.rx_buf != nullptr;
-}
 #endif
 // Frame callback function
 static void FrameCallback(unsigned int frameIndex)
@@ -165,11 +205,55 @@ static void FrameCallback(unsigned int frameIndex)
     // This ensures we sync exactly once per frame regardless of PIF polling timing
     s_SyncedThisFrame = false;
 #endif
+    
+    if (CoreGetScriptingHooks().onFrameUpdate) {
+        // If the core exports debugger functions, sample the current PC once per frame.
+        uint32_t pc = 0;
+        {
+            using ptr_DebugGetCPUDataPtr = void* (*)(m64p_dbg_cpu_data);
+            static ptr_DebugGetCPUDataPtr getPtr = nullptr;
+            static bool resolved = false;
+            if (!resolved) {
+                void* coreHandle = m64p::Core.GetHandle();
+                if (coreHandle) {
+#ifdef _WIN32
+                    getPtr = (ptr_DebugGetCPUDataPtr)GetProcAddress((HMODULE)coreHandle, "DebugGetCPUDataPtr");
+#else
+                    getPtr = (ptr_DebugGetCPUDataPtr)dlsym(coreHandle, "DebugGetCPUDataPtr");
+#endif
+                }
+                resolved = true;
+            }
+            if (getPtr) {
+                // Read EPC (COP0 register 14): the address where the game was executing
+                // when the VI interrupt fired. M64P_CPU_PC gives the interrupt handler's
+                // PC (always OS kernel code), while EPC gives the interrupted game code.
+                uint32_t* cp0 = static_cast<uint32_t*>(getPtr(M64P_CPU_REG_COP0));
+                if (cp0) {
+                    pc = cp0[14]; // CP0_EPC_REG
+                }
+            }
+        }
+        CoreGetScriptingHooks().onFrameUpdate(pc);
+    }
 }
+
+// Per-instruction PC callback (called from mupen64plus-core interpreter loop)
+#ifdef SCRIPTING_ENABLED
+static void ScriptingPCCallback(void* Context, uint32_t pc)
+{
+    (void)Context;
+    if (CoreGetScriptingHooks().onPCUpdate)
+        CoreGetScriptingHooks().onPCUpdate(pc);
+}
+#endif
 
 // Kaillera PIF sync callback (called from mupen64plus-core after netplay sync)
 static void KailleraPifSyncCallback(struct pif* pif)
 {
+#ifdef SCRIPTING_ENABLED
+    SnapshotPifChannels(pif);
+#endif
 #ifdef NETPLAY
     if (rmgk_gekko::is_netplay_session_active()) {
         return;
@@ -669,9 +753,9 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         }
 #endif
 
-#ifdef NETPLAY
-        // Register Kaillera PIF sync callback (works with any input plugin)
-        // Get function pointer dynamically since mupen64plus is loaded at runtime
+#if defined(SCRIPTING_ENABLED) || defined(NETPLAY)
+        // Register PIF sync callback for scripting input capture and/or Kaillera netplay.
+        // Get function pointer dynamically since mupen64plus is loaded at runtime.
         typedef void (*set_pif_sync_callback_t)(pif_sync_callback_t);
         void* coreHandle = m64p::Core.GetHandle();
         if (coreHandle)
@@ -685,9 +769,36 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #endif
             if (set_callback)
             {
-                set_callback(address == "KAILLERA" ? KailleraPifSyncCallback : nullptr);
+#ifdef NETPLAY
+                if (address == "KAILLERA")
+                    set_callback(KailleraPifSyncCallback);
+                else
+#endif
+#ifdef SCRIPTING_ENABLED
+                    set_callback(ScriptingPifCallback);
+#else
+                    set_callback(nullptr);
+#endif
             }
         }
+
+#ifdef SCRIPTING_ENABLED
+        // Register per-instruction PC callback for scripting
+        typedef m64p_error (*set_pc_callback_t)(void (*)(void *, uint32_t), void *);
+        set_pc_callback_t SetPCCallback = nullptr;
+        if (coreHandle)
+        {
+#ifdef _WIN32
+            SetPCCallback = (set_pc_callback_t)GetProcAddress((HMODULE)coreHandle, "SetPCCallback");
+#else
+            SetPCCallback = (set_pc_callback_t)dlsym(coreHandle, "SetPCCallback");
+#endif
+            if (SetPCCallback)
+            {
+                SetPCCallback(ScriptingPCCallback, nullptr);
+            }
+        }
+#endif
 #endif
 
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
@@ -791,6 +902,9 @@ CORE_EXPORT bool CoreStopEmulation(void)
     CoreSetKailleraPlayerNumber(0);
 #endif
 
+    if (CoreGetScriptingHooks().onEmulationStop)
+        CoreGetScriptingHooks().onEmulationStop();
+
     return ret == M64ERR_SUCCESS;
 }
 
@@ -825,6 +939,9 @@ CORE_EXPORT bool CorePauseEmulation(void)
         CoreSetError(error);
     }
 
+    if (ret == M64ERR_SUCCESS && CoreGetScriptingHooks().onEmulationPause)
+        CoreGetScriptingHooks().onEmulationPause();
+
     return ret == M64ERR_SUCCESS;
 }
 
@@ -858,6 +975,9 @@ CORE_EXPORT bool CoreResumeEmulation(void)
         error += m64p::Core.ErrorMessage(ret);
         CoreSetError(error);
     }
+
+    if (ret == M64ERR_SUCCESS && CoreGetScriptingHooks().onEmulationResume)
+        CoreGetScriptingHooks().onEmulationResume();
 
     return ret == M64ERR_SUCCESS;
 }
@@ -1004,4 +1124,28 @@ CORE_EXPORT int CoreGetCurrentFrameCount(void)
 {
     // Return frame counter updated via frame callback
     return s_CurrentFrame;
+}
+
+CORE_EXPORT bool CoreGetControllerState(int port, bool& connected, bool& valid, uint8_t (&rx)[4])
+{
+    if (port < 0 || port >= PIF_CONTROLLER_CHANNELS_COUNT)
+        return false;
+    const PifControllerSnapshot& snap = s_ControllerSnapshot[port];
+    connected = snap.connected;
+    valid     = snap.valid;
+    if (snap.valid) {
+        rx[0] = snap.data[0];
+        rx[1] = snap.data[1];
+        rx[2] = snap.data[2];
+        rx[3] = snap.data[3];
+    }
+    return true;
+}
+
+CORE_EXPORT bool CoreAreOnPCHooksSupported(void)
+{
+    // on_pc hooks only work with interpreter modes (0=pure, 1=cached)
+    // JIT/dynarec (2+) doesn't support per-instruction callbacks
+    int cpuEmulator = CoreSettingsGetIntValue(SettingsID::Core_CPU_Emulator);
+    return cpuEmulator < 2;
 }

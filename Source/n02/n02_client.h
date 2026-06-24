@@ -68,6 +68,9 @@ void setRecordsDirectory(const std::string& recordsDirectory);
 // Check if a game is currently in the "running" state (KSSDFA state 2)
 bool isGameRunning();
 
+// Get the last measured P2P transport-layer ping in milliseconds (0 if unavailable)
+int getLastP2PPing();
+
 // Get KSSDFA state (0=polling, 1=game callback pending, 2=game running, 3=shutdown)
 int getState();
 
