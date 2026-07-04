@@ -182,6 +182,10 @@ target_include_directories(RMG PRIVATE
 target_link_directories(RMG PRIVATE ${HIDAPI_LIBRARY_DIRS})
 target_link_libraries(RMG Qt6::Gui Qt6::Widgets ${HIDAPI_LIBRARIES})
 
+if (WIN32)
+    target_link_libraries(RMG opengl32 gdi32 user32)
+endif(WIN32)
+
 if (NOT WIN32 AND NOT APPLE)
     target_link_libraries(RMG Qt6::DBus)
 endif()

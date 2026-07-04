@@ -26,12 +26,27 @@
 
 #include "m64p/Api.hpp"
 
+#include <cstdlib>
+
 // Windows/POSIX dynamic loading
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
+
+static void setRollbackLoggingEnvironment(void)
+{
+    const bool pifLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_VerbosePifInputLogging);
+    const bool glideLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging);
+#ifdef _WIN32
+    _putenv_s("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0");
+    _putenv_s("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0");
+#else
+    setenv("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0", 1);
+    setenv("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0", 1);
+#endif
+}
 
 // Forward declarations for PIF structures
 extern "C" {
@@ -44,10 +59,15 @@ extern "C" {
         uint8_t* rx;
         uint8_t* rx_buf;
     };
+    enum {
+        PIF_CHANNELS_COUNT = 5,
+        PIF_CONTROLLER_CHANNELS_COUNT = 4
+    };
+
     struct pif {
         uint8_t* base;
         uint8_t* ram;
-        struct pif_channel channels[6];  // PIF_CHANNELS_COUNT = 6
+        struct pif_channel channels[PIF_CHANNELS_COUNT];
     };
 
     // Joybus command constants
@@ -92,7 +112,7 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
         if (predictionSeparator == std::string::npos)
         {
             frameDelay = std::stoi(address.substr(delaySeparator + 1));
-            predictionWindow = 4;
+            predictionWindow = 7;
         }
         else
         {
@@ -127,6 +147,14 @@ static int s_CachedNumReceived = 0;
 // Track whether we've already synced since the last frame advance
 // This is more reliable than comparing frame numbers due to callback timing
 static bool s_SyncedThisFrame = false;
+
+static bool pif_channel_has_command(const pif_channel& channel)
+{
+    return channel.tx != nullptr &&
+           channel.rx != nullptr &&
+           channel.tx_buf != nullptr &&
+           channel.rx_buf != nullptr;
+}
 #endif
 // Frame callback function
 static void FrameCallback(unsigned int frameIndex)
@@ -160,9 +188,8 @@ static void KailleraPifSyncCallback(struct pif* pif)
 
     // Check if this is a controller read command for channel 0 (local player)
     // We only want to sync on actual input reads, not status queries or other commands
-    bool isControllerRead = (pif->channels[0].tx &&
-                             pif->channels[0].tx_buf[0] == JCMD_CONTROLLER_READ &&
-                             pif->channels[0].rx_buf != NULL);
+    bool isControllerRead = (pif_channel_has_command(pif->channels[0]) &&
+                             pif->channels[0].tx_buf[0] == JCMD_CONTROLLER_READ);
 
     // Only sync with Kaillera on controller read commands, and only once per frame
     // This prevents syncing on JCMD_STATUS which would send zero input
@@ -182,13 +209,18 @@ static void KailleraPifSyncCallback(struct pif* pif)
         int ret = CoreModifyKailleraPlayValues(sync_buffer, sizeof(uint32_t));
 
         if (ret < 0) {
-            // Game ended or network error - cache zeros and continue
-            // Don't stop emulation - let user manually stop
-            // Mark game as inactive so UI buttons are re-enabled
+            // Game ended or network error. For live netplay we keep emulation
+            // running so the user can manually exit; for krec playback there
+            // are no more inputs to feed, so stop emulation here (the dialog
+            // timer would otherwise only catch this while the dialog is open).
+            const bool wasPlayback = CoreIsKailleraPlaybackMode();
             CoreMarkKailleraGameInactive();
             s_CachedNumReceived = 0;
             for (int i = 0; i < MAX_PLAYERS; i++) {
                 s_CachedSyncBuffer[i] = 0;
+            }
+            if (wasPlayback) {
+                CoreStopEmulation();
             }
             return;
         }
@@ -214,8 +246,12 @@ static void KailleraPifSyncCallback(struct pif* pif)
     // without a physical controller connected).
     // JCMD_CONTROLLER_READ data injection is gated on cache availability.
     int numPlayers = CoreGetKailleraNumPlayers();
+    if (numPlayers > PIF_CONTROLLER_CHANNELS_COUNT) {
+        numPlayers = PIF_CONTROLLER_CHANNELS_COUNT;
+    }
+
     for (int i = 0; i < numPlayers && i < MAX_PLAYERS; i++) {
-        if (pif->channels[i].tx && pif->channels[i].rx != NULL) {
+        if (pif_channel_has_command(pif->channels[i])) {
             // Always clear error bits to show controller as connected
             *pif->channels[i].rx &= ~0xC0;
 
@@ -547,7 +583,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             std::string remoteAddress;
             int remotePort = 0;
             int frameDelay = 0;
-            int predictionWindow = 4;
+            int predictionWindow = 7;
             if (!parse_gekko_address(address, remoteAddress, remotePort, frameDelay, predictionWindow))
             {
                 CoreSetError("CoreStartEmulation: invalid GekkoNet session parameters");
@@ -665,6 +701,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #endif
 
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
+        setRollbackLoggingEnvironment();
 
         if (rollbackExecute)
         {

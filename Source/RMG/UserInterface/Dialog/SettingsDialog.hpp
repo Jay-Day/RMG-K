@@ -70,6 +70,8 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     QColor currentTextColor;
     QCheckBox* rollbackVerboseStatsCheckBox = nullptr;
     QCheckBox* rollbackEnableLocalTestingCheckBox = nullptr;
+    QCheckBox* rollbackVerbosePifInputLoggingCheckBox = nullptr;
+    QCheckBox* rollbackVerboseGlideInputLoggingCheckBox = nullptr;
 
     std::vector<CorePlugin> pluginList;
 

@@ -143,12 +143,12 @@ void Config::resetToDefaults()
 	gammaCorrection.level = 2.0f;
 
 	onScreenDisplay.vis = 0;
-	onScreenDisplay.fps = 0;
+	onScreenDisplay.fps = 1;
 	onScreenDisplay.percent = 0;
 	onScreenDisplay.internalResolution = 0;
 	onScreenDisplay.renderingResolution = 0;
 	onScreenDisplay.statistics = 0;
-	onScreenDisplay.pos = posBottomLeft;
+	onScreenDisplay.pos = posBottomRight;
 
 	for (u32 idx = 0; idx < HotKey::hkTotal; ++idx) {
 		hotkeys.enabledKeys[idx] = 0;
@@ -257,4 +257,3 @@ const char* Config::enabledHotkeyIniName(u32 _idx)
 	}
 	return nullptr;
 }
-

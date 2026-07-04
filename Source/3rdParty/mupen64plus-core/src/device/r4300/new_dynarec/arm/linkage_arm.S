@@ -82,6 +82,7 @@ TEXT_SECTION
     .align   2
     .outptr_offset  : .word out-(.outptr_pic+8)
     .savedcontextptr_offset  : .word g_dev + device_r4300_new_dynarec_hot_state_dynarec_local + fp_saved_context -(.savedcontextptr_pic+8)
+    .savedcontextptr_resume_offset  : .word g_dev + device_r4300_new_dynarec_hot_state_dynarec_local + fp_saved_context -(.savedcontextptr_resume_pic+8)
 
 GLOBAL_FUNCTION(jump_vaddr_r0):
     b      jump_vaddr
@@ -215,6 +216,17 @@ GLOBAL_FUNCTION(new_dyna_start):
     bl     new_recompile_block
     ldr    r10, [fp, #fp_cycle_count]
     mov    pc, r4
+
+GLOBAL_FUNCTION(new_dyna_resume):
+    ldr    r12, .savedcontextptr_resume_offset
+.savedcontextptr_resume_pic:
+    add    r12, pc, r12
+    stmia  r12, {r4, r5, r6, r7, r8, r9, sl, fp, lr}
+    sub    fp, r12, #fp_saved_context
+    ldr    r0, [fp, #fp_pcaddr]
+    bl     get_addr_ht
+    ldr    r10, [fp, #fp_cycle_count]
+    mov    pc, r0
 
 GLOBAL_FUNCTION(invalidate_addr_r0):
     stmia  fp, {r0, r1, r2, r3, r12, lr}

@@ -241,3 +241,9 @@ gzFile osal_gzopen(const char *filename, const char *mode)
 {
     return gzopen(filename, mode);
 }
+
+int osal_file_replace(const char *srcpath, const char *dstpath)
+{
+    /* POSIX rename() atomically replaces an existing destination on the same filesystem */
+    return rename(srcpath, dstpath);
+}

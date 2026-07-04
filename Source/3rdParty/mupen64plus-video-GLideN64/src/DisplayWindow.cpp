@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <cstdlib>
 #include "Config.h"
+#include "gDP.h"
+#include "gSP.h"
 #include "RSP.h"
 #include "VI.h"
 #include "Graphics/Context.h"
@@ -113,6 +115,12 @@ void DisplayWindow::closeWindow()
 
 void DisplayWindow::setWindowSize(u32 _width, u32 _height)
 {
+#if defined(OS_WINDOWS)
+	if (m_bFullscreen && std::getenv("RMG_NATIVE_WGL_DRAWABLE_WIDTH") != nullptr) {
+		return;
+	}
+#endif
+
 	if (m_width != _width || m_height != _height) {
 		m_resizeWidth = _width;
 		m_resizeHeight = _height;
@@ -138,8 +146,14 @@ void DisplayWindow::updateScale()
 {
 	if (VI.width == 0 || VI.height == 0)
 		return;
+	const f32 oldScaleX = m_scaleX;
+	const f32 oldScaleY = m_scaleY;
 	m_scaleX = static_cast<f32>(m_width) / static_cast<f32>(VI.width);
 	m_scaleY = static_cast<f32>(m_height) / static_cast<f32>(VI.height);
+	if (m_scaleX != oldScaleX || m_scaleY != oldScaleY) {
+		gSP.changed |= CHANGED_VIEWPORT;
+		gDP.changed |= CHANGED_SCISSOR;
+	}
 }
 
 void DisplayWindow::_setBufferSize()

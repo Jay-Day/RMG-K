@@ -262,7 +262,8 @@ bool DepthBufferToRDRAM::_copy(u32 _startAddress, u32 _endAddress)
 						   numPixels,
 						   _startAddress,
 						   pDepthBuffer->m_address,
-						   G_IM_SIZ_16b);
+						   G_IM_SIZ_16b,
+						   "glide_depth");
 
 	pDepthBuffer->m_cleared = false;
 	FrameBuffer * pBuffer = frameBufferList().findBuffer(pDepthBuffer->m_address);

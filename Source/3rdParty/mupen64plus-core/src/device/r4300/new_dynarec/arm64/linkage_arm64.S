@@ -278,6 +278,23 @@ GLOBAL_FUNCTION(new_dyna_start):
     ldr    w20, [x29, #fp_cycle_count]
     br     x19
 
+GLOBAL_FUNCTION(new_dyna_resume):
+    adrp   x16, g_dev
+    add    x16, x16, :lo12:g_dev
+    movl   x1, (device_r4300_new_dynarec_hot_state_dynarec_local + saved_context)
+    add    x16, x16, x1
+    stp    x19,x20,[x16,#0]
+    stp    x21,x22,[x16,#16]
+    stp    x23,x24,[x16,#32]
+    stp    x25,x26,[x16,#48]
+    stp    x27,x28,[x16,#64]
+    stp    x29,x30,[x16,#80]
+    sub    x29, x16, #saved_context
+    ldr    w0, [x29, #fp_pcaddr]
+    bl     get_addr_ht
+    ldr    w20, [x29, #fp_cycle_count]
+    br     x0
+
 GLOBAL_FUNCTION(breakpoint):
     brk 0
     ret

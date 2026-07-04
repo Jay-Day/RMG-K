@@ -35,6 +35,13 @@ void selectServerDialog(void* parent);
 // Returns: number of bytes of synced data, 0 during delay frames, -1 on error
 int modifyPlayValues(void *values, int size);
 
+// Append a synchronized-inputs record (0x12 marker + size + bytes) to the
+// open recording. Mirrors what modifyPlayValues writes for normal play,
+// but is callable from outside n02's frame loop — the P2P rollback path
+// uses GekkoNet for input sync so it never reaches modifyPlayValues.
+// No-op if no recording is open.
+void recordingWriteInputs(const void* values, int size);
+
 // Send chat message to other players
 void chatSend(char *text);
 
@@ -66,6 +73,9 @@ int getState();
 
 // Set KSSDFA input to trigger state transition
 void setStateInput(int input);
+
+// Reset the n02 state machine to lobby/polling state without emitting game lifecycle callbacks.
+void resetStateMachine();
 
 // Process one step of the state machine (non-blocking)
 // Returns true if state machine is still active (state != 3)

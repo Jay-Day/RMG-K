@@ -234,6 +234,39 @@ static void load_inputmapping_settings(InputMapping* mapping, std::string sectio
     }
 }
 
+static const char* input_device_type_to_string(const InputDeviceType type)
+{
+    switch (type)
+    {
+        case InputDeviceType::Invalid:
+            return "Invalid";
+        case InputDeviceType::None:
+            return "None";
+        case InputDeviceType::Automatic:
+            return "Automatic";
+        case InputDeviceType::Joystick:
+            return "Joystick";
+        case InputDeviceType::Keyboard:
+            return "Keyboard";
+        default:
+            return "Unknown";
+    }
+}
+
+static void log_profile_state(const int index, const std::string& context, const InputProfile& profile, const std::string& section)
+{
+    std::string debugMessage = context;
+    debugMessage += " [Port " + std::to_string(index) + "]: ";
+    debugMessage += "section=\"" + section + "\", ";
+    debugMessage += "PluggedIn=";
+    debugMessage += profile.PluggedIn ? "true" : "false";
+    debugMessage += ", DeviceType=" + std::string(input_device_type_to_string(profile.DeviceType));
+    debugMessage += ", DeviceName=\"" + profile.DeviceName + "\"";
+    debugMessage += ", DevicePath=\"" + profile.DevicePath + "\"";
+    debugMessage += ", DeviceSerial=\"" + profile.DeviceSerial + "\"";
+    PluginDebugMessage(M64MSG_VERBOSE, debugMessage);
+}
+
 static void load_settings(void)
 {
     std::string gameId;
@@ -301,6 +334,7 @@ static void load_settings(void)
         if (!CoreSettingsSectionExists(section))
         {
             profile->PluggedIn = false;
+            log_profile_state(i, "load_settings()", *profile, section);
             continue;
         }
 
@@ -380,6 +414,8 @@ static void load_settings(void)
         LOAD_INPUT_MAPPING(Hotkey_Fullscreen, Input_Hotkey_Fullscreen);
 
 #undef LOAD_INPUT_MAPPING
+
+        log_profile_state(i, "load_settings()", *profile, section);
     }
 }
 
@@ -412,6 +448,13 @@ static void apply_controller_profiles(void)
                 plugin = PLUGIN_NONE;
                 break;
         }
+
+        std::string pluginDebugMessage = "apply_controller_profiles(): ";
+        pluginDebugMessage += "Port " + std::to_string(i);
+        pluginDebugMessage += " setting Present=";
+        pluginDebugMessage += profile->PluggedIn ? "1" : "0";
+        pluginDebugMessage += ", Plugin=" + std::to_string(plugin);
+        PluginDebugMessage(M64MSG_VERBOSE, pluginDebugMessage);
 
         l_ControlInfo.Controls[i].Present = profile->PluggedIn ? 1 : 0;
         l_ControlInfo.Controls[i].Plugin  = plugin;
@@ -570,12 +613,14 @@ static void open_controller_automatic(int index, InputProfile* profile, SDL_Joys
     }
 }
 
-static void open_controller(InputProfile* profile, SDL_JoystickID* joysticks, int joysticksCount)
+static void open_controller(int index, InputProfile* profile, SDL_JoystickID* joysticks, int joysticksCount)
 {
     SDL_JoystickID joystickId;
     SDL_Joystick* joystick = nullptr;
     SDL_Gamepad* gamepad = nullptr;
+    bool foundJoystick = false;
     std::string errorMessage;
+    std::string debugMessage;
 
     std::string deviceName;
     std::string devicePath;
@@ -631,6 +676,9 @@ static void open_controller(InputProfile* profile, SDL_JoystickID* joysticks, in
         {
             profile->SDLJoystick = joystick;
             profile->SDLGamepad = gamepad;
+            foundJoystick = true;
+            debugMessage = "open_controller(" + std::to_string(index) + "): matched configured device name=\"" + deviceName + "\"";
+            PluginDebugMessage(M64MSG_VERBOSE, debugMessage);
             return;
         }
 
@@ -645,6 +693,24 @@ static void open_controller(InputProfile* profile, SDL_JoystickID* joysticks, in
             SDL_CloseJoystick(joystick);
             joystick = nullptr;
         }
+    }
+
+    if (!foundJoystick)
+    {
+        std::string debugMessageBase = "open_controller(): profile[" + std::to_string(index) + "] failed to find selected device: ";
+        debugMessageBase += "selected name=\"" + profile->DeviceName + "\"";
+        debugMessageBase += ", path=\"" + profile->DevicePath + "\"";
+        debugMessageBase += ", serial=\"" + profile->DeviceSerial + "\"";
+        PluginDebugMessage(M64MSG_WARNING, debugMessageBase);
+
+        profile->PluggedIn = false;
+        if (l_HasControlInfo)
+        {
+            l_ControlInfo.Controls[index].Present = 0;
+        }
+
+        profile->SDLGamepad = nullptr;
+        profile->SDLJoystick = nullptr;
     }
 }
 
@@ -700,6 +766,9 @@ static void open_controllers(void)
         InputProfile* profile = &l_InputProfiles[i];
 
         close_controller(profile);
+        std::string debugMessage = "open_controllers(): preparing port " + std::to_string(i) +
+            " (" + std::string(input_device_type_to_string(profile->DeviceType)) + ")";
+        PluginDebugMessage(M64MSG_VERBOSE, debugMessage);
 
         if (profile->DeviceType == InputDeviceType::Automatic)
         {
@@ -707,7 +776,7 @@ static void open_controllers(void)
         }
         else if (profile->DeviceType == InputDeviceType::Joystick)
         {
-            open_controller(profile, joysticks, joysticksCount);
+            open_controller(i, profile, joysticks, joysticksCount);
         }
     }
 

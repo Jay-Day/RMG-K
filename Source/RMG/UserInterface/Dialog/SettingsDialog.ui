@@ -233,6 +233,19 @@
                    </widget>
                   </item>
                   <item>
+                   <widget class="QCheckBox" name="betaFullscreenBackendCheckBox">
+                    <property name="enabled">
+                     <bool>false</bool>
+                    </property>
+                    <property name="toolTip">
+                     <string>This fullscreen mode is beta and does not support toggling fullscreen or OSD messages.</string>
+                    </property>
+                    <property name="text">
+                     <string>Use experimental fullscreen mode</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
                    <layout class="QHBoxLayout" name="exclusiveMonitorLayout">
                     <item>
                      <widget class="QLabel" name="exclusiveMonitorLabel">

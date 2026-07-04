@@ -56,12 +56,15 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QMenuBar>
+#include <QByteArray>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QShowEvent>
 #include <QDir>
 #include <QUrl>
 #include <QRegularExpression>
+#include <QScreen>
 
 #ifdef KCA_DRAG_DROP
 #include <KUrlMimeData>
@@ -75,6 +78,7 @@
 #include <QProxyStyle>
 
 #include <cstdlib>
+#include <string>
 
 #ifdef _WIN32
 class NoAccentProxyStyle final : public QProxyStyle
@@ -146,6 +150,7 @@ public:
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
@@ -190,7 +195,7 @@ constexpr int kRollbackDebugReplayPlayers = 4;
 constexpr int kRollbackDebugStressInterval = 5;
 constexpr int kRollbackDebugStressRollbackFrames = 2;
 constexpr const char* kRollbackDebugReplayFilePath = "rollback_sanity_test.replay";
-constexpr const char* kRollbackDebugReplayLogPath = "rollback_sanity_test.log";
+constexpr const char* kRollbackDebugReplayLogFileName = "rollback_sanity_test.log";
 constexpr uint32_t kRollbackDebugReplayMagic = 0x52534452;
 constexpr uint32_t kRollbackDebugReplayVersion = 9;
 
@@ -581,6 +586,44 @@ bool SaveRollbackDebugReplayFile(std::string& error, const CoreRollbackState& fi
     }
 
     return true;
+}
+
+std::filesystem::path GetRollbackDebugLogDirectory()
+{
+    std::error_code errorCode;
+    std::filesystem::path directory = CoreGetLibraryDirectory() / "Logs";
+
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    errorCode.clear();
+    directory = "Logs";
+    if (std::filesystem::is_directory(directory, errorCode) ||
+        std::filesystem::create_directories(directory, errorCode))
+    {
+        return directory.make_preferred();
+    }
+
+    return std::filesystem::path();
+}
+
+std::filesystem::path GetRollbackDebugReplayLogPath()
+{
+    const std::filesystem::path directory = GetRollbackDebugLogDirectory();
+    if (!directory.empty())
+    {
+        return directory / kRollbackDebugReplayLogFileName;
+    }
+
+    return std::filesystem::path(kRollbackDebugReplayLogFileName);
+}
+
+std::string GetRollbackDebugReplayLogPathString()
+{
+    return GetRollbackDebugReplayLogPath().string();
 }
 
 std::string GetRollbackDebugReplayPayloadRegion(int payloadOffset)
@@ -1397,7 +1440,7 @@ void WriteRollbackDebugReplayLog(const std::string& phase,
     GetRollbackStatePayload(expectedState, expectedPayload, expectedPayloadLen);
     GetRollbackStatePayload(actualState, actualPayload, actualPayloadLen);
 
-    std::ofstream log(kRollbackDebugReplayLogPath, std::ios::app);
+    std::ofstream log(GetRollbackDebugReplayLogPath(), std::ios::app);
     if (!log.is_open())
     {
         return;
@@ -1466,7 +1509,7 @@ void WriteRollbackDebugReplayLog(const std::string& phase,
 
 void WriteRollbackDebugReplayEventLog(const std::string& phase, const std::string& message)
 {
-    std::ofstream log(kRollbackDebugReplayLogPath, std::ios::app);
+    std::ofstream log(GetRollbackDebugReplayLogPath(), std::ios::app);
     if (!log.is_open())
     {
         return;
@@ -2522,9 +2565,54 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
         return;
     }
 
-    if (this->ui_LaunchInFullscreen || CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen))
+    const bool startInFullscreen = this->ui_LaunchInFullscreen || CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen);
+#ifdef _WIN32
+    const bool useNativeFullscreenStartup = startInFullscreen &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen) &&
+        CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend);
+    qputenv("RMG_GLIDEN64_START_FULLSCREEN", useNativeFullscreenStartup ? "1" : "0");
+    if (useNativeFullscreenStartup)
     {
-        this->ui_FullscreenTimerId = this->startTimer(100);
+        int nativeWidth = 0;
+        int nativeHeight = 0;
+        QString resolution = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenResolution));
+        QStringList resolutionParts = resolution.split('x');
+        if (resolutionParts.size() == 2)
+        {
+            bool widthOk = false;
+            bool heightOk = false;
+            nativeWidth = resolutionParts.at(0).toInt(&widthOk);
+            nativeHeight = resolutionParts.at(1).toInt(&heightOk);
+            if (!widthOk || !heightOk)
+            {
+                nativeWidth = 0;
+                nativeHeight = 0;
+            }
+        }
+        if ((nativeWidth <= 0 || nativeHeight <= 0) && this->screen() != nullptr)
+        {
+            QSize screenSize = this->screen()->geometry().size();
+            nativeWidth = screenSize.width();
+            nativeHeight = screenSize.height();
+        }
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_WIDTH", nativeWidth > 0 ? QByteArray::number(nativeWidth) : "");
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_HEIGHT", nativeHeight > 0 ? QByteArray::number(nativeHeight) : "");
+    }
+    else
+    {
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_WIDTH", "");
+        qputenv("RMG_GLIDEN64_START_FULLSCREEN_HEIGHT", "");
+    }
+#endif
+
+    if (startInFullscreen)
+    {
+#ifdef _WIN32
+        if (!useNativeFullscreenStartup)
+#endif
+        {
+            this->ui_FullscreenTimerId = this->startTimer(100);
+        }
         this->ui_LaunchInFullscreen = false;
     }
 
@@ -2570,7 +2658,8 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
 
     const bool synchronizedNetplayActive = CoreIsSynchronizedNetplayActive();
-    const bool netplaySessionActive = synchronizedNetplayActive || CoreHasInitKaillera();
+    const bool blockEmulationPauseForNetplay = this->shouldBlockEmulationPauseForNetplay();
+    const bool netplaySessionActive = blockEmulationPauseForNetplay || CoreHasInitKaillera();
 
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_StartROM));
     this->action_System_StartRom->setShortcut(QKeySequence(keyBinding));
@@ -2602,7 +2691,7 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_System_HardReset->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Resume));
     this->action_System_Pause->setChecked(isPaused);
-    this->action_System_Pause->setEnabled(inEmulation && !synchronizedNetplayActive);
+    this->action_System_Pause->setEnabled(inEmulation && !blockEmulationPauseForNetplay);
     this->action_System_Pause->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Screenshot));
     this->action_System_Screenshot->setEnabled(inEmulation);
@@ -3433,6 +3522,7 @@ void MainWindow::on_QGuiApplication_applicationStateChanged(Qt::ApplicationState
 
     bool pauseOnFocusLoss = CoreSettingsGetBoolValue(SettingsID::GUI_PauseEmulationOnFocusLoss);
     bool resumeOnFocus = CoreSettingsGetBoolValue(SettingsID::GUI_ResumeEmulationOnFocus);
+    bool blockEmulationPauseForNetplay = this->shouldBlockEmulationPauseForNetplay();
 
     switch (state)
     {
@@ -3441,22 +3531,51 @@ void MainWindow::on_QGuiApplication_applicationStateChanged(Qt::ApplicationState
 
         case Qt::ApplicationState::ApplicationInactive:
         {
-            // Don't pause during synchronized netplay.
-            if (pauseOnFocusLoss && isRunning && !isPaused && !CoreIsSynchronizedNetplayActive())
+            if (pauseOnFocusLoss && isRunning && !isPaused && !blockEmulationPauseForNetplay)
             {
-                this->on_Action_System_Pause();
-                this->ui_ManuallyPaused = false;
+                if (CorePauseEmulation())
+                {
+                    this->ui_FocusPausedEmulation = true;
+                    this->updateUI(true, true);
+                }
             }
         } break;
 
         case Qt::ApplicationState::ApplicationActive:
         {
-            if (resumeOnFocus && isPaused && !this->ui_ManuallyPaused)
+            if (resumeOnFocus && isPaused && this->ui_FocusPausedEmulation)
             {
-                this->on_Action_System_Pause();
+                if (!blockEmulationPauseForNetplay && CoreResumeEmulation())
+                {
+                    this->ui_FocusPausedEmulation = false;
+                    this->updateUI(true, false);
+                }
+            }
+
+            if (!resumeOnFocus || !CoreIsEmulationPaused() || blockEmulationPauseForNetplay)
+            {
+                this->ui_FocusPausedEmulation = false;
             }
         } break;
     }
+}
+
+bool MainWindow::shouldBlockEmulationPauseForNetplay(void) const
+{
+    if (CoreIsSynchronizedNetplayActive())
+    {
+        return true;
+    }
+
+#ifdef NETPLAY
+    if (this->kailleraSessionManager != nullptr || this->netplaySessionDialog != nullptr ||
+        this->ui_RollbackNetplayRoomActive || this->ui_RollbackNetplayLaunchActive)
+    {
+        return true;
+    }
+#endif // NETPLAY
+
+    return false;
 }
 
 #ifdef UPDATER
@@ -3720,7 +3839,10 @@ void MainWindow::on_Action_System_Pause(void)
     }
 
     this->updateUI(true, (!isPaused && ret));
-    this->ui_ManuallyPaused = true;
+    if (ret)
+    {
+        this->ui_FocusPausedEmulation = false;
+    }
 }
 
 void MainWindow::on_Action_System_Screenshot(void)
@@ -4400,6 +4522,9 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
         this->ui_CheckVideoSizeTimerId = 0;
     }
 
+#ifdef _WIN32
+    OnScreenDisplaySetKailleraPortLabels(2, GetLiveKailleraPortLabelNames());
+#endif
     this->emulationThread->SetGekkoNetplay(remoteAddress, localPort, remotePort, localPlayer, frameDelay, predictionWindow);
     this->launchEmulationThread(romFile, "", false, -1, true);
 }
@@ -4776,6 +4901,8 @@ void MainWindow::on_Action_Audio_ToggleVolumeMute(void)
 
 void MainWindow::on_Emulation_Started(void)
 {
+    this->ui_FocusPausedEmulation = false;
+
     // only clear log dialog when we've gone over the limit
     if (this->logDialog.GetLineCount() >= 500000)
     {
@@ -4788,6 +4915,8 @@ void MainWindow::on_Emulation_Started(void)
 
 void MainWindow::on_Emulation_Finished(bool ret, QString error)
 {
+    this->ui_FocusPausedEmulation = false;
+
 #ifdef _WIN32
     this->restoreDisplayMode();
 #endif
@@ -4802,6 +4931,7 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     this->ui_RollbackLivePumpActive = false;
     this->ui_RollbackNetplayRoomActive = false;
     this->ui_RollbackNetplayLaunchActive = false;
+    OnScreenDisplayClearKailleraPortLabels();
 #endif // NETPLAY
 
     if (!ret)
@@ -5682,12 +5812,12 @@ void MainWindow::on_Action_Rollback_StartDebugReplay(void)
         {
             this->setDebugReplayStatusMessage("Recorded debug replay: " + std::to_string(recordedInputFrames) +
                 " input frames, payload hash " + std::to_string(finalHash) + ", wrote " + kRollbackDebugReplayFilePath +
-                " and " + kRollbackDebugReplayLogPath);
+                " and " + GetRollbackDebugReplayLogPathString());
         }
         else
         {
             this->setDebugReplayStatusMessage("Debug replay recording stopped before a replay was written; wrote " +
-                std::string(kRollbackDebugReplayLogPath));
+                GetRollbackDebugReplayLogPathString());
         }
     });
     progressTimer->start();
@@ -5833,7 +5963,7 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
         if (!completed)
         {
             this->setDebugReplayStatusMessage("Debug replay verify stopped before completion; wrote " +
-                std::string(kRollbackDebugReplayLogPath));
+                GetRollbackDebugReplayLogPathString());
             return;
         }
 
@@ -5841,13 +5971,13 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
         {
             this->setDebugReplayStatusMessage("Debug replay matched: " + std::to_string(replayedInputFrames) +
                 "/" + std::to_string(recordedInputFrames) + " input frames, payload hash " +
-                std::to_string(actualHash) + ", wrote " + kRollbackDebugReplayLogPath);
+                std::to_string(actualHash) + ", wrote " + GetRollbackDebugReplayLogPathString());
         }
         else
         {
             this->setDebugReplayStatusMessage("Debug replay mismatch: expected " + std::to_string(expectedHash) +
                 ", got " + std::to_string(actualHash) + ", replayed " + std::to_string(replayedInputFrames) +
-                "/" + std::to_string(recordedInputFrames) + " input frames, wrote " + kRollbackDebugReplayLogPath);
+                "/" + std::to_string(recordedInputFrames) + " input frames, wrote " + GetRollbackDebugReplayLogPathString());
         }
     });
     progressTimer->start();

@@ -588,4 +588,3 @@ m64p_error plugin_check(void)
 
     return M64ERR_SUCCESS;
 }
-

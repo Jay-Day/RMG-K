@@ -81,7 +81,9 @@ $XVFB_RUN "$script_dir/lib4bin" --dst-dir "$bin_dir" \
 	"$lib_dir"/qt6/plugins/styles/* \
 	"$lib_dir"/qt6/plugins/xcbglintegrations/* \
 	"$lib_dir"/qt6/plugins/tls/* \
-	"$lib_dir"/qt6/plugins/wayland-*/*
+	"$lib_dir"/qt6/plugins/wayland-*/* \
+	"$lib_dir"/libasound* \
+	"$lib_dir"/libpulse*
 
 # Prepare sharun
 "$bin_dir/sharun" -g

@@ -20,7 +20,7 @@
 #include <QHeaderView>
 #include <QIcon>
 
-static const char* kPlistUrl = "http://kaillerareborn.2manygames.fr:27887/plist.txt";
+static const char* kPlistUrl = "http://p2plist.smash64.net:27887/plist.txt";
 
 static QString buildWaitingGamesStyleSheet()
 {

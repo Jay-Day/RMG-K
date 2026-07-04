@@ -404,8 +404,17 @@ static int pb_performIo(void)
 
 static int pb_commandIsValid(int Control, unsigned char *Command)
 {
-	if (Control < 0 || Control >= g_n_channels) {
+	// A negative Control is genuinely malformed and worth flagging.
+	if (Control < 0) {
 		DebugMessage(PB_MSG_WARNING, "pb_readController called with Control=%d", Control);
+		return 0;
+	}
+
+	// Control >= g_n_channels means the PIF is polling a slot beyond what
+	// this adapter has channels for. InitiateControllers already declared
+	// those slots Present=0, so the poll happening is expected hardware
+	// behavior (N64 PIF polls all 4 slots every frame) — not an error.
+	if (Control >= g_n_channels) {
 		return 0;
 	}
 

@@ -23,6 +23,7 @@ enum class SettingsID
     GUI_ResumeEmulationOnFocus,
     GUI_AutomaticFullscreen,
     GUI_ExclusiveFullscreen,
+    GUI_BetaFullscreenBackend,
     GUI_ExclusiveFullscreenMonitor,
     GUI_ExclusiveFullscreenResolution,
     GUI_ExclusiveFullscreenRefreshRate,
@@ -104,6 +105,8 @@ enum class SettingsID
     // Rollback Settings
     Rollback_VerboseStats,
     Rollback_EnableLocalTesting,
+    Rollback_VerbosePifInputLogging,
+    Rollback_VerboseGlideInputLogging,
 
     // Core Plugin Settings
     Core_GFX_Plugin,

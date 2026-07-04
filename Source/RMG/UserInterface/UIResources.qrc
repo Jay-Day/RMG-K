@@ -7,10 +7,13 @@
   <file alias="icons/black/index.theme">Resource/icons/black/index.theme</file>
   <file alias="icons/black/svg/add-line.svg">Resource/icons/black/svg/add-line.svg</file>
   <file alias="icons/black/svg/arrow-down-s-line.svg">Resource/icons/black/svg/arrow-down-s-line.svg</file>
+  <file alias="icons/black/svg/arrow-bar-right-line.svg">Resource/icons/black/svg/arrow-bar-right-line.svg</file>
   <file alias="icons/black/svg/aed-electrodes-fill.svg">Resource/icons/black/svg/aed-electrodes-fill.svg</file>
   <file alias="icons/black/svg/aed-electrodes-line.svg">Resource/icons/black/svg/aed-electrodes-line.svg</file>
   <file alias="icons/black/svg/brush-line.svg">Resource/icons/black/svg/brush-line.svg</file>
+  <file alias="icons/black/svg/check-line.svg">Resource/icons/black/svg/check-line.svg</file>
   <file alias="icons/black/svg/checkbox-blank-circle-line.svg">Resource/icons/black/svg/checkbox-blank-circle-line.svg</file>
+  <file alias="icons/black/svg/close-line.svg">Resource/icons/black/svg/close-line.svg</file>
   <file alias="icons/black/svg/code-box-line.svg">Resource/icons/black/svg/code-box-line.svg</file>
   <file alias="icons/black/svg/copy-check-line.svg">Resource/icons/black/svg/copy-check-line.svg</file>
   <file alias="icons/black/svg/copy-line.svg">Resource/icons/black/svg/copy-line.svg</file>
@@ -53,10 +56,13 @@
   <file alias="icons/white/index.theme">Resource/icons/white/index.theme</file>
   <file alias="icons/white/svg/add-line.svg">Resource/icons/white/svg/add-line.svg</file>
   <file alias="icons/white/svg/arrow-down-s-line.svg">Resource/icons/white/svg/arrow-down-s-line.svg</file>
+  <file alias="icons/white/svg/arrow-bar-right-line.svg">Resource/icons/white/svg/arrow-bar-right-line.svg</file>
   <file alias="icons/white/svg/aed-electrodes-fill.svg">Resource/icons/white/svg/aed-electrodes-fill.svg</file>
   <file alias="icons/white/svg/aed-electrodes-line.svg">Resource/icons/white/svg/aed-electrodes-line.svg</file>
   <file alias="icons/white/svg/brush-line.svg">Resource/icons/white/svg/brush-line.svg</file>
+  <file alias="icons/white/svg/check-line.svg">Resource/icons/white/svg/check-line.svg</file>
   <file alias="icons/white/svg/checkbox-blank-circle-line.svg">Resource/icons/white/svg/checkbox-blank-circle-line.svg</file>
+  <file alias="icons/white/svg/close-line.svg">Resource/icons/white/svg/close-line.svg</file>
   <file alias="icons/white/svg/code-box-line.svg">Resource/icons/white/svg/code-box-line.svg</file>
   <file alias="icons/white/svg/copy-check-line.svg">Resource/icons/white/svg/copy-check-line.svg</file>
   <file alias="icons/white/svg/copy-line.svg">Resource/icons/white/svg/copy-line.svg</file>

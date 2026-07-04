@@ -923,7 +923,7 @@ void KailleraPlaybackDialog::populatePlaybackList()
         // Column 4: Size
         QString sizeStr;
         {
-            qint64 sz = fi.size();
+            qint64 sz = static_cast<qint64>(len);
             if (sz <= 1024)
                 sizeStr = QString::number(sz) + " B";
             else if (sz < 1024 * 1000)

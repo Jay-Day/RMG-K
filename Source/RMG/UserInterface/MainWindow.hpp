@@ -103,7 +103,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_ShowToolbar   = false;
     bool ui_ShowStatusbar = false;
 
-    bool ui_ManuallyPaused = true;
+    bool ui_FocusPausedEmulation = false;
     bool ui_ManuallySavedState  = false;
     bool ui_ManuallyLoadedState = false;
     CoreRollbackState ui_RollbackDebugState;
@@ -199,6 +199,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void addActions(void);
     void removeActions(void);
+
+    bool shouldBlockEmulationPauseForNetplay(void) const;
 
 #ifdef UPDATER
     void checkForUpdates(bool silent, bool force);

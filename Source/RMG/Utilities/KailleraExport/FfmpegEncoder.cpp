@@ -126,14 +126,21 @@ static bool runCommandWithCapturedOutput(const std::string& command,
 
 static bool probeVideoEncoder(const std::string& ffmpegPath, const char* codec)
 {
+    // AMD AMF requires at least 128x96 to initialize; 64x64 silently fails on
+    // AMD systems even when the driver is fine. 320x240 clears all known
+    // hardware-encoder minimums (NVENC, QSV, AMF). yuv420p is forced because
+    // the real export pipeline converts to it and some hardware encoders
+    // refuse lavfi's default surface format. The 10s timeout covers AMF's
+    // cold-init latency on first launch.
     char command[512];
     snprintf(command,
              sizeof(command),
-             "\"%s\" -v error -f lavfi -i color=black:s=64x64:d=0.1 -frames:v 1 -c:v %s -f null -",
+             "\"%s\" -v error -f lavfi -i color=black:s=320x240:r=30:d=0.1 -frames:v 1 "
+             "-pix_fmt yuv420p -c:v %s -f null -",
              ffmpegPath.c_str(),
              codec);
 
-    return runCommandWithCapturedOutput(command, 5000, false, nullptr);
+    return runCommandWithCapturedOutput(command, 10000, false, nullptr);
 }
 
 static std::string chooseVideoEncoder(const std::string& ffmpegPath, bool* hardwareAccelerated)

@@ -18,6 +18,7 @@
 #include <QRegularExpression>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGroupBox>
 #include <QFileDialog>
 #include <QColorDialog>
 #include <QDirIterator>
@@ -229,10 +230,17 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     QWidget* rollbackTab = new QWidget(this->tabWidget);
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
-    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats messaging", rollbackTab);
+    QGroupBox* rollbackLoggingGroupBox = new QGroupBox("Logging", rollbackTab);
+    QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
     this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
-    rollbackLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
+    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
+    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackVerbosePifInputLoggingCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
+    rollbackLayout->addWidget(rollbackLoggingGroupBox);
     rollbackLayout->addStretch();
     this->tabWidget->addTab(rollbackTab, "Rollback");
 
@@ -304,9 +312,17 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 #ifdef _WIN32
     connect(this->exclusiveFullscreenCheckBox, &QCheckBox::toggled, this, [this](bool checked)
     {
+        this->betaFullscreenBackendCheckBox->setEnabled(checked);
         this->exclusiveMonitorComboBox->setEnabled(checked);
         this->exclusiveResolutionComboBox->setEnabled(checked);
         this->exclusiveRefreshRateComboBox->setEnabled(checked);
+    });
+    connect(this->betaFullscreenBackendCheckBox, &QCheckBox::toggled, this, [this](bool checked)
+    {
+        if (checked)
+        {
+            this->automaticFullscreenCheckbox->setChecked(true);
+        }
     });
     connect(this->exclusiveMonitorComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
     {
@@ -850,6 +866,11 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen));
 #ifdef _WIN32
     this->exclusiveFullscreenCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen));
+    this->betaFullscreenBackendCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_BetaFullscreenBackend));
+    if (this->betaFullscreenBackendCheckBox->isChecked())
+    {
+        this->automaticFullscreenCheckbox->setChecked(true);
+    }
     {
         // set saved values into combobox data before populating so they get selected
         QString savedMonitor = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_ExclusiveFullscreenMonitor));
@@ -886,6 +907,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveRefreshRateComboBox->blockSignals(false);
         this->populateExclusiveFullscreenModes();
     }
+    this->betaFullscreenBackendCheckBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
     this->exclusiveMonitorComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
     this->exclusiveResolutionComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
     this->exclusiveRefreshRateComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
@@ -957,6 +979,8 @@ void SettingsDialog::loadRollbackSettings(void)
 {
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
+    this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
+    this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
 }
 
 void SettingsDialog::loadDefaultCoreSettings(void)
@@ -1104,6 +1128,8 @@ void SettingsDialog::loadDefaultInterfaceEmulationSettings(void)
     this->automaticFullscreenCheckbox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutomaticFullscreen));
 #ifdef _WIN32
     this->exclusiveFullscreenCheckBox->setChecked(false);
+    this->betaFullscreenBackendCheckBox->setChecked(false);
+    this->betaFullscreenBackendCheckBox->setEnabled(false);
     this->exclusiveMonitorComboBox->setCurrentIndex(0);
     this->exclusiveResolutionComboBox->setCurrentIndex(0);
     this->exclusiveRefreshRateComboBox->setCurrentIndex(0);
@@ -1169,6 +1195,8 @@ void SettingsDialog::loadDefaultRollbackSettings(void)
 {
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseStats));
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EnableLocalTesting));
+    this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
+    this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
 }
 
 void SettingsDialog::saveSettings(void)
@@ -1378,12 +1406,16 @@ void SettingsDialog::saveInterfaceEmulationSettings(void)
     CoreSettingsSetValue(SettingsID::GUI_HideCursorInFullscreenEmulation, this->hideCursorFullscreenCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_PauseEmulationOnFocusLoss, this->pauseEmulationOnFocusCheckbox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_ResumeEmulationOnFocus, this->resumeEmulationOnFocusCheckBox->isChecked());
-    CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
 #ifdef _WIN32
+    const bool useExperimentalFullscreen = this->betaFullscreenBackendCheckBox->isChecked();
+    CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked() || useExperimentalFullscreen);
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreen, this->exclusiveFullscreenCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::GUI_BetaFullscreenBackend, useExperimentalFullscreen);
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenMonitor, this->exclusiveMonitorComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenResolution, this->exclusiveResolutionComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_ExclusiveFullscreenRefreshRate, this->exclusiveRefreshRateComboBox->currentData().toInt());
+#else
+    CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
 #endif
     CoreSettingsSetValue(SettingsID::GUI_ConfirmDragDrop, this->confirmDragDropCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_ConfirmExitWhileInGame, this->confirmExitWhileInGameCheckBox->isChecked());
@@ -1437,6 +1469,8 @@ void SettingsDialog::saveRollbackSettings(void)
 {
     CoreSettingsSetValue(SettingsID::Rollback_VerboseStats, this->rollbackVerboseStatsCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, this->rollbackEnableLocalTestingCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_VerbosePifInputLogging, this->rollbackVerbosePifInputLoggingCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_VerboseGlideInputLogging, this->rollbackVerboseGlideInputLoggingCheckBox->isChecked());
 }
 
 void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)

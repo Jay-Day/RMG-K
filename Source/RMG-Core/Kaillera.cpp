@@ -66,7 +66,7 @@ static std::filesystem::path getKailleraRecordsDirectoryPath()
     return pathFromUtf8String(recordsDirectory);
 }
 
-static uint64_t computeDirectorySizeBytes(const std::filesystem::path& directory)
+static uint64_t computeKrecDirectorySizeBytes(const std::filesystem::path& directory)
 {
     std::error_code ec;
     if (!std::filesystem::exists(directory, ec))
@@ -82,7 +82,8 @@ static uint64_t computeDirectorySizeBytes(const std::filesystem::path& directory
     while (!ec && it != end)
     {
         const auto& entry = *it;
-        if (entry.is_regular_file(ec))
+        // Only count .krec files — the cap manages recordings, not exported MP4s or other files.
+        if (entry.is_regular_file(ec) && entry.path().extension() == ".krec")
         {
             uintmax_t fileSize = entry.file_size(ec);
             if (!ec)
@@ -417,7 +418,7 @@ CORE_EXPORT bool CoreRefreshKailleraRecordingStorageStatus(void)
         return false;
     }
 
-    s_RecordingStorageBytes = computeDirectorySizeBytes(getKailleraRecordsDirectoryPath());
+    s_RecordingStorageBytes = computeKrecDirectorySizeBytes(getKailleraRecordsDirectoryPath());
     s_RecordingStorageStatusInitialized = true;
 
     int capMB = CoreSettingsGetIntValue(SettingsID::Kaillera_RecordingCapMB);

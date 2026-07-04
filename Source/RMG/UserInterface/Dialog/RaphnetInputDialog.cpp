@@ -14,6 +14,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QDialogButtonBox>
+#include <QElapsedTimer>
 #include <QPushButton>
 #include <QComboBox>
 #include <cstring>
@@ -85,6 +86,9 @@ const RaphnetAdapterDef g_RaphnetAdapters[] = {
     { 0x0067, 1, 1, 63 },
 };
 
+constexpr int64_t kSlowPollThresholdUs = 4000;
+constexpr int64_t kFrameBudgetUs = 16667;
+
 const RaphnetAdapterDef* findRaphnetAdapter(uint16_t productId, int interfaceNumber)
 {
     for (const RaphnetAdapterDef& adapter : g_RaphnetAdapters)
@@ -98,6 +102,16 @@ const RaphnetAdapterDef* findRaphnetAdapter(uint16_t productId, int interfaceNum
     return nullptr;
 }
 
+QString formatCount(uint64_t value)
+{
+    return QString::number(static_cast<qulonglong>(value));
+}
+
+QString formatDuration(int64_t elapsedUs)
+{
+    return QString("%1 ms").arg(static_cast<double>(elapsedUs) / 1000.0, 0, 'f', 3);
+}
+
 } // namespace
 
 using namespace UserInterface;
@@ -105,7 +119,7 @@ using namespace UserInterface;
 RaphnetInputDialog::RaphnetInputDialog(QWidget* parent) : QDialog(parent)
 {
     setWindowTitle("Raphnet Adapter - Input Test");
-    setMinimumSize(420, 400);
+    setMinimumSize(460, 520);
 
     setupUi();
 
@@ -230,6 +244,34 @@ void RaphnetInputDialog::setupUi()
 
     mainLayout->addWidget(axesGroup);
 
+    // USB timing/debug stats
+    QGroupBox* statsGroup = new QGroupBox("USB Timing", this);
+    QGridLayout* statsGrid = new QGridLayout(statsGroup);
+
+    m_StatsPollsLabel = new QLabel(statsGroup);
+    m_StatsLatencyLabel = new QLabel(statsGroup);
+    m_StatsSlowPollsLabel = new QLabel(statsGroup);
+    m_StatsErrorsLabel = new QLabel(statsGroup);
+    m_StatsResponseLabel = new QLabel(statsGroup);
+
+    statsGrid->addWidget(new QLabel("Polls:", statsGroup), 0, 0);
+    statsGrid->addWidget(m_StatsPollsLabel, 0, 1);
+    statsGrid->addWidget(new QLabel("Latency:", statsGroup), 1, 0);
+    statsGrid->addWidget(m_StatsLatencyLabel, 1, 1);
+    statsGrid->addWidget(new QLabel("Slow:", statsGroup), 2, 0);
+    statsGrid->addWidget(m_StatsSlowPollsLabel, 2, 1);
+    statsGrid->addWidget(new QLabel("Errors:", statsGroup), 3, 0);
+    statsGrid->addWidget(m_StatsErrorsLabel, 3, 1);
+    statsGrid->addWidget(new QLabel("Last response:", statsGroup), 4, 0);
+    statsGrid->addWidget(m_StatsResponseLabel, 4, 1);
+
+    QPushButton* resetStatsButton = new QPushButton("Reset Stats", statsGroup);
+    connect(resetStatsButton, &QPushButton::clicked, this, &RaphnetInputDialog::onResetStatsClicked);
+    statsGrid->addWidget(resetStatsButton, 5, 1, Qt::AlignRight);
+
+    mainLayout->addWidget(statsGroup);
+    updateDebugStatsLabels();
+
     // Close button
     QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -290,11 +332,30 @@ void RaphnetInputDialog::closeAdapter()
     hid_exit();
 }
 
-bool RaphnetInputDialog::exchangeCommand(const unsigned char* command, int commandLength, unsigned char* response, int& responseLength)
+bool RaphnetInputDialog::exchangeCommand(const unsigned char* command, int commandLength, unsigned char* response,
+    int& responseLength, ExchangeTiming* timing)
 {
+    if (timing != nullptr)
+    {
+        *timing = {};
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    auto finish = [&](ExchangeFailure failure) {
+        if (timing != nullptr)
+        {
+            timing->elapsedUs = timer.nsecsElapsed() / 1000;
+            timing->failure = failure;
+        }
+
+        return failure == ExchangeFailure::None;
+    };
+
     if (!m_HidDevice || !command || !response || commandLength <= 0 || commandLength > m_ReportSize)
     {
-        return false;
+        return finish(ExchangeFailure::InvalidArgument);
     }
 
     unsigned char buffer[64];
@@ -305,18 +366,23 @@ bool RaphnetInputDialog::exchangeCommand(const unsigned char* command, int comma
     int n = hid_send_feature_report(m_HidDevice, buffer, m_ReportSize + 1);
     if (n < 0)
     {
-        return false;
+        return finish(ExchangeFailure::SendError);
     }
 
     for (int attempt = 0; attempt < 8; attempt++)
     {
+        if (timing != nullptr)
+        {
+            timing->attempts++;
+        }
+
         memset(buffer, 0, sizeof(buffer));
         buffer[0] = 0x00;
 
         n = hid_get_feature_report(m_HidDevice, buffer, m_ReportSize + 1);
         if (n < 0)
         {
-            return false;
+            return finish(ExchangeFailure::ReceiveError);
         }
 
         if (n <= 1)
@@ -325,15 +391,19 @@ bool RaphnetInputDialog::exchangeCommand(const unsigned char* command, int comma
         }
 
         responseLength = n - 1;
+        if (timing != nullptr)
+        {
+            timing->responseLength = responseLength;
+        }
         memcpy(response, buffer + 1, static_cast<size_t>(responseLength));
 
         if (response[0] == command[0])
         {
-            return true;
+            return finish(ExchangeFailure::None);
         }
     }
 
-    return false;
+    return finish(ExchangeFailure::NoResponse);
 }
 
 bool RaphnetInputDialog::setAdapterPollingSuspended(bool suspended)
@@ -366,27 +436,34 @@ bool RaphnetInputDialog::pollController(uint16_t& buttons, int8_t& xAxis, int8_t
     unsigned char response[64];
     int responseLength = 0;
     memset(response, 0, sizeof(response));
+    ExchangeTiming timing;
 
-    if (!exchangeCommand(cmd, sizeof(cmd), response, responseLength))
+    if (!exchangeCommand(cmd, sizeof(cmd), response, responseLength, &timing))
     {
+        recordPollStats(false, timing, false);
         return false;
     }
 
     // Response format: [report_type, channel, rx_len, rx_data...]
     if (responseLength < 7)
     {
+        recordPollStats(false, timing, true);
         return false;
     }
 
     unsigned char rxLen = response[2];
     if (rxLen < 4)
+    {
+        recordPollStats(false, timing, true);
         return false;
+    }
 
     // Parse N64 controller status (4 bytes)
     buttons = (static_cast<uint16_t>(response[3]) << 8) | response[4];
     xAxis = static_cast<int8_t>(response[5]);
     yAxis = static_cast<int8_t>(response[6]);
 
+    recordPollStats(true, timing, false);
     return true;
 }
 
@@ -412,6 +489,13 @@ void RaphnetInputDialog::onPollTimer()
     }
 }
 
+void RaphnetInputDialog::onResetStatsClicked()
+{
+    m_DebugStats = {};
+    m_FailedPollCount = 0;
+    updateDebugStatsLabels();
+}
+
 void RaphnetInputDialog::updateButtonIndicators(uint16_t buttons)
 {
     for (auto& indicator : m_ButtonIndicators)
@@ -429,4 +513,94 @@ void RaphnetInputDialog::updateAxisDisplay(int8_t x, int8_t y)
     m_YAxisValue->setText(QString::number(y));
     m_XAxisBar->setValue(x);
     m_YAxisBar->setValue(y);
+}
+
+void RaphnetInputDialog::recordPollStats(bool success, const ExchangeTiming& timing, bool invalidResponse)
+{
+    m_DebugStats.pollCount++;
+    m_DebugStats.totalExchangeUs += static_cast<uint64_t>(timing.elapsedUs);
+    m_DebugStats.lastExchangeUs = timing.elapsedUs;
+    if (timing.elapsedUs > m_DebugStats.maxExchangeUs)
+    {
+        m_DebugStats.maxExchangeUs = timing.elapsedUs;
+    }
+
+    m_DebugStats.lastAttempts = timing.attempts;
+    if (timing.attempts > m_DebugStats.maxAttempts)
+    {
+        m_DebugStats.maxAttempts = timing.attempts;
+    }
+    m_DebugStats.lastResponseLength = timing.responseLength;
+
+    if (timing.elapsedUs >= kSlowPollThresholdUs)
+    {
+        m_DebugStats.slowPollCount++;
+    }
+    if (timing.elapsedUs >= kFrameBudgetUs)
+    {
+        m_DebugStats.frameBudgetMissCount++;
+    }
+
+    if (success)
+    {
+        m_DebugStats.successCount++;
+    }
+    else
+    {
+        m_DebugStats.failureCount++;
+    }
+
+    if (invalidResponse)
+    {
+        m_DebugStats.invalidResponseCount++;
+    }
+
+    switch (timing.failure)
+    {
+    case ExchangeFailure::SendError:
+        m_DebugStats.sendErrorCount++;
+        break;
+    case ExchangeFailure::ReceiveError:
+        m_DebugStats.receiveErrorCount++;
+        break;
+    case ExchangeFailure::NoResponse:
+        m_DebugStats.noResponseCount++;
+        break;
+    default:
+        break;
+    }
+
+    updateDebugStatsLabels();
+}
+
+void RaphnetInputDialog::updateDebugStatsLabels()
+{
+    if (m_StatsPollsLabel == nullptr)
+    {
+        return;
+    }
+
+    const int64_t averageUs = m_DebugStats.pollCount > 0 ?
+        static_cast<int64_t>(m_DebugStats.totalExchangeUs / m_DebugStats.pollCount) : 0;
+
+    m_StatsPollsLabel->setText(QString("%1 ok / %2 failed / %3 total")
+        .arg(formatCount(m_DebugStats.successCount),
+             formatCount(m_DebugStats.failureCount),
+             formatCount(m_DebugStats.pollCount)));
+    m_StatsLatencyLabel->setText(QString("last %1 / avg %2 / max %3")
+        .arg(formatDuration(m_DebugStats.lastExchangeUs),
+             formatDuration(averageUs),
+             formatDuration(m_DebugStats.maxExchangeUs)));
+    m_StatsSlowPollsLabel->setText(QString(">=4 ms: %1 / >=16.7 ms: %2")
+        .arg(formatCount(m_DebugStats.slowPollCount),
+             formatCount(m_DebugStats.frameBudgetMissCount)));
+    m_StatsErrorsLabel->setText(QString("send %1 / read %2 / no response %3 / malformed %4")
+        .arg(formatCount(m_DebugStats.sendErrorCount),
+             formatCount(m_DebugStats.receiveErrorCount),
+             formatCount(m_DebugStats.noResponseCount),
+             formatCount(m_DebugStats.invalidResponseCount)));
+    m_StatsResponseLabel->setText(QString("attempts %1 (max %2) / bytes %3")
+        .arg(m_DebugStats.lastAttempts)
+        .arg(m_DebugStats.maxAttempts)
+        .arg(m_DebugStats.lastResponseLength));
 }
