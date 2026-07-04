@@ -18,6 +18,20 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.          *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+#ifdef __APPLE__
+/* macOS/Mach-O assembler does not support ELF-specific .type or .size */
+#define GLOBAL_FUNCTION(name)  \
+    .globl name;               \
+    .private_extern name;      \
+    name
+
+#define LOCAL_FUNCTION(name)  \
+    name
+
+#define GLOBAL_VARIABLE(name, size_) \
+    .global name;                    \
+    .private_extern name
+#else
 #define GLOBAL_FUNCTION(name)  \
     .globl name;               \
     .hidden name;              \
@@ -34,6 +48,7 @@
     .hidden name;                    \
     .type   name, %object;           \
     .size   name, size_
+#endif
 
 .macro movl Wn, imm
     movz    \Wn, (\imm >> 16) & 0xFFFF, lsl 16

@@ -27,7 +27,7 @@ class OGLWidget : public QWindow
     OGLWidget(QWidget *);
     ~OGLWidget(void);
 
-    void MoveContextToThread(QThread* thread);
+    void MoveContextToThread(QThread* thread, const QSurfaceFormat& format = QSurfaceFormat());
     QOpenGLContext* GetContext();
 
     void SetHideCursor(bool hide);

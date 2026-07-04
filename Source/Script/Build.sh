@@ -3,7 +3,7 @@ set -ex
 script_dir="$(dirname "$0")"
 toplvl_dir="$(realpath "$script_dir/../../")"
 build_config="Debug"
-threads="$(nproc)"
+threads="$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)"
 kaillera_app_version_override=""
 generator="Unix Makefiles"
 install_cheats="ON"

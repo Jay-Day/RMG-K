@@ -7,9 +7,9 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 COMPONENTS Gui Widgets Core REQUIRED)
 
-if (NOT WIN32)
+if (NOT WIN32 AND NOT APPLE)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
-endif(NOT WIN32)
+endif()
 
 if (PORTABLE_INSTALL)
     add_definitions(-DPORTABLE_INSTALL)
@@ -41,7 +41,7 @@ endif()
 
 # hidapi for raphnet adapter input test dialog
 find_package(PkgConfig REQUIRED)
-if (WIN32)
+if (WIN32 OR APPLE)
     pkg_check_modules(HIDAPI REQUIRED hidapi)
 else()
     pkg_check_modules(HIDAPI REQUIRED hidapi-hidraw)
@@ -90,6 +90,10 @@ set(RMG_SOURCES
     VidExt.cpp
     main.cpp
 )
+
+if (APPLE)
+    list(APPEND RMG_SOURCES VidExtMac.mm)
+endif()
 
 if (UPDATER)
     list(APPEND RMG_SOURCES
@@ -160,9 +164,11 @@ target_link_libraries(RMG
 
 # needed for dynamically linked RMG-Core
 if (PORTABLE_INSTALL)
-    set_target_properties(RMG PROPERTIES
-        INSTALL_RPATH "$ORIGIN"
-    )
+    if (APPLE)
+        set_target_properties(RMG PROPERTIES INSTALL_RPATH "@loader_path")
+    else()
+        set_target_properties(RMG PROPERTIES INSTALL_RPATH "$ORIGIN")
+    endif()
 endif(PORTABLE_INSTALL)
 
 target_include_directories(RMG PRIVATE
@@ -173,15 +179,16 @@ target_include_directories(RMG PRIVATE
     ${HIDAPI_INCLUDE_DIRS}
 )
 
+target_link_directories(RMG PRIVATE ${HIDAPI_LIBRARY_DIRS})
 target_link_libraries(RMG Qt6::Gui Qt6::Widgets ${HIDAPI_LIBRARIES})
 
 if (WIN32)
     target_link_libraries(RMG opengl32 gdi32 user32)
 endif(WIN32)
 
-if (NOT WIN32)
+if (NOT WIN32 AND NOT APPLE)
     target_link_libraries(RMG Qt6::DBus)
-endif(NOT WIN32)
+endif()
 
 if (UPDATER)
     target_link_libraries(RMG Qt6::Network)

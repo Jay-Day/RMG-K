@@ -14,7 +14,7 @@
 
 #ifdef _WIN32
 #include <Windows.h>
-#else // Linux
+#elif !defined(__APPLE__)
 #include <QDBusConnection>
 #include <QDBusReply>
 #endif
@@ -90,7 +90,7 @@ void EmulationThread::inhibitScreensaver(void)
 {
 #ifdef _WIN32
     SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED);
-#else
+#elif !defined(__APPLE__)
     this->dbusCookieId = 0;
     this->dbusInterface = new QDBusInterface("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver", QDBusConnection::sessionBus());
     if (!this->dbusInterface->isValid())
@@ -110,7 +110,7 @@ void EmulationThread::uninhibitScreensaver(void)
 {
 #ifdef _WIN32
     SetThreadExecutionState(ES_CONTINUOUS);
-#else
+#elif !defined(__APPLE__)
     if (this->dbusInterface == nullptr)
     {
         return;

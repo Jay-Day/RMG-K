@@ -5219,7 +5219,7 @@ void MainWindow::on_VidExt_Init(VidExtRenderMode renderMode)
 
 void MainWindow::on_VidExt_SetupOGL(QSurfaceFormat format, QThread* thread)
 {
-    this->ui_Widget_OpenGL->MoveContextToThread(thread);
+    this->ui_Widget_OpenGL->MoveContextToThread(thread, format);
     // on wayland setting the surface format
     // fails for some reason, and if we set it anyways
     // ->makeCurrent() will fail in VidExt.cpp,

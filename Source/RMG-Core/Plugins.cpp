@@ -150,6 +150,13 @@ static std::string get_plugin_path(CorePluginType type, std::string settingsValu
         return std::string();
     }
 
+#ifdef __APPLE__
+    if (settingsValue.ends_with(".so"))
+    {
+        settingsValue = settingsValue.substr(0, settingsValue.size() - 3) + CORE_LIBRARY_EXT_STR;
+    }
+#endif
+
     pluginPath = CoreGetPluginDirectory().string();
 
     // if the full plugin path is in the settings value,

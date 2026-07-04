@@ -8,6 +8,9 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "VidExt.hpp"
+#ifdef __APPLE__
+#include "VidExtMac.hpp"
+#endif
 
 #include <RMG-Core/Callback.hpp>
 #include <RMG-Core/Emulation.hpp>
@@ -19,7 +22,9 @@
 
 #include "OnScreenDisplay.hpp"
 
+#if QT_CONFIG(vulkan)
 #include <QVulkanInstance>
+#endif
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QApplication>
@@ -537,9 +542,11 @@ static bool VidExt_NativeWglActive(void)
 }
 #endif
 
+#if QT_CONFIG(vulkan)
 static QVulkanInstance l_VulkanInstance;
 static QVulkanInfoVector<QVulkanExtension> l_VulkanExtensions;
 static QVector<const char*> l_VulkanExtensionList;
+#endif
 
 static void VidExt_UpdateOsdDisplaySize(void)
 {
@@ -587,21 +594,34 @@ static bool VidExt_OglSetup(int screenMode)
 
     l_EmuThread->on_VidExt_SetupOGL(l_SurfaceFormat, QThread::currentThread());
 
-    while (!(*l_OGLWidget)->isVisible())
+    // isExposed() is required on macOS: isVisible() returns true before the
+    // NSView has an actual drawable surface, causing makeCurrent() to fail
+    constexpr int kTimeoutMs = 5000;
+    int waited = 0;
+    while (!(*l_OGLWidget)->isVisible() || !(*l_OGLWidget)->isExposed())
     {
-        continue;
+        QThread::msleep(1);
+        if (++waited >= kTimeoutMs)
+        {
+            CoreAddCallbackMessage(CoreDebugMessageType::Error,
+                std::string("Timed out waiting for OpenGL widget to become ready"
+                    " (visible=") + ((*l_OGLWidget)->isVisible() ? "true" : "false") +
+                    " exposed=" + ((*l_OGLWidget)->isExposed() ? "true" : "false") + ")");
+            return false;
+        }
     }
 
     if (!(*l_OGLWidget)->GetContext()->isValid())
     {
-        if (QSurfaceFormat::defaultFormat().renderableType() == QSurfaceFormat::OpenGLES)
-        {
-            CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL ES context");
-        }
-        else
-        {
-            CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL context");
-        }
+        QSurfaceFormat got = (*l_OGLWidget)->GetContext()->format();
+        CoreAddCallbackMessage(CoreDebugMessageType::Error,
+            std::string("OpenGL context invalid — requested ") +
+            std::to_string(l_SurfaceFormat.majorVersion()) + "." +
+            std::to_string(l_SurfaceFormat.minorVersion()) +
+            (l_SurfaceFormat.profile() == QSurfaceFormat::CoreProfile ? " Core" : " Compat") +
+            ", got " + std::to_string(got.majorVersion()) + "." +
+            std::to_string(got.minorVersion()) +
+            (got.profile() == QSurfaceFormat::CoreProfile ? " Core" : " Compat"));
         return false;
     }
 
@@ -669,6 +689,7 @@ static m64p_error VidExt_Quit(void)
     }
     else
     {
+#if QT_CONFIG(vulkan)
         // remove vulkan instance from widget
         // and destroy the instance
         (*l_VulkanWidget)->setVulkanInstance(nullptr);
@@ -676,6 +697,7 @@ static m64p_error VidExt_Quit(void)
         {
             l_VulkanInstance.destroy();
         }
+#endif
     }
     l_EmuThread->on_VidExt_Quit();
 
@@ -1015,6 +1037,7 @@ static uint32_t VidExt_GLGetDefaultFramebuffer(void)
     return (*l_OGLWidget)->GetContext()->defaultFramebufferObject();
 }
 
+#if QT_CONFIG(vulkan)
 static m64p_error VidExt_VK_GetSurface(void** Surface, void* Instance)
 {
     if (l_RenderMode != M64P_RENDER_VULKAN)
@@ -1078,14 +1101,28 @@ static m64p_error VidExt_VK_GetInstanceExtensions(const char** Extensions[], uin
     *NumExtensions = l_VulkanExtensionList.size();
     return M64ERR_SUCCESS;
 }
+#else
+static m64p_error VidExt_VK_GetSurface(void** Surface, void* Instance)
+{
+    return M64ERR_UNSUPPORTED;
+}
+
+static m64p_error VidExt_VK_GetInstanceExtensions(const char** Extensions[], uint32_t* NumExtensions)
+{
+    return M64ERR_UNSUPPORTED;
+}
+#endif
 
 //
 // Exported Functions
 //
 
-bool SetupVidExt(Thread::EmulationThread* emuThread, UserInterface::MainWindow* mainWindow, 
+bool SetupVidExt(Thread::EmulationThread* emuThread, UserInterface::MainWindow* mainWindow,
     UserInterface::Widget::OGLWidget** oglWidget, UserInterface::Widget::VKWidget** vulkanWidget)
 {
+#ifdef __APPLE__
+    VidExtMac_InstallThreadSafeSetView();
+#endif
     l_EmuThread    = emuThread;
     l_MainWindow   = mainWindow;
     l_OGLWidget    = oglWidget;

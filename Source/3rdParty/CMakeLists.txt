@@ -8,13 +8,17 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(M64P_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core)
 if(WIN32)
     set(SO_EXT "dll")
-    set(GCA_LIB "mupen64plus_input_gca.${SO_EXT}")
+    set(GCA_LIB "mupen64plus_input_gca.dll")
     set(CORE_FILE "mupen64plus.dll")
-else(WIN32)
+elseif(APPLE)
+    set(SO_EXT "dylib")
+    set(GCA_LIB "libmupen64plus_input_gca.dylib")
+    set(CORE_FILE "libmupen64plus.dylib")
+else()
     set(SO_EXT "so")
-    set(GCA_LIB "libmupen64plus_input_gca.${SO_EXT}")
+    set(GCA_LIB "libmupen64plus_input_gca.so")
     set(CORE_FILE "libmupen64plus.so")
-endif(WIN32)
+endif()
 
 set(BASE_CMAKE_CONFIGURE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} 
     -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
@@ -60,8 +64,9 @@ set(SDL3NET_SOURCES
 )
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL3 REQUIRED sdl3)
+find_package(Vulkan)
 add_library(SDL3_net STATIC ${SDL3NET_SOURCES})
-target_include_directories(SDL3_net PRIVATE ${SDL3NET_DIR}/include)
+target_include_directories(SDL3_net PRIVATE ${SDL3NET_DIR}/include ${SDL3_INCLUDE_DIRS})
 set(SDL3NET_CFLAGS "-DUSE_SDL3NET -I${SDL3NET_DIR}/include")
 # for some reason MingW needs SDL3 to be linked after SDL3_net,
 # else we get a lot of missing symbol errors, should be harmless
@@ -87,7 +92,7 @@ ExternalProject_Add(mupen64plus-core
     BUILD_COMMAND ${MAKE_CMD} all -f ${M64P_CORE_DIR}/projects/unix/Makefile 
         SRCDIR=${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core/src 
         SUBDIR=${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core/subprojects 
-        OSD=0 NEW_DYNAREC=1 NO_ASM=$<BOOL:${NO_ASM}> 
+        OSD=0 NEW_DYNAREC=$<IF:$<PLATFORM_ID:Darwin>,0,1> NO_ASM=$<IF:$<PLATFORM_ID:Darwin>,1,$<BOOL:${NO_ASM}>>
         KEYBINDINGS=0 ACCURATE_FPU=1 VULKAN=0 NETPLAY=$<BOOL:${NETPLAY}> 
         TARGET=${CORE_FILE} DEBUG=${MAKE_DEBUG}
         CC=${MAKE_CC_COMPILER} CXX=${MAKE_CXX_COMPILER}
@@ -141,18 +146,20 @@ ExternalProject_Add(mupen64plus-rsp-hle
     BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-hle/mupen64plus-rsp-hle.${SO_EXT}
 )
 
-ExternalProject_Add(mupen64plus-rsp-parallel
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-parallel/
+if (Vulkan_FOUND)
+    ExternalProject_Add(mupen64plus-rsp-parallel
+        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-parallel/
 
-    INSTALL_COMMAND ""
+        INSTALL_COMMAND ""
 
-    BUILD_IN_SOURCE False
-    BUILD_ALWAYS True
-    CMAKE_ARGS -DUSE_IPO=OFF ${CMAKE_CONFIGURE_ARGS}
-    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-parallel
+        BUILD_IN_SOURCE False
+        BUILD_ALWAYS True
+        CMAKE_ARGS -DUSE_IPO=OFF ${CMAKE_CONFIGURE_ARGS}
+        BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-parallel
 
-    BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-parallel/mupen64plus-rsp-parallel.${SO_EXT}
-)
+        BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-parallel/mupen64plus-rsp-parallel.${SO_EXT}
+    )
+endif (Vulkan_FOUND)
 
 ExternalProject_Add(mupen64plus-input-raphnetraw
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-input-raphnetraw/
@@ -214,18 +221,20 @@ ExternalProject_Add(mupen64plus-video-GLideN64
     BUILD_BYPRODUCTS ${GLIDEN64_BUILD_DIR}/plugin/${GLIDEN64_BUILD_TYPE}/mupen64plus-video-GLideN64.${SO_EXT}
 )
 
-ExternalProject_Add(mupen64plus-video-parallel
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-video-parallel
+if (Vulkan_FOUND)
+    ExternalProject_Add(mupen64plus-video-parallel
+        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-video-parallel
 
-    INSTALL_COMMAND ""
+        INSTALL_COMMAND ""
 
-    BUILD_IN_SOURCE False
-    BUILD_ALWAYS True
-    CMAKE_ARGS -DCONFIG_GUI=ON -DUSE_IPO=OFF ${CMAKE_CONFIGURE_ARGS}
-    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-video-parallel
+        BUILD_IN_SOURCE False
+        BUILD_ALWAYS True
+        CMAKE_ARGS -DCONFIG_GUI=ON -DUSE_IPO=OFF ${CMAKE_CONFIGURE_ARGS}
+        BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-video-parallel
 
-    BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-video-parallel/mupen64plus-video-parallel.${SO_EXT}
-)
+        BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-video-parallel/mupen64plus-video-parallel.${SO_EXT}
+    )
+endif (Vulkan_FOUND)
 
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
 set(IMGUI_SOURCES
@@ -268,8 +277,10 @@ set(MUPEN64PLUS_PLUGIN_RSP_CXD4 ${BUILD_BYPRODUCTS} PARENT_SCOPE)
 ExternalProject_Get_property(mupen64plus-rsp-hle BUILD_BYPRODUCTS)
 set(MUPEN64PLUS_PLUGIN_RSP_HLE ${BUILD_BYPRODUCTS} PARENT_SCOPE)
 
-ExternalProject_Get_property(mupen64plus-rsp-parallel BUILD_BYPRODUCTS)
-set(MUPEN64PLUS_PLUGIN_RSP_PARALLEL ${BUILD_BYPRODUCTS} PARENT_SCOPE)
+if (Vulkan_FOUND)
+    ExternalProject_Get_property(mupen64plus-rsp-parallel BUILD_BYPRODUCTS)
+    set(MUPEN64PLUS_PLUGIN_RSP_PARALLEL ${BUILD_BYPRODUCTS} PARENT_SCOPE)
+endif (Vulkan_FOUND)
 
 ExternalProject_Get_property(mupen64plus-input-raphnetraw BUILD_BYPRODUCTS)
 set(MUPEN64PLUS_PLUGIN_INPUT_RAPHNET ${BUILD_BYPRODUCTS} PARENT_SCOPE)
@@ -283,8 +294,10 @@ ExternalProject_Get_property(mupen64plus-video-GLideN64 BUILD_BYPRODUCTS)
 set(MUPEN64PLUS_PLUGIN_GFX_GLIDEN64 ${BUILD_BYPRODUCTS} PARENT_SCOPE)
 set(MUPEN64PLUS_PLUGIN_GFX_GLIDEN64_DATA ${GLIDEN64_CUSTOM_INI} PARENT_SCOPE)
 
-ExternalProject_Get_property(mupen64plus-video-parallel BUILD_BYPRODUCTS)
-set(MUPEN64PLUS_PLUGIN_GFX_PARALLEL ${BUILD_BYPRODUCTS} PARENT_SCOPE)
+if (Vulkan_FOUND)
+    ExternalProject_Get_property(mupen64plus-video-parallel BUILD_BYPRODUCTS)
+    set(MUPEN64PLUS_PLUGIN_GFX_PARALLEL ${BUILD_BYPRODUCTS} PARENT_SCOPE)
+endif (Vulkan_FOUND)
 
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui PARENT_SCOPE)
 

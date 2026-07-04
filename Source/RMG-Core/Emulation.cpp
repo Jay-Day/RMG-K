@@ -361,11 +361,8 @@ static void apply_game_coresettings_overlay(void)
 // so the setting takes effect when plugins are loaded
 static void apply_kaillera_rsp_override(void)
 {
-#ifdef _WIN32
-    CoreSettingsSetValue(SettingsID::Core_RSP_Plugin, std::string("mupen64plus-rsp-hle.dll"));
-#else
-    CoreSettingsSetValue(SettingsID::Core_RSP_Plugin, std::string("mupen64plus-rsp-hle.so"));
-#endif
+    CoreSettingsSetValue(SettingsID::Core_RSP_Plugin,
+        std::string("mupen64plus-rsp-hle") + CORE_LIBRARY_EXT_STR);
 }
 
 // Force deterministic settings for Kaillera netplay to prevent desync
@@ -379,7 +376,12 @@ static void apply_kaillera_deterministic_settings(void)
 
     // Use dynamic recompiler for best performance
     // Value 0 = Pure Interpreter, 1 = Cached Interpreter, 2 = Dynamic Recompiler
+    // macOS: dynarec disabled (arm64 asm uses ELF directives, incompatible with Mach-O)
+#ifdef __APPLE__
+    CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 1);
+#else
     CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+#endif
 
     // Set consistent CountPerOp values for deterministic timing
     CoreSettingsSetValue(SettingsID::Core_CountPerOp, 0);
@@ -595,7 +597,11 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             }
             else
             {
+#ifdef __APPLE__
+                CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 1);
+#else
                 CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+#endif
                 netplay_ret = rmgk_gekko::start_p2p_session("rmgk-gekko",
                     2, static_cast<int>(sizeof(uint32_t)), player, static_cast<unsigned short>(port),
                     remoteAddress.c_str(), static_cast<unsigned short>(remotePort), frameDelay, predictionWindow);
@@ -630,7 +636,11 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         }
         else
         {
+#ifdef __APPLE__
+            CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 1);
+#else
             CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+#endif
             netplay_ret = rmgk_gekko::start_local_session("rmgk-gekko-local",
                 2, static_cast<int>(sizeof(uint32_t)), 0);
             rollbackExecute = netplay_ret;

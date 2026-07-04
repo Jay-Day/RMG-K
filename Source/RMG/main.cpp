@@ -143,15 +143,14 @@ int main(int argc, char **argv)
     // This ensures Kaillera dialog windows are grouped with the main RMG-K window
     SetCurrentProcessExplicitAppUserModelID(L"RMG-K.RMG-K");
 #else
-    // on Linux we need to install signal handlers,
-    // so we can exit cleanly when the user presses
-    // i.e control+c
+    // install signal handlers so we can exit cleanly on Ctrl+C
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
 
+#ifndef __APPLE__
     // on Linux, wayland works only on some compositors,
     // it works on KDE plasma and sway (on 2023-07-26),
-    // but i.e doesn't work on GNOME wayland or labwc, 
+    // but i.e doesn't work on GNOME wayland or labwc,
     // so to compromise the situation, we'll force xwayland
     // unless RMG_ALLOW_WAYLAND is set to 1, which'll allow wayland
     // as qt platform, so users can experiment with the
@@ -185,6 +184,7 @@ int main(int argc, char **argv)
     // specified, else the window icon will be
     // the generic wayland icon on wayland
     QGuiApplication::setDesktopFileName("com.github.Rosalie241.RMG");
+#endif // __APPLE__
 #endif
 
     QApplication app(argc, argv);

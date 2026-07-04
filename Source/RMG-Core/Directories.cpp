@@ -24,6 +24,8 @@
 #ifdef _WIN32
 #include <Windows.h>
 #include <shlobj.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
 #endif // _WIN32
 
 //
@@ -61,7 +63,20 @@ static std::filesystem::path get_exe_directory(void)
         throw std::runtime_error("get_exe_directory: GetModuleFileNameW() failed");
     }
     directory = std::filesystem::path(buffer).parent_path();
-#else // _WIN32
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buf(size, '\0');
+    if (_NSGetExecutablePath(buf.data(), &size) != 0)
+    {
+        throw std::runtime_error("get_exe_directory: _NSGetExecutablePath() failed");
+    }
+    directory = std::filesystem::canonical(buf, errorCode).parent_path();
+    if (errorCode)
+    {
+        throw std::runtime_error("get_exe_directory: std::filesystem::canonical() failed: " + errorCode.message());
+    }
+#else // Linux
     directory =  std::filesystem::canonical("/proc/self/exe", errorCode).parent_path();
     if (errorCode)
     {

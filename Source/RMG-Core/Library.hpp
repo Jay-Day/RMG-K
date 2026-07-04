@@ -22,7 +22,11 @@ typedef FARPROC CoreLibrarySymbol;
 #else // Unix
 typedef void*   CoreLibraryHandle;
 typedef void*   CoreLibrarySymbol;
+#ifdef __APPLE__
+#define CORE_LIBRARY_EXT_STR ".dylib"
+#else
 #define CORE_LIBRARY_EXT_STR ".so"
+#endif
 #define CORE_EXPORT __attribute__((visibility("default")))
 #endif // _WIN32
 
