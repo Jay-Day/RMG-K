@@ -50,6 +50,7 @@ namespace
     constexpr int ANCHOR_PUNCH_BURST = 10;
     constexpr int MATCH_ENDPOINT_PROBE_TIMEOUT_MS = 900;
     constexpr int MATCH_ENDPOINT_PROBE_INTERVAL_MS = 90;
+    constexpr int PREMATCH_ENDPOINT_PROBE_INTERVAL_MS = 200;
 
     // PROBE/PROBE_REPLY packet: [magic(4) | op(1) | senderUserId(8) | nonce(8)]
     constexpr int PROBE_PACKET_SIZE = 4 + 1 + 8 + 8;
@@ -1236,6 +1237,22 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
         return endpoints;
     };
 
+    // Keep one stable nonce per unresolved peer for the duration of pre-match
+    // synchronization. Every 200 ms we resend the same probe to every available
+    // candidate until that peer answers. This extends the short initial race and
+    // is especially important for non-host-to-non-host routes in 3/4-player games.
+    QHash<quint64, quint64> prematchProbeNonceByUser;
+    QHash<quint64, quint64> prematchProbeUserByNonce;
+
+    auto clearPrematchProbe = [&](quint64 userId) {
+        const auto nonceIt = prematchProbeNonceByUser.find(userId);
+        if (nonceIt == prematchProbeNonceByUser.end())
+            return;
+
+        prematchProbeUserByNonce.remove(nonceIt.value());
+        prematchProbeNonceByUser.erase(nonceIt);
+    };
+
     auto recordSelectedEndpoint = [&](quint64 userId, const QHostAddress& sender, quint16 senderPort) {
         for (LobbyMatchPeer& peer : peers)
         {
@@ -1255,27 +1272,101 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
                     break;
                 }
             }
+
+            clearPrematchProbe(userId);
             return;
         }
     };
 
-    auto replyToProbe = [&](const QByteArray& datagram, const QHostAddress& sender, quint16 senderPort) {
+    for (const LobbyMatchPeer& peer : peers)
+    {
+        if (peer.userId == m_selfUserId || peer.selectedEndpointVerified || endpointsFor(peer).isEmpty())
+            continue;
+
+        quint64 nonce = 0;
+        do
+        {
+            nonce = QRandomGenerator::global()->generate64();
+        }
+        while (nonce == 0 || prematchProbeUserByNonce.contains(nonce) || m_pendingProbes.contains(nonce));
+
+        prematchProbeNonceByUser.insert(peer.userId, nonce);
+        prematchProbeUserByNonce.insert(nonce, peer.userId);
+    }
+
+    auto sendUnresolvedPeerProbes = [&](qint64 nowMs, qint64& nextSendMs) {
+        if (prematchProbeNonceByUser.isEmpty() || nowMs < nextSendMs)
+            return;
+
+        for (const LobbyMatchPeer& peer : peers)
+        {
+            const auto nonceIt = prematchProbeNonceByUser.constFind(peer.userId);
+            if (nonceIt == prematchProbeNonceByUser.constEnd())
+                continue;
+
+            const QByteArray packet = buildProbePacket(m_selfUserId, nonceIt.value());
+            const auto endpoints = endpointsFor(peer);
+            for (const auto& endpoint : endpoints)
+                m_udp->writeDatagram(packet, endpoint.address, endpoint.port);
+        }
+
+        nextSendMs = nowMs + PREMATCH_ENDPOINT_PROBE_INTERVAL_MS;
+    };
+
+    auto handleProbeDatagram = [&](const QByteArray& datagram, const QHostAddress& sender, quint16 senderPort) {
         if (datagram.size() != PROBE_PACKET_SIZE ||
-            std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
-            static_cast<quint8>(datagram.at(4)) != ANCHOR_OP_PROBE)
+            std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0)
         {
             return false;
         }
 
-        quint64 ignoredSender = 0;
+        const quint8 op = static_cast<quint8>(datagram.at(4));
+        if (op == ANCHOR_OP_PROBE)
+        {
+            quint64 ignoredSender = 0;
+            quint64 nonce = 0;
+            if (readProbePacket(datagram, ignoredSender, nonce))
+            {
+                const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
+                m_udp->writeDatagram(reply, sender, senderPort);
+            }
+            return true;
+        }
+
+        if (op != ANCHOR_OP_PROBE_REPLY)
+            return false;
+
+        quint64 senderUserId = 0;
         quint64 nonce = 0;
-        if (!readProbePacket(datagram, ignoredSender, nonce))
+        if (!readProbePacket(datagram, senderUserId, nonce))
             return true;
 
-        const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
-        m_udp->writeDatagram(reply, sender, senderPort);
+        const auto expectedIt = prematchProbeUserByNonce.constFind(nonce);
+        if (expectedIt != prematchProbeUserByNonce.constEnd() && expectedIt.value() == senderUserId)
+        {
+            recordSelectedEndpoint(senderUserId, sender, senderPort);
+            qInfo() << "Rollback lobby prematch probe selected"
+                    << "peerUserId" << senderUserId
+                    << "endpoint" << sender.toString() << senderPort
+                    << "remaining" << prematchProbeNonceByUser.size();
+            return true;
+        }
+
+        // A normal lobby ping may complete while pre-match sync owns the UDP
+        // socket. Preserve that measurement instead of dropping the reply.
+        auto pingIt = m_pendingProbes.find(nonce);
+        if (pingIt != m_pendingProbes.end() && senderUserId == pingIt->targetUserId)
+        {
+            const int rttMs = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - pingIt->sendMs);
+            const quint64 uid = pingIt->targetUserId;
+            m_pendingProbes.erase(pingIt);
+            m_measuredPing[uid] = rttMs;
+            emit pingProbeMeasured(uid, rttMs);
+        }
         return true;
     };
+
+    qint64 nextProbeSendMs = 0;
 
     if (localSlot == 1)
     {
@@ -1300,16 +1391,20 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
                 << "hash" << static_cast<qulonglong>(manifestHash)
                 << "bytes" << manifest.size()
                 << "cheats" << static_cast<qulonglong>(cheatCount)
-                << "peers" << pendingAcks.size();
+                << "peers" << pendingAcks.size()
+                << "unresolvedRoutes" << prematchProbeNonceByUser.size();
 
         const qint64 hostSyncDeadlineMs = QDateTime::currentMSecsSinceEpoch() + kPrematchSyncTimeoutMs;
         while (!pendingAcks.isEmpty())
         {
-            if (QDateTime::currentMSecsSinceEpoch() > hostSyncDeadlineMs)
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            if (nowMs > hostSyncDeadlineMs)
             {
                 error = QStringLiteral("Pre-match sync timed out — a player didn't respond (missing ROM or blocked connection).");
                 return false;
             }
+
+            sendUnresolvedPeerProbes(nowMs, nextProbeSendMs);
             QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
             for (const auto& peer : peers)
             {
@@ -1333,7 +1428,7 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
                     datagram.resize(int(m_udp->pendingDatagramSize()));
                     m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
 
-                    if (replyToProbe(datagram, sender, senderPort))
+                    if (handleProbeDatagram(datagram, sender, senderPort))
                         continue;
 
                     if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
@@ -1362,7 +1457,8 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
 
         qInfo() << "Rollback lobby prematch host complete"
                 << "hash" << static_cast<qulonglong>(manifestHash)
-                << "cheats" << static_cast<qulonglong>(cheatCount);
+                << "cheats" << static_cast<qulonglong>(cheatCount)
+                << "unresolvedRoutes" << prematchProbeNonceByUser.size();
         return true;
     }
 
@@ -1376,16 +1472,20 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
     qInfo() << "Rollback lobby prematch client waiting"
             << "hostUserId" << host.userId
             << "hostEndpoint" << hostEndpoints.first().address.toString()
-            << hostEndpoints.first().port;
+            << hostEndpoints.first().port
+            << "unresolvedRoutes" << prematchProbeNonceByUser.size();
 
     const qint64 clientSyncDeadlineMs = QDateTime::currentMSecsSinceEpoch() + kPrematchSyncTimeoutMs;
     for (;;)
     {
-        if (QDateTime::currentMSecsSinceEpoch() > clientSyncDeadlineMs)
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (nowMs > clientSyncDeadlineMs)
         {
             error = QStringLiteral("Pre-match sync timed out — never heard from the host.");
             return false;
         }
+
+        sendUnresolvedPeerProbes(nowMs, nextProbeSendMs);
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         if (!m_udp->waitForReadyRead(50))
             continue;
@@ -1398,7 +1498,7 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
             datagram.resize(int(m_udp->pendingDatagramSize()));
             m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
 
-            if (replyToProbe(datagram, sender, senderPort))
+            if (handleProbeDatagram(datagram, sender, senderPort))
                 continue;
 
             if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
@@ -1423,13 +1523,70 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
                 return false;
             }
 
+            const QHostAddress manifestSender = sender;
+            const quint16 manifestSenderPort = senderPort;
             const QByteArray ack = buildPrematchPacket(ANCHOR_OP_PREMATCH_ACK, m_selfUserId, manifestHash);
             for (int i = 0; i < ANCHOR_PUNCH_BURST; i++)
-                m_udp->writeDatagram(ack, sender, senderPort);
+                m_udp->writeDatagram(ack, manifestSender, manifestSenderPort);
+
+            // Do not immediately release the UDP socket after receiving the
+            // host manifest. Keep answering and sending probes until every
+            // still-unresolved peer route has replied, or until the existing
+            // pre-match deadline expires. This gives non-host peers time to
+            // punch directly through to each other in 3/4-player matches.
+            qint64 nextAckSendMs = QDateTime::currentMSecsSinceEpoch() + PREMATCH_ENDPOINT_PROBE_INTERVAL_MS;
+            while (!prematchProbeNonceByUser.isEmpty())
+            {
+                const qint64 convergeNowMs = QDateTime::currentMSecsSinceEpoch();
+                if (convergeNowMs > clientSyncDeadlineMs)
+                {
+                    qWarning() << "Rollback lobby prematch route probing timed out; using fallbacks"
+                               << "unresolvedUserIds" << prematchProbeNonceByUser.keys();
+                    break;
+                }
+
+                sendUnresolvedPeerProbes(convergeNowMs, nextProbeSendMs);
+                if (convergeNowMs >= nextAckSendMs)
+                {
+                    m_udp->writeDatagram(ack, manifestSender, manifestSenderPort);
+                    nextAckSendMs = convergeNowMs + PREMATCH_ENDPOINT_PROBE_INTERVAL_MS;
+                }
+
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                if (!m_udp->hasPendingDatagrams())
+                    m_udp->waitForReadyRead(20);
+
+                while (m_udp->hasPendingDatagrams())
+                {
+                    QByteArray incoming;
+                    QHostAddress incomingSender;
+                    quint16 incomingSenderPort = 0;
+                    incoming.resize(int(m_udp->pendingDatagramSize()));
+                    m_udp->readDatagram(incoming.data(), incoming.size(), &incomingSender, &incomingSenderPort);
+
+                    if (handleProbeDatagram(incoming, incomingSender, incomingSenderPort))
+                        continue;
+
+                    // The host may retransmit the same manifest until it sees
+                    // our ACK. Acknowledge duplicates without reapplying it.
+                    if (incoming.size() >= 5 && std::memcmp(incoming.constData(), ANCHOR_MAGIC, 4) == 0 &&
+                        static_cast<quint8>(incoming.at(4)) == ANCHOR_OP_PREMATCH_MANIFEST)
+                    {
+                        quint64 duplicateSenderUserId = 0;
+                        uint64_t duplicateHash = 0;
+                        if (readPrematchSenderAndHash(incoming, duplicateSenderUserId, duplicateHash) &&
+                            duplicateSenderUserId == host.userId && duplicateHash == manifestHash)
+                        {
+                            m_udp->writeDatagram(ack, incomingSender, incomingSenderPort);
+                        }
+                    }
+                }
+            }
 
             qInfo() << "Rollback lobby prematch client complete"
                     << "hash" << static_cast<qulonglong>(manifestHash)
-                    << "cheats" << static_cast<qulonglong>(cheatCount);
+                    << "cheats" << static_cast<qulonglong>(cheatCount)
+                    << "unresolvedRoutes" << prematchProbeNonceByUser.size();
             return true;
         }
     }
