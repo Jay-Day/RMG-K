@@ -1246,6 +1246,7 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersTree->setHeaderLabels({ "Player", "State", "Est. Ping" });
     m_playersTree->setRootIsDecorated(false);
     m_playersTree->setSortingEnabled(true);
+	m_playersTree->sortItems(0, Qt::AscendingOrder);
     m_playersTree->setAlternatingRowColors(true);
     m_playersTree->setFrameShape(QFrame::NoFrame);
     m_playersTree->setUniformRowHeights(true);
