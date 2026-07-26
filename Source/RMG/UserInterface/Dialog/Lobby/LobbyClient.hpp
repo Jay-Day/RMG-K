@@ -83,7 +83,16 @@ public:
         QString publicIp;
         quint16 publicPort = 0;
         QString localIp;
+        quint16 localPort = 0;
         int slot = 0;
+
+        // Client-selected route. These fields are populated immediately before
+        // match startup by racing the peer's LAN/public candidates. They are
+        // not part of MATCH_BEGIN itself.
+        QString selectedIp;
+        quint16 selectedPort = 0;
+        QString selectedKind;
+        bool selectedEndpointVerified = false;
     };
 
     struct ChatMessage
@@ -180,12 +189,17 @@ public:
     void releaseUdpAnchor();
     void reopenUdpAnchor();
 
+    // Race the LAN/public candidates supplied by MATCH_BEGIN and retain the
+    // first endpoint that sends a valid peer reply. If neither candidate
+    // answers promptly, a backward-compatible deterministic fallback remains.
+    void resolvePeerEndpoints(QList<LobbyMatchPeer>& peers);
+
     // Fire a burst of UDP punch packets from the anchor socket to each peer's
-    // public endpoint. Call this *before* releaseUdpAnchor() so the punch goes
-    // out from the same NAT mapping GekkoNet will inherit when it re-binds.
-    // Peers silently drop these on their still-open anchor socket.
+    // available endpoint candidates. Call this *before* releaseUdpAnchor() so
+    // the punch goes out from the same NAT mapping GekkoNet will inherit when
+    // it re-binds. Peers silently drop these on their still-open anchor socket.
     void punchPeerEndpoints(const QList<LobbyMatchPeer>& peers);
-    bool syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error);
+    bool syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error);
 
 signals:
     void stateChanged(LobbyClient::ConnectionState newState);
@@ -274,6 +288,7 @@ private:
     void handleModNotice(const QJsonObject& data);
     void handleModList(const QJsonObject& data);
 
+    bool ensureUdpAnchorBound();
     void initiateUdpAnchor();
     void sendUdpRegister();
     void sendUdpKeepalive();
@@ -287,6 +302,8 @@ private:
 
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
+    // A synchronous match-start UDP phase is draining the socket itself.
+    // readyRead must not consume packets concurrently during these phases.
     bool m_inPrematchSync = false;
 
     // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).

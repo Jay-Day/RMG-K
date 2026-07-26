@@ -3431,7 +3431,9 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 
 void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers)
 {
-    const QString line = QString("Match #%1 starting with %2 player(s)").arg(matchId).arg(peers.size());
+    QList<LobbyClient::LobbyMatchPeer> resolvedPeers = peers;
+
+    const QString line = QString("Match #%1 starting with %2 player(s)").arg(matchId).arg(resolvedPeers.size());
     appendChatSystemLine(CHANNEL_LOBBY, line);
     appendChatSystemLine(CHANNEL_ROOM,  line);
 
@@ -3472,7 +3474,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     CoreAddCallbackMessage(CoreDebugMessageType::Info,
         QString("Rollback lobby MATCH_BEGIN: match=%1 peers=%2 self=%3 roomGame='%4' delay=%5 prediction=%6 anchorPort=%7")
             .arg(matchId)
-            .arg(peers.size())
+            .arg(resolvedPeers.size())
             .arg(m_client->selfUserId())
             .arg(m_currentRoomGame)
             .arg(m_currentRoomDelay)
@@ -3483,16 +3485,16 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     const quint64 selfId = m_client->selfUserId();
     LobbyClient::LobbyMatchPeer local{};
     bool foundLocal = false;
-    QStringList remotePeers;
-    for (const auto& p : peers)
+    for (const auto& p : resolvedPeers)
     {
-        const QString peerLine = QString("Rollback lobby MATCH_BEGIN peer: user=%1 name='%2' slot=%3 public=%4:%5 local=%6 self=%7")
+        const QString peerLine = QString("Rollback lobby MATCH_BEGIN peer: user=%1 name='%2' slot=%3 public=%4:%5 local=%6:%7 self=%8")
             .arg(p.userId)
             .arg(p.username)
             .arg(p.slot)
             .arg(p.publicIp)
             .arg(p.publicPort)
             .arg(p.localIp)
+            .arg(p.localPort)
             .arg(p.userId == selfId ? 1 : 0);
         CoreAddCallbackMessage(CoreDebugMessageType::Info, peerLine.toUtf8().constData());
 
@@ -3506,6 +3508,19 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     {
         abortMatchStart("Match start failed: missing local peer.");
         return;
+    }
+
+    // New servers provide LAN and public candidates. Probe both from the exact
+    // UDP socket that GekkoNet will inherit and keep the first valid reply.
+    // Old servers simply leave localPort absent and retain the prior fallback.
+    m_client->resolvePeerEndpoints(resolvedPeers);
+    for (const auto& p : resolvedPeers)
+    {
+        if (p.userId == selfId)
+        {
+            local = p;
+            break;
+        }
     }
 
     // Make this room's "Record game" checkbox authoritative for the match, in
@@ -3533,7 +3548,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // harmless when "Record game" is off (the open self-gates on the flag).
     {
         std::memset(recording_player_names, 0, sizeof(recording_player_names));
-        for (const auto& p : peers)
+        for (const auto& p : resolvedPeers)
         {
             if (p.slot >= 1 && p.slot <= 4)
             {
@@ -3546,48 +3561,11 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     const quint16 localPort = m_client->localUdpPort();
 
-    for (const auto& p : peers)
-    {
-        if (p.userId == selfId)
-            continue;
-
-        QString endpointIp = p.publicIp;
-        QString endpointKind = "public";
-
-        if (!local.publicIp.isEmpty() &&
-            !p.publicIp.isEmpty() &&
-            local.publicIp == p.publicIp &&
-            !p.localIp.isEmpty())
-        {
-            endpointIp = p.localIp;
-            endpointKind = "local";
-        }
-
-        const QString selectedLine = QString("Rollback lobby selected endpoint: peerUser=%1 slot=%2 kind=%3 endpoint=%4:%5 localPublic=%6 peerPublic=%7 peerLocal=%8")
-            .arg(p.userId)
-            .arg(p.slot)
-            .arg(endpointKind)
-            .arg(endpointIp)
-            .arg(p.publicPort)
-            .arg(local.publicIp)
-            .arg(p.publicIp)
-            .arg(p.localIp);
-        CoreAddCallbackMessage(CoreDebugMessageType::Info, selectedLine.toUtf8().constData());
-
-        remotePeers << QString("%1,%2,%3").arg(p.slot).arg(endpointIp).arg(p.publicPort);
-    }
-
-    if (remotePeers.isEmpty())
-    {
-        abortMatchStart("Match start failed: missing remote peer.");
-        return;
-    }
-
     // Punch peer NATs from the anchor socket before handing the port to
     // GekkoNet. Both peers receive MATCH_BEGIN within ~RTT of each other, so
     // both fire while the other's anchor is still open — opens the NAT
     // mapping so GekkoNet's first frame doesn't have to eat the handshake.
-    m_client->punchPeerEndpoints(peers);
+    m_client->punchPeerEndpoints(resolvedPeers);
 
     const QString localRomFile = localRomPathForMd5(m_currentRoomMd5);
     if (localRomFile.isEmpty())
@@ -3598,12 +3576,51 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     appendChatSystemLine(CHANNEL_ROOM, "Synchronizing pre-match settings...");
     QString prematchError;
-    if (!m_client->syncPrematchManifest(peers, local.slot, localRomFile, prematchError))
+    if (!m_client->syncPrematchManifest(resolvedPeers, local.slot, localRomFile, prematchError))
     {
         abortMatchStart(prematchError.isEmpty() ? QStringLiteral("Pre-match sync failed.") : prematchError);
         return;
     }
     appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");
+
+    QStringList remotePeers;
+    for (const auto& p : resolvedPeers)
+    {
+        if (p.userId == selfId)
+            continue;
+
+        QString endpointIp = p.selectedIp;
+        quint16 endpointPort = p.selectedPort;
+        QString endpointKind = p.selectedKind;
+        if (endpointIp.isEmpty() || endpointPort == 0)
+        {
+            endpointIp = p.publicIp;
+            endpointPort = p.publicPort;
+            endpointKind = QStringLiteral("public-fallback");
+        }
+
+        const QString selectedLine = QString("Rollback lobby selected endpoint: peerUser=%1 slot=%2 kind=%3 verified=%4 endpoint=%5:%6 localPublic=%7 peerPublic=%8 peerLocal=%9:%10")
+            .arg(p.userId)
+            .arg(p.slot)
+            .arg(endpointKind)
+            .arg(p.selectedEndpointVerified ? 1 : 0)
+            .arg(endpointIp)
+            .arg(endpointPort)
+            .arg(local.publicIp)
+            .arg(p.publicIp)
+            .arg(p.localIp)
+            .arg(p.localPort);
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, selectedLine.toUtf8().constData());
+
+        if (!endpointIp.isEmpty() && endpointPort != 0)
+            remotePeers << QString("%1,%2,%3").arg(p.slot).arg(endpointIp).arg(endpointPort);
+    }
+
+    if (remotePeers.isEmpty())
+    {
+        abortMatchStart("Match start failed: missing remote peer.");
+        return;
+    }
 
     m_client->releaseUdpAnchor();
 

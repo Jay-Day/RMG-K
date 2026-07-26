@@ -48,9 +48,121 @@ namespace
     // and brief mapping-creation latency on consumer routers — NOT against
     // simultaneity failures (those need retries, which we don't do here yet).
     constexpr int ANCHOR_PUNCH_BURST = 10;
+    constexpr int MATCH_ENDPOINT_PROBE_TIMEOUT_MS = 900;
+    constexpr int MATCH_ENDPOINT_PROBE_INTERVAL_MS = 90;
 
     // PROBE/PROBE_REPLY packet: [magic(4) | op(1) | senderUserId(8) | nonce(8)]
     constexpr int PROBE_PACKET_SIZE = 4 + 1 + 8 + 8;
+
+    struct UdpEndpointCandidate
+    {
+        QHostAddress address;
+        quint16 port = 0;
+        QString kind;
+    };
+
+    QString endpointKey(const QHostAddress& address, quint16 port)
+    {
+        return address.toString() + QLatin1Char(':') + QString::number(port);
+    }
+
+    void appendEndpointCandidate(QList<UdpEndpointCandidate>& out,
+                                 const QString& ip, quint16 port,
+                                 const QString& kind)
+    {
+        const QHostAddress address(ip);
+        if (address.isNull() || port == 0)
+            return;
+
+        const QString key = endpointKey(address, port);
+        for (const auto& candidate : out)
+        {
+            if (endpointKey(candidate.address, candidate.port) == key)
+                return;
+        }
+
+        UdpEndpointCandidate candidate;
+        candidate.address = address;
+        candidate.port = port;
+        candidate.kind = kind;
+        out.append(candidate);
+    }
+
+    bool parseEndpointString(const QString& endpoint, UdpEndpointCandidate& out,
+                             const QString& kind)
+    {
+        if (endpoint.isEmpty())
+            return false;
+
+        const int colon = endpoint.lastIndexOf(':');
+        if (colon <= 0)
+            return false;
+
+        bool portOk = false;
+        const uint parsedPort = endpoint.mid(colon + 1).toUInt(&portOk);
+        const QHostAddress address(endpoint.left(colon));
+        if (!portOk || parsedPort == 0 || parsedPort > 65535 || address.isNull())
+            return false;
+
+        out.address = address;
+        out.port = static_cast<quint16>(parsedPort);
+        out.kind = kind;
+        return true;
+    }
+
+    QList<UdpEndpointCandidate> peerEndpointCandidates(
+        const LobbyClient::LobbyMatchPeer& local,
+        const LobbyClient::LobbyMatchPeer& peer)
+    {
+        QList<UdpEndpointCandidate> out;
+        const bool samePublicIp = !local.publicIp.isEmpty() &&
+                                  !peer.publicIp.isEmpty() &&
+                                  local.publicIp == peer.publicIp;
+
+        if (samePublicIp && !peer.localIp.isEmpty())
+        {
+            // New servers provide the exact LAN-side game socket port. When
+            // talking to an old server, retain the previous local-IP/public-
+            // port candidate as a compatibility fallback.
+            const quint16 lanPort = peer.localPort != 0 ? peer.localPort : peer.publicPort;
+            appendEndpointCandidate(out, peer.localIp, lanPort,
+                                    peer.localPort != 0 ? QStringLiteral("local")
+                                                        : QStringLiteral("local-legacy"));
+        }
+
+        appendEndpointCandidate(out, peer.publicIp, peer.publicPort, QStringLiteral("public"));
+        return out;
+    }
+
+    QByteArray buildProbePacket(quint64 senderUserId, quint64 nonce, quint8 op = ANCHOR_OP_PROBE)
+    {
+        QByteArray packet;
+        packet.reserve(PROBE_PACKET_SIZE);
+        packet.append(ANCHOR_MAGIC, 4);
+        packet.append(static_cast<char>(op));
+        const quint64 senderBE = qToBigEndian(senderUserId);
+        packet.append(reinterpret_cast<const char*>(&senderBE), sizeof(senderBE));
+        const quint64 nonceBE = qToBigEndian(nonce);
+        packet.append(reinterpret_cast<const char*>(&nonceBE), sizeof(nonceBE));
+        return packet;
+    }
+
+    bool readProbePacket(const QByteArray& packet, quint64& senderUserId, quint64& nonce)
+    {
+        if (packet.size() != PROBE_PACKET_SIZE ||
+            std::memcmp(packet.constData(), ANCHOR_MAGIC, 4) != 0)
+        {
+            return false;
+        }
+
+        quint64 senderBE = 0;
+        quint64 nonceBE = 0;
+        std::memcpy(&senderBE, packet.constData() + 5, sizeof(senderBE));
+        std::memcpy(&nonceBE, packet.constData() + 13, sizeof(nonceBE));
+        senderUserId = qFromBigEndian(senderBE);
+        nonce = qFromBigEndian(nonceBE);
+        return true;
+    }
 
     uint64_t prematchHashBytes(const std::string& data)
     {
@@ -280,6 +392,11 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
         m_udpAnchorPort = 6364;
     }
 
+    // Bind the eventual GekkoNet port before HELLO so updated servers can
+    // advertise the exact LAN-side endpoint immediately. Registration still
+    // waits for HELLO_OK because it requires the assigned user id.
+    ensureUdpAnchorBound();
+
     setState(ConnectionState::Connecting);
     m_ws->open(url);
 }
@@ -338,6 +455,9 @@ void LobbyClient::onWsConnected()
     data["romHashes"] = romArr;
     if (!m_pendingLocalIp.isEmpty())
         data["localIp"] = m_pendingLocalIp;
+    const quint16 boundPort = localUdpPort();
+    if (boundPort != 0)
+        data["localPort"] = static_cast<int>(boundPort);
 
     sendEnvelope("HELLO", data, "hello-1");
 }
@@ -566,41 +686,45 @@ void LobbyClient::handleChatHistoryReply(const QJsonObject& data)
 void LobbyClient::handlePingProbeReply(const QJsonObject& data)
 {
     const quint64 uid = static_cast<quint64>(data.value("targetUserId").toDouble());
-    const QString endpoint = data.value("targetEndpoint").toString();
-    emit pingProbeReply(uid, endpoint);
+    const QString targetEndpoint = data.value("targetEndpoint").toString();
+    const QString publicEndpoint = data.value("publicEndpoint").toString();
+    const QString localEndpoint  = data.value("localEndpoint").toString();
+    emit pingProbeReply(uid, targetEndpoint);
 
-    if (endpoint.isEmpty() || !m_udp ||
+    if (!m_udp ||
         m_udp->state() == QAbstractSocket::UnconnectedState ||
         m_selfUserId == 0)
         return;
 
-    const int colon = endpoint.lastIndexOf(':');
-    if (colon <= 0)
-        return;
-    const QHostAddress addr(endpoint.left(colon));
-    const quint16 port = static_cast<quint16>(endpoint.mid(colon + 1).toUInt());
-    if (addr.isNull() || port == 0)
+    QList<UdpEndpointCandidate> candidates;
+    const auto appendParsed = [&](const QString& endpoint, const QString& kind) {
+        UdpEndpointCandidate candidate;
+        if (parseEndpointString(endpoint, candidate, kind))
+            appendEndpointCandidate(candidates, candidate.address.toString(), candidate.port, candidate.kind);
+    };
+
+    // New servers provide both candidates. targetEndpoint remains first for
+    // old-server compatibility, while duplicate endpoints are collapsed.
+    appendParsed(targetEndpoint, QStringLiteral("target"));
+    appendParsed(localEndpoint, QStringLiteral("local"));
+    appendParsed(publicEndpoint, QStringLiteral("public"));
+    if (candidates.isEmpty())
         return;
 
     // Fire a UDP PROBE at the peer's anchor socket. The peer recognises the
-    // opcode and echoes back a PROBE_REPLY; we match by nonce to compute RTT.
+    // opcode and echoes back a PROBE_REPLY. Updated servers expose both LAN
+    // and public routes, so send the same nonce to all candidates and accept
+    // the first valid response.
     const quint64 nonce = QRandomGenerator::global()->generate64();
-
-    QByteArray pkt;
-    pkt.reserve(PROBE_PACKET_SIZE);
-    pkt.append(ANCHOR_MAGIC, 4);
-    pkt.append(static_cast<char>(ANCHOR_OP_PROBE));
-    const quint64 selfIdBE = qToBigEndian(m_selfUserId);
-    pkt.append(reinterpret_cast<const char*>(&selfIdBE), sizeof(selfIdBE));
-    const quint64 nonceBE = qToBigEndian(nonce);
-    pkt.append(reinterpret_cast<const char*>(&nonceBE), sizeof(nonceBE));
+    const QByteArray pkt = buildProbePacket(m_selfUserId, nonce);
 
     ProbeInFlight in;
     in.targetUserId = uid;
     in.sendMs       = QDateTime::currentMSecsSinceEpoch();
     m_pendingProbes.insert(nonce, in);
 
-    m_udp->writeDatagram(pkt, addr, port);
+    for (const auto& candidate : candidates)
+        m_udp->writeDatagram(pkt, candidate.address, candidate.port);
 }
 
 void LobbyClient::handleMatchBegin(const QJsonObject& data)
@@ -616,6 +740,7 @@ void LobbyClient::handleMatchBegin(const QJsonObject& data)
         p.publicIp   = o.value("publicIp").toString();
         p.publicPort = static_cast<quint16>(o.value("publicPort").toInt());
         p.localIp    = o.value("localIp").toString();
+        p.localPort  = static_cast<quint16>(o.value("localPort").toInt());
         p.slot       = o.value("slot").toInt();
         peers.append(p);
     }
@@ -716,13 +841,31 @@ void LobbyClient::onHeartbeatTimer()
 
 // -------- UDP anchor --------
 
-void LobbyClient::initiateUdpAnchor()
+bool LobbyClient::ensureUdpAnchorBound()
 {
+    if (!m_udp)
+        return false;
+
+    if (m_udp->state() != QAbstractSocket::UnconnectedState)
+        return m_udp->localPort() != 0;
+
     if (!m_udp->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress))
     {
         qWarning() << "lobby: udp bind failed:" << m_udp->errorString();
-        return;
+        return false;
     }
+
+    qInfo() << "Rollback lobby UDP anchor bound"
+            << "localIp" << (m_pendingLocalIp.isEmpty() ? QString("<none>") : m_pendingLocalIp)
+            << "localPort" << m_udp->localPort();
+    return true;
+}
+
+void LobbyClient::initiateUdpAnchor()
+{
+    if (!ensureUdpAnchorBound())
+        return;
+
     sendUdpRegister();
     m_udpKeepaliveTimer->start();
 }
@@ -732,11 +875,13 @@ void LobbyClient::sendUdpRegister()
     if (m_selfUserId == 0)
         return;
     QByteArray pkt;
-    pkt.reserve(13);
+    pkt.reserve(15);
     pkt.append(ANCHOR_MAGIC, 4);
     pkt.append(static_cast<char>(ANCHOR_OP_REGISTER));
     quint64 idBE = qToBigEndian(m_selfUserId);
     pkt.append(reinterpret_cast<const char*>(&idBE), sizeof(idBE));
+    const quint16 portBE = qToBigEndian(localUdpPort());
+    pkt.append(reinterpret_cast<const char*>(&portBE), sizeof(portBE));
     m_udp->writeDatagram(pkt, QHostAddress(m_udpAnchorHost), m_udpAnchorPort);
 }
 
@@ -745,17 +890,207 @@ void LobbyClient::sendUdpKeepalive()
     if (m_selfUserId == 0)
         return;
     QByteArray pkt;
-    pkt.reserve(13);
+    pkt.reserve(15);
     pkt.append(ANCHOR_MAGIC, 4);
     pkt.append(static_cast<char>(ANCHOR_OP_KEEPALIVE));
     quint64 idBE = qToBigEndian(m_selfUserId);
     pkt.append(reinterpret_cast<const char*>(&idBE), sizeof(idBE));
+    const quint16 portBE = qToBigEndian(localUdpPort());
+    pkt.append(reinterpret_cast<const char*>(&portBE), sizeof(portBE));
     m_udp->writeDatagram(pkt, QHostAddress(m_udpAnchorHost), m_udpAnchorPort);
 }
 
 void LobbyClient::onUdpKeepaliveTimer()
 {
     sendUdpKeepalive();
+}
+
+void LobbyClient::resolvePeerEndpoints(QList<LobbyMatchPeer>& peers)
+{
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState || m_selfUserId == 0)
+        return;
+
+    int localIndex = -1;
+    for (int i = 0; i < peers.size(); i++)
+    {
+        if (peers[i].userId == m_selfUserId)
+        {
+            localIndex = i;
+            break;
+        }
+    }
+    if (localIndex < 0)
+        return;
+
+    const LobbyMatchPeer local = peers[localIndex];
+    QHash<quint64, int> pendingPeerByNonce;
+    QHash<quint64, QList<UdpEndpointCandidate>> candidatesByNonce;
+
+    for (int i = 0; i < peers.size(); i++)
+    {
+        LobbyMatchPeer& peer = peers[i];
+        if (peer.userId == m_selfUserId)
+            continue;
+
+        const QList<UdpEndpointCandidate> candidates = peerEndpointCandidates(local, peer);
+        if (candidates.isEmpty())
+            continue;
+
+        // Always retain a deterministic fallback. With an old server this is
+        // exactly the client's prior same-public-IP behavior; with a new server
+        // it uses the exact LAN port when available.
+        peer.selectedIp = candidates.first().address.toString();
+        peer.selectedPort = candidates.first().port;
+        peer.selectedKind = candidates.first().kind;
+        peer.selectedEndpointVerified = false;
+
+        if (candidates.size() < 2)
+            continue;
+
+        quint64 nonce = 0;
+        do
+        {
+            nonce = QRandomGenerator::global()->generate64();
+        }
+        while (nonce == 0 || pendingPeerByNonce.contains(nonce) || m_pendingProbes.contains(nonce));
+
+        pendingPeerByNonce.insert(nonce, i);
+        candidatesByNonce.insert(nonce, candidates);
+    }
+
+    if (pendingPeerByNonce.isEmpty())
+        return;
+
+    struct SynchronousUdpGuard
+    {
+        LobbyClient& client;
+        explicit SynchronousUdpGuard(LobbyClient& client) : client(client) { client.m_inPrematchSync = true; }
+        ~SynchronousUdpGuard() { client.m_inPrematchSync = false; }
+    } guard(*this);
+
+    qInfo() << "Rollback lobby endpoint race begin"
+            << "peers" << pendingPeerByNonce.size()
+            << "localPort" << m_udp->localPort();
+
+    const qint64 deadlineMs = QDateTime::currentMSecsSinceEpoch() + MATCH_ENDPOINT_PROBE_TIMEOUT_MS;
+    qint64 nextSendMs = 0;
+
+    while (!pendingPeerByNonce.isEmpty() && QDateTime::currentMSecsSinceEpoch() < deadlineMs)
+    {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (nowMs >= nextSendMs)
+        {
+            for (auto it = pendingPeerByNonce.constBegin(); it != pendingPeerByNonce.constEnd(); ++it)
+            {
+                const quint64 nonce = it.key();
+                const QByteArray packet = buildProbePacket(m_selfUserId, nonce);
+                const auto candidatesIt = candidatesByNonce.constFind(nonce);
+                if (candidatesIt == candidatesByNonce.constEnd())
+                    continue;
+
+                for (const auto& candidate : candidatesIt.value())
+                    m_udp->writeDatagram(packet, candidate.address, candidate.port);
+            }
+            nextSendMs = nowMs + MATCH_ENDPOINT_PROBE_INTERVAL_MS;
+        }
+
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        if (!m_udp->hasPendingDatagrams())
+            m_udp->waitForReadyRead(20);
+
+        while (m_udp->hasPendingDatagrams())
+        {
+            QByteArray datagram;
+            QHostAddress sender;
+            quint16 senderPort = 0;
+            datagram.resize(int(m_udp->pendingDatagramSize()));
+            m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+
+            if (datagram.size() != PROBE_PACKET_SIZE ||
+                std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0)
+            {
+                continue;
+            }
+
+            const quint8 op = static_cast<quint8>(datagram.at(4));
+            if (op == ANCHOR_OP_PROBE)
+            {
+                quint64 ignoredSender = 0;
+                quint64 nonce = 0;
+                if (!readProbePacket(datagram, ignoredSender, nonce))
+                    continue;
+                const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
+                m_udp->writeDatagram(reply, sender, senderPort);
+                continue;
+            }
+
+            if (op != ANCHOR_OP_PROBE_REPLY)
+                continue;
+
+            quint64 senderUserId = 0;
+            quint64 nonce = 0;
+            if (!readProbePacket(datagram, senderUserId, nonce))
+                continue;
+
+            auto routeIt = pendingPeerByNonce.find(nonce);
+            if (routeIt != pendingPeerByNonce.end())
+            {
+                LobbyMatchPeer& peer = peers[routeIt.value()];
+                if (senderUserId != peer.userId)
+                    continue;
+
+                peer.selectedIp = sender.toString();
+                peer.selectedPort = senderPort;
+                peer.selectedKind = QStringLiteral("reply");
+                peer.selectedEndpointVerified = true;
+
+                const auto candidatesIt = candidatesByNonce.constFind(nonce);
+                if (candidatesIt != candidatesByNonce.constEnd())
+                {
+                    for (const auto& candidate : candidatesIt.value())
+                    {
+                        if (candidate.address == sender && candidate.port == senderPort)
+                        {
+                            peer.selectedKind = candidate.kind;
+                            break;
+                        }
+                    }
+                }
+
+                qInfo() << "Rollback lobby endpoint race selected"
+                        << "peerUserId" << peer.userId
+                        << "slot" << peer.slot
+                        << "kind" << peer.selectedKind
+                        << "endpoint" << peer.selectedIp << peer.selectedPort;
+
+                candidatesByNonce.remove(nonce);
+                pendingPeerByNonce.erase(routeIt);
+                continue;
+            }
+
+            // A normal lobby ping may complete while the match-start race owns
+            // the socket. Preserve that result instead of dropping the reply.
+            auto pingIt = m_pendingProbes.find(nonce);
+            if (pingIt != m_pendingProbes.end() && senderUserId == pingIt->targetUserId)
+            {
+                const int rttMs = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - pingIt->sendMs);
+                const quint64 uid = pingIt->targetUserId;
+                m_pendingProbes.erase(pingIt);
+                m_measuredPing[uid] = rttMs;
+                emit pingProbeMeasured(uid, rttMs);
+            }
+        }
+    }
+
+    for (auto it = pendingPeerByNonce.constBegin(); it != pendingPeerByNonce.constEnd(); ++it)
+    {
+        const LobbyMatchPeer& peer = peers[it.value()];
+        qWarning() << "Rollback lobby endpoint race timed out; using fallback"
+                   << "peerUserId" << peer.userId
+                   << "slot" << peer.slot
+                   << "kind" << peer.selectedKind
+                   << "endpoint" << peer.selectedIp << peer.selectedPort;
+    }
 }
 
 void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
@@ -778,42 +1113,64 @@ void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
     quint64 idBE = qToBigEndian(m_selfUserId);
     pkt.append(reinterpret_cast<const char*>(&idBE), sizeof(idBE));
 
+    LobbyMatchPeer local{};
+    bool foundLocal = false;
+    for (const auto& peer : peers)
+    {
+        if (peer.userId == m_selfUserId)
+        {
+            local = peer;
+            foundLocal = true;
+            break;
+        }
+    }
+
     for (const auto& p : peers)
     {
         if (p.userId == m_selfUserId)
             continue;
-        if (p.publicIp.isEmpty() || p.publicPort == 0)
+
+        QList<UdpEndpointCandidate> candidates;
+        appendEndpointCandidate(candidates, p.selectedIp, p.selectedPort,
+                                p.selectedKind.isEmpty() ? QStringLiteral("selected") : p.selectedKind);
+        if (foundLocal)
+        {
+            const auto advertised = peerEndpointCandidates(local, p);
+            for (const auto& candidate : advertised)
+                appendEndpointCandidate(candidates, candidate.address.toString(), candidate.port, candidate.kind);
+        }
+        else
+        {
+            appendEndpointCandidate(candidates, p.publicIp, p.publicPort, QStringLiteral("public"));
+        }
+
+        if (candidates.isEmpty())
         {
             qWarning() << "Rollback lobby punch skipped peer"
                        << "userId" << p.userId
                        << "slot" << p.slot
                        << "public" << p.publicIp << p.publicPort
-                       << "local" << p.localIp;
+                       << "local" << p.localIp << p.localPort;
             continue;
         }
-        QHostAddress addr(p.publicIp);
-        if (addr.isNull())
+
+        for (const auto& candidate : candidates)
         {
-            qWarning() << "Rollback lobby punch skipped peer with invalid address"
-                       << "userId" << p.userId
-                       << "slot" << p.slot
-                       << "public" << p.publicIp << p.publicPort;
-            continue;
+            qInfo() << "Rollback lobby punching peer"
+                    << "selfUserId" << m_selfUserId
+                    << "localPort" << m_udp->localPort()
+                    << "peerUserId" << p.userId
+                    << "slot" << p.slot
+                    << "kind" << candidate.kind
+                    << "endpoint" << candidate.address.toString() << candidate.port
+                    << "burst" << ANCHOR_PUNCH_BURST;
+            for (int i = 0; i < ANCHOR_PUNCH_BURST; ++i)
+                m_udp->writeDatagram(pkt, candidate.address, candidate.port);
         }
-        qInfo() << "Rollback lobby punching peer"
-                << "selfUserId" << m_selfUserId
-                << "localPort" << m_udp->localPort()
-                << "peerUserId" << p.userId
-                << "slot" << p.slot
-                << "public" << p.publicIp << p.publicPort
-                << "local" << p.localIp
-                << "burst" << ANCHOR_PUNCH_BURST;
-        for (int i = 0; i < ANCHOR_PUNCH_BURST; ++i)
-            m_udp->writeDatagram(pkt, addr, p.publicPort);
     }
 }
 
-bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error)
+bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error)
 {
     struct PrematchSyncGuard
     {
@@ -845,34 +1202,79 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
     // that left users force-killing the window. Bail out gracefully after this.
     const qint64 kPrematchSyncTimeoutMs = 10'000;
 
-    LobbyMatchPeer local{};
-    LobbyMatchPeer host{};
-    bool foundLocal = false;
-    bool foundHost = false;
-    for (const auto& peer : peers)
+    int localIndex = -1;
+    int hostIndex = -1;
+    for (int i = 0; i < peers.size(); i++)
     {
-        if (peer.userId == m_selfUserId)
-        {
-            local = peer;
-            foundLocal = true;
-        }
-        if (peer.slot == 1)
-        {
-            host = peer;
-            foundHost = true;
-        }
+        if (peers[i].userId == m_selfUserId)
+            localIndex = i;
+        if (peers[i].slot == 1)
+            hostIndex = i;
     }
-    if (!foundLocal || !foundHost)
+    if (localIndex < 0 || hostIndex < 0)
     {
         error = "Pre-match sync failed: incomplete peer list";
         return false;
     }
 
-    auto endpointFor = [&](const LobbyMatchPeer& peer) {
-        QString ip = peer.publicIp;
-        if (!local.publicIp.isEmpty() && local.publicIp == peer.publicIp && !peer.localIp.isEmpty())
-            ip = peer.localIp;
-        return QPair<QHostAddress, quint16>(QHostAddress(ip), peer.publicPort);
+    LobbyMatchPeer& local = peers[localIndex];
+    LobbyMatchPeer& host = peers[hostIndex];
+
+    auto endpointsFor = [&](const LobbyMatchPeer& peer) {
+        QList<UdpEndpointCandidate> endpoints;
+        appendEndpointCandidate(endpoints, peer.selectedIp, peer.selectedPort,
+                                peer.selectedKind.isEmpty() ? QStringLiteral("selected") : peer.selectedKind);
+
+        // If the endpoint race did not receive a reply, continue racing during
+        // pre-match sync instead of committing to an unverified fallback.
+        if (!peer.selectedEndpointVerified)
+        {
+            const auto advertised = peerEndpointCandidates(local, peer);
+            for (const auto& candidate : advertised)
+                appendEndpointCandidate(endpoints, candidate.address.toString(), candidate.port, candidate.kind);
+        }
+        return endpoints;
+    };
+
+    auto recordSelectedEndpoint = [&](quint64 userId, const QHostAddress& sender, quint16 senderPort) {
+        for (LobbyMatchPeer& peer : peers)
+        {
+            if (peer.userId != userId)
+                continue;
+
+            peer.selectedIp = sender.toString();
+            peer.selectedPort = senderPort;
+            peer.selectedKind = QStringLiteral("reply");
+            peer.selectedEndpointVerified = true;
+            const auto advertised = peerEndpointCandidates(local, peer);
+            for (const auto& candidate : advertised)
+            {
+                if (candidate.address == sender && candidate.port == senderPort)
+                {
+                    peer.selectedKind = candidate.kind;
+                    break;
+                }
+            }
+            return;
+        }
+    };
+
+    auto replyToProbe = [&](const QByteArray& datagram, const QHostAddress& sender, quint16 senderPort) {
+        if (datagram.size() != PROBE_PACKET_SIZE ||
+            std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
+            static_cast<quint8>(datagram.at(4)) != ANCHOR_OP_PROBE)
+        {
+            return false;
+        }
+
+        quint64 ignoredSender = 0;
+        quint64 nonce = 0;
+        if (!readProbePacket(datagram, ignoredSender, nonce))
+            return true;
+
+        const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
+        m_udp->writeDatagram(reply, sender, senderPort);
+        return true;
     };
 
     if (localSlot == 1)
@@ -913,9 +1315,9 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
             {
                 if (!pendingAcks.contains(peer.userId))
                     continue;
-                const auto endpoint = endpointFor(peer);
-                if (!endpoint.first.isNull() && endpoint.second != 0)
-                    m_udp->writeDatagram(packet, endpoint.first, endpoint.second);
+                const auto endpoints = endpointsFor(peer);
+                for (const auto& endpoint : endpoints)
+                    m_udp->writeDatagram(packet, endpoint.address, endpoint.port);
             }
 
             for (int i = 0; i < 5; i++)
@@ -931,6 +1333,9 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
                     datagram.resize(int(m_udp->pendingDatagramSize()));
                     m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
 
+                    if (replyToProbe(datagram, sender, senderPort))
+                        continue;
+
                     if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
                         static_cast<quint8>(datagram.at(4)) != ANCHOR_OP_PREMATCH_ACK)
                     {
@@ -939,8 +1344,12 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
 
                     quint64 senderUserId = 0;
                     uint64_t ackHash = 0;
-                    if (readPrematchSenderAndHash(datagram, senderUserId, ackHash) && ackHash == manifestHash)
+                    if (readPrematchSenderAndHash(datagram, senderUserId, ackHash) &&
+                        ackHash == manifestHash && pendingAcks.contains(senderUserId))
+                    {
+                        recordSelectedEndpoint(senderUserId, sender, senderPort);
                         pendingAcks.remove(senderUserId);
+                    }
                 }
             }
         }
@@ -957,8 +1366,8 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         return true;
     }
 
-    const auto hostEndpoint = endpointFor(host);
-    if (hostEndpoint.first.isNull() || hostEndpoint.second == 0)
+    const auto hostEndpoints = endpointsFor(host);
+    if (hostEndpoints.isEmpty())
     {
         error = "Pre-match sync failed: invalid host endpoint";
         return false;
@@ -966,8 +1375,8 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
 
     qInfo() << "Rollback lobby prematch client waiting"
             << "hostUserId" << host.userId
-            << "hostEndpoint" << hostEndpoint.first.toString()
-            << hostEndpoint.second;
+            << "hostEndpoint" << hostEndpoints.first().address.toString()
+            << hostEndpoints.first().port;
 
     const qint64 clientSyncDeadlineMs = QDateTime::currentMSecsSinceEpoch() + kPrematchSyncTimeoutMs;
     for (;;)
@@ -989,6 +1398,9 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
             datagram.resize(int(m_udp->pendingDatagramSize()));
             m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
 
+            if (replyToProbe(datagram, sender, senderPort))
+                continue;
+
             if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
                 static_cast<quint8>(datagram.at(4)) != ANCHOR_OP_PREMATCH_MANIFEST)
             {
@@ -999,6 +1411,8 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
             uint64_t manifestHash = 0;
             if (!readPrematchSenderAndHash(datagram, senderUserId, manifestHash) || senderUserId != host.userId)
                 continue;
+
+            recordSelectedEndpoint(senderUserId, sender, senderPort);
 
             const int manifestOffset = 4 + 1 + 8 + 8;
             const std::string manifest(datagram.constData() + manifestOffset, datagram.constData() + datagram.size());
@@ -1011,7 +1425,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
 
             const QByteArray ack = buildPrematchPacket(ANCHOR_OP_PREMATCH_ACK, m_selfUserId, manifestHash);
             for (int i = 0; i < ANCHOR_PUNCH_BURST; i++)
-                m_udp->writeDatagram(ack, hostEndpoint.first, hostEndpoint.second);
+                m_udp->writeDatagram(ack, sender, senderPort);
 
             qInfo() << "Rollback lobby prematch client complete"
                     << "hash" << static_cast<qulonglong>(manifestHash)
@@ -1076,28 +1490,25 @@ void LobbyClient::onUdpReadyRead()
         {
         case ANCHOR_OP_PROBE:
         {
-            if (datagram.size() != PROBE_PACKET_SIZE)
+            quint64 ignoredSender = 0;
+            quint64 nonce = 0;
+            if (!readProbePacket(datagram, ignoredSender, nonce))
                 break;
-            // Echo as PROBE_REPLY with our userId in the sender slot; nonce
-            // bytes (offset 13..21) carry through unchanged so the originator
-            // can match on its end.
-            QByteArray reply(datagram);
-            reply[4] = static_cast<char>(ANCHOR_OP_PROBE_REPLY);
-            const quint64 selfIdBE = qToBigEndian(m_selfUserId);
-            std::memcpy(reply.data() + 5, &selfIdBE, sizeof(selfIdBE));
+            // Echo as PROBE_REPLY with our userId while retaining the nonce so
+            // the originator can match the first candidate that answered.
+            const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
             m_udp->writeDatagram(reply, sender, senderPort);
             break;
         }
         case ANCHOR_OP_PROBE_REPLY:
         {
-            if (datagram.size() != PROBE_PACKET_SIZE)
+            quint64 senderUserId = 0;
+            quint64 nonce = 0;
+            if (!readProbePacket(datagram, senderUserId, nonce))
                 break;
-            quint64 nonceBE = 0;
-            std::memcpy(&nonceBE, datagram.constData() + 13, sizeof(nonceBE));
-            const quint64 nonce = qFromBigEndian(nonceBE);
 
             const auto it = m_pendingProbes.find(nonce);
-            if (it == m_pendingProbes.end())
+            if (it == m_pendingProbes.end() || senderUserId != it->targetUserId)
                 break;
             const qint64 nowMs  = QDateTime::currentMSecsSinceEpoch();
             const int    rttMs  = static_cast<int>(nowMs - it->sendMs);
