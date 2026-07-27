@@ -2012,6 +2012,7 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.username        = obj.value("username").toString();
     u.state           = obj.value("state").toString();
     u.region          = obj.value("region").toString();
+    u.country         = obj.value("country").toString();
     u.pingToServer    = static_cast<quint16>(obj.value("pingToServer").toInt());
     u.currentRoomId   = static_cast<quint64>(obj.value("currentRoomId").toDouble());
     u.currentRoomName = obj.value("currentRoomName").toString();

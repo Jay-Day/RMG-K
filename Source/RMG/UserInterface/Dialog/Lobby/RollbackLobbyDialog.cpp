@@ -74,6 +74,9 @@
 #include <QUrl>
 #include <QDebug>
 #include <QVariant>
+#include <QIcon>
+#include <QFile>
+#include <QLocale>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -2124,18 +2127,37 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     else
         item->setToolTip(1, QString());
 
-    // Region column: little flag + compact label. The ping moved into the
-    // tooltip — a measured UDP round-trip when the background probes have one,
-    // the coarse region-matrix estimate otherwise.
+    // Region column: country flag (Fightcade-style — the server geolocates the
+    // ISO country code, we render the bundled SVG) + compact region label. Old
+    // servers don't send a country, so fall back to the region's emoji badge.
+    // The ping moved into the tooltip — a measured UDP round-trip when the
+    // background probes have one, the coarse region-matrix estimate otherwise.
     // U+2014 EM DASH — using QChar avoids any file-encoding ambiguity in
     // the literal.
     const QString dash = QString(QChar(0x2014));
-    item->setText(2, u.region.isEmpty()
-        ? dash
-        : LobbyRegions::flagFor(u.region) + QChar(' ') + LobbyRegions::shortLabelFor(u.region));
+    const QString flagResource = QString(":/flags/%1.svg").arg(u.country.toLower());
+    QString countryName;
+    if (!u.country.isEmpty() && QFile::exists(flagResource))
+    {
+        item->setIcon(2, QIcon(flagResource));
+        item->setText(2, u.region.isEmpty() ? QString() : LobbyRegions::shortLabelFor(u.region));
+        const QLocale::Territory territory = QLocale::codeToTerritory(u.country);
+        countryName = (territory != QLocale::AnyTerritory)
+            ? QLocale::territoryToString(territory)
+            : u.country;
+    }
+    else
+    {
+        item->setIcon(2, QIcon());
+        item->setText(2, u.region.isEmpty()
+            ? dash
+            : LobbyRegions::flagFor(u.region) + QChar(' ') + LobbyRegions::shortLabelFor(u.region));
+    }
 
     const QString regionLabel = LobbyRegions::labelFor(u.region);
     QString tip = QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel);
+    if (!countryName.isEmpty())
+        tip = QString("Country: %1\n%2").arg(countryName, tip);
     if (u.id != m_client->selfUserId())
     {
         const int measured = m_client->measuredPingMs(u.id);

@@ -52,6 +52,7 @@ public:
         QString username;
         QString state;           // matches protocol UserState strings
         QString region;
+        QString country;         // ISO 3166-1 alpha-2 from the server; "" on old servers
         quint16 pingToServer = 0;
         quint64 currentRoomId = 0;
         QString currentRoomName;
