@@ -516,6 +516,7 @@ void LobbyClient::onWsDisconnected()
     // id can't inherit another player's ping history.
     m_measuredPing.clear();
     m_pingSamples.clear();
+    m_peerLearnedEndpoints.clear();
     setState(ConnectionState::Disconnected);
 }
 
@@ -765,6 +766,16 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     QStringList endpointStrings;
     for (const auto& candidate : candidates)
         endpointStrings.append(endpointKey(candidate.address, candidate.port));
+
+    // Endpoints learned from the peer's own inbound probes (see onUdpReadyRead).
+    // For a peer behind an endpoint-dependent NAT the server-observed port is
+    // dead to us — the port their packets actually reach us from is the only
+    // usable route, so include it from the first send for an accurate RTT.
+    for (const QString& learned : m_peerLearnedEndpoints.value(uid))
+    {
+        if (!endpointStrings.contains(learned))
+            endpointStrings.append(learned);
+    }
 
     // The updated server sends a reciprocal PING_PROBE_REPLY to the target, so
     // both peers may receive near-simultaneous starts for the same pair. Merge
@@ -1812,10 +1823,45 @@ void LobbyClient::onUdpReadyRead()
         {
         case ANCHOR_OP_PROBE:
         {
-            quint64 ignoredSender = 0;
+            quint64 senderUserId = 0;
             quint64 nonce = 0;
-            if (!readProbePacket(datagram, ignoredSender, nonce))
+            if (!readProbePacket(datagram, senderUserId, nonce))
                 break;
+
+            // An inbound probe is proof this exact source endpoint traverses
+            // both NATs. For a peer behind an endpoint-dependent NAT, the port
+            // their packets reach us from differs from the server-observed one
+            // — and is the ONLY port our own probes can reach them on. Remember
+            // it for future bursts and splice it into any burst in flight.
+            // (Mirrors the inbound learning the match-start race already does.)
+            if (senderUserId != 0 && senderUserId != m_selfUserId)
+            {
+                bool isV4 = false;
+                const quint32 v4 = sender.toIPv4Address(&isV4);
+                const QString observed = endpointKey(isV4 ? QHostAddress(v4) : sender, senderPort);
+
+                QStringList& learned = m_peerLearnedEndpoints[senderUserId];
+                if (!learned.contains(observed))
+                {
+                    learned.append(observed);
+                    while (learned.size() > 4)
+                        learned.removeFirst();
+                }
+                for (auto probeIt = m_pendingProbes.begin(); probeIt != m_pendingProbes.end(); ++probeIt)
+                {
+                    if (probeIt->targetUserId != senderUserId)
+                        continue;
+                    if (!probeIt->endpoints.contains(observed))
+                    {
+                        probeIt->endpoints.append(observed);
+                        probeIt->nextSendMs = 0; // fire at the learned route now
+                        if (!m_pingProbeBurstTimer->isActive())
+                            m_pingProbeBurstTimer->start();
+                    }
+                    break;
+                }
+            }
+
             // Echo as PROBE_REPLY with our userId while retaining the nonce so
             // the originator can match the first candidate that answered.
             const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
