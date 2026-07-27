@@ -2177,8 +2177,8 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     // Self-reported transport medium ("wifi"/"lan"/...) and build, when the
     // peer's client and the server are new enough to relay them.
     const QString connLabel =
-          u.connection == QLatin1String("wifi")      ? QStringLiteral("Wi-Fi 📶")
-        : u.connection == QLatin1String("lan")       ? QStringLiteral("Wired (LAN)")
+          u.connection == QLatin1String("wifi")      ? QStringLiteral("Wi-Fi")
+        : u.connection == QLatin1String("lan")       ? QStringLiteral("LAN")
         : u.connection == QLatin1String("cellular")  ? QStringLiteral("Cellular")
         : u.connection == QLatin1String("bluetooth") ? QStringLiteral("Bluetooth")
         : QString();
