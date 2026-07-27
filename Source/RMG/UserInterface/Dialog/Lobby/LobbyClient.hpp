@@ -20,6 +20,7 @@
 
 class QWebSocket;
 class QUdpSocket;
+class QFile;
 
 namespace UserInterface
 {
@@ -301,6 +302,13 @@ private:
     void sendUdpRegister();
     void sendUdpKeepalive();
 
+    // Dedicated on-disk diagnostics for intermittent lobby peer-ping failures.
+    // The file is created in RMG-K's Logs directory for each lobby connection.
+    void startPingDiagnosticLog();
+    void writePingDiagnostic(const QString& event, const QString& details = QString());
+    QString pingUserLabel(quint64 userId) const;
+    QString pendingPingSummary() const;
+
     static LobbyUser parsePresenceUser(const QJsonObject& obj);
 
     ConnectionState m_state = ConnectionState::Disconnected;
@@ -311,6 +319,8 @@ private:
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
     QTimer* m_pingProbeBurstTimer = nullptr;
+    QFile* m_pingDiagnosticFile = nullptr;
+    qint64 m_pingDiagnosticStartMs = 0;
     // A synchronous match-start UDP phase is draining the socket itself.
     // readyRead must not consume packets concurrently during these phases.
     bool m_inPrematchSync = false;
@@ -344,9 +354,14 @@ private:
     struct ProbeInFlight
     {
         quint64 targetUserId = 0;
-        qint64  sendMs       = 0; // most recent burst send, for RTT
+        qint64  createdMs    = 0;
+        qint64  sendMs       = 0; // first actual burst send, for RTT
+        qint64  lastSendMs   = 0;
         qint64  nextSendMs   = 0;
         qint64  deadlineMs   = 0;
+        int     sendRounds   = 0;
+        int     datagramsSent = 0;
+        QString origin;
         QStringList endpoints; // canonical IPv4 "address:port" candidates
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;

@@ -9,6 +9,7 @@
 #include "LobbyClient.hpp"
 
 #include <RMG-Core/Cheats.hpp>
+#include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/Version.hpp>
 
@@ -27,9 +28,11 @@
 #include <QtEndian>
 #include <QRandomGenerator>
 #include <QDebug>
+#include <QFile>
 #include <QSet>
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 
 using namespace UserInterface::Dialog;
 
@@ -64,6 +67,28 @@ namespace
 
     // PROBE/PROBE_REPLY packet: [magic(4) | op(1) | senderUserId(8) | nonce(8)]
     constexpr int PROBE_PACKET_SIZE = 4 + 1 + 8 + 8;
+
+    std::filesystem::path lobbyPingLogDirectory()
+    {
+        std::error_code errorCode;
+        std::filesystem::path directory = CoreGetLibraryDirectory() / "Logs";
+
+        if (std::filesystem::is_directory(directory, errorCode) ||
+            std::filesystem::create_directories(directory, errorCode))
+        {
+            return directory.make_preferred();
+        }
+
+        errorCode.clear();
+        directory = "Logs";
+        if (std::filesystem::is_directory(directory, errorCode) ||
+            std::filesystem::create_directories(directory, errorCode))
+        {
+            return directory.make_preferred();
+        }
+
+        return std::filesystem::path();
+    }
 
     struct UdpEndpointCandidate
     {
@@ -336,6 +361,8 @@ namespace
 LobbyClient::LobbyClient(QObject* parent)
     : QObject(parent)
 {
+    m_pingDiagnosticFile = new QFile(this);
+
     m_ws = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
     connect(m_ws, &QWebSocket::connected,           this, &LobbyClient::onWsConnected);
     connect(m_ws, &QWebSocket::disconnected,        this, &LobbyClient::onWsDisconnected);
@@ -368,6 +395,90 @@ LobbyClient::~LobbyClient()
     disconnectFromServer();
 }
 
+void LobbyClient::startPingDiagnosticLog()
+{
+    if (!m_pingDiagnosticFile)
+        return;
+
+    if (m_pingDiagnosticFile->isOpen())
+        m_pingDiagnosticFile->close();
+
+    const std::filesystem::path directory = lobbyPingLogDirectory();
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
+    const QString filename = QStringLiteral("lobby_ping_%1_pid%2.log")
+                                 .arg(timestamp)
+                                 .arg(QCoreApplication::applicationPid());
+
+    QString path = filename;
+    if (!directory.empty())
+        path = QString::fromStdString((directory / filename.toStdString()).string());
+
+    m_pingDiagnosticFile->setFileName(path);
+    if (!m_pingDiagnosticFile->open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
+    {
+        qWarning() << "Rollback lobby could not open ping diagnostic log"
+                   << path << m_pingDiagnosticFile->errorString();
+        return;
+    }
+
+    m_pingDiagnosticStartMs = QDateTime::currentMSecsSinceEpoch();
+    qInfo() << "Rollback lobby ping diagnostic log" << path;
+    writePingDiagnostic(QStringLiteral("LOG_START"),
+                        QStringLiteral("path=%1 version=%2 username=%3")
+                            .arg(path,
+                                 QString::fromStdString(CoreGetVersion()),
+                                 m_pendingUsername));
+}
+
+void LobbyClient::writePingDiagnostic(const QString& event, const QString& details)
+{
+    if (!m_pingDiagnosticFile || !m_pingDiagnosticFile->isOpen())
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    QString cleanDetails = details;
+    cleanDetails.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    cleanDetails.replace(QLatin1Char('\r'), QLatin1Char(' '));
+
+    QString line = QStringLiteral("%1 elapsed_ms=%2 self=%3 local_udp=%4 event=%5")
+                       .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs))
+                       .arg(m_pingDiagnosticStartMs == 0 ? 0 : nowMs - m_pingDiagnosticStartMs)
+                       .arg(m_selfUserId)
+                       .arg(localUdpPort())
+                       .arg(event);
+    if (!cleanDetails.isEmpty())
+        line += QLatin1Char(' ') + cleanDetails;
+    line += QLatin1Char('\n');
+
+    m_pingDiagnosticFile->write(line.toUtf8());
+    m_pingDiagnosticFile->flush();
+}
+
+QString LobbyClient::pingUserLabel(quint64 userId) const
+{
+    const auto it = m_users.constFind(userId);
+    if (it == m_users.constEnd())
+        return QStringLiteral("%1:<unknown>").arg(userId);
+    return QStringLiteral("%1:%2").arg(userId).arg(it->username);
+}
+
+QString LobbyClient::pendingPingSummary() const
+{
+    QStringList entries;
+    entries.reserve(m_pendingProbes.size());
+    for (auto it = m_pendingProbes.constBegin(); it != m_pendingProbes.constEnd(); ++it)
+    {
+        entries.append(QStringLiteral("nonce=%1 target=%2 origin=%3 endpoints=[%4] rounds=%5 datagrams=%6")
+                           .arg(it.key())
+                           .arg(pingUserLabel(it->targetUserId))
+                           .arg(it->origin)
+                           .arg(it->endpoints.join(QLatin1Char(',')))
+                           .arg(it->sendRounds)
+                           .arg(it->datagramsSent));
+    }
+    return entries.join(QStringLiteral(" | "));
+}
+
 void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
                                    const QStringList& romHashes, const QString& udpAddr)
 {
@@ -383,8 +494,15 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     m_users.clear();
     m_rooms.clear();
 
+    startPingDiagnosticLog();
+
     qInfo() << "Rollback lobby local IPv4 detection"
             << "localIp" << (m_pendingLocalIp.isEmpty() ? QString("<none>") : m_pendingLocalIp);
+    writePingDiagnostic(QStringLiteral("CONNECT_BEGIN"),
+                        QStringLiteral("ws=%1 username=%2 detected_local_ip=%3")
+                            .arg(wsUrl,
+                                 username,
+                                 m_pendingLocalIp.isEmpty() ? QStringLiteral("<none>") : m_pendingLocalIp));
 
     QUrl url(wsUrl);
     if (!udpAddr.isEmpty())
@@ -407,6 +525,11 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
         m_udpAnchorPort = 6364;
     }
 
+    writePingDiagnostic(QStringLiteral("ANCHOR_CONFIG"),
+                        QStringLiteral("host=%1 port=%2")
+                            .arg(m_udpAnchorHost)
+                            .arg(m_udpAnchorPort));
+
     // Bind the eventual GekkoNet port before HELLO so updated servers can
     // advertise the exact LAN-side endpoint immediately. Registration still
     // waits for HELLO_OK because it requires the assigned user id.
@@ -418,6 +541,12 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
 
 void LobbyClient::disconnectFromServer()
 {
+    writePingDiagnostic(QStringLiteral("DISCONNECT_REQUEST"),
+                        QStringLiteral("ws_state=%1 udp_state=%2 pending_count=%3 pending={%4}")
+                            .arg(m_ws ? static_cast<int>(m_ws->state()) : -1)
+                            .arg(m_udp ? static_cast<int>(m_udp->state()) : -1)
+                            .arg(m_pendingProbes.size())
+                            .arg(pendingPingSummary()));
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     m_pingProbeBurstTimer->stop();
@@ -485,6 +614,9 @@ static QString detectTransportMedium()
 void LobbyClient::onWsConnected()
 {
     setState(ConnectionState::Authenticating);
+    writePingDiagnostic(QStringLiteral("WS_CONNECTED"),
+                        QStringLiteral("state=%1")
+                            .arg(static_cast<int>(m_ws->state())));
 
     QJsonObject data;
     data["username"]      = m_pendingUsername;
@@ -502,11 +634,21 @@ void LobbyClient::onWsConnected()
     if (boundPort != 0)
         data["localPort"] = static_cast<int>(boundPort);
 
+    writePingDiagnostic(QStringLiteral("HELLO_SEND"),
+                        QStringLiteral("username=%1 local_ip=%2 local_port=%3 transport=%4")
+                            .arg(m_pendingUsername,
+                                 m_pendingLocalIp.isEmpty() ? QStringLiteral("<none>") : m_pendingLocalIp)
+                            .arg(boundPort)
+                            .arg(transport.isEmpty() ? QStringLiteral("<unknown>") : transport));
     sendEnvelope("HELLO", data, "hello-1");
 }
 
 void LobbyClient::onWsDisconnected()
 {
+    writePingDiagnostic(QStringLiteral("WS_DISCONNECTED"),
+                        QStringLiteral("pending_count=%1 pending={%2}")
+                            .arg(m_pendingProbes.size())
+                            .arg(pendingPingSummary()));
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     m_pingProbeBurstTimer->stop();
@@ -521,6 +663,10 @@ void LobbyClient::onWsDisconnected()
 
 void LobbyClient::onWsErrorOccurred()
 {
+    writePingDiagnostic(QStringLiteral("WS_ERROR"),
+                        QStringLiteral("code=%1 text=%2")
+                            .arg(static_cast<int>(m_ws->error()))
+                            .arg(m_ws->errorString()));
     emit connectError(m_ws->errorString());
     setState(ConnectionState::Failed);
 }
@@ -591,6 +737,16 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
         }
     }
 
+    writePingDiagnostic(QStringLiteral("HELLO_OK"),
+                        QStringLiteral("username=%1 observed_ip=%2 region=%3 anchor=%4:%5 bound_local_ip=%6 bound_local_port=%7")
+                            .arg(m_pendingUsername,
+                                 m_observedIp,
+                                 m_region,
+                                 m_udpAnchorHost)
+                            .arg(m_udpAnchorPort)
+                            .arg(m_pendingLocalIp.isEmpty() ? QStringLiteral("<none>") : m_pendingLocalIp)
+                            .arg(localUdpPort()));
+
     setState(ConnectionState::Connected);
     m_heartbeatTimer->start();
     initiateUdpAnchor();
@@ -599,6 +755,7 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
 void LobbyClient::handleHelloFail(const QJsonObject& data)
 {
     const QString reason = data.value("reason").toString();
+    writePingDiagnostic(QStringLiteral("HELLO_FAIL"), QStringLiteral("reason=%1").arg(reason));
     emit helloFailed(reason);
     setState(ConnectionState::Failed);
     if (m_ws)
@@ -614,11 +771,21 @@ void LobbyClient::handleHeartbeatAck(const QJsonObject& data)
 void LobbyClient::handlePresenceFull(const QJsonObject& data)
 {
     m_users.clear();
+    QStringList roster;
     for (const auto& v : data.value("users").toArray())
     {
         const auto u = parsePresenceUser(v.toObject());
         m_users.insert(u.id, u);
+        roster.append(QStringLiteral("%1:%2 state=%3 room=%4")
+                          .arg(u.id)
+                          .arg(u.username)
+                          .arg(u.state)
+                          .arg(u.currentRoomId));
     }
+    writePingDiagnostic(QStringLiteral("PRESENCE_FULL"),
+                        QStringLiteral("count=%1 users={%2}")
+                            .arg(m_users.size())
+                            .arg(roster.join(QStringLiteral(" | "))));
     emit presenceFull();
 }
 
@@ -628,17 +795,44 @@ void LobbyClient::handlePresenceDelta(const QJsonObject& data)
     {
         const auto u = parsePresenceUser(v.toObject());
         m_users.insert(u.id, u);
+        writePingDiagnostic(QStringLiteral("PRESENCE_ADD"),
+                            QStringLiteral("user=%1:%2 state=%3 room=%4")
+                                .arg(u.id)
+                                .arg(u.username)
+                                .arg(u.state)
+                                .arg(u.currentRoomId));
         emit userAdded(u.id);
     }
     for (const auto& v : data.value("updated").toArray())
     {
         const auto u = parsePresenceUser(v.toObject());
         m_users.insert(u.id, u);
+        writePingDiagnostic(QStringLiteral("PRESENCE_UPDATE"),
+                            QStringLiteral("user=%1:%2 state=%3 room=%4")
+                                .arg(u.id)
+                                .arg(u.username)
+                                .arg(u.state)
+                                .arg(u.currentRoomId));
         emit userUpdated(u.id);
     }
     for (const auto& v : data.value("removed").toArray())
     {
         const quint64 id = static_cast<quint64>(v.toDouble());
+        const QString removedLabel = pingUserLabel(id);
+        bool hadPending = false;
+        for (auto it = m_pendingProbes.constBegin(); it != m_pendingProbes.constEnd(); ++it)
+        {
+            if (it->targetUserId == id)
+            {
+                hadPending = true;
+                break;
+            }
+        }
+        writePingDiagnostic(QStringLiteral("PRESENCE_REMOVE"),
+                            QStringLiteral("user=%1 had_pending=%2 pending={%3}")
+                                .arg(removedLabel)
+                                .arg(hadPending ? 1 : 0)
+                                .arg(hadPending ? pendingPingSummary() : QString()));
         m_users.remove(id);
         emit userRemoved(id);
     }
@@ -684,16 +878,28 @@ void LobbyClient::handleRoomCreateFail(const QJsonObject& data)
 
 void LobbyClient::handleRoomLeft(const QJsonObject& data)
 {
+    writePingDiagnostic(QStringLiteral("ROOM_LEFT"),
+                        QStringLiteral("reason=%1 pending_count=%2 pending={%3}")
+                            .arg(data.value("reason").toString())
+                            .arg(m_pendingProbes.size())
+                            .arg(pendingPingSummary()));
     emit roomLeft(data.value("reason").toString());
 }
 
 void LobbyClient::handleRoomState(const QJsonObject& data)
 {
+    writePingDiagnostic(QStringLiteral("ROOM_STATE"),
+                        QStringLiteral("json=%1")
+                            .arg(QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact))));
     emit roomStateChanged(data);
 }
 
 void LobbyClient::handleRoomJoinOk(const QJsonObject& data)
 {
+    writePingDiagnostic(QStringLiteral("ROOM_JOIN_OK"),
+                        QStringLiteral("room_id=%1 json=%2")
+                            .arg(static_cast<quint64>(data.value("id").toDouble()))
+                            .arg(QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact))));
     emit roomJoinOk(static_cast<quint64>(data.value("id").toDouble()));
     emit roomStateChanged(data);
 }
@@ -739,12 +945,25 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     const QString targetEndpoint = data.value("targetEndpoint").toString();
     const QString publicEndpoint = data.value("publicEndpoint").toString();
     const QString localEndpoint  = data.value("localEndpoint").toString();
+    writePingDiagnostic(QStringLiteral("PING_SERVER_START"),
+                        QStringLiteral("target=%1 preferred=%2 public=%3 local=%4 udp_state=%5 pending_count=%6")
+                            .arg(pingUserLabel(uid),
+                                 targetEndpoint.isEmpty() ? QStringLiteral("<empty>") : targetEndpoint,
+                                 publicEndpoint.isEmpty() ? QStringLiteral("<empty>") : publicEndpoint,
+                                 localEndpoint.isEmpty() ? QStringLiteral("<empty>") : localEndpoint)
+                            .arg(m_udp ? static_cast<int>(m_udp->state()) : -1)
+                            .arg(m_pendingProbes.size()));
     emit pingProbeReply(uid, targetEndpoint);
 
     if (!m_udp ||
         m_udp->state() == QAbstractSocket::UnconnectedState ||
         m_selfUserId == 0)
+    {
+        writePingDiagnostic(QStringLiteral("PING_SERVER_START_IGNORED"),
+                            QStringLiteral("target=%1 reason=udp_unavailable_or_no_self_id")
+                                .arg(pingUserLabel(uid)));
         return;
+    }
 
     QList<UdpEndpointCandidate> candidates;
     const auto appendParsed = [&](const QString& endpoint, const QString& kind) {
@@ -759,7 +978,12 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     appendParsed(localEndpoint, QStringLiteral("local"));
     appendParsed(publicEndpoint, QStringLiteral("public"));
     if (candidates.isEmpty())
+    {
+        writePingDiagnostic(QStringLiteral("PING_SERVER_START_IGNORED"),
+                            QStringLiteral("target=%1 reason=no_valid_candidates")
+                                .arg(pingUserLabel(uid)));
         return;
+    }
 
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     QStringList endpointStrings;
@@ -773,13 +997,25 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     {
         if (it->targetUserId != uid)
             continue;
+        QStringList addedEndpoints;
         for (const QString& endpoint : endpointStrings)
         {
             if (!it->endpoints.contains(endpoint))
+            {
                 it->endpoints.append(endpoint);
+                addedEndpoints.append(endpoint);
+            }
         }
         it->nextSendMs = 0;
         it->deadlineMs = qMax(it->deadlineMs, nowMs + LOBBY_PING_PROBE_DURATION_MS);
+        writePingDiagnostic(QStringLiteral("PING_BURST_MERGE"),
+                            QStringLiteral("nonce=%1 target=%2 origin=%3 added=[%4] all=[%5] deadline_in_ms=%6")
+                                .arg(it.key())
+                                .arg(pingUserLabel(uid))
+                                .arg(it->origin)
+                                .arg(addedEndpoints.join(QLatin1Char(',')))
+                                .arg(it->endpoints.join(QLatin1Char(',')))
+                                .arg(it->deadlineMs - nowMs));
         if (!m_pingProbeBurstTimer->isActive())
             m_pingProbeBurstTimer->start();
         onPingProbeBurstTimer();
@@ -795,10 +1031,20 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
 
     ProbeInFlight in;
     in.targetUserId = uid;
+    in.createdMs    = nowMs;
     in.nextSendMs   = 0;
     in.deadlineMs   = nowMs + LOBBY_PING_PROBE_DURATION_MS;
+    in.origin       = QStringLiteral("server-start");
     in.endpoints    = endpointStrings;
     m_pendingProbes.insert(nonce, in);
+
+    writePingDiagnostic(QStringLiteral("PING_BURST_CREATE"),
+                        QStringLiteral("nonce=%1 target=%2 origin=%3 endpoints=[%4] duration_ms=%5")
+                            .arg(nonce)
+                            .arg(pingUserLabel(uid))
+                            .arg(in.origin)
+                            .arg(in.endpoints.join(QLatin1Char(',')))
+                            .arg(LOBBY_PING_PROBE_DURATION_MS));
 
     if (!m_pingProbeBurstTimer->isActive())
         m_pingProbeBurstTimer->start();
@@ -922,20 +1168,39 @@ void LobbyClient::onHeartbeatTimer()
 bool LobbyClient::ensureUdpAnchorBound()
 {
     if (!m_udp)
+    {
+        writePingDiagnostic(QStringLiteral("UDP_BIND_FAIL"), QStringLiteral("reason=no_socket"));
         return false;
+    }
 
     if (m_udp->state() != QAbstractSocket::UnconnectedState)
+    {
+        writePingDiagnostic(QStringLiteral("UDP_BIND_REUSE"),
+                            QStringLiteral("state=%1 local_address=%2 local_port=%3")
+                                .arg(static_cast<int>(m_udp->state()))
+                                .arg(m_udp->localAddress().toString())
+                                .arg(m_udp->localPort()));
         return m_udp->localPort() != 0;
+    }
 
     if (!m_udp->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress))
     {
         qWarning() << "lobby: udp bind failed:" << m_udp->errorString();
+        writePingDiagnostic(QStringLiteral("UDP_BIND_FAIL"),
+                            QStringLiteral("error=%1 code=%2")
+                                .arg(m_udp->errorString())
+                                .arg(static_cast<int>(m_udp->error())));
         return false;
     }
 
     qInfo() << "Rollback lobby UDP anchor bound"
             << "localIp" << (m_pendingLocalIp.isEmpty() ? QString("<none>") : m_pendingLocalIp)
             << "localPort" << m_udp->localPort();
+    writePingDiagnostic(QStringLiteral("UDP_BOUND"),
+                        QStringLiteral("socket_address=%1 detected_local_ip=%2 local_port=%3 share_address=1")
+                            .arg(m_udp->localAddress().toString(),
+                                 m_pendingLocalIp.isEmpty() ? QStringLiteral("<none>") : m_pendingLocalIp)
+                            .arg(m_udp->localPort()));
     return true;
 }
 
@@ -951,7 +1216,10 @@ void LobbyClient::initiateUdpAnchor()
 void LobbyClient::sendUdpRegister()
 {
     if (m_selfUserId == 0)
+    {
+        writePingDiagnostic(QStringLiteral("UDP_REGISTER_SKIP"), QStringLiteral("reason=no_self_id"));
         return;
+    }
     QByteArray pkt;
     pkt.reserve(15);
     pkt.append(ANCHOR_MAGIC, 4);
@@ -960,7 +1228,15 @@ void LobbyClient::sendUdpRegister()
     pkt.append(reinterpret_cast<const char*>(&idBE), sizeof(idBE));
     const quint16 portBE = qToBigEndian(localUdpPort());
     pkt.append(reinterpret_cast<const char*>(&portBE), sizeof(portBE));
-    m_udp->writeDatagram(pkt, QHostAddress(m_udpAnchorHost), m_udpAnchorPort);
+    const qint64 written = m_udp->writeDatagram(pkt, QHostAddress(m_udpAnchorHost), m_udpAnchorPort);
+    writePingDiagnostic(QStringLiteral("UDP_REGISTER_SEND"),
+                        QStringLiteral("anchor=%1:%2 advertised_local_port=%3 bytes=%4 result=%5 error=%6")
+                            .arg(m_udpAnchorHost)
+                            .arg(m_udpAnchorPort)
+                            .arg(localUdpPort())
+                            .arg(pkt.size())
+                            .arg(written)
+                            .arg(written == pkt.size() ? QStringLiteral("ok") : m_udp->errorString()));
 }
 
 void LobbyClient::sendUdpKeepalive()
@@ -975,7 +1251,14 @@ void LobbyClient::sendUdpKeepalive()
     pkt.append(reinterpret_cast<const char*>(&idBE), sizeof(idBE));
     const quint16 portBE = qToBigEndian(localUdpPort());
     pkt.append(reinterpret_cast<const char*>(&portBE), sizeof(portBE));
-    m_udp->writeDatagram(pkt, QHostAddress(m_udpAnchorHost), m_udpAnchorPort);
+    const qint64 written = m_udp->writeDatagram(pkt, QHostAddress(m_udpAnchorHost), m_udpAnchorPort);
+    writePingDiagnostic(QStringLiteral("UDP_KEEPALIVE_SEND"),
+                        QStringLiteral("anchor=%1:%2 advertised_local_port=%3 result=%4 error=%5")
+                            .arg(m_udpAnchorHost)
+                            .arg(m_udpAnchorPort)
+                            .arg(localUdpPort())
+                            .arg(written)
+                            .arg(written == pkt.size() ? QStringLiteral("ok") : m_udp->errorString()));
 }
 
 void LobbyClient::onUdpKeepaliveTimer()
@@ -990,6 +1273,10 @@ void LobbyClient::onPingProbeBurstTimer()
 
     if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState || m_selfUserId == 0)
     {
+        writePingDiagnostic(QStringLiteral("PING_BURSTS_CLEARED"),
+                            QStringLiteral("reason=udp_unavailable_or_no_self_id count=%1 pending={%2}")
+                                .arg(m_pendingProbes.size())
+                                .arg(pendingPingSummary()));
         m_pendingProbes.clear();
         m_pingProbeBurstTimer->stop();
         return;
@@ -1000,6 +1287,15 @@ void LobbyClient::onPingProbeBurstTimer()
     {
         if (nowMs > it->deadlineMs)
         {
+            writePingDiagnostic(QStringLiteral("PING_BURST_EXPIRE"),
+                                QStringLiteral("nonce=%1 target=%2 origin=%3 age_ms=%4 rounds=%5 datagrams=%6 endpoints=[%7]")
+                                    .arg(it.key())
+                                    .arg(pingUserLabel(it->targetUserId))
+                                    .arg(it->origin)
+                                    .arg(nowMs - it->createdMs)
+                                    .arg(it->sendRounds)
+                                    .arg(it->datagramsSent)
+                                    .arg(it->endpoints.join(QLatin1Char(','))));
             it = m_pendingProbes.erase(it);
             continue;
         }
@@ -1008,13 +1304,30 @@ void LobbyClient::onPingProbeBurstTimer()
         {
             const QByteArray packet = buildProbePacket(m_selfUserId, it.key());
             bool sentAny = false;
+            int successfulDatagrams = 0;
+            QStringList sendResults;
             for (const QString& endpoint : it->endpoints)
             {
                 UdpEndpointCandidate candidate;
                 if (!parseEndpointString(endpoint, candidate, QStringLiteral("ping")))
+                {
+                    sendResults.append(endpoint + QStringLiteral("=invalid"));
                     continue;
-                m_udp->writeDatagram(packet, candidate.address, candidate.port);
-                sentAny = true;
+                }
+                const qint64 written = m_udp->writeDatagram(packet, candidate.address, candidate.port);
+                if (written == packet.size())
+                {
+                    sentAny = true;
+                    successfulDatagrams++;
+                    sendResults.append(endpoint + QStringLiteral("=ok"));
+                }
+                else
+                {
+                    sendResults.append(QStringLiteral("%1=fail(%2:%3)")
+                                           .arg(endpoint)
+                                           .arg(written)
+                                           .arg(m_udp->errorString()));
+                }
             }
             // Stamp only the FIRST actual send. Replies are matched by nonce,
             // which every resend shares — measuring a reply to packet #1
@@ -1024,6 +1337,19 @@ void LobbyClient::onPingProbeBurstTimer()
             // median sample window absorbs.
             if (sentAny && it->sendMs == 0)
                 it->sendMs = nowMs;
+            it->lastSendMs = nowMs;
+            it->sendRounds++;
+            it->datagramsSent += successfulDatagrams;
+            writePingDiagnostic(QStringLiteral("PING_SEND_ROUND"),
+                                QStringLiteral("nonce=%1 target=%2 origin=%3 round=%4 successful=%5 endpoints=[%6] results=[%7] first_send_age_ms=%8")
+                                    .arg(it.key())
+                                    .arg(pingUserLabel(it->targetUserId))
+                                    .arg(it->origin)
+                                    .arg(it->sendRounds)
+                                    .arg(successfulDatagrams)
+                                    .arg(it->endpoints.join(QLatin1Char(',')))
+                                    .arg(sendResults.join(QLatin1Char(',')))
+                                    .arg(it->sendMs == 0 ? -1 : nowMs - it->sendMs));
             it->nextSendMs = nowMs + LOBBY_PING_PROBE_INTERVAL_MS;
         }
         ++it;
@@ -1815,7 +2141,23 @@ void LobbyClient::onUdpReadyRead()
             quint64 senderUserId = 0;
             quint64 nonce = 0;
             if (!readProbePacket(datagram, senderUserId, nonce))
+            {
+                writePingDiagnostic(QStringLiteral("PING_RECV_PROBE_INVALID"),
+                                    QStringLiteral("source=%1:%2 bytes=%3")
+                                        .arg(sender.toString())
+                                        .arg(senderPort)
+                                        .arg(datagram.size()));
                 break;
+            }
+
+            writePingDiagnostic(QStringLiteral("PING_RECV_PROBE"),
+                                QStringLiteral("source=%1:%2 sender=%3 nonce=%4 known_user=%5 pending_count=%6")
+                                    .arg(sender.toString())
+                                    .arg(senderPort)
+                                    .arg(pingUserLabel(senderUserId))
+                                    .arg(nonce)
+                                    .arg(m_users.contains(senderUserId) ? 1 : 0)
+                                    .arg(m_pendingProbes.size()));
 
             // The source of an inbound probe is a demonstrably usable endpoint
             // for this peer-to-peer NAT mapping. Add it to our own active ping
@@ -1838,6 +2180,22 @@ void LobbyClient::onUdpReadyRead()
                     qInfo() << "Rollback lobby ping learned endpoint from inbound probe"
                             << "peerUserId" << senderUserId
                             << "endpoint" << learnedEndpoint;
+                    writePingDiagnostic(QStringLiteral("PING_LEARN_ENDPOINT"),
+                                        QStringLiteral("nonce=%1 target=%2 origin=%3 endpoint=%4 action=append all=[%5]")
+                                            .arg(it.key())
+                                            .arg(pingUserLabel(senderUserId))
+                                            .arg(it->origin)
+                                            .arg(learnedEndpoint)
+                                            .arg(it->endpoints.join(QLatin1Char(','))));
+                }
+                else
+                {
+                    writePingDiagnostic(QStringLiteral("PING_LEARN_ENDPOINT"),
+                                        QStringLiteral("nonce=%1 target=%2 origin=%3 endpoint=%4 action=already_present")
+                                            .arg(it.key())
+                                            .arg(pingUserLabel(senderUserId))
+                                            .arg(it->origin)
+                                            .arg(learnedEndpoint));
                 }
 
                 // Send our own nonce to the learned endpoint immediately rather
@@ -1861,8 +2219,10 @@ void LobbyClient::onUdpReadyRead()
                 const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
                 ProbeInFlight reciprocal;
                 reciprocal.targetUserId = senderUserId;
+                reciprocal.createdMs = nowMs;
                 reciprocal.nextSendMs = 0;
                 reciprocal.deadlineMs = nowMs + LOBBY_PING_PROBE_DURATION_MS;
+                reciprocal.origin = QStringLiteral("early-inbound");
                 reciprocal.endpoints.append(learnedEndpoint);
                 m_pendingProbes.insert(reciprocalNonce, reciprocal);
                 learnedActiveRoute = true;
@@ -1870,10 +2230,26 @@ void LobbyClient::onUdpReadyRead()
                 qInfo() << "Rollback lobby ping started from early inbound probe"
                         << "peerUserId" << senderUserId
                         << "endpoint" << learnedEndpoint;
+                writePingDiagnostic(QStringLiteral("PING_BURST_CREATE"),
+                                    QStringLiteral("nonce=%1 target=%2 origin=%3 endpoints=[%4] trigger_nonce=%5")
+                                        .arg(reciprocalNonce)
+                                        .arg(pingUserLabel(senderUserId))
+                                        .arg(reciprocal.origin)
+                                        .arg(reciprocal.endpoints.join(QLatin1Char(',')))
+                                        .arg(nonce));
             }
 
             const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
-            m_udp->writeDatagram(reply, sender, senderPort);
+            const qint64 replyWritten = m_udp->writeDatagram(reply, sender, senderPort);
+            writePingDiagnostic(QStringLiteral("PING_SEND_REPLY"),
+                                QStringLiteral("to=%1:%2 peer=%3 nonce=%4 bytes=%5 result=%6 error=%7")
+                                    .arg(sender.toString())
+                                    .arg(senderPort)
+                                    .arg(pingUserLabel(senderUserId))
+                                    .arg(nonce)
+                                    .arg(reply.size())
+                                    .arg(replyWritten)
+                                    .arg(replyWritten == reply.size() ? QStringLiteral("ok") : m_udp->errorString()));
 
             if (learnedActiveRoute)
             {
@@ -1888,18 +2264,82 @@ void LobbyClient::onUdpReadyRead()
             quint64 senderUserId = 0;
             quint64 nonce = 0;
             if (!readProbePacket(datagram, senderUserId, nonce))
+            {
+                writePingDiagnostic(QStringLiteral("PING_RECV_REPLY_INVALID"),
+                                    QStringLiteral("source=%1:%2 bytes=%3")
+                                        .arg(sender.toString())
+                                        .arg(senderPort)
+                                        .arg(datagram.size()));
                 break;
+            }
+
+            writePingDiagnostic(QStringLiteral("PING_RECV_REPLY"),
+                                QStringLiteral("source=%1:%2 sender=%3 nonce=%4 pending_count=%5")
+                                    .arg(sender.toString())
+                                    .arg(senderPort)
+                                    .arg(pingUserLabel(senderUserId))
+                                    .arg(nonce)
+                                    .arg(m_pendingProbes.size()));
 
             const auto it = m_pendingProbes.find(nonce);
-            if (it == m_pendingProbes.end() || senderUserId != it->targetUserId)
+            if (it == m_pendingProbes.end())
+            {
+                writePingDiagnostic(QStringLiteral("PING_REPLY_UNMATCHED"),
+                                    QStringLiteral("reason=unknown_nonce source=%1:%2 sender=%3 nonce=%4 pending={%5}")
+                                        .arg(sender.toString())
+                                        .arg(senderPort)
+                                        .arg(pingUserLabel(senderUserId))
+                                        .arg(nonce)
+                                        .arg(pendingPingSummary()));
                 break;
+            }
+            if (senderUserId != it->targetUserId)
+            {
+                writePingDiagnostic(QStringLiteral("PING_REPLY_UNMATCHED"),
+                                    QStringLiteral("reason=sender_mismatch nonce=%1 expected=%2 actual=%3 source=%4:%5")
+                                        .arg(nonce)
+                                        .arg(pingUserLabel(it->targetUserId))
+                                        .arg(pingUserLabel(senderUserId))
+                                        .arg(sender.toString())
+                                        .arg(senderPort));
+                break;
+            }
             const qint64 nowMs  = QDateTime::currentMSecsSinceEpoch();
+            const bool sendWasRecorded = it->sendMs != 0;
             const int    rttMs  = static_cast<int>(nowMs - it->sendMs);
             const quint64 uid   = it->targetUserId;
+            const QString origin = it->origin;
+            const int rounds = it->sendRounds;
+            const int datagramsSent = it->datagramsSent;
+            const QStringList endpoints = it->endpoints;
             m_pendingProbes.erase(it);
             if (m_pendingProbes.isEmpty())
                 m_pingProbeBurstTimer->stop();
-            emit pingProbeMeasured(uid, recordPingSample(uid, rttMs));
+            if (!sendWasRecorded)
+            {
+                writePingDiagnostic(QStringLiteral("PING_REPLY_ANOMALY"),
+                                    QStringLiteral("reason=reply_before_recorded_send nonce=%1 target=%2 source=%3:%4 origin=%5 computed_rtt_ms=%6")
+                                        .arg(nonce)
+                                        .arg(pingUserLabel(uid))
+                                        .arg(sender.toString())
+                                        .arg(senderPort)
+                                        .arg(origin)
+                                        .arg(rttMs));
+            }
+            const int median = recordPingSample(uid, rttMs);
+            writePingDiagnostic(QStringLiteral("PING_SUCCESS"),
+                                QStringLiteral("nonce=%1 target=%2 source=%3:%4 origin=%5 raw_rtt_ms=%6 median_ms=%7 rounds=%8 datagrams=%9 endpoints=[%10]")
+                                    .arg(nonce)
+                                    .arg(pingUserLabel(uid))
+                                    .arg(sender.toString())
+                                    .arg(senderPort)
+                                    .arg(origin)
+                                    .arg(rttMs)
+                                    .arg(median)
+                                    .arg(rounds)
+                                    .arg(datagramsSent)
+                                    .arg(endpoints.join(QLatin1Char(','))));
+            emit pingProbeMeasured(uid, median);
             break;
         }
         case ANCHOR_OP_REGISTER:
@@ -1935,6 +2375,15 @@ int LobbyClient::recordPingSample(quint64 userId, int rttMs)
     std::sort(sorted.begin(), sorted.end());
     const int median = sorted[sorted.size() / 2];
     m_measuredPing[userId] = median;
+    QStringList sampleStrings;
+    for (const int sample : samples)
+        sampleStrings.append(QString::number(sample));
+    writePingDiagnostic(QStringLiteral("PING_SAMPLE"),
+                        QStringLiteral("target=%1 raw_ms=%2 median_ms=%3 samples=[%4]")
+                            .arg(pingUserLabel(userId))
+                            .arg(rttMs)
+                            .arg(median)
+                            .arg(sampleStrings.join(QLatin1Char(','))));
     return median;
 }
 
@@ -2075,6 +2524,11 @@ void LobbyClient::swapSeats(int slotA, int slotB)
 
 void LobbyClient::requestPingProbe(quint64 targetUserId)
 {
+    writePingDiagnostic(QStringLiteral("PING_REQUEST"),
+                        QStringLiteral("target=%1 previous_median_ms=%2 pending_count=%3")
+                            .arg(pingUserLabel(targetUserId))
+                            .arg(measuredPingMs(targetUserId))
+                            .arg(m_pendingProbes.size()));
     QJsonObject d;
     d["targetUserId"] = QJsonValue(qint64(targetUserId));
     sendEnvelope("PING_PROBE_REQUEST", d);
