@@ -3108,6 +3108,13 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
     {
         emit roomChatReceived(msg.fromUsername, displayMessage);
     }
+    else if (notifyPing)
+    {
+        // Admin @notify announcements are forced onto the in-game overlay even
+        // from the lobby channel, so mid-match players see them. MainWindow
+        // drops the line unless emulation is running.
+        emit roomChatReceived(msg.fromUsername, displayMessage);
+    }
 }
 
 void RollbackLobbyDialog::sendRoomChat(const QString& message)
