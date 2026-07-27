@@ -1016,7 +1016,13 @@ void LobbyClient::onPingProbeBurstTimer()
                 m_udp->writeDatagram(packet, candidate.address, candidate.port);
                 sentAny = true;
             }
-            if (sentAny)
+            // Stamp only the FIRST actual send. Replies are matched by nonce,
+            // which every resend shares — measuring a reply to packet #1
+            // against the latest resend time under-reads any RTT above the
+            // resend interval (a real 150 ms would display as 50 ms). A route
+            // that only opens mid-burst over-reads once instead, which the
+            // median sample window absorbs.
+            if (sentAny && it->sendMs == 0)
                 it->sendMs = nowMs;
             it->nextSendMs = nowMs + LOBBY_PING_PROBE_INTERVAL_MS;
         }
