@@ -53,6 +53,8 @@ public:
         QString state;           // matches protocol UserState strings
         QString region;
         QString country;         // ISO 3166-1 alpha-2 from the server; "" on old servers
+        QString clientVersion;   // peer's self-reported RMG-K build
+        QString connection;      // peer's self-reported transport ("wifi"/"lan"/...)
         quint16 pingToServer = 0;
         quint64 currentRoomId = 0;
         QString currentRoomName;

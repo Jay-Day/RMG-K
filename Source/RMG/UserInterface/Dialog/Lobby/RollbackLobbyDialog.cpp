@@ -2174,6 +2174,18 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     QString tip = QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel);
     if (!countryName.isEmpty())
         tip = QString("Country: %1\n%2").arg(countryName, tip);
+    // Self-reported transport medium ("wifi"/"lan"/...) and build, when the
+    // peer's client and the server are new enough to relay them.
+    const QString connLabel =
+          u.connection == QLatin1String("wifi")      ? QStringLiteral("Wi-Fi 📶")
+        : u.connection == QLatin1String("lan")       ? QStringLiteral("Wired (LAN)")
+        : u.connection == QLatin1String("cellular")  ? QStringLiteral("Cellular")
+        : u.connection == QLatin1String("bluetooth") ? QStringLiteral("Bluetooth")
+        : QString();
+    if (!connLabel.isEmpty())
+        tip += QString("\nConnection: %1").arg(connLabel);
+    if (!u.clientVersion.isEmpty())
+        tip += QString("\nBuild: %1").arg(u.clientVersion);
     if (u.id != m_client->selfUserId())
     {
         const int measured = m_client->measuredPingMs(u.id);

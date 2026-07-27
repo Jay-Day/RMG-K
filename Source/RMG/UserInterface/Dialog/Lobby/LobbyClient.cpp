@@ -10,6 +10,7 @@
 
 #include <RMG-Core/Cheats.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/Version.hpp>
 
 #include <QWebSocket>
 #include <QUdpSocket>
@@ -20,6 +21,7 @@
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QNetworkInterface>
+#include <QNetworkInformation>
 #include <QDateTime>
 #include <QCoreApplication>
 #include <QtEndian>
@@ -444,13 +446,39 @@ void LobbyClient::sendEnvelope(const QString& type, const QJsonObject& data, con
 
 // -------- WebSocket lifecycle --------
 
+// Best-effort detection of this machine's transport medium ("wifi"/"lan"/...),
+// reported in HELLO so peers can gauge connection-quality risk Slippi-style.
+// Returns an empty string when the OS backend can't say.
+static QString detectTransportMedium()
+{
+    if (!QNetworkInformation::instance() &&
+        !QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::TransportMedium))
+        return QString();
+
+    const auto* info = QNetworkInformation::instance();
+    if (info == nullptr)
+        return QString();
+
+    switch (info->transportMedium())
+    {
+    case QNetworkInformation::TransportMedium::Ethernet:  return QStringLiteral("lan");
+    case QNetworkInformation::TransportMedium::WiFi:      return QStringLiteral("wifi");
+    case QNetworkInformation::TransportMedium::Cellular:  return QStringLiteral("cellular");
+    case QNetworkInformation::TransportMedium::Bluetooth: return QStringLiteral("bluetooth");
+    default:                                              return QString();
+    }
+}
+
 void LobbyClient::onWsConnected()
 {
     setState(ConnectionState::Authenticating);
 
     QJsonObject data;
     data["username"]      = m_pendingUsername;
-    data["clientVersion"] = "rmgk-dev"; // TODO: pull real version
+    data["clientVersion"] = QString::fromStdString(CoreGetVersion());
+    const QString transport = detectTransportMedium();
+    if (!transport.isEmpty())
+        data["connection"] = transport;
     QJsonArray romArr;
     for (const auto& h : m_pendingRomHashes)
         romArr.append(h);
@@ -2013,6 +2041,8 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.state           = obj.value("state").toString();
     u.region          = obj.value("region").toString();
     u.country         = obj.value("country").toString();
+    u.clientVersion   = obj.value("clientVersion").toString();
+    u.connection      = obj.value("connection").toString();
     u.pingToServer    = static_cast<quint16>(obj.value("pingToServer").toInt());
     u.currentRoomId   = static_cast<quint64>(obj.value("currentRoomId").toDouble());
     u.currentRoomName = obj.value("currentRoomName").toString();
