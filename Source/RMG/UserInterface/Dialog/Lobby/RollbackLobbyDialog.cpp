@@ -3070,14 +3070,27 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
     // arrive via chatHistoryReceived, not here, so reconnecting never re-pings.
     const bool notifyPing = msg.fromAdmin && msg.message.contains(QStringLiteral("@notify"));
 
-    const auto ts = QDateTime::fromMSecsSinceEpoch(msg.serverTimeMs).toString("hh:mm");
-    QString line = QString("[%1] <b>%2:</b> %3")
-        .arg(ts, msg.fromUsername.toHtmlEscaped(), msg.message.toHtmlEscaped());
+    // The "@notify" token is a trigger, not content — hide it from the
+    // rendered line. A bare "@notify" still needs something to show on the bar.
+    QString displayMessage = msg.message;
     if (notifyPing)
     {
-        // Fixed black-on-light-yellow so the highlight reads the same in
-        // light and dark themes.
-        line = QString("<span style=\"background-color:#fff3b0; color:#000000;\">&nbsp;%1&nbsp;</span>").arg(line);
+        displayMessage.remove(QStringLiteral("@notify"));
+        displayMessage = displayMessage.simplified();
+        if (displayMessage.isEmpty())
+            displayMessage = QStringLiteral("📣 Attention!");
+    }
+
+    const auto ts = QDateTime::fromMSecsSinceEpoch(msg.serverTimeMs).toString("hh:mm");
+    QString line = QString("[%1] <b>%2:</b> %3")
+        .arg(ts, msg.fromUsername.toHtmlEscaped(), displayMessage.toHtmlEscaped());
+    if (notifyPing)
+    {
+        // Full-width bar via a one-cell table (QTextEdit's rich-text subset
+        // doesn't background-fill plain blocks). Fixed black-on-light-yellow
+        // so the highlight reads the same in light and dark themes.
+        line = QString("<table width=\"100%\" cellpadding=\"3\" style=\"background-color:#fff3b0;\">"
+                       "<tr><td style=\"color:#000000;\">%1</td></tr></table>").arg(line);
     }
     appendChatLine(msg.channel, line);
 
@@ -3093,7 +3106,7 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
     // the dialog or via the in-game chat key.
     if (msg.channel == CHANNEL_ROOM)
     {
-        emit roomChatReceived(msg.fromUsername, msg.message);
+        emit roomChatReceived(msg.fromUsername, displayMessage);
     }
 }
 
