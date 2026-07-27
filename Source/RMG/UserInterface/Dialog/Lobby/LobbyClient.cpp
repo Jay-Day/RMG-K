@@ -36,7 +36,10 @@ using namespace UserInterface::Dialog;
 namespace
 {
     constexpr int HEARTBEAT_INTERVAL_MS  = 15'000;
-    constexpr int UDP_KEEPALIVE_INTERVAL = 20'000;
+    // 10 s matches the proven N02TRAV1 HOSTKEEP cadence. At the previous 20 s,
+    // consumer-router UDP mappings (often 15-30 s idle timeout) could lapse
+    // between keepalives, leaving the server advertising a dead endpoint.
+    constexpr int UDP_KEEPALIVE_INTERVAL = 10'000;
 
     constexpr char ANCHOR_MAGIC[4] = { 'R', 'M', 'G', 'K' };
     constexpr quint8 ANCHOR_OP_REGISTER    = 0x01;
@@ -56,9 +59,13 @@ namespace
     constexpr int PREMATCH_ENDPOINT_PROBE_INTERVAL_MS = 200;
 
     // Lobby ping probes are coordinated by the server in both directions. Keep
-    // sending for a short window so endpoint-dependent NAT mappings have time
-    // to converge instead of relying on a single packet.
-    constexpr int LOBBY_PING_PROBE_DURATION_MS = 1'500;
+    // sending for a sustained window so slow/endpoint-dependent NAT mappings
+    // have time to converge — the N02TRAV1 traversal path that reliably
+    // connects the same NAT pairs punches for ~15 s; a 1.5 s window gave up
+    // long before marginal routers looped the mapping. The 3 s probe tick
+    // merges into an in-flight burst (extending its deadline), so an
+    // unresolved peer is punched continuously until a reply lands.
+    constexpr int LOBBY_PING_PROBE_DURATION_MS = 12'000;
     constexpr int LOBBY_PING_PROBE_INTERVAL_MS = 100;
     constexpr int LOBBY_PING_TIMER_INTERVAL_MS = 25;
 
