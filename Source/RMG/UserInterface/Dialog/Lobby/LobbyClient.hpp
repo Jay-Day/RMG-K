@@ -351,13 +351,6 @@ private:
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;
 
-    // Latest peer endpoint proven working by their inbound probes (userId →
-    // canonical "address:port"). For endpoint-dependent NATs this holds the
-    // only route our probes can actually reach; merged into every burst. A
-    // peer has one anchor socket, so only the newest observation can be live —
-    // it replaces, never accumulates.
-    QHash<quint64, QString> m_peerLearnedEndpoints;
-
     // Last measured round-trip per peer (userId → ms). Survives between
     // measurements so the UI has a value to render even when the next probe
     // is still in flight.
