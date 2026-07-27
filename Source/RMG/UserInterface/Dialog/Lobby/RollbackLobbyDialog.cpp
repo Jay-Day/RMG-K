@@ -3063,18 +3063,25 @@ void RollbackLobbyDialog::onRoomChatSendClicked()
 
 void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& msg)
 {
+    // Discord-style @notify ping: a moderator's live message containing
+    // "@notify" is highlighted, plays the system alert sound, and flashes the
+    // lobby window. Trust comes from the server's admin stamp on the message,
+    // so a regular user typing "@notify" can't ping the lobby. History replays
+    // arrive via chatHistoryReceived, not here, so reconnecting never re-pings.
+    const bool notifyPing = msg.fromAdmin && msg.message.contains(QStringLiteral("@notify"));
+
     const auto ts = QDateTime::fromMSecsSinceEpoch(msg.serverTimeMs).toString("hh:mm");
-    const QString line = QString("[%1] <b>%2:</b> %3")
+    QString line = QString("[%1] <b>%2:</b> %3")
         .arg(ts, msg.fromUsername.toHtmlEscaped(), msg.message.toHtmlEscaped());
+    if (notifyPing)
+    {
+        // Fixed black-on-light-yellow so the highlight reads the same in
+        // light and dark themes.
+        line = QString("<span style=\"background-color:#fff3b0; color:#000000;\">&nbsp;%1&nbsp;</span>").arg(line);
+    }
     appendChatLine(msg.channel, line);
 
-    // Discord-style @notify ping: a moderator's live message containing
-    // "@notify" plays the system alert sound and flashes the lobby window.
-    // Trust comes from the server's admin stamp on the message, so a regular
-    // user typing "@notify" can't ping the lobby. History replays arrive via
-    // chatHistoryReceived, not here, so reconnecting never re-pings.
-    if (msg.fromAdmin && msg.message.contains(QStringLiteral("@notify")) &&
-        m_client && msg.fromUserId != m_client->selfUserId())
+    if (notifyPing && m_client && msg.fromUserId != m_client->selfUserId())
     {
         QApplication::beep();
         QApplication::alert(this);
