@@ -297,6 +297,7 @@ private:
 
     // ── Main panels ──
     QSplitter*   m_splitter      = nullptr;
+    QSplitter*   m_browseSplitter = nullptr; // Active Rooms / Ongoing Matches divider
     QTreeWidget* m_playersTree   = nullptr;
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;

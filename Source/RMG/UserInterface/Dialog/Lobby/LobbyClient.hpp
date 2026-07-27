@@ -102,6 +102,9 @@ public:
         QString fromUsername;
         QString message;
         qint64 serverTimeMs = 0;
+        // Sender was a server-authenticated moderator when this was sent.
+        // Old servers never send the field, so it stays false.
+        bool fromAdmin = false;
     };
 
     explicit LobbyClient(QObject* parent = nullptr);

@@ -663,6 +663,7 @@ void LobbyClient::handleChatMsg(const QJsonObject& data)
     m.fromUsername   = data.value("fromUsername").toString();
     m.message        = data.value("message").toString();
     m.serverTimeMs   = static_cast<qint64>(data.value("serverTime").toDouble());
+    m.fromAdmin      = data.value("admin").toBool();
     emit chatMessageReceived(m);
 }
 

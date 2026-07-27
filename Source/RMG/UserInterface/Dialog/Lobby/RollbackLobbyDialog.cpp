@@ -380,6 +380,16 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
 RollbackLobbyDialog::~RollbackLobbyDialog()
 {
+    // Saved here rather than closeEvent because Esc rejects the dialog
+    // without a close event.
+    QSettings s("RMG-K", "n02");
+    if (m_roomsTree)
+        s.setValue("RollbackLobby/RoomsHeaderState", m_roomsTree->header()->saveState());
+    if (m_matchesTree)
+        s.setValue("RollbackLobby/MatchesHeaderState", m_matchesTree->header()->saveState());
+    if (m_browseSplitter)
+        s.setValue("RollbackLobby/BrowseSplitterState", m_browseSplitter->saveState());
+
     // Detach the recording sink before we're gone — it captures `this` and is
     // invoked on the emulation thread (emulation should already be stopped here).
     if (m_broadcasting)
@@ -693,10 +703,20 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     lay->addLayout(gameRow);
     populateBrowseRoms(); // fill from whatever library we have so far
 
-    // ── Active Rooms ──
+    // ── Active Rooms / Ongoing Matches — panes of a vertical splitter so
+    //    the matches list height is user-adjustable ──
+    m_browseSplitter = new QSplitter(Qt::Vertical, this);
+    m_browseSplitter->setHandleWidth(1);
+    m_browseSplitter->setChildrenCollapsible(false);
+
+    auto* roomsPane = new QWidget(this);
+    auto* roomsLay = new QVBoxLayout(roomsPane);
+    roomsLay->setContentsMargins(0, 0, 0, 0);
+    roomsLay->setSpacing(SPACING_DEFAULT);
+
     auto* roomsHeader = new QLabel("ACTIVE ROOMS", this);
     roomsHeader->setProperty("class", "SectionHeader");
-    lay->addWidget(roomsHeader);
+    roomsLay->addWidget(roomsHeader);
 
     m_roomsTree = new QTreeWidget(this);
     m_roomsTree->setObjectName("RoomsTree");
@@ -706,34 +726,67 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_roomsTree->setAlternatingRowColors(true);
     m_roomsTree->setFrameShape(QFrame::NoFrame);
     m_roomsTree->setUniformRowHeights(true);
-    m_roomsTree->header()->setStretchLastSection(false);
-    m_roomsTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_roomsTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_roomsTree->header()->setSectionResizeMode(2, QHeaderView::Stretch);
-    m_roomsTree->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    m_roomsTree->header()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    m_roomsTree->header()->setStretchLastSection(true);
+    m_roomsTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+    m_roomsTree->setColumnWidth(0, 180);
+    m_roomsTree->setColumnWidth(1, 110);
+    m_roomsTree->setColumnWidth(2, 160);
+    m_roomsTree->setColumnWidth(3, 60);
+    {
+        QSettings s("RMG-K", "n02");
+        const QByteArray headerState = s.value("RollbackLobby/RoomsHeaderState").toByteArray();
+        if (!headerState.isEmpty())
+            m_roomsTree->header()->restoreState(headerState);
+    }
     connect(m_roomsTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onRoomDoubleClicked);
-    lay->addWidget(m_roomsTree, 1);
+    roomsLay->addWidget(m_roomsTree, 1);
+    m_browseSplitter->addWidget(roomsPane);
 
     // ── Ongoing Matches ──
+    auto* matchesPane = new QWidget(this);
+    auto* matchesLay = new QVBoxLayout(matchesPane);
+    matchesLay->setContentsMargins(0, 0, 0, 0);
+    matchesLay->setSpacing(SPACING_DEFAULT);
+
     auto* matchesHeader = new QLabel("ONGOING MATCHES", this);
     matchesHeader->setProperty("class", "SectionHeader");
-    lay->addWidget(matchesHeader);
+    matchesLay->addWidget(matchesHeader);
 
     m_matchesTree = new QTreeWidget(this);
     m_matchesTree->setObjectName("MatchesTree");
     m_matchesTree->setHeaderLabels({ "Players", "Duration", "ROM" });
     m_matchesTree->setRootIsDecorated(false);
+    m_matchesTree->setSortingEnabled(true);
+    m_matchesTree->sortItems(0, Qt::AscendingOrder);
     m_matchesTree->setAlternatingRowColors(true);
     m_matchesTree->setFrameShape(QFrame::NoFrame);
-    m_matchesTree->setFixedHeight(120);
-    m_matchesTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_matchesTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_matchesTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_matchesTree->setMinimumHeight(70);
+    m_matchesTree->header()->setStretchLastSection(true);
+    m_matchesTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+    m_matchesTree->setColumnWidth(0, 220);
+    m_matchesTree->setColumnWidth(1, 80);
+    {
+        QSettings s("RMG-K", "n02");
+        const QByteArray headerState = s.value("RollbackLobby/MatchesHeaderState").toByteArray();
+        if (!headerState.isEmpty())
+            m_matchesTree->header()->restoreState(headerState);
+    }
     connect(m_matchesTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onMatchDoubleClicked);
-    lay->addWidget(m_matchesTree);
+    matchesLay->addWidget(m_matchesTree, 1);
+    m_browseSplitter->addWidget(matchesPane);
+
+    m_browseSplitter->setStretchFactor(0, 1);
+    m_browseSplitter->setStretchFactor(1, 0);
+    m_browseSplitter->setSizes({420, 150});
+    {
+        QSettings s("RMG-K", "n02");
+        const QByteArray splitState = s.value("RollbackLobby/BrowseSplitterState").toByteArray();
+        if (!splitState.isEmpty())
+            m_browseSplitter->restoreState(splitState);
+    }
+    lay->addWidget(m_browseSplitter, 1);
 
     // Tick the ongoing-match durations once a second (the room list only
     // refreshes on events, so the timer keeps the elapsed time live).
@@ -833,6 +886,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     auto* delayLbl = new QLabel("Frame delay:", this);
     m_delayCombo = new QComboBox(this);
     m_delayCombo->setObjectName("LobbyCombo");
+    // Re-measure when the Auto entry grows into "Auto (2 f)" so the resolved
+    // value isn't clipped.
+    m_delayCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     fillFrameCombo(m_delayCombo, "Auto");
     m_delayCombo->setToolTip(delayTip);
     // Stash the explainer so onRoomStateChanged can restore it after a
@@ -846,7 +902,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     auto* predLbl = new QLabel("Prediction:", this);
     m_predictionCombo = new QComboBox(this);
     m_predictionCombo->setObjectName("LobbyCombo");
-    fillFrameCombo(m_predictionCombo, "Default");
+    fillFrameCombo(m_predictionCombo, QString("Default (%1 f)").arg(kAutoPredictionWindow));
     m_predictionCombo->setToolTip(predictionTip);
     m_predictionCombo->setProperty("originalTip", predictionTip);
     settingsRow->addWidget(predLbl);
@@ -2117,6 +2173,29 @@ static QString formatMatchDuration(qint64 startedAtMs)
     return QString("%1:%2").arg(m).arg(s, 2, 10, QChar('0'));
 }
 
+namespace
+{
+// Sorts the Duration column by match start time instead of the displayed
+// "m:ss" text, which orders wrong once a duration passes 10 minutes and
+// changes under the once-a-second ticker.
+class MatchTreeItem : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+
+    bool operator<(const QTreeWidgetItem& other) const override
+    {
+        const QTreeWidget* tree = treeWidget();
+        if (tree && tree->sortColumn() == 1)
+        {
+            // A later start means a shorter duration.
+            return data(1, Qt::UserRole).toLongLong() > other.data(1, Qt::UserRole).toLongLong();
+        }
+        return QTreeWidgetItem::operator<(other);
+    }
+};
+} // namespace
+
 void RollbackLobbyDialog::onRoomListChanged()
 {
     m_roomsTree->clear();
@@ -2130,7 +2209,7 @@ void RollbackLobbyDialog::onRoomListChanged()
         // and drop it from the joinable Active Rooms list.
         if (r.state == "in_game")
         {
-            auto* matchRow = new QTreeWidgetItem(m_matchesTree);
+            auto* matchRow = new MatchTreeItem(m_matchesTree);
             matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(" vs "));
             matchRow->setText(1, formatMatchDuration(r.startedAtMs));
             matchRow->setText(2, r.romName);
@@ -2988,6 +3067,18 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
     const QString line = QString("[%1] <b>%2:</b> %3")
         .arg(ts, msg.fromUsername.toHtmlEscaped(), msg.message.toHtmlEscaped());
     appendChatLine(msg.channel, line);
+
+    // Discord-style @notify ping: a moderator's live message containing
+    // "@notify" plays the system alert sound and flashes the lobby window.
+    // Trust comes from the server's admin stamp on the message, so a regular
+    // user typing "@notify" can't ping the lobby. History replays arrive via
+    // chatHistoryReceived, not here, so reconnecting never re-pings.
+    if (msg.fromAdmin && msg.message.contains(QStringLiteral("@notify")) &&
+        m_client && msg.fromUserId != m_client->selfUserId())
+    {
+        QApplication::beep();
+        QApplication::alert(this);
+    }
 
     // Mirror room chat into the in-game overlay. The server relays room chat to
     // every member (including the sender), so forwarding all room messages —
