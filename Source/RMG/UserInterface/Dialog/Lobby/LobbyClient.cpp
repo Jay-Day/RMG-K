@@ -1782,6 +1782,11 @@ void LobbyClient::onUdpReadyRead()
             // The source of an inbound probe is a demonstrably usable endpoint
             // for this peer-to-peer NAT mapping. Add it to our own active ping
             // burst so our independent nonce is sent back through that route.
+            //
+            // Important: UDP may arrive before the reciprocal WebSocket
+            // PING_PROBE_REPLY that normally creates m_pendingProbes. In that
+            // ordering, create the reciprocal burst here instead of discarding
+            // the learned endpoint and later retrying only the stale anchor port.
             const QString learnedEndpoint = endpointKey(sender, senderPort);
             bool learnedActiveRoute = false;
             for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); ++it)
@@ -1800,8 +1805,33 @@ void LobbyClient::onUdpReadyRead()
                 // Send our own nonce to the learned endpoint immediately rather
                 // than waiting for the next periodic burst tick.
                 it->nextSendMs = 0;
+                it->deadlineMs = qMax(it->deadlineMs,
+                                      QDateTime::currentMSecsSinceEpoch() + LOBBY_PING_PROBE_DURATION_MS);
                 learnedActiveRoute = true;
                 break;
+            }
+
+            if (!learnedActiveRoute && senderUserId != 0 && senderUserId != m_selfUserId)
+            {
+                quint64 reciprocalNonce = 0;
+                do
+                {
+                    reciprocalNonce = QRandomGenerator::global()->generate64();
+                }
+                while (reciprocalNonce == 0 || m_pendingProbes.contains(reciprocalNonce));
+
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                ProbeInFlight reciprocal;
+                reciprocal.targetUserId = senderUserId;
+                reciprocal.nextSendMs = 0;
+                reciprocal.deadlineMs = nowMs + LOBBY_PING_PROBE_DURATION_MS;
+                reciprocal.endpoints.append(learnedEndpoint);
+                m_pendingProbes.insert(reciprocalNonce, reciprocal);
+                learnedActiveRoute = true;
+
+                qInfo() << "Rollback lobby ping started from early inbound probe"
+                        << "peerUserId" << senderUserId
+                        << "endpoint" << learnedEndpoint;
             }
 
             const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
