@@ -1837,6 +1837,7 @@ void LobbyClient::onUdpReadyRead()
             // — and is the ONLY port our own probes can reach them on. Remember
             // it for future bursts and splice it into any burst in flight.
             // (Mirrors the inbound learning the match-start race already does.)
+            bool learnedActiveRoute = false;
             if (senderUserId != 0 && senderUserId != m_selfUserId)
             {
                 bool isV4 = false;
@@ -1849,20 +1850,20 @@ void LobbyClient::onUdpReadyRead()
                     learned.append(observed);
                     while (learned.size() > 4)
                         learned.removeFirst();
-                    qInfo() << "lobby ping learned endpoint" << "peer" << senderUserId
-                            << "observed" << observed;
+                    qInfo() << "Rollback lobby ping learned endpoint from inbound probe"
+                            << "peerUserId" << senderUserId
+                            << "endpoint" << observed;
                 }
                 for (auto probeIt = m_pendingProbes.begin(); probeIt != m_pendingProbes.end(); ++probeIt)
                 {
                     if (probeIt->targetUserId != senderUserId)
                         continue;
                     if (!probeIt->endpoints.contains(observed))
-                    {
                         probeIt->endpoints.append(observed);
-                        probeIt->nextSendMs = 0; // fire at the learned route now
-                        if (!m_pingProbeBurstTimer->isActive())
-                            m_pingProbeBurstTimer->start();
-                    }
+                    // Send our own nonce through the learned route immediately
+                    // rather than waiting for the next burst tick.
+                    probeIt->nextSendMs = 0;
+                    learnedActiveRoute = true;
                     break;
                 }
             }
@@ -1871,6 +1872,13 @@ void LobbyClient::onUdpReadyRead()
             // the originator can match the first candidate that answered.
             const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
             m_udp->writeDatagram(reply, sender, senderPort);
+
+            if (learnedActiveRoute)
+            {
+                if (!m_pingProbeBurstTimer->isActive())
+                    m_pingProbeBurstTimer->start();
+                onPingProbeBurstTimer();
+            }
             break;
         }
         case ANCHOR_OP_PROBE_REPLY:
