@@ -55,6 +55,13 @@ namespace
     constexpr int MATCH_ENDPOINT_PROBE_INTERVAL_MS = 90;
     constexpr int PREMATCH_ENDPOINT_PROBE_INTERVAL_MS = 200;
 
+    // Lobby ping probes are coordinated by the server in both directions. Keep
+    // sending for a short window so endpoint-dependent NAT mappings have time
+    // to converge instead of relying on a single packet.
+    constexpr int LOBBY_PING_PROBE_DURATION_MS = 1'500;
+    constexpr int LOBBY_PING_PROBE_INTERVAL_MS = 100;
+    constexpr int LOBBY_PING_TIMER_INTERVAL_MS = 25;
+
     // PROBE/PROBE_REPLY packet: [magic(4) | op(1) | senderUserId(8) | nonce(8)]
     constexpr int PROBE_PACKET_SIZE = 4 + 1 + 8 + 8;
 
@@ -350,6 +357,10 @@ LobbyClient::LobbyClient(QObject* parent)
     m_udpKeepaliveTimer = new QTimer(this);
     m_udpKeepaliveTimer->setInterval(UDP_KEEPALIVE_INTERVAL);
     connect(m_udpKeepaliveTimer, &QTimer::timeout, this, &LobbyClient::onUdpKeepaliveTimer);
+
+    m_pingProbeBurstTimer = new QTimer(this);
+    m_pingProbeBurstTimer->setInterval(LOBBY_PING_TIMER_INTERVAL_MS);
+    connect(m_pingProbeBurstTimer, &QTimer::timeout, this, &LobbyClient::onPingProbeBurstTimer);
 }
 
 LobbyClient::~LobbyClient()
@@ -409,6 +420,8 @@ void LobbyClient::disconnectFromServer()
 {
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
+    m_pingProbeBurstTimer->stop();
+    m_pendingProbes.clear();
     if (m_ws && m_ws->state() != QAbstractSocket::UnconnectedState)
     {
         m_ws->close();
@@ -496,6 +509,8 @@ void LobbyClient::onWsDisconnected()
 {
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
+    m_pingProbeBurstTimer->stop();
+    m_pendingProbes.clear();
     m_isModerator = false; // role is per-connection; must re-auth after reconnect
     // User ids restart when the server does — drop measurements so a recycled
     // id can't inherit another player's ping history.
@@ -746,20 +761,48 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     if (candidates.isEmpty())
         return;
 
-    // Fire a UDP PROBE at the peer's anchor socket. The peer recognises the
-    // opcode and echoes back a PROBE_REPLY. Updated servers expose both LAN
-    // and public routes, so send the same nonce to all candidates and accept
-    // the first valid response.
-    const quint64 nonce = QRandomGenerator::global()->generate64();
-    const QByteArray pkt = buildProbePacket(m_selfUserId, nonce);
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    QStringList endpointStrings;
+    for (const auto& candidate : candidates)
+        endpointStrings.append(endpointKey(candidate.address, candidate.port));
+
+    // The updated server sends a reciprocal PING_PROBE_REPLY to the target, so
+    // both peers may receive near-simultaneous starts for the same pair. Merge
+    // those into one in-flight burst instead of multiplying traffic.
+    for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); ++it)
+    {
+        if (it->targetUserId != uid)
+            continue;
+        for (const QString& endpoint : endpointStrings)
+        {
+            if (!it->endpoints.contains(endpoint))
+                it->endpoints.append(endpoint);
+        }
+        it->nextSendMs = 0;
+        it->deadlineMs = qMax(it->deadlineMs, nowMs + LOBBY_PING_PROBE_DURATION_MS);
+        if (!m_pingProbeBurstTimer->isActive())
+            m_pingProbeBurstTimer->start();
+        onPingProbeBurstTimer();
+        return;
+    }
+
+    quint64 nonce = 0;
+    do
+    {
+        nonce = QRandomGenerator::global()->generate64();
+    }
+    while (nonce == 0 || m_pendingProbes.contains(nonce));
 
     ProbeInFlight in;
     in.targetUserId = uid;
-    in.sendMs       = QDateTime::currentMSecsSinceEpoch();
+    in.nextSendMs   = 0;
+    in.deadlineMs   = nowMs + LOBBY_PING_PROBE_DURATION_MS;
+    in.endpoints    = endpointStrings;
     m_pendingProbes.insert(nonce, in);
 
-    for (const auto& candidate : candidates)
-        m_udp->writeDatagram(pkt, candidate.address, candidate.port);
+    if (!m_pingProbeBurstTimer->isActive())
+        m_pingProbeBurstTimer->start();
+    onPingProbeBurstTimer();
 }
 
 void LobbyClient::handleMatchBegin(const QJsonObject& data)
@@ -938,6 +981,50 @@ void LobbyClient::sendUdpKeepalive()
 void LobbyClient::onUdpKeepaliveTimer()
 {
     sendUdpKeepalive();
+}
+
+void LobbyClient::onPingProbeBurstTimer()
+{
+    if (m_inPrematchSync)
+        return;
+
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState || m_selfUserId == 0)
+    {
+        m_pendingProbes.clear();
+        m_pingProbeBurstTimer->stop();
+        return;
+    }
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); )
+    {
+        if (nowMs > it->deadlineMs)
+        {
+            it = m_pendingProbes.erase(it);
+            continue;
+        }
+
+        if (nowMs >= it->nextSendMs)
+        {
+            const QByteArray packet = buildProbePacket(m_selfUserId, it.key());
+            bool sentAny = false;
+            for (const QString& endpoint : it->endpoints)
+            {
+                UdpEndpointCandidate candidate;
+                if (!parseEndpointString(endpoint, candidate, QStringLiteral("ping")))
+                    continue;
+                m_udp->writeDatagram(packet, candidate.address, candidate.port);
+                sentAny = true;
+            }
+            if (sentAny)
+                it->sendMs = nowMs;
+            it->nextSendMs = nowMs + LOBBY_PING_PROBE_INTERVAL_MS;
+        }
+        ++it;
+    }
+
+    if (m_pendingProbes.isEmpty())
+        m_pingProbeBurstTimer->stop();
 }
 
 void LobbyClient::resolvePeerEndpoints(QList<LobbyMatchPeer>& peers)
@@ -1743,6 +1830,8 @@ void LobbyClient::onUdpReadyRead()
             const int    rttMs  = static_cast<int>(nowMs - it->sendMs);
             const quint64 uid   = it->targetUserId;
             m_pendingProbes.erase(it);
+            if (m_pendingProbes.isEmpty())
+                m_pingProbeBurstTimer->stop();
             emit pingProbeMeasured(uid, recordPingSample(uid, rttMs));
             break;
         }
@@ -1756,16 +1845,6 @@ void LobbyClient::onUdpReadyRead()
         }
     }
 
-    // Cheap stale-probe cleanup: anything older than 5 seconds is never
-    // coming back, so don't let the map grow unbounded.
-    const qint64 cutoff = QDateTime::currentMSecsSinceEpoch() - 5'000;
-    for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); )
-    {
-        if (it->sendMs < cutoff)
-            it = m_pendingProbes.erase(it);
-        else
-            ++it;
-    }
 }
 
 int LobbyClient::measuredPingMs(quint64 userId) const
