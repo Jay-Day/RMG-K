@@ -390,9 +390,11 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     // without a close event.
     QSettings s("RMG-K", "n02");
     if (m_roomsTree)
-        s.setValue("RollbackLobby/RoomsHeaderState", m_roomsTree->header()->saveState());
+        s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
+                   m_roomsTree->header()->saveState());
     if (m_matchesTree)
-        s.setValue("RollbackLobby/MatchesHeaderState", m_matchesTree->header()->saveState());
+        s.setValue(QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount()),
+                   m_matchesTree->header()->saveState());
     if (m_browseSplitter)
         s.setValue("RollbackLobby/BrowseSplitterState", m_browseSplitter->saveState());
 
@@ -740,8 +742,12 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_roomsTree->setColumnWidth(3, 160);
     m_roomsTree->setColumnWidth(4, 60);
     {
+        // The column count is part of the key: restoring a state saved for a
+        // different column layout half-applies and breaks the header (missing
+        // section dividers, wrong stretch section).
         QSettings s("RMG-K", "n02");
-        const QByteArray headerState = s.value("RollbackLobby/RoomsHeaderState").toByteArray();
+        const QString key = QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount());
+        const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_roomsTree->header()->restoreState(headerState);
     }
@@ -779,7 +785,8 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_matchesTree->setColumnWidth(1, 80);
     {
         QSettings s("RMG-K", "n02");
-        const QByteArray headerState = s.value("RollbackLobby/MatchesHeaderState").toByteArray();
+        const QString key = QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount());
+        const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_matchesTree->header()->restoreState(headerState);
     }
