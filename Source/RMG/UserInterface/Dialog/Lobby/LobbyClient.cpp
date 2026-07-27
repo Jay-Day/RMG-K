@@ -64,6 +64,8 @@ namespace
     constexpr int LOBBY_PING_PROBE_DURATION_MS = 1'500;
     constexpr int LOBBY_PING_PROBE_INTERVAL_MS = 100;
     constexpr int LOBBY_PING_TIMER_INTERVAL_MS = 25;
+    constexpr int LOBBY_PING_LEARNED_ENDPOINT_TTL_MS = 5'000;
+    constexpr qint64 LOBBY_PING_DIAGNOSTIC_MAX_BYTES = 100ll * 1024ll * 1024ll;
 
     // PROBE/PROBE_REPLY packet: [magic(4) | op(1) | senderUserId(8) | nonce(8)]
     constexpr int PROBE_PACKET_SIZE = 4 + 1 + 8 + 8;
@@ -450,7 +452,26 @@ void LobbyClient::writePingDiagnostic(const QString& event, const QString& detai
         line += QLatin1Char(' ') + cleanDetails;
     line += QLatin1Char('\n');
 
-    m_pingDiagnosticFile->write(line.toUtf8());
+    const QByteArray encoded = line.toUtf8();
+    if (m_pingDiagnosticFile->size() + encoded.size() > LOBBY_PING_DIAGNOSTIC_MAX_BYTES)
+    {
+        const QByteArray stopLine = QStringLiteral(
+            "%1 elapsed_ms=%2 self=%3 local_udp=%4 event=LOG_STOP reason=max_size limit_bytes=%5\n")
+            .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs))
+            .arg(m_pingDiagnosticStartMs == 0 ? 0 : nowMs - m_pingDiagnosticStartMs)
+            .arg(m_selfUserId)
+            .arg(localUdpPort())
+            .arg(LOBBY_PING_DIAGNOSTIC_MAX_BYTES)
+            .toUtf8();
+        m_pingDiagnosticFile->write(stopLine);
+        m_pingDiagnosticFile->flush();
+        m_pingDiagnosticFile->close();
+        qWarning() << "Rollback lobby ping diagnostic log reached size limit"
+                   << LOBBY_PING_DIAGNOSTIC_MAX_BYTES;
+        return;
+    }
+
+    m_pingDiagnosticFile->write(encoded);
     m_pingDiagnosticFile->flush();
 }
 
@@ -493,6 +514,7 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     m_selfUserId       = 0;
     m_users.clear();
     m_rooms.clear();
+    m_recentInboundPingEndpoints.clear();
 
     startPingDiagnosticLog();
 
@@ -551,6 +573,7 @@ void LobbyClient::disconnectFromServer()
     m_udpKeepaliveTimer->stop();
     m_pingProbeBurstTimer->stop();
     m_pendingProbes.clear();
+    m_recentInboundPingEndpoints.clear();
     if (m_ws && m_ws->state() != QAbstractSocket::UnconnectedState)
     {
         m_ws->close();
@@ -653,6 +676,7 @@ void LobbyClient::onWsDisconnected()
     m_udpKeepaliveTimer->stop();
     m_pingProbeBurstTimer->stop();
     m_pendingProbes.clear();
+    m_recentInboundPingEndpoints.clear();
     m_isModerator = false; // role is per-connection; must re-auth after reconnect
     // User ids restart when the server does — drop measurements so a recycled
     // id can't inherit another player's ping history.
@@ -833,6 +857,18 @@ void LobbyClient::handlePresenceDelta(const QJsonObject& data)
                                 .arg(removedLabel)
                                 .arg(hadPending ? 1 : 0)
                                 .arg(hadPending ? pendingPingSummary() : QString()));
+        for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); )
+        {
+            if (it->targetUserId == id)
+                it = m_pendingProbes.erase(it);
+            else
+                ++it;
+        }
+        m_recentInboundPingEndpoints.remove(id);
+        m_measuredPing.remove(id);
+        m_pingSamples.remove(id);
+        if (m_pendingProbes.isEmpty())
+            m_pingProbeBurstTimer->stop();
         m_users.remove(id);
         emit userRemoved(id);
     }
@@ -990,6 +1026,35 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     for (const auto& candidate : candidates)
         endpointStrings.append(endpointKey(candidate.address, candidate.port));
 
+    // UDP can beat the reciprocal WebSocket start. Preserve the most recently
+    // observed source endpoint for a few seconds and merge it when the server
+    // start arrives, rather than spawning an unbounded reciprocal burst from
+    // every inbound probe.
+    const auto learnedIt = m_recentInboundPingEndpoints.find(uid);
+    if (learnedIt != m_recentInboundPingEndpoints.end())
+    {
+        const qint64 learnedAgeMs = nowMs - learnedIt->seenMs;
+        if (learnedAgeMs >= 0 && learnedAgeMs <= LOBBY_PING_LEARNED_ENDPOINT_TTL_MS)
+        {
+            if (!endpointStrings.contains(learnedIt->endpoint))
+                endpointStrings.append(learnedIt->endpoint);
+            writePingDiagnostic(QStringLiteral("PING_USE_CACHED_ENDPOINT"),
+                                QStringLiteral("target=%1 endpoint=%2 age_ms=%3")
+                                    .arg(pingUserLabel(uid))
+                                    .arg(learnedIt->endpoint)
+                                    .arg(learnedAgeMs));
+        }
+        else
+        {
+            writePingDiagnostic(QStringLiteral("PING_DROP_CACHED_ENDPOINT"),
+                                QStringLiteral("target=%1 endpoint=%2 age_ms=%3 reason=expired")
+                                    .arg(pingUserLabel(uid))
+                                    .arg(learnedIt->endpoint)
+                                    .arg(learnedAgeMs));
+            m_recentInboundPingEndpoints.erase(learnedIt);
+        }
+    }
+
     // The updated server sends a reciprocal PING_PROBE_REPLY to the target, so
     // both peers may receive near-simultaneous starts for the same pair. Merge
     // those into one in-flight burst instead of multiplying traffic.
@@ -1006,8 +1071,8 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
                 addedEndpoints.append(endpoint);
             }
         }
-        it->nextSendMs = 0;
-        it->deadlineMs = qMax(it->deadlineMs, nowMs + LOBBY_PING_PROBE_DURATION_MS);
+        if (!addedEndpoints.isEmpty())
+            it->nextSendMs = 0;
         writePingDiagnostic(QStringLiteral("PING_BURST_MERGE"),
                             QStringLiteral("nonce=%1 target=%2 origin=%3 added=[%4] all=[%5] deadline_in_ms=%6")
                                 .arg(it.key())
@@ -1018,7 +1083,8 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
                                 .arg(it->deadlineMs - nowMs));
         if (!m_pingProbeBurstTimer->isActive())
             m_pingProbeBurstTimer->start();
-        onPingProbeBurstTimer();
+        if (!addedEndpoints.isEmpty())
+            onPingProbeBurstTimer();
         return;
     }
 
@@ -2160,83 +2226,68 @@ void LobbyClient::onUdpReadyRead()
                                     .arg(m_pendingProbes.size()));
 
             // The source of an inbound probe is a demonstrably usable endpoint
-            // for this peer-to-peer NAT mapping. Add it to our own active ping
-            // burst so our independent nonce is sent back through that route.
-            //
-            // Important: UDP may arrive before the reciprocal WebSocket
-            // PING_PROBE_REPLY that normally creates m_pendingProbes. In that
-            // ordering, create the reciprocal burst here instead of discarding
-            // the learned endpoint and later retrying only the stale anchor port.
+            // for this peer-to-peer NAT mapping. Cache it even if the reciprocal
+            // WebSocket start has not arrived yet. If a burst is already active,
+            // add the route once and let the fixed-rate timer send through it.
+            // Never create a new burst from an inbound probe: late packets from a
+            // completed burst would otherwise cause both peers to recursively
+            // restart each other and grow into a packet storm.
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
             const QString learnedEndpoint = endpointKey(sender, senderPort);
-            bool learnedActiveRoute = false;
-            for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); ++it)
-            {
-                if (it->targetUserId != senderUserId)
-                    continue;
+            const bool knownRemoteUser = senderUserId != 0 &&
+                                         senderUserId != m_selfUserId &&
+                                         m_users.contains(senderUserId);
+            bool foundActiveBurst = false;
+            bool appendedActiveRoute = false;
 
-                if (!it->endpoints.contains(learnedEndpoint))
+            if (knownRemoteUser)
+            {
+                RecentInboundPingEndpoint& cached = m_recentInboundPingEndpoints[senderUserId];
+                const bool cacheChanged = cached.endpoint != learnedEndpoint;
+                cached.endpoint = learnedEndpoint;
+                cached.seenMs = nowMs;
+
+                for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); ++it)
                 {
-                    it->endpoints.append(learnedEndpoint);
-                    qInfo() << "Rollback lobby ping learned endpoint from inbound probe"
-                            << "peerUserId" << senderUserId
-                            << "endpoint" << learnedEndpoint;
-                    writePingDiagnostic(QStringLiteral("PING_LEARN_ENDPOINT"),
-                                        QStringLiteral("nonce=%1 target=%2 origin=%3 endpoint=%4 action=append all=[%5]")
-                                            .arg(it.key())
+                    if (it->targetUserId != senderUserId)
+                        continue;
+
+                    foundActiveBurst = true;
+                    if (!it->endpoints.contains(learnedEndpoint))
+                    {
+                        it->endpoints.append(learnedEndpoint);
+                        it->nextSendMs = 0;
+                        appendedActiveRoute = true;
+                        qInfo() << "Rollback lobby ping learned endpoint from inbound probe"
+                                << "peerUserId" << senderUserId
+                                << "endpoint" << learnedEndpoint;
+                        writePingDiagnostic(QStringLiteral("PING_LEARN_ENDPOINT"),
+                                            QStringLiteral("nonce=%1 target=%2 origin=%3 endpoint=%4 action=append all=[%5]")
+                                                .arg(it.key())
+                                                .arg(pingUserLabel(senderUserId))
+                                                .arg(it->origin)
+                                                .arg(learnedEndpoint)
+                                                .arg(it->endpoints.join(QLatin1Char(','))));
+                    }
+                    break;
+                }
+
+                if (!foundActiveBurst)
+                {
+                    writePingDiagnostic(QStringLiteral("PING_CACHE_ENDPOINT"),
+                                        QStringLiteral("target=%1 endpoint=%2 action=%3 trigger_nonce=%4")
                                             .arg(pingUserLabel(senderUserId))
-                                            .arg(it->origin)
                                             .arg(learnedEndpoint)
-                                            .arg(it->endpoints.join(QLatin1Char(','))));
+                                            .arg(cacheChanged ? QStringLiteral("store") : QStringLiteral("refresh"))
+                                            .arg(nonce));
                 }
-                else
-                {
-                    writePingDiagnostic(QStringLiteral("PING_LEARN_ENDPOINT"),
-                                        QStringLiteral("nonce=%1 target=%2 origin=%3 endpoint=%4 action=already_present")
-                                            .arg(it.key())
-                                            .arg(pingUserLabel(senderUserId))
-                                            .arg(it->origin)
-                                            .arg(learnedEndpoint));
-                }
-
-                // Send our own nonce to the learned endpoint immediately rather
-                // than waiting for the next periodic burst tick.
-                it->nextSendMs = 0;
-                it->deadlineMs = qMax(it->deadlineMs,
-                                      QDateTime::currentMSecsSinceEpoch() + LOBBY_PING_PROBE_DURATION_MS);
-                learnedActiveRoute = true;
-                break;
             }
-
-            if (!learnedActiveRoute && senderUserId != 0 && senderUserId != m_selfUserId)
+            else
             {
-                quint64 reciprocalNonce = 0;
-                do
-                {
-                    reciprocalNonce = QRandomGenerator::global()->generate64();
-                }
-                while (reciprocalNonce == 0 || m_pendingProbes.contains(reciprocalNonce));
-
-                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-                ProbeInFlight reciprocal;
-                reciprocal.targetUserId = senderUserId;
-                reciprocal.createdMs = nowMs;
-                reciprocal.nextSendMs = 0;
-                reciprocal.deadlineMs = nowMs + LOBBY_PING_PROBE_DURATION_MS;
-                reciprocal.origin = QStringLiteral("early-inbound");
-                reciprocal.endpoints.append(learnedEndpoint);
-                m_pendingProbes.insert(reciprocalNonce, reciprocal);
-                learnedActiveRoute = true;
-
-                qInfo() << "Rollback lobby ping started from early inbound probe"
-                        << "peerUserId" << senderUserId
-                        << "endpoint" << learnedEndpoint;
-                writePingDiagnostic(QStringLiteral("PING_BURST_CREATE"),
-                                    QStringLiteral("nonce=%1 target=%2 origin=%3 endpoints=[%4] trigger_nonce=%5")
-                                        .arg(reciprocalNonce)
+                writePingDiagnostic(QStringLiteral("PING_ENDPOINT_NOT_CACHED"),
+                                    QStringLiteral("sender=%1 endpoint=%2 reason=unknown_or_self")
                                         .arg(pingUserLabel(senderUserId))
-                                        .arg(reciprocal.origin)
-                                        .arg(reciprocal.endpoints.join(QLatin1Char(',')))
-                                        .arg(nonce));
+                                        .arg(learnedEndpoint));
             }
 
             const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
@@ -2251,7 +2302,7 @@ void LobbyClient::onUdpReadyRead()
                                     .arg(replyWritten)
                                     .arg(replyWritten == reply.size() ? QStringLiteral("ok") : m_udp->errorString()));
 
-            if (learnedActiveRoute)
+            if (appendedActiveRoute)
             {
                 if (!m_pingProbeBurstTimer->isActive())
                     m_pingProbeBurstTimer->start();
@@ -2312,6 +2363,9 @@ void LobbyClient::onUdpReadyRead()
             const int rounds = it->sendRounds;
             const int datagramsSent = it->datagramsSent;
             const QStringList endpoints = it->endpoints;
+            RecentInboundPingEndpoint& successfulEndpoint = m_recentInboundPingEndpoints[uid];
+            successfulEndpoint.endpoint = endpointKey(sender, senderPort);
+            successfulEndpoint.seenMs = nowMs;
             m_pendingProbes.erase(it);
             if (m_pendingProbes.isEmpty())
                 m_pingProbeBurstTimer->stop();

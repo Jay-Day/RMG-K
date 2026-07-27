@@ -366,6 +366,16 @@ private:
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;
 
+    // A UDP probe can arrive before the reciprocal WebSocket start. Cache the
+    // actual source endpoint briefly so the later server-started burst can use
+    // it without recursively spawning a new burst for every late packet.
+    struct RecentInboundPingEndpoint
+    {
+        QString endpoint;
+        qint64 seenMs = 0;
+    };
+    QHash<quint64, RecentInboundPingEndpoint> m_recentInboundPingEndpoints;
+
     // Last measured round-trip per peer (userId → ms). Survives between
     // measurements so the UI has a value to render even when the next probe
     // is still in flight.
