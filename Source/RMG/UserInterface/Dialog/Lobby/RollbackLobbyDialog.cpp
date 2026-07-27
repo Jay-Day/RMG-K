@@ -725,7 +725,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     m_roomsTree = new QTreeWidget(this);
     m_roomsTree->setObjectName("RoomsTree");
-    m_roomsTree->setHeaderLabels({ "Name", "Host", "ROM", "Seats", "State" });
+    m_roomsTree->setHeaderLabels({ "Name", "Host", "Ping", "ROM", "Seats", "State" });
     m_roomsTree->setRootIsDecorated(false);
     m_roomsTree->setSortingEnabled(true);
     m_roomsTree->setAlternatingRowColors(true);
@@ -735,8 +735,9 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_roomsTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     m_roomsTree->setColumnWidth(0, 180);
     m_roomsTree->setColumnWidth(1, 110);
-    m_roomsTree->setColumnWidth(2, 160);
-    m_roomsTree->setColumnWidth(3, 60);
+    m_roomsTree->setColumnWidth(2, 70);
+    m_roomsTree->setColumnWidth(3, 160);
+    m_roomsTree->setColumnWidth(4, 60);
     {
         QSettings s("RMG-K", "n02");
         const QByteArray headerState = s.value("RollbackLobby/RoomsHeaderState").toByteArray();
@@ -2228,6 +2229,27 @@ public:
         return QTreeWidgetItem::operator<(other);
     }
 };
+
+// Sorts the rooms list's Ping column by the numeric RTT stashed in the cell's
+// UserRole data — text like "~105 ms" orders wrong as a string. Unknown pings
+// (-1) sort to the bottom in ascending order.
+class RoomTreeItem : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+
+    bool operator<(const QTreeWidgetItem& other) const override
+    {
+        const QTreeWidget* tree = treeWidget();
+        if (tree && tree->sortColumn() == 2)
+        {
+            const int a = data(2, Qt::UserRole).toInt();
+            const int b = other.data(2, Qt::UserRole).toInt();
+            return (a < 0 ? 1'000'000 : a) < (b < 0 ? 1'000'000 : b);
+        }
+        return QTreeWidgetItem::operator<(other);
+    }
+};
 } // namespace
 
 void RollbackLobbyDialog::onRoomListChanged()
@@ -2267,7 +2289,7 @@ void RollbackLobbyDialog::onRoomListChanged()
             continue;
         }
 
-        auto* row = new QTreeWidgetItem(m_roomsTree);
+        auto* row = new RoomTreeItem(m_roomsTree);
         refreshRoomRow(row, r);
         m_roomItems.insert(it.key(), row);
     }
@@ -2306,17 +2328,45 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     const bool dark = isDarkTheme();
     item->setText(0, nameCell);
     item->setText(1, r.hostName);
-    item->setText(2, r.romName);
-    item->setText(3, QString("%1/%2").arg(r.players).arg(r.maxPlayers));
-    item->setText(4, stateGlyph(r.state));
+    item->setText(3, r.romName);
+    item->setText(4, QString("%1/%2").arg(r.players).arg(r.maxPlayers));
+    item->setText(5, stateGlyph(r.state));
     item->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
+
+    // Your ping to the host — measured by the background lobby probes when
+    // available, the region estimate otherwise — so a room can be judged
+    // before joining. Own room shows a dash.
+    const QString dash = QString(QChar(0x2014));
+    int pingMs = -1;
+    bool pingMeasured = false;
+    if (m_client && r.hostId != 0 && r.hostId != m_client->selfUserId())
+    {
+        pingMs = m_client->measuredPingMs(r.hostId);
+        pingMeasured = (pingMs >= 0);
+        if (!pingMeasured)
+        {
+            const auto& users = m_client->users();
+            const auto hostIt = users.constFind(r.hostId);
+            if (hostIt != users.constEnd())
+                pingMs = LobbyRegions::estimatedRttMs(m_client->selfRegion(), hostIt->region);
+            if (pingMs == 0)
+                pingMs = -1;
+        }
+    }
+    item->setText(2, pingMs >= 0 ? QString(pingMeasured ? "%1 ms" : "~%1 ms").arg(pingMs) : dash);
+    item->setForeground(2, QColor(pingHex(pingMs)));
+    item->setData(2, Qt::UserRole, pingMs);
+    item->setToolTip(2,
+        pingMeasured  ? QStringLiteral("Your measured ping to the host")
+        : pingMs >= 0 ? QStringLiteral("Estimated from regions — measuring…")
+                      : QString());
 
     // Seats: green when there's room to join, red when full.
     const bool full = (r.maxPlayers > 0 && r.players >= r.maxPlayers);
     const auto sc = statusColors();
-    item->setForeground(3, QColor(full ? sc.fail : sc.ok));
+    item->setForeground(4, QColor(full ? sc.fail : sc.ok));
     // State: same color language as presence / seats.
-    item->setForeground(4, QColor(stateHex(r.state, dark)));
+    item->setForeground(5, QColor(stateHex(r.state, dark)));
 
     // Bold the user's own room and tint its name with the P1 accent.
     QFont f = item->font(0);
@@ -2993,6 +3043,17 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
         const auto userIt = users.constFind(userId);
         if (userIt != users.constEnd())
             refreshPlayerRow(rowIt.value(), userIt.value());
+    }
+
+    // Rooms hosted by this user show your ping in the Active Rooms list.
+    const auto& rooms = m_client->rooms();
+    for (auto it = rooms.constBegin(); it != rooms.constEnd(); ++it)
+    {
+        if (it.value().hostId != userId)
+            continue;
+        const auto roomRowIt = m_roomItems.constFind(it.key());
+        if (roomRowIt != m_roomItems.constEnd())
+            refreshRoomRow(roomRowIt.value(), it.value());
     }
 }
 
