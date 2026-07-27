@@ -946,9 +946,9 @@ void LobbyClient::resolvePeerEndpoints(QList<LobbyMatchPeer>& peers)
         peer.selectedKind = candidates.first().kind;
         peer.selectedEndpointVerified = false;
 
-        if (candidates.size() < 2)
-            continue;
-
+        // Probe even when there is only one advertised candidate. A peer behind
+        // endpoint-dependent NAT may contact us from a different translated port,
+        // and an inbound probe lets us learn that usable source endpoint.
         quint64 nonce = 0;
         do
         {
@@ -1017,10 +1017,45 @@ void LobbyClient::resolvePeerEndpoints(QList<LobbyMatchPeer>& peers)
             const quint8 op = static_cast<quint8>(datagram.at(4));
             if (op == ANCHOR_OP_PROBE)
             {
-                quint64 ignoredSender = 0;
+                quint64 senderUserId = 0;
                 quint64 nonce = 0;
-                if (!readProbePacket(datagram, ignoredSender, nonce))
+                if (!readProbePacket(datagram, senderUserId, nonce))
                     continue;
+
+                // An inbound probe is proof that this exact source endpoint can
+                // reach us. Learn it even when our probe to the server-observed
+                // endpoint never received a reply (common with symmetric NAT).
+                for (int peerIndex = 0; peerIndex < peers.size(); ++peerIndex)
+                {
+                    LobbyMatchPeer& peer = peers[peerIndex];
+                    if (peer.userId != senderUserId || peer.userId == m_selfUserId)
+                        continue;
+
+                    peer.selectedIp = sender.toString();
+                    peer.selectedPort = senderPort;
+                    peer.selectedKind = QStringLiteral("inbound-probe");
+                    peer.selectedEndpointVerified = true;
+
+                    for (auto pendingIt = pendingPeerByNonce.begin(); pendingIt != pendingPeerByNonce.end();)
+                    {
+                        if (pendingIt.value() == peerIndex)
+                        {
+                            candidatesByNonce.remove(pendingIt.key());
+                            pendingIt = pendingPeerByNonce.erase(pendingIt);
+                        }
+                        else
+                        {
+                            ++pendingIt;
+                        }
+                    }
+
+                    qInfo() << "Rollback lobby endpoint race selected from inbound probe"
+                            << "peerUserId" << peer.userId
+                            << "slot" << peer.slot
+                            << "endpoint" << peer.selectedIp << peer.selectedPort;
+                    break;
+                }
+
                 const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
                 m_udp->writeDatagram(reply, sender, senderPort);
                 continue;
@@ -1324,10 +1359,15 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
         const quint8 op = static_cast<quint8>(datagram.at(4));
         if (op == ANCHOR_OP_PROBE)
         {
-            quint64 ignoredSender = 0;
+            quint64 senderUserId = 0;
             quint64 nonce = 0;
-            if (readProbePacket(datagram, ignoredSender, nonce))
+            if (readProbePacket(datagram, senderUserId, nonce))
             {
+                // Learn the actual source endpoint before replying. This is the
+                // endpoint that is demonstrably usable for this peer-to-peer path,
+                // even if it differs from the lobby server's observed mapping.
+                recordSelectedEndpoint(senderUserId, sender, senderPort);
+
                 const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
                 m_udp->writeDatagram(reply, sender, senderPort);
             }
