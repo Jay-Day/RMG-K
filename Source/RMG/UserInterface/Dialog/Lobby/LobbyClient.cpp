@@ -1774,14 +1774,45 @@ void LobbyClient::onUdpReadyRead()
         {
         case ANCHOR_OP_PROBE:
         {
-            quint64 ignoredSender = 0;
+            quint64 senderUserId = 0;
             quint64 nonce = 0;
-            if (!readProbePacket(datagram, ignoredSender, nonce))
+            if (!readProbePacket(datagram, senderUserId, nonce))
                 break;
-            // Echo as PROBE_REPLY with our userId while retaining the nonce so
-            // the originator can match the first candidate that answered.
+
+            // The source of an inbound probe is a demonstrably usable endpoint
+            // for this peer-to-peer NAT mapping. Add it to our own active ping
+            // burst so our independent nonce is sent back through that route.
+            const QString learnedEndpoint = endpointKey(sender, senderPort);
+            bool learnedActiveRoute = false;
+            for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); ++it)
+            {
+                if (it->targetUserId != senderUserId)
+                    continue;
+
+                if (!it->endpoints.contains(learnedEndpoint))
+                {
+                    it->endpoints.append(learnedEndpoint);
+                    qInfo() << "Rollback lobby ping learned endpoint from inbound probe"
+                            << "peerUserId" << senderUserId
+                            << "endpoint" << learnedEndpoint;
+                }
+
+                // Send our own nonce to the learned endpoint immediately rather
+                // than waiting for the next periodic burst tick.
+                it->nextSendMs = 0;
+                learnedActiveRoute = true;
+                break;
+            }
+
             const QByteArray reply = buildProbePacket(m_selfUserId, nonce, ANCHOR_OP_PROBE_REPLY);
             m_udp->writeDatagram(reply, sender, senderPort);
+
+            if (learnedActiveRoute)
+            {
+                if (!m_pingProbeBurstTimer->isActive())
+                    m_pingProbeBurstTimer->start();
+                onPingProbeBurstTimer();
+            }
             break;
         }
         case ANCHOR_OP_PROBE_REPLY:
