@@ -299,6 +299,7 @@ private:
     QSplitter*   m_splitter      = nullptr;
     QSplitter*   m_browseSplitter = nullptr; // Active Rooms / Ongoing Matches divider
     QTreeWidget* m_playersTree   = nullptr;
+    int m_lobbyProbeCursor = 0; // round-robin index for lobby-wide ping probes
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;
     QTimer*      m_matchDurationTimer = nullptr;

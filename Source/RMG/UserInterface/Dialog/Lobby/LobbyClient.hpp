@@ -345,7 +345,10 @@ private:
     // Last measured round-trip per peer (userId → ms). Survives between
     // measurements so the UI has a value to render even when the next probe
     // is still in flight.
-    QHash<quint64, int> m_measuredPing;
+    int recordPingSample(quint64 userId, int rttMs);
+
+    QHash<quint64, int> m_measuredPing;          // median of the sample window
+    QHash<quint64, QList<int>> m_pingSamples;    // last few raw RTT samples
 };
 
 } // namespace Dialog

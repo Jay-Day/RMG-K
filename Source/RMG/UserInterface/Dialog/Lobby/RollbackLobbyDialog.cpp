@@ -74,6 +74,7 @@
 #include <QUrl>
 #include <QDebug>
 #include <QVariant>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -370,9 +371,10 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
     // 3 s cadence is a balance: fast enough that the displayed ping tracks real
     // conditions, slow enough that we're not flooding peers' anchor sockets. The
-    // *first* ping for a peer no longer waits on this tick — onRoomStateChanged
-    // fires an immediate probe the moment a peer is seated. Stays stopped until a
-    // room is entered.
+    // *first* ping for a seated peer doesn't wait on this tick — onRoomStateChanged
+    // fires an immediate probe the moment a peer is seated. Runs whenever the
+    // connection is up (see onClientStateChanged): seated peers refresh every
+    // tick, the rest of the lobby on a slow round-robin for the hover tooltip.
     m_pingProbeTimer = new QTimer(this);
     m_pingProbeTimer->setInterval(3'000);
     connect(m_pingProbeTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onPingProbeTick);
@@ -1299,7 +1301,7 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
 
     m_playersTree = new QTreeWidget(card);
     m_playersTree->setObjectName("PlayersTree");
-    m_playersTree->setHeaderLabels({ "Player", "State", "Est. Ping" });
+    m_playersTree->setHeaderLabels({ "Player", "State", "Region" });
     m_playersTree->setRootIsDecorated(false);
     m_playersTree->setSortingEnabled(true);
 	m_playersTree->sortItems(0, Qt::AscendingOrder);
@@ -1917,6 +1919,15 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     updateStatusIndicator(s);
 
     const bool connected = (s == LobbyClient::ConnectionState::Connected);
+    // Ping probing runs for the whole connection lifetime — it feeds the
+    // players-list hover tooltips in the lobby, not just seated peers.
+    if (m_pingProbeTimer)
+    {
+        if (connected && !m_pingProbeTimer->isActive())
+            m_pingProbeTimer->start();
+        else if (!connected)
+            m_pingProbeTimer->stop();
+    }
     m_chatInput->setEnabled(connected);
     if (m_quickMatchBtn)
         m_quickMatchBtn->setEnabled(connected && m_currentRoomId == 0);
@@ -2113,31 +2124,32 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     else
         item->setToolTip(1, QString());
 
-    // Ping column shows an estimated round-trip between *this* client and the
-    // peer, based on region buckets the server assigned via IP geolocation.
-    // It's intentionally rough — same-region pairs read ~30 ms, transatlantic
-    // ~90, transpacific ~200. Self-row always shows "—".
+    // Region column: little flag + compact label. The ping moved into the
+    // tooltip — a measured UDP round-trip when the background probes have one,
+    // the coarse region-matrix estimate otherwise.
     // U+2014 EM DASH — using QChar avoids any file-encoding ambiguity in
     // the literal.
     const QString dash = QString(QChar(0x2014));
-    if (u.id == m_client->selfUserId())
-    {
-        item->setText(2, dash);
-        item->setForeground(2, QColor(statusColors().idle));
-    }
-    else
-    {
-        const int rtt = UserInterface::Dialog::LobbyRegions::estimatedRttMs(
-            m_client->selfRegion(), u.region);
-        item->setText(2, rtt > 0 ? QString("~%1 ms").arg(rtt) : dash);
-        // Tint by the same ping tiers as the seat cards (grey when unknown).
-        item->setForeground(2, QColor(pingHex(rtt > 0 ? rtt : -1)));
-    }
+    item->setText(2, u.region.isEmpty()
+        ? dash
+        : LobbyRegions::flagFor(u.region) + QChar(' ') + LobbyRegions::shortLabelFor(u.region));
 
-    const QString regionLabel = UserInterface::Dialog::LobbyRegions::labelFor(u.region);
-    const QString regionTip = QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel);
-    item->setToolTip(0, regionTip);
-    item->setToolTip(2, regionTip); // hovering the ping shows the peer's region
+    const QString regionLabel = LobbyRegions::labelFor(u.region);
+    QString tip = QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel);
+    if (u.id != m_client->selfUserId())
+    {
+        const int measured = m_client->measuredPingMs(u.id);
+        if (measured >= 0)
+            tip += QString("\nPing: %1 ms").arg(measured);
+        else
+        {
+            const int rtt = LobbyRegions::estimatedRttMs(m_client->selfRegion(), u.region);
+            tip += rtt > 0 ? QString("\nPing: ~%1 ms (regional estimate)").arg(rtt)
+                           : QStringLiteral("\nPing: measuring…");
+        }
+    }
+    item->setToolTip(0, tip);
+    item->setToolTip(2, tip);
     item->setData(0, Qt::UserRole, QVariant::fromValue(u.id));
 }
 
@@ -2419,12 +2431,6 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
 
     if (!greetingChatLine.isEmpty())
         appendChatLine(CHANNEL_ROOM, greetingChatLine);
-
-    // Start measuring actual round-trip to seated peers. Seat assignments
-    // populate via the follow-up ROOM_STATE message, which fires its own
-    // immediate probe per newly-seated peer; this timer just refreshes them.
-    if (m_pingProbeTimer && !m_pingProbeTimer->isActive())
-        m_pingProbeTimer->start();
 
     // Backstop in case ROOM_STATE seats arrive in a shape that didn't trigger a
     // per-peer probe — kick one sweep shortly after entry so ping shows promptly
@@ -2903,15 +2909,37 @@ void RollbackLobbyDialog::onStartGameClicked()
 
 void RollbackLobbyDialog::onPingProbeTick()
 {
-    if (!m_client || m_currentRoomId == 0)
+    if (!m_client || m_client->state() != LobbyClient::ConnectionState::Connected)
         return;
 
     const quint64 selfId = m_client->selfUserId();
-    for (const auto& s : m_seats)
+
+    // Seated peers refresh every tick — Start gating and the Auto frame delay
+    // hang off these measurements.
+    if (m_currentRoomId != 0)
     {
-        if (s.userId == 0 || s.userId == selfId)
-            continue;
-        m_client->requestPingProbe(s.userId);
+        for (const auto& s : m_seats)
+        {
+            if (s.userId == 0 || s.userId == selfId)
+                continue;
+            m_client->requestPingProbe(s.userId);
+        }
+    }
+
+    // Everyone else refreshes on a slow round-robin (a few users per tick), so
+    // the players-list hover shows a real measurement instead of the region
+    // table without probe-flooding a large lobby. A 30-player lobby cycles in
+    // ~30 s; the mutual traffic doubles as the NAT hole-punch for these pings.
+    QList<quint64> uids = m_userItems.keys();
+    std::sort(uids.begin(), uids.end());
+    uids.removeAll(selfId);
+    if (uids.isEmpty())
+        return;
+    constexpr int kLobbyProbesPerTick = 3;
+    for (int i = 0; i < kLobbyProbesPerTick && i < uids.size(); ++i)
+    {
+        m_lobbyProbeCursor = (m_lobbyProbeCursor + 1) % uids.size();
+        m_client->requestPingProbe(uids[m_lobbyProbeCursor]);
     }
 }
 
@@ -2934,6 +2962,16 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
 
     // A peer's first ping may be what unblocks the host's Start button.
     refreshStartButton();
+
+    // Refresh the lobby row so the hover tooltip shows the fresh measurement.
+    const auto rowIt = m_userItems.constFind(userId);
+    if (rowIt != m_userItems.constEnd())
+    {
+        const auto& users = m_client->users();
+        const auto userIt = users.constFind(userId);
+        if (userIt != users.constEnd())
+            refreshPlayerRow(rowIt.value(), userIt.value());
+    }
 }
 
 int RollbackLobbyDialog::worstSeatPingMs() const
@@ -2994,7 +3032,6 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     if (m_emulationActive || m_awaitingEmulationStart)
         emit closeMatchRequested();
 
-    if (m_pingProbeTimer) m_pingProbeTimer->stop();
     for (auto& s : m_seats)
         s.userId = 0;
 

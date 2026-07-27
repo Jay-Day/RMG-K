@@ -26,6 +26,7 @@
 #include <QRandomGenerator>
 #include <QDebug>
 #include <QSet>
+#include <algorithm>
 #include <cstring>
 
 using namespace UserInterface::Dialog;
@@ -468,6 +469,10 @@ void LobbyClient::onWsDisconnected()
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     m_isModerator = false; // role is per-connection; must re-auth after reconnect
+    // User ids restart when the server does — drop measurements so a recycled
+    // id can't inherit another player's ping history.
+    m_measuredPing.clear();
+    m_pingSamples.clear();
     setState(ConnectionState::Disconnected);
 }
 
@@ -1113,8 +1118,7 @@ void LobbyClient::resolvePeerEndpoints(QList<LobbyMatchPeer>& peers)
                 const int rttMs = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - pingIt->sendMs);
                 const quint64 uid = pingIt->targetUserId;
                 m_pendingProbes.erase(pingIt);
-                m_measuredPing[uid] = rttMs;
-                emit pingProbeMeasured(uid, rttMs);
+                emit pingProbeMeasured(uid, recordPingSample(uid, rttMs));
             }
         }
     }
@@ -1401,8 +1405,7 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
             const int rttMs = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - pingIt->sendMs);
             const quint64 uid = pingIt->targetUserId;
             m_pendingProbes.erase(pingIt);
-            m_measuredPing[uid] = rttMs;
-            emit pingProbeMeasured(uid, rttMs);
+            emit pingProbeMeasured(uid, recordPingSample(uid, rttMs));
         }
         return true;
     };
@@ -1712,8 +1715,7 @@ void LobbyClient::onUdpReadyRead()
             const int    rttMs  = static_cast<int>(nowMs - it->sendMs);
             const quint64 uid   = it->targetUserId;
             m_pendingProbes.erase(it);
-            m_measuredPing[uid] = rttMs;
-            emit pingProbeMeasured(uid, rttMs);
+            emit pingProbeMeasured(uid, recordPingSample(uid, rttMs));
             break;
         }
         case ANCHOR_OP_REGISTER:
@@ -1742,6 +1744,24 @@ int LobbyClient::measuredPingMs(quint64 userId) const
 {
     const auto it = m_measuredPing.constFind(userId);
     return it == m_measuredPing.constEnd() ? -1 : it.value();
+}
+
+// Fold a fresh RTT sample into the per-user window and return the median.
+// Single samples are noisy — the first probe after a rebind eats NAT setup
+// time and any probe can catch a jitter spike — so measuredPingMs() reports
+// the median of the last few samples instead of the latest one.
+int LobbyClient::recordPingSample(quint64 userId, int rttMs)
+{
+    QList<int>& samples = m_pingSamples[userId];
+    samples.append(rttMs);
+    while (samples.size() > 9)
+        samples.removeFirst();
+
+    QList<int> sorted = samples;
+    std::sort(sorted.begin(), sorted.end());
+    const int median = sorted[sorted.size() / 2];
+    m_measuredPing[userId] = median;
+    return median;
 }
 
 // -------- Chat API --------
