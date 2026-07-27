@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
+#include <QByteArray>
 
 class QWebSocket;
 class QUdpSocket;
@@ -252,6 +253,7 @@ private slots:
 
     void onUdpReadyRead();
     void onUdpKeepaliveTimer();
+    void onPingProbeBurstTimer();
     void onHeartbeatTimer();
 
 private:
@@ -302,6 +304,7 @@ private:
 
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
+    QTimer* m_pingProbeBurstTimer = nullptr;
     // A synchronous match-start UDP phase is draining the socket itself.
     // readyRead must not consume packets concurrently during these phases.
     bool m_inPrematchSync = false;
@@ -335,7 +338,10 @@ private:
     struct ProbeInFlight
     {
         quint64 targetUserId = 0;
-        qint64  sendMs       = 0;
+        qint64  sendMs       = 0; // most recent burst send, for RTT
+        qint64  nextSendMs   = 0;
+        qint64  deadlineMs   = 0;
+        QStringList endpoints; // canonical IPv4 "address:port" candidates
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;
 
