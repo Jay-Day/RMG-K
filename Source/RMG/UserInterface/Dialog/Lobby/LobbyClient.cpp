@@ -811,6 +811,9 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     in.endpoints    = endpointStrings;
     m_pendingProbes.insert(nonce, in);
 
+    qInfo() << "lobby ping burst start" << "target" << uid
+            << "endpoints" << endpointStrings;
+
     if (!m_pingProbeBurstTimer->isActive())
         m_pingProbeBurstTimer->start();
     onPingProbeBurstTimer();
@@ -1846,6 +1849,8 @@ void LobbyClient::onUdpReadyRead()
                     learned.append(observed);
                     while (learned.size() > 4)
                         learned.removeFirst();
+                    qInfo() << "lobby ping learned endpoint" << "peer" << senderUserId
+                            << "observed" << observed;
                 }
                 for (auto probeIt = m_pendingProbes.begin(); probeIt != m_pendingProbes.end(); ++probeIt)
                 {
@@ -1884,6 +1889,8 @@ void LobbyClient::onUdpReadyRead()
             m_pendingProbes.erase(it);
             if (m_pendingProbes.isEmpty())
                 m_pingProbeBurstTimer->stop();
+            qInfo() << "lobby ping measured" << "peer" << uid << "rtt" << rttMs
+                    << "from" << sender.toString() << senderPort;
             emit pingProbeMeasured(uid, recordPingSample(uid, rttMs));
             break;
         }
