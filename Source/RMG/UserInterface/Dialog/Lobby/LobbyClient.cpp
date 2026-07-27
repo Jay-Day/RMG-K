@@ -767,15 +767,13 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     for (const auto& candidate : candidates)
         endpointStrings.append(endpointKey(candidate.address, candidate.port));
 
-    // Endpoints learned from the peer's own inbound probes (see onUdpReadyRead).
+    // Endpoint learned from the peer's own inbound probes (see onUdpReadyRead).
     // For a peer behind an endpoint-dependent NAT the server-observed port is
     // dead to us — the port their packets actually reach us from is the only
     // usable route, so include it from the first send for an accurate RTT.
-    for (const QString& learned : m_peerLearnedEndpoints.value(uid))
-    {
-        if (!endpointStrings.contains(learned))
-            endpointStrings.append(learned);
-    }
+    const QString learnedEndpoint = m_peerLearnedEndpoints.value(uid);
+    if (!learnedEndpoint.isEmpty() && !endpointStrings.contains(learnedEndpoint))
+        endpointStrings.append(learnedEndpoint);
 
     // The updated server sends a reciprocal PING_PROBE_REPLY to the target, so
     // both peers may receive near-simultaneous starts for the same pair. Merge
@@ -1844,12 +1842,14 @@ void LobbyClient::onUdpReadyRead()
                 const quint32 v4 = sender.toIPv4Address(&isV4);
                 const QString observed = endpointKey(isV4 ? QHostAddress(v4) : sender, senderPort);
 
-                QStringList& learned = m_peerLearnedEndpoints[senderUserId];
-                if (!learned.contains(observed))
+                // A peer has exactly one live anchor socket, so only the most
+                // recent observed endpoint can be valid — anything older (a
+                // pre-match port, a router remap) is dead, and keeping it
+                // would spray every future burst at stale mappings.
+                QString& learned = m_peerLearnedEndpoints[senderUserId];
+                if (learned != observed)
                 {
-                    learned.append(observed);
-                    while (learned.size() > 4)
-                        learned.removeFirst();
+                    learned = observed;
                     qInfo() << "Rollback lobby ping learned endpoint from inbound probe"
                             << "peerUserId" << senderUserId
                             << "endpoint" << observed;
