@@ -77,6 +77,7 @@
 #include <QIcon>
 #include <QFile>
 #include <QLocale>
+#include <QMenu>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -746,6 +747,10 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     }
     connect(m_roomsTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onRoomDoubleClicked);
+    // Moderators get a right-click "close room" action; a no-op for everyone else.
+    m_roomsTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_roomsTree, &QTreeWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos) { showAdminRoomMenu(m_roomsTree, pos); });
     roomsLay->addWidget(m_roomsTree, 1);
     m_browseSplitter->addWidget(roomsPane);
 
@@ -780,6 +785,9 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     }
     connect(m_matchesTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onMatchDoubleClicked);
+    m_matchesTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_matchesTree, &QTreeWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos) { showAdminRoomMenu(m_matchesTree, pos); });
     matchesLay->addWidget(m_matchesTree, 1);
     m_browseSplitter->addWidget(matchesPane);
 
@@ -2376,6 +2384,34 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
         item->setForeground(0, QColor(playerAccentHex(1, dark)));
 }
 
+void RollbackLobbyDialog::showAdminRoomMenu(QTreeWidget* tree, const QPoint& pos)
+{
+    // Right-click close is a moderator tool — everyone else gets no menu.
+    if (!m_client || !m_client->isModerator())
+        return;
+
+    QTreeWidgetItem* item = tree->itemAt(pos);
+    if (!item)
+        return;
+    const quint64 roomId = item->data(0, Qt::UserRole).toULongLong();
+    if (roomId == 0)
+        return;
+
+    QMenu menu(tree);
+    QAction* closeAction = menu.addAction(tree == m_matchesTree
+        ? tr("End match && close room  (moderator)")
+        : tr("Close room  (moderator)"));
+    if (menu.exec(tree->viewport()->mapToGlobal(pos)) != closeAction)
+        return;
+
+    if (QMessageBox::question(this, tr("Close room"),
+            tr("Close \"%1\" for everyone?").arg(item->text(0))) != QMessageBox::Yes)
+        return;
+
+    m_client->sendModAction(QStringLiteral("closeroom"),
+                            QString::number(roomId), QString(), QString());
+}
+
 void RollbackLobbyDialog::onCreateRoomClicked()
 {
     if (m_client->state() != LobbyClient::ConnectionState::Connected)
@@ -3156,6 +3192,9 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     else if (reason == QLatin1String("host_left"))
         QMessageBox::information(this, "Room closed",
             "The host closed the room.");
+    else if (reason == QLatin1String("admin_closed"))
+        QMessageBox::information(this, "Room closed",
+            "The room was closed by a moderator.");
 }
 
 // ──────────────────────────────────────────────────────────────────────
