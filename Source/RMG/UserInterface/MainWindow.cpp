@@ -26,6 +26,7 @@
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #include "KailleraUIBridge.hpp"
 #include "Dialog/Kaillera/KailleraPlaybackDialog.hpp"
+#include "Dialog/Lobby/LobbyConnectDialog.hpp"
 #include "n02_client.h"
 #include "kailleraclient.h"
 #endif // NETPLAY
@@ -4775,8 +4776,17 @@ void MainWindow::on_Action_Rollback_Lobby(void)
     this->ensureRollbackLobbyDialog();
     // Refresh ROM library on every open so newly-added games show up.
     this->rollbackLobbyDialog->setRomLibrary(this->ui_Widget_RomBrowser->GetModelData());
-    // The lobby shows its own inline connect screen (username + Connect) when
-    // not yet connected, then transforms into the live lobby in-place.
+
+    if (!this->rollbackLobbyDialog->isConnected())
+    {
+        Dialog::LobbyConnectDialog dlg(this);
+        if (dlg.exec() != QDialog::Accepted)
+        {
+            return; // User canceled
+        }
+        this->rollbackLobbyDialog->connectWithUsername(dlg.username(), dlg.serverUrl());
+    }
+
     this->rollbackLobbyDialog->show();
     this->rollbackLobbyDialog->raise();
     this->rollbackLobbyDialog->activateWindow();

@@ -1955,6 +1955,26 @@ void RollbackLobbyDialog::onConnectClicked()
     showLobbyView();
 }
 
+bool RollbackLobbyDialog::isConnected() const
+{
+    return m_client && m_client->state() == LobbyClient::ConnectionState::Connected;
+}
+
+void RollbackLobbyDialog::connectWithUsername(const QString& username, const QString& serverUrl)
+{
+    if (username.isEmpty()) return;
+    m_username = username;
+    m_serverUrl = serverUrl.isEmpty() ? LobbyConnectDialog::defaultServerUrl() : serverUrl;
+
+    if (m_userLabel) m_userLabel->setText(QString("User: %1").arg(m_username));
+
+    QSettings s("RMG-K", "n02");
+    s.setValue("Lobby/Username", m_username);
+
+    updateServerMeta();
+    m_client->connectToServer(m_serverUrl, m_username, {}, QString());
+}
+
 // ──────────────────────────────────────────────────────────────────────
 //  Connection events
 // ──────────────────────────────────────────────────────────────────────

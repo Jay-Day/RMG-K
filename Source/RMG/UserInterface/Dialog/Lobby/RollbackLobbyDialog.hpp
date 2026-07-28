@@ -72,6 +72,9 @@ public:
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
 
+    bool isConnected() const;
+    void connectWithUsername(const QString& username, const QString& serverUrl = QString());
+
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
     // is pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address
