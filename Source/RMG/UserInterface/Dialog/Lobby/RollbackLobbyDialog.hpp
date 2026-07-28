@@ -72,6 +72,9 @@ public:
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
 
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
     // is pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address
