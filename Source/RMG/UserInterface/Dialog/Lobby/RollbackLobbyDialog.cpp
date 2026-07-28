@@ -335,7 +335,9 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 {
     setWindowTitle("RMG-K Lobby");
     setWindowModality(Qt::NonModal);
-    resize(330, 270);
+    setMinimumSize(340, 280);
+    setMaximumSize(340, 280);
+    resize(340, 280);
     setObjectName("RollbackLobbyDialog");
 
     m_client = new LobbyClient(this);
@@ -492,12 +494,16 @@ QWidget* RollbackLobbyDialog::buildConnectView()
     lay->setContentsMargins(22, 16, 22, 16);
     lay->setSpacing(8);
 
-    // Centered Logo (Kaillera.svg emblem - exact logo from Image 2!)
+    // Centered Logo Emblem
     auto* logoLabel = new QLabel(page);
-    const QIcon kIcon(":/Resource/Kaillera.svg");
-    if (!kIcon.isNull())
+    QPixmap logoPix(":/Resource/RMGK.png");
+    if (logoPix.isNull())
     {
-        logoLabel->setPixmap(kIcon.pixmap(QSize(96, 42)));
+        logoPix.load(":/Resource/RMG.png");
+    }
+    if (!logoPix.isNull())
+    {
+        logoLabel->setPixmap(logoPix.scaled(130, 52, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         logoLabel->setAlignment(Qt::AlignHCenter);
         lay->addWidget(logoLabel);
     }
@@ -1961,7 +1967,9 @@ void RollbackLobbyDialog::showConnectView(const QString& statusMessage)
     }
 
     m_topStack->setCurrentIndex(0);
-    resize(330, 270);
+    setMinimumSize(340, 280);
+    setMaximumSize(340, 280);
+    resize(340, 280);
 }
 
 void RollbackLobbyDialog::showLobbyView()
@@ -1970,6 +1978,8 @@ void RollbackLobbyDialog::showLobbyView()
     {
         m_topStack->setCurrentIndex(1);
     }
+    setMinimumSize(960, 640);
+    setMaximumSize(16777215, 16777215);
     resize(1180, 720);
 }
 
