@@ -1026,7 +1026,21 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     // New servers provide both candidates. targetEndpoint remains first for
     // old-server compatibility, while duplicate endpoints are collapsed.
     appendParsed(targetEndpoint, QStringLiteral("target"));
-    appendParsed(localEndpoint, QStringLiteral("local"));
+
+    // Only probe the peer's LAN candidate when they share our public IP.
+    // Across the internet a private address is dead weight at best, and on
+    // 10.x institutional networks the packets actually route into OUR local
+    // network, where bursts at strangers' addresses can trip IDS port-scan
+    // heuristics. Genuine same-router pairs lose nothing: the server already
+    // promotes the LAN endpoint to targetEndpoint for them.
+    UdpEndpointCandidate peerPublic;
+    if (!m_observedIp.isEmpty() &&
+        parseEndpointString(publicEndpoint, peerPublic, QStringLiteral("public")) &&
+        peerPublic.address == QHostAddress(m_observedIp))
+    {
+        appendParsed(localEndpoint, QStringLiteral("local"));
+    }
+
     appendParsed(publicEndpoint, QStringLiteral("public"));
     if (candidates.isEmpty())
     {
