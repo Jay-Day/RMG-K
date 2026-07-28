@@ -24,6 +24,7 @@
 #include <QNetworkInterface>
 #include <QNetworkInformation>
 #include <QDateTime>
+#include <QTimeZone>
 #include <QCoreApplication>
 #include <QtEndian>
 #include <QRandomGenerator>
@@ -671,6 +672,14 @@ void LobbyClient::onWsConnected()
     const QString transport = detectTransportMedium();
     if (!transport.isEmpty())
         data["connection"] = transport;
+    // Standard (non-DST) UTC offset — the server uses it to split the North
+    // America country bucket into east/central/west (New York -5 h, Chicago
+    // -6 h, Denver -7 h, Los Angeles -8 h). standardTimeOffset is DST-immune,
+    // unlike the raw current offset which collides LA with Phoenix in summer.
+    const int tzOffsetSec = QTimeZone::systemTimeZone()
+        .standardTimeOffset(QDateTime::currentDateTimeUtc());
+    if (tzOffsetSec != 0)
+        data["tzOffset"] = tzOffsetSec;
     QJsonArray romArr;
     for (const auto& h : m_pendingRomHashes)
         romArr.append(h);
