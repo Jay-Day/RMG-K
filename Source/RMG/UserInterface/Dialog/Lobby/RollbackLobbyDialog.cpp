@@ -46,6 +46,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTreeWidget>
+#include <QScrollBar>
 #include <QHeaderView>
 #include <QTextEdit>
 #include <QLineEdit>
@@ -1153,15 +1154,19 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
     s.kickButton->setFocusPolicy(Qt::NoFocus);
     s.kickButton->setToolTip(QStringLiteral("Remove this player from the match"));
     s.kickButton->setVisible(false);
-    connect(s.kickButton, &QPushButton::clicked, this, [this, &s]() {
-        if (!m_client || s.userId == 0)
+    const int slot = slotIdx;
+    connect(s.kickButton, &QPushButton::clicked, this, [this, slot]() {
+        if (!m_client || slot < 1 || slot > 4)
             return;
-        const QString name = s.nameLabel ? s.nameLabel->text() : QString();
+        const SeatRow& seat = m_seats[slot - 1];
+        if (seat.userId == 0)
+            return;
+        const QString name = seat.nameLabel ? seat.nameLabel->text() : QString();
         if (QMessageBox::question(this, "Remove player",
                 QString("Remove %1 from the match?").arg(name.isEmpty() ? QStringLiteral("this player") : name),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
             return;
-        m_client->kickFromRoom(s.userId);
+        m_client->kickFromRoom(seat.userId);
     });
     lay->addWidget(s.kickButton);
 }
@@ -1812,13 +1817,34 @@ int RollbackLobbyDialog::seatSlotAtPos(const QPoint& pos) const
 
 QString RollbackLobbyDialog::localRomPathForMd5(const QString& md5) const
 {
-    if (md5.isEmpty())
-        return QString();
-    for (auto it = m_roms.constBegin(); it != m_roms.constEnd(); ++it)
+    // 1. Strict MD5 lookup
+    if (!md5.isEmpty())
     {
-        if (QString::fromStdString(it.value().MD5).compare(md5, Qt::CaseInsensitive) == 0)
-            return it.key();
+        for (auto it = m_roms.constBegin(); it != m_roms.constEnd(); ++it)
+        {
+            if (QString::fromStdString(it.value().MD5).compare(md5, Qt::CaseInsensitive) == 0)
+                return it.key();
+        }
     }
+
+    // 2. Fallback: match by current room game name / ROM title if MD5 differs (e.g. byte-swap, dump variations)
+    const QString roomGame = m_currentRoomGame.trimmed();
+    if (!roomGame.isEmpty())
+    {
+        for (auto it = m_roms.constBegin(); it != m_roms.constEnd(); ++it)
+        {
+            const QString goodName = QString::fromStdString(it.value().GoodName).trimmed();
+            if (!goodName.isEmpty() && (goodName.compare(roomGame, Qt::CaseInsensitive) == 0 || goodName.contains(roomGame, Qt::CaseInsensitive) || roomGame.contains(goodName, Qt::CaseInsensitive)))
+                return it.key();
+        }
+    }
+
+    // 3. Fallback: return currently selected ROM in browse dropdown if non-empty
+    const QVariantMap selected = selectedBrowseRom();
+    const QString selectedFile = selected.value("file").toString();
+    if (!selectedFile.isEmpty())
+        return selectedFile;
+
     return QString();
 }
 
@@ -2282,9 +2308,20 @@ public:
 
 void RollbackLobbyDialog::onRoomListChanged()
 {
+    m_roomsTree->setUpdatesEnabled(false);
+    m_matchesTree->setUpdatesEnabled(false);
+
+    const quint64 selectedRoomId = m_roomsTree->currentItem()
+        ? m_roomsTree->currentItem()->data(0, Qt::UserRole).toULongLong() : 0;
+    const int scrollPos = m_roomsTree->verticalScrollBar()
+        ? m_roomsTree->verticalScrollBar()->value() : 0;
+
     m_roomsTree->clear();
     m_matchesTree->clear();
     m_roomItems.clear();
+
+    QTreeWidgetItem* toReselect = nullptr;
+
     for (auto it = m_client->rooms().constBegin(); it != m_client->rooms().constEnd(); ++it)
     {
         const LobbyClient::LobbyRoomSummary& r = it.value();
@@ -2320,7 +2357,19 @@ void RollbackLobbyDialog::onRoomListChanged()
         auto* row = new RoomTreeItem(m_roomsTree);
         refreshRoomRow(row, r);
         m_roomItems.insert(it.key(), row);
+
+        if (r.id == selectedRoomId)
+            toReselect = row;
     }
+
+    if (toReselect)
+        m_roomsTree->setCurrentItem(toReselect);
+    if (m_roomsTree->verticalScrollBar())
+        m_roomsTree->verticalScrollBar()->setValue(scrollPos);
+
+    m_roomsTree->setUpdatesEnabled(true);
+    m_matchesTree->setUpdatesEnabled(true);
+
     updateServerMeta();
     updateInRoomBanner();   // seat counts may have changed in our own room
 }
@@ -3010,7 +3059,18 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     // after onMatchBegin's releaseUdpAnchor), GekkoNet binds to a random
     // kernel-picked port for match #2, and peers send to the stale port from
     // match #1 — black screen on every match after the first.
-    if (m_client) m_client->reopenUdpAnchor();
+    if (m_client)
+    {
+        m_client->reopenUdpAnchor();
+        // Immediately probe seated peers so pings resolve in ~15ms RTT
+        // instead of waiting many seconds for background timers.
+        for (const auto& s : m_seats)
+        {
+            if (s.userId != 0 && s.userId != m_client->selfUserId())
+                m_client->requestPingProbe(s.userId);
+        }
+    }
+    refreshStartButton();
 }
 
 void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason)

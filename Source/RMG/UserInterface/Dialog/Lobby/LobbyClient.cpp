@@ -1264,7 +1264,7 @@ bool LobbyClient::ensureUdpAnchorBound()
         return m_udp->localPort() != 0;
     }
 
-    if (!m_udp->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress))
+    if (!m_udp->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint))
     {
         qWarning() << "lobby: udp bind failed:" << m_udp->errorString();
         writePingDiagnostic(QStringLiteral("UDP_BIND_FAIL"),
