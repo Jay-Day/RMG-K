@@ -335,7 +335,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 {
     setWindowTitle("RMG-K Lobby");
     setWindowModality(Qt::NonModal);
-    resize(440, 370);
+    resize(330, 270);
     setObjectName("RollbackLobbyDialog");
 
     m_client = new LobbyClient(this);
@@ -466,7 +466,7 @@ QWidget* RollbackLobbyDialog::buildConnectView()
     page->setObjectName("ConnectPage");
     page->setStyleSheet(R"(
         QWidget#ConnectPage {
-            background-color: #1a1c23;
+            background-color: #14161f;
             color: #e0e0e0;
             font-family: 'Segoe UI', system-ui, sans-serif;
         }
@@ -474,35 +474,30 @@ QWidget* RollbackLobbyDialog::buildConnectView()
             color: #a0a5b5;
         }
         QLineEdit {
-            background-color: #121318;
+            background-color: #1a1c24;
             color: #ffffff;
             border: 1px solid #2e3244;
-            border-radius: 8px;
-            padding: 9px 12px;
-            font-size: 13px;
+            border-radius: 6px;
+            padding: 7px 10px;
+            font-size: 12.5px;
             selection-background-color: #0084ff;
         }
         QLineEdit:focus {
             border: 1.5px solid #0084ff;
-            background-color: #14161f;
+            background-color: #1c1e28;
         }
     )");
 
     auto* lay = new QVBoxLayout(page);
-    lay->setContentsMargins(28, 22, 28, 22);
-    lay->setSpacing(12);
+    lay->setContentsMargins(22, 16, 22, 16);
+    lay->setSpacing(8);
 
-    // Centered RMG-K Emblem Logo
+    // Centered Logo (Kaillera.svg emblem - exact logo from Image 2!)
     auto* logoLabel = new QLabel(page);
-    QPixmap logoPix(":/Resource/RMGK.png");
-    if (logoPix.isNull())
+    const QIcon kIcon(":/Resource/Kaillera.svg");
+    if (!kIcon.isNull())
     {
-        const QIcon kIcon(":/Resource/Kaillera.svg");
-        if (!kIcon.isNull()) logoPix = kIcon.pixmap(QSize(120, 52));
-    }
-    if (!logoPix.isNull())
-    {
-        logoLabel->setPixmap(logoPix.scaled(130, 55, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        logoLabel->setPixmap(kIcon.pixmap(QSize(96, 42)));
         logoLabel->setAlignment(Qt::AlignHCenter);
         lay->addWidget(logoLabel);
     }
@@ -510,21 +505,23 @@ QWidget* RollbackLobbyDialog::buildConnectView()
     // Title & Subtitle
     auto* title = new QLabel("Connect to RMG-K", page);
     title->setAlignment(Qt::AlignHCenter);
-    title->setStyleSheet("color: #ffffff; font-size: 19px; font-weight: 700;");
+    title->setStyleSheet("color: #ffffff; font-size: 16px; font-weight: 700;");
     lay->addWidget(title);
 
     auto* intro = new QLabel("Enter your details to join the network.", page);
     intro->setWordWrap(true);
     intro->setAlignment(Qt::AlignHCenter);
-    intro->setStyleSheet("color: #8a8f9e; font-size: 12px;");
+    intro->setStyleSheet("color: #8a8f9e; font-size: 11px;");
     lay->addWidget(intro);
+
+    lay->addSpacing(2);
 
     // Username Field with Label above
     auto* userFieldLay = new QVBoxLayout;
-    userFieldLay->setSpacing(4);
+    userFieldLay->setSpacing(3);
 
     auto* userLbl = new QLabel("Username", page);
-    userLbl->setStyleSheet("color: #a0a5b5; font-size: 11.5px; font-weight: 600;");
+    userLbl->setStyleSheet("color: #a0a5b5; font-size: 11px; font-weight: 600;");
     userFieldLay->addWidget(userLbl);
 
     m_connectUsernameEdit = new QLineEdit(page);
@@ -540,22 +537,22 @@ QWidget* RollbackLobbyDialog::buildConnectView()
     m_connectStatusLabel = new QLabel(page);
     m_connectStatusLabel->setWordWrap(true);
     m_connectStatusLabel->setAlignment(Qt::AlignHCenter);
-    m_connectStatusLabel->setStyleSheet("color: #e74c3c; font-size: 11.5px;");
+    m_connectStatusLabel->setStyleSheet("color: #e74c3c; font-size: 11px;");
     lay->addWidget(m_connectStatusLabel);
 
     // Pill Connect Button
     m_connectButton = new QPushButton("Connect", page);
     m_connectButton->setDefault(true);
-    m_connectButton->setMinimumHeight(38);
+    m_connectButton->setMinimumHeight(34);
     m_connectButton->setCursor(Qt::PointingHandCursor);
     m_connectButton->setStyleSheet(R"(
         QPushButton {
             background-color: #0084ff;
             color: #ffffff;
             border: none;
-            border-radius: 19px;
-            padding: 8px 30px;
-            font-size: 13.5px;
+            border-radius: 17px;
+            padding: 6px 28px;
+            font-size: 13px;
             font-weight: 700;
         }
         QPushButton:hover {
@@ -576,6 +573,30 @@ QWidget* RollbackLobbyDialog::buildConnectView()
     btnRow->addWidget(m_connectButton, 2);
     btnRow->addStretch(1);
     lay->addLayout(btnRow);
+
+    // Subtle Cancel button
+    auto* cancelBtn = new QPushButton("Cancel", page);
+    cancelBtn->setCursor(Qt::PointingHandCursor);
+    cancelBtn->setStyleSheet(R"(
+        QPushButton {
+            background: transparent;
+            color: #8a8f9e;
+            border: none;
+            font-size: 11px;
+            text-decoration: underline;
+        }
+        QPushButton:hover {
+            color: #ffffff;
+        }
+    )");
+    connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
+
+    auto* cancelRow = new QHBoxLayout();
+    cancelRow->setContentsMargins(0, 0, 0, 0);
+    cancelRow->addStretch(1);
+    cancelRow->addWidget(cancelBtn);
+    cancelRow->addStretch(1);
+    lay->addLayout(cancelRow);
 
     connect(m_connectButton, &QPushButton::clicked,
             this, &RollbackLobbyDialog::onConnectClicked);
@@ -1940,7 +1961,7 @@ void RollbackLobbyDialog::showConnectView(const QString& statusMessage)
     }
 
     m_topStack->setCurrentIndex(0);
-    resize(440, 370);
+    resize(330, 270);
 }
 
 void RollbackLobbyDialog::showLobbyView()
