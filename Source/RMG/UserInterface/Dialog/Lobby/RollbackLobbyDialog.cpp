@@ -411,9 +411,6 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
 }
 
 // ──────────────────────────────────────────────────────────────────────
-//  UI construction
-// ──────────────────────────────────────────────────────────────────────
-
 void RollbackLobbyDialog::buildUi()
 {
     auto* root = new QVBoxLayout(this);
@@ -468,74 +465,116 @@ QWidget* RollbackLobbyDialog::buildConnectView()
 {
     auto* page = new QWidget(this);
     auto* outer = new QVBoxLayout(page);
-    outer->setContentsMargins(32, 32, 32, 32);
+    outer->setContentsMargins(20, 20, 20, 20);
     outer->addStretch(1);
 
     auto* card = new QWidget(page);
     card->setObjectName("LobbyConnectCard");
-    card->setMaximumWidth(460);
-    auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(8, 8, 8, 8);
-    lay->setSpacing(14);
+    card->setMaximumWidth(400);
+    card->setStyleSheet(R"(
+        QWidget#LobbyConnectCard {
+            background-color: #1a1c23;
+            border: 1px solid #2a2d3c;
+            border-radius: 14px;
+        }
+        QLabel {
+            color: #a0a5b5;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        QLineEdit {
+            background-color: #121318;
+            color: #ffffff;
+            border: 1px solid #2a2d3c;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 13px;
+            selection-background-color: #0084ff;
+        }
+        QLineEdit:focus {
+            border: 1.5px solid #0084ff;
+            background-color: #14161f;
+        }
+    )");
 
-    auto* title = new QLabel("RMG-K Rollback Netplay", card);
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(28, 28, 28, 28);
+    lay->setSpacing(16);
+
+    // Centered Logo
+    auto* logoLabel = new QLabel(card);
+    QPixmap logoPix(":/Resource/RMG.png");
+    if (!logoPix.isNull())
+    {
+        logoLabel->setPixmap(logoPix.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        logoLabel->setAlignment(Qt::AlignHCenter);
+        lay->addWidget(logoLabel);
+    }
+
+    // Title & Subtitle
+    auto* title = new QLabel("Connect to RMG-K", card);
     title->setAlignment(Qt::AlignHCenter);
-    QFont titleFont = title->font();
-    titleFont.setPointSizeF(titleFont.pointSizeF() + 4.0);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
+    title->setStyleSheet("color: #ffffff; font-size: 20px; font-weight: 700;");
     lay->addWidget(title);
 
-    auto* intro = new QLabel(
-        "Rollback netplay uses GGPO-style rollback for smooth, low-latency online "
-        "play. Connect to the lobby to see who's online, create or join a room, and "
-        "start a match.\n\nPick a username other players will see — you can change "
-        "it later.", card);
+    auto* intro = new QLabel("Enter your details to join the network.", card);
     intro->setWordWrap(true);
     intro->setAlignment(Qt::AlignHCenter);
+    intro->setStyleSheet("color: #8a8f9e; font-size: 12.5px;");
     lay->addWidget(intro);
+
+    // Username Field with Label above
+    auto* userFieldLay = new QVBoxLayout;
+    userFieldLay->setSpacing(6);
+
+    auto* userLbl = new QLabel("Username", card);
+    userLbl->setStyleSheet("color: #a0a5b5; font-size: 12px; font-weight: 600;");
+    userFieldLay->addWidget(userLbl);
 
     m_connectUsernameEdit = new QLineEdit(card);
     m_connectUsernameEdit->setMaxLength(16);
-    m_connectUsernameEdit->setPlaceholderText("Username");
-    m_connectUsernameEdit->setAlignment(Qt::AlignHCenter);
+    m_connectUsernameEdit->setPlaceholderText("yourusername");
     auto* validator = new QRegularExpressionValidator(
         QRegularExpression(R"([A-Za-z0-9_\-\.]{1,16})"), this);
     m_connectUsernameEdit->setValidator(validator);
-    // Half-width, centered (side stretch 1 : field 2 : side stretch 1 = 50%).
-    auto* userRow = new QHBoxLayout();
-    userRow->setContentsMargins(0, 0, 0, 0);
-    userRow->addStretch(1);
-    userRow->addWidget(m_connectUsernameEdit, 2);
-    userRow->addStretch(1);
-    lay->addLayout(userRow);
+    userFieldLay->addWidget(m_connectUsernameEdit);
+
+    lay->addLayout(userFieldLay);
 
     m_connectStatusLabel = new QLabel(card);
     m_connectStatusLabel->setWordWrap(true);
     m_connectStatusLabel->setAlignment(Qt::AlignHCenter);
+    m_connectStatusLabel->setStyleSheet("color: #e74c3c; font-size: 12px;");
     lay->addWidget(m_connectStatusLabel);
 
+    // Pill Connect Button
     m_connectButton = new QPushButton("Connect", card);
     m_connectButton->setDefault(true);
-    m_connectButton->setMinimumHeight(38);
+    m_connectButton->setMinimumHeight(40);
     m_connectButton->setCursor(Qt::PointingHandCursor);
-    m_connectButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    // Modern, rounded, primary-blue (matches the launcher's accent buttons).
-    m_connectButton->setStyleSheet(
-        "QPushButton {"
-        "  background-color: #0078D7;"
-        "  color: white;"
-        "  border: none;"
-        "  border-radius: 19px;"
-        "  padding: 8px 22px;"
-        "  font-weight: 600;"
-        "}"
-        "QPushButton:hover { background-color: #1c88dc; }"
-        "QPushButton:pressed { background-color: #005a9e; }"
-        "QPushButton:disabled { background-color: palette(mid); color: palette(midlight); }");
-    // Half-width, centered to match the username field.
+    m_connectButton->setStyleSheet(R"(
+        QPushButton {
+            background-color: #0084ff;
+            color: #ffffff;
+            border: none;
+            border-radius: 20px;
+            padding: 10px 32px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+        QPushButton:hover {
+            background-color: #1a92ff;
+        }
+        QPushButton:pressed {
+            background-color: #006cd4;
+        }
+        QPushButton:disabled {
+            background-color: #262a36;
+            color: #555b6e;
+        }
+    )");
+
     auto* btnRow = new QHBoxLayout();
-    btnRow->setContentsMargins(0, 0, 0, 0);
+    btnRow->setContentsMargins(0, 4, 0, 0);
     btnRow->addStretch(1);
     btnRow->addWidget(m_connectButton, 2);
     btnRow->addStretch(1);
@@ -550,7 +589,8 @@ QWidget* RollbackLobbyDialog::buildConnectView()
     });
 
     outer->addWidget(card, 0, Qt::AlignHCenter);
-    outer->addStretch(2);
+    outer->addStretch(1);
+
     return page;
 }
 
