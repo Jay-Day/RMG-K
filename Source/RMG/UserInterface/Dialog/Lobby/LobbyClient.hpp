@@ -189,6 +189,12 @@ public:
     void sendAdminAuth(const QString& password);
     void sendModAction(const QString& action, const QString& target,
                        const QString& duration = QString(), const QString& reason = QString());
+
+    // Opt-in ping diagnostics (Logs/lobby_ping_*.log). Off by default — this
+    // is connectivity-debugging tooling, not something every player should pay
+    // disk writes for. Enabling mid-session starts a log immediately;
+    // disabling closes the current one.
+    void setPingDiagnosticsEnabled(bool enabled);
     bool isModerator() const { return m_isModerator; }
 
     // UDP anchor port management — exposed so the GekkoNet session can take
@@ -321,6 +327,7 @@ private:
     QTimer* m_pingProbeBurstTimer = nullptr;
     QFile* m_pingDiagnosticFile = nullptr;
     qint64 m_pingDiagnosticStartMs = 0;
+    bool m_pingDiagnosticsEnabled = false;
     // A synchronous match-start UDP phase is draining the socket itself.
     // readyRead must not consume packets concurrently during these phases.
     bool m_inPrematchSync = false;

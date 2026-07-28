@@ -397,8 +397,32 @@ LobbyClient::~LobbyClient()
     disconnectFromServer();
 }
 
+void LobbyClient::setPingDiagnosticsEnabled(bool enabled)
+{
+    if (m_pingDiagnosticsEnabled == enabled)
+        return;
+    m_pingDiagnosticsEnabled = enabled;
+
+    if (!enabled)
+    {
+        if (m_pingDiagnosticFile && m_pingDiagnosticFile->isOpen())
+        {
+            writePingDiagnostic(QStringLiteral("LOG_STOP"), QStringLiteral("reason=disabled"));
+            m_pingDiagnosticFile->close();
+        }
+        return;
+    }
+
+    // Enabled mid-session: start a log right away so the user doesn't have to
+    // reconnect to begin capturing.
+    if (m_state != ConnectionState::Disconnected)
+        startPingDiagnosticLog();
+}
+
 void LobbyClient::startPingDiagnosticLog()
 {
+    if (!m_pingDiagnosticsEnabled)
+        return;
     if (!m_pingDiagnosticFile)
         return;
 

@@ -335,6 +335,11 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     setObjectName("RollbackLobbyDialog");
 
     m_client = new LobbyClient(this);
+    {
+        QSettings s("RMG-K", "n02");
+        m_client->setPingDiagnosticsEnabled(
+            s.value("RollbackLobby/PingDiagnostics", false).toBool());
+    }
 
     buildUi();
     applyStylesheet();
@@ -536,6 +541,32 @@ QWidget* RollbackLobbyDialog::buildConnectView()
     btnRow->addWidget(m_connectButton, 2);
     btnRow->addStretch(1);
     lay->addLayout(btnRow);
+
+    // Opt-in connectivity diagnostics — writes Logs/lobby_ping_*.log tracing
+    // ping probes and NAT punching. Off by default; only useful when debugging
+    // connection problems with another player.
+    m_pingDiagnosticsCheck = new QCheckBox("Log ping diagnostics", card);
+    {
+        QSettings s("RMG-K", "n02");
+        m_pingDiagnosticsCheck->setChecked(
+            s.value("RollbackLobby/PingDiagnostics", false).toBool());
+    }
+    m_pingDiagnosticsCheck->setToolTip(
+        "Write a detailed lobby_ping_*.log file (in the Logs folder) tracing ping\n"
+        "probes and NAT hole-punching. Only useful when debugging connection\n"
+        "problems with another player.");
+    connect(m_pingDiagnosticsCheck, &QCheckBox::toggled, this, [this](bool on) {
+        QSettings s("RMG-K", "n02");
+        s.setValue("RollbackLobby/PingDiagnostics", on);
+        if (m_client)
+            m_client->setPingDiagnosticsEnabled(on);
+    });
+    auto* diagRow = new QHBoxLayout();
+    diagRow->setContentsMargins(0, 0, 0, 0);
+    diagRow->addStretch(1);
+    diagRow->addWidget(m_pingDiagnosticsCheck, 0);
+    diagRow->addStretch(1);
+    lay->addLayout(diagRow);
 
     connect(m_connectButton, &QPushButton::clicked,
             this, &RollbackLobbyDialog::onConnectClicked);

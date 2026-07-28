@@ -337,6 +337,9 @@ private:
     // match (the player who checks it records, same as the p2p/kaillera lobbies).
     // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
     QCheckBox* m_recordCheck     = nullptr;
+    // Opt-in ping diagnostics logging toggle on the connect view; persisted in
+    // QSettings and applied to LobbyClient live.
+    QCheckBox* m_pingDiagnosticsCheck = nullptr;
 
     // When checked, this client also streams the match's .krec up to the server
     // so others can spectate. Broadcasting implies recording (the stream is the
