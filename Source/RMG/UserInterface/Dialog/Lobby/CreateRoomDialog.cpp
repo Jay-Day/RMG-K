@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QLineEdit>
+#include <QComboBox>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
@@ -60,7 +61,7 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
             font-size: 18px;
             font-weight: 700;
         }
-        QLineEdit, QSpinBox {
+        QLineEdit, QComboBox {
             background-color: #121318;
             color: #ffffff;
             border: 1px solid #2a2d3c;
@@ -69,9 +70,32 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
             font-size: 13px;
             selection-background-color: #0084ff;
         }
-        QLineEdit:focus, QSpinBox:focus {
+        QLineEdit:focus, QComboBox:focus {
             border: 1.5px solid #0084ff;
             background-color: #14161f;
+        }
+        QComboBox::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 32px;
+            border: none;
+        }
+        QComboBox::down-arrow {
+            image: none;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid #8a8f9e;
+            width: 0;
+            height: 0;
+            margin-right: 10px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #1a1c23;
+            color: #ffffff;
+            selection-background-color: #0084ff;
+            border: 1px solid #2a2d3c;
+            border-radius: 6px;
+            padding: 4px;
         }
         QLabel#GameCard {
             background-color: #121318;
@@ -190,16 +214,18 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
     gameLay->addWidget(m_gameLabel);
     root->addLayout(gameLay);
 
-    // Max Players Field (2 to 5 players)
+    // Max Players Field (Dropdown with down arrow: 2, 3, 4, 5 players)
     auto* playersLay = new QVBoxLayout;
     playersLay->setSpacing(6);
     auto* playersLbl = new QLabel("Max Players", this);
-    m_maxPlayersSpin = new QSpinBox(this);
-    m_maxPlayersSpin->setRange(2, 5);
-    m_maxPlayersSpin->setValue(4);
-    m_maxPlayersSpin->setSuffix(" players");
+    m_maxPlayersCombo = new QComboBox(this);
+    m_maxPlayersCombo->addItem("2 players", 2);
+    m_maxPlayersCombo->addItem("3 players", 3);
+    m_maxPlayersCombo->addItem("4 players", 4);
+    m_maxPlayersCombo->addItem("5 players", 5);
+    m_maxPlayersCombo->setCurrentIndex(2); // default 4 players (index 2)
     playersLay->addWidget(playersLbl);
-    playersLay->addWidget(m_maxPlayersSpin);
+    playersLay->addWidget(m_maxPlayersCombo);
     root->addLayout(playersLay);
 
     m_statusLabel = new QLabel(this);
@@ -286,7 +312,7 @@ void CreateRoomDialog::onCreateClicked()
     m_name = m_nameEdit->text().trimmed();
     // m_romName / m_romMd5 were set from the lobby picker in the constructor.
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
-    m_maxPlayers = m_maxPlayersSpin->value();
+    m_maxPlayers = m_maxPlayersCombo ? m_maxPlayersCombo->currentData().toInt() : 4;
     m_password   = m_passwordCheck->isChecked() ? m_passwordEdit->text() : QString();
 
     saveDefaults();
@@ -307,7 +333,7 @@ void CreateRoomDialog::showCreateFailure(const QString& reason)
 void CreateRoomDialog::setFormEnabled(bool enabled)
 {
     m_nameEdit->setEnabled(enabled);
-    m_maxPlayersSpin->setEnabled(enabled);
+    if (m_maxPlayersCombo) m_maxPlayersCombo->setEnabled(enabled);
     m_passwordCheck->setEnabled(enabled);
     m_passwordEdit->setEnabled(enabled && m_passwordCheck->isChecked());
     m_createButton->setEnabled(enabled);
@@ -317,7 +343,12 @@ void CreateRoomDialog::loadDefaults()
 {
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
-    if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
+    if (s.contains("MaxPlayers") && m_maxPlayersCombo)
+    {
+        const int val = s.value("MaxPlayers").toInt();
+        const int idx = m_maxPlayersCombo->findData(val);
+        if (idx >= 0) m_maxPlayersCombo->setCurrentIndex(idx);
+    }
     // Seed the initial delay/prediction from the last in-room values the
     // host configured. The in-room view writes to the same keys.
     if (s.contains("Delay"))      m_delay = s.value("Delay").toInt();
