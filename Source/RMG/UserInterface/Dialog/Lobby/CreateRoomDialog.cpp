@@ -45,7 +45,7 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
 {
     setStyleSheet(R"(
         QDialog {
-            background-color: #1e1f28;
+            background-color: #1a1c23;
             color: #e0e0e0;
             font-family: 'Segoe UI', system-ui, sans-serif;
             font-size: 13px;
@@ -63,75 +63,77 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
         QLineEdit, QSpinBox {
             background-color: #121318;
             color: #ffffff;
-            border: 1px solid #323544;
-            border-radius: 6px;
-            padding: 8px 12px;
+            border: 1px solid #2a2d3c;
+            border-radius: 8px;
+            padding: 10px 14px;
             font-size: 13px;
-            selection-background-color: #0078d7;
+            selection-background-color: #0084ff;
         }
         QLineEdit:focus, QSpinBox:focus {
-            border: 1px solid #0078d7;
+            border: 1.5px solid #0084ff;
+            background-color: #14161f;
         }
         QLabel#GameCard {
             background-color: #121318;
-            color: #4aa3ff;
-            border: 1px solid #323544;
-            border-radius: 6px;
-            padding: 8px 12px;
+            color: #38b6ff;
+            border: 1px solid #2a2d3c;
+            border-radius: 8px;
+            padding: 10px 14px;
             font-size: 13px;
             font-weight: 600;
         }
         QCheckBox {
             color: #a0a5b5;
-            font-size: 12px;
+            font-size: 12.5px;
             spacing: 8px;
+            font-weight: 500;
         }
         QCheckBox::indicator {
-            width: 16px;
-            height: 16px;
+            width: 17px;
+            height: 17px;
             border-radius: 4px;
             border: 1px solid #323544;
             background-color: #121318;
         }
         QCheckBox::indicator:checked {
-            background-color: #0078d7;
-            border-color: #0078d7;
+            background-color: #0084ff;
+            border-color: #0084ff;
         }
         QPushButton#CreateBtn {
-            background-color: #0078d7;
+            background-color: #0084ff;
             color: #ffffff;
             border: none;
-            border-radius: 6px;
-            padding: 9px 24px;
+            border-radius: 18px;
+            padding: 10px 32px;
             font-size: 13px;
-            font-weight: 600;
+            font-weight: 700;
+            letter-spacing: 1px;
         }
         QPushButton#CreateBtn:hover {
-            background-color: #1084e3;
+            background-color: #1a92ff;
         }
         QPushButton#CreateBtn:pressed {
-            background-color: #0066b8;
+            background-color: #006cd4;
         }
         QPushButton#CreateBtn:disabled {
-            background-color: #2c3240;
-            color: #5a6070;
+            background-color: #262a36;
+            color: #555b6e;
         }
         QPushButton#CancelBtn {
             background-color: transparent;
             color: #a0a5b5;
-            border: 1px solid #323544;
-            border-radius: 6px;
-            padding: 8px 18px;
+            border: none;
+            padding: 8px 16px;
             font-size: 13px;
         }
         QPushButton#CancelBtn:hover {
-            background-color: #282a36;
             color: #ffffff;
+            text-decoration: underline;
         }
     )");
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(24, 20, 24, 20);
+    root->setContentsMargins(24, 22, 24, 22);
     root->setSpacing(16);
 
     // Title Header with close button
@@ -144,7 +146,7 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
     auto* closeBtn = new QPushButton("✕", this);
     closeBtn->setFixedSize(24, 24);
     closeBtn->setCursor(Qt::PointingHandCursor);
-    closeBtn->setStyleSheet("QPushButton { background: transparent; color: #a0a5b5; border: none; font-size: 14px; } QPushButton:hover { color: #ffffff; }");
+    closeBtn->setStyleSheet("QPushButton { background: transparent; color: #8a8f9e; border: none; font-size: 15px; } QPushButton:hover { color: #ffffff; }");
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::reject);
     headerRow->addWidget(closeBtn);
     root->addLayout(headerRow);
@@ -163,6 +165,20 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
     nameLay->addWidget(m_nameEdit);
     root->addLayout(nameLay);
 
+    // Optional Password
+    auto* pwLay = new QVBoxLayout;
+    pwLay->setSpacing(6);
+    m_passwordCheck = new QCheckBox("Password-protect this room", this);
+    pwLay->addWidget(m_passwordCheck);
+
+    m_passwordEdit = new QLineEdit(this);
+    m_passwordEdit->setPlaceholderText("Room password");
+    m_passwordEdit->setEchoMode(QLineEdit::Password);
+    m_passwordEdit->setEnabled(false);
+    m_passwordEdit->setVisible(false);
+    pwLay->addWidget(m_passwordEdit);
+    root->addLayout(pwLay);
+
     // Game Field (Card display)
     auto* gameLay = new QVBoxLayout;
     gameLay->setSpacing(6);
@@ -174,33 +190,20 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
     gameLay->addWidget(m_gameLabel);
     root->addLayout(gameLay);
 
-    // Max Players Field
+    // Max Players Field (2 to 5 players)
     auto* playersLay = new QVBoxLayout;
     playersLay->setSpacing(6);
     auto* playersLbl = new QLabel("Max Players", this);
     m_maxPlayersSpin = new QSpinBox(this);
-    m_maxPlayersSpin->setRange(2, 4);
+    m_maxPlayersSpin->setRange(2, 5);
     m_maxPlayersSpin->setValue(4);
     m_maxPlayersSpin->setSuffix(" players");
     playersLay->addWidget(playersLbl);
     playersLay->addWidget(m_maxPlayersSpin);
     root->addLayout(playersLay);
 
-    // Optional Password
-    auto* pwLay = new QVBoxLayout;
-    pwLay->setSpacing(6);
-    m_passwordCheck = new QCheckBox("Password-protect this room", this);
-    pwLay->addWidget(m_passwordCheck);
-
-    m_passwordEdit = new QLineEdit(this);
-    m_passwordEdit->setPlaceholderText("Room password");
-    m_passwordEdit->setEnabled(false);
-    m_passwordEdit->setVisible(false);
-    pwLay->addWidget(m_passwordEdit);
-    root->addLayout(pwLay);
-
     m_statusLabel = new QLabel(this);
-    m_statusLabel->setStyleSheet("color: #e74c3c; font-size: 12px;");
+    m_statusLabel->setStyleSheet("color: #e74c3c; font-size: 12px; font-weight: 500;");
     m_statusLabel->setWordWrap(true);
     root->addWidget(m_statusLabel);
 
@@ -215,7 +218,7 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
     m_cancelButton->setCursor(Qt::PointingHandCursor);
     btnRow->addWidget(m_cancelButton);
 
-    m_createButton = new QPushButton("Create", this);
+    m_createButton = new QPushButton("CREATE", this);
     m_createButton->setObjectName("CreateBtn");
     m_createButton->setCursor(Qt::PointingHandCursor);
     m_createButton->setDefault(true);
