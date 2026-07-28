@@ -335,7 +335,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 {
     setWindowTitle("RMG-K Lobby");
     setWindowModality(Qt::NonModal);
-    resize(1180, 720);
+    resize(540, 380);
     setObjectName("RollbackLobbyDialog");
 
     m_client = new LobbyClient(this);
@@ -1906,6 +1906,7 @@ void RollbackLobbyDialog::showConnectView(const QString& statusMessage)
     }
 
     m_topStack->setCurrentIndex(0);
+    resize(540, 380);
 }
 
 void RollbackLobbyDialog::showLobbyView()
@@ -1914,6 +1915,7 @@ void RollbackLobbyDialog::showLobbyView()
     {
         m_topStack->setCurrentIndex(1);
     }
+    resize(1180, 720);
 }
 
 void RollbackLobbyDialog::onConnectClicked()
