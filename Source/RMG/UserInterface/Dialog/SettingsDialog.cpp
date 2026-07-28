@@ -246,12 +246,18 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
         "Enable this only while diagnosing frame pacing; it is disabled by default.");
     this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
     this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
+    this->rollbackPingDiagnosticsCheckBox = new QCheckBox("Enable lobby ping diagnostics logging", rollbackLoggingGroupBox);
+    this->rollbackPingDiagnosticsCheckBox->setToolTip(
+        "Write a detailed lobby_ping_*.log file (in the Logs folder) tracing lobby ping\n"
+        "probes and NAT hole-punching. Only useful when debugging connection problems\n"
+        "with another player. Applies the next time you connect to the lobby.");
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackPacingTraceCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerbosePifInputLoggingCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackPingDiagnosticsCheckBox);
     rollbackLayout->addWidget(rollbackLoggingGroupBox);
     rollbackLayout->addStretch();
     this->tabWidget->addTab(rollbackTab, "Rollback");
@@ -995,6 +1001,7 @@ void SettingsDialog::loadRollbackSettings(void)
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
+    this->rollbackPingDiagnosticsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_PingDiagnostics));
 }
 
 void SettingsDialog::loadDefaultCoreSettings(void)
@@ -1213,6 +1220,7 @@ void SettingsDialog::loadDefaultRollbackSettings(void)
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
+    this->rollbackPingDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_PingDiagnostics));
 }
 
 void SettingsDialog::saveSettings(void)
@@ -1489,6 +1497,7 @@ void SettingsDialog::saveRollbackSettings(void)
     CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, this->rollbackEnableLocalTestingCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_VerbosePifInputLogging, this->rollbackVerbosePifInputLoggingCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_VerboseGlideInputLogging, this->rollbackVerboseGlideInputLoggingCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_PingDiagnostics, this->rollbackPingDiagnosticsCheckBox->isChecked());
 }
 
 void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)

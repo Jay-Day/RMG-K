@@ -190,11 +190,6 @@ public:
     void sendModAction(const QString& action, const QString& target,
                        const QString& duration = QString(), const QString& reason = QString());
 
-    // Opt-in ping diagnostics (Logs/lobby_ping_*.log). Off by default — this
-    // is connectivity-debugging tooling, not something every player should pay
-    // disk writes for. Enabling mid-session starts a log immediately;
-    // disabling closes the current one.
-    void setPingDiagnosticsEnabled(bool enabled);
     bool isModerator() const { return m_isModerator; }
 
     // UDP anchor port management — exposed so the GekkoNet session can take

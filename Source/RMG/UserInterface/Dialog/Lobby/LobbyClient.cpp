@@ -11,6 +11,7 @@
 #include <RMG-Core/Cheats.hpp>
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
 #include <QWebSocket>
@@ -398,30 +399,11 @@ LobbyClient::~LobbyClient()
     disconnectFromServer();
 }
 
-void LobbyClient::setPingDiagnosticsEnabled(bool enabled)
-{
-    if (m_pingDiagnosticsEnabled == enabled)
-        return;
-    m_pingDiagnosticsEnabled = enabled;
-
-    if (!enabled)
-    {
-        if (m_pingDiagnosticFile && m_pingDiagnosticFile->isOpen())
-        {
-            writePingDiagnostic(QStringLiteral("LOG_STOP"), QStringLiteral("reason=disabled"));
-            m_pingDiagnosticFile->close();
-        }
-        return;
-    }
-
-    // Enabled mid-session: start a log right away so the user doesn't have to
-    // reconnect to begin capturing.
-    if (m_state != ConnectionState::Disconnected)
-        startPingDiagnosticLog();
-}
-
 void LobbyClient::startPingDiagnosticLog()
 {
+    // Opt-in via Settings → Rollback → Logging; read here so it takes effect
+    // on the next lobby connect without any live plumbing.
+    m_pingDiagnosticsEnabled = CoreSettingsGetBoolValue(SettingsID::Rollback_PingDiagnostics);
     if (!m_pingDiagnosticsEnabled)
         return;
     if (!m_pingDiagnosticFile)
