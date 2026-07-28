@@ -16,9 +16,11 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
+#include <QByteArray>
 
 class QWebSocket;
 class QUdpSocket;
+class QFile;
 
 namespace UserInterface
 {
@@ -52,6 +54,9 @@ public:
         QString username;
         QString state;           // matches protocol UserState strings
         QString region;
+        QString country;         // ISO 3166-1 alpha-2 from the server; "" on old servers
+        QString clientVersion;   // peer's self-reported RMG-K build
+        QString connection;      // peer's self-reported transport ("wifi"/"lan"/...)
         quint16 pingToServer = 0;
         quint64 currentRoomId = 0;
         QString currentRoomName;
@@ -83,7 +88,16 @@ public:
         QString publicIp;
         quint16 publicPort = 0;
         QString localIp;
+        quint16 localPort = 0;
         int slot = 0;
+
+        // Client-selected route. These fields are populated immediately before
+        // match startup by racing the peer's LAN/public candidates. They are
+        // not part of MATCH_BEGIN itself.
+        QString selectedIp;
+        quint16 selectedPort = 0;
+        QString selectedKind;
+        bool selectedEndpointVerified = false;
     };
 
     struct ChatMessage
@@ -93,6 +107,9 @@ public:
         QString fromUsername;
         QString message;
         qint64 serverTimeMs = 0;
+        // Sender was a server-authenticated moderator when this was sent.
+        // Old servers never send the field, so it stays false.
+        bool fromAdmin = false;
     };
 
     explicit LobbyClient(QObject* parent = nullptr);
@@ -172,6 +189,7 @@ public:
     void sendAdminAuth(const QString& password);
     void sendModAction(const QString& action, const QString& target,
                        const QString& duration = QString(), const QString& reason = QString());
+
     bool isModerator() const { return m_isModerator; }
 
     // UDP anchor port management — exposed so the GekkoNet session can take
@@ -180,12 +198,17 @@ public:
     void releaseUdpAnchor();
     void reopenUdpAnchor();
 
+    // Race the LAN/public candidates supplied by MATCH_BEGIN and retain the
+    // first endpoint that sends a valid peer reply. If neither candidate
+    // answers promptly, a backward-compatible deterministic fallback remains.
+    void resolvePeerEndpoints(QList<LobbyMatchPeer>& peers);
+
     // Fire a burst of UDP punch packets from the anchor socket to each peer's
-    // public endpoint. Call this *before* releaseUdpAnchor() so the punch goes
-    // out from the same NAT mapping GekkoNet will inherit when it re-binds.
-    // Peers silently drop these on their still-open anchor socket.
+    // available endpoint candidates. Call this *before* releaseUdpAnchor() so
+    // the punch goes out from the same NAT mapping GekkoNet will inherit when
+    // it re-binds. Peers silently drop these on their still-open anchor socket.
     void punchPeerEndpoints(const QList<LobbyMatchPeer>& peers);
-    bool syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error);
+    bool syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error);
 
 signals:
     void stateChanged(LobbyClient::ConnectionState newState);
@@ -238,6 +261,7 @@ private slots:
 
     void onUdpReadyRead();
     void onUdpKeepaliveTimer();
+    void onPingProbeBurstTimer();
     void onHeartbeatTimer();
 
 private:
@@ -274,9 +298,17 @@ private:
     void handleModNotice(const QJsonObject& data);
     void handleModList(const QJsonObject& data);
 
+    bool ensureUdpAnchorBound();
     void initiateUdpAnchor();
     void sendUdpRegister();
     void sendUdpKeepalive();
+
+    // Dedicated on-disk diagnostics for intermittent lobby peer-ping failures.
+    // The file is created in RMG-K's Logs directory for each lobby connection.
+    void startPingDiagnosticLog();
+    void writePingDiagnostic(const QString& event, const QString& details = QString());
+    QString pingUserLabel(quint64 userId) const;
+    QString pendingPingSummary() const;
 
     static LobbyUser parsePresenceUser(const QJsonObject& obj);
 
@@ -287,6 +319,12 @@ private:
 
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
+    QTimer* m_pingProbeBurstTimer = nullptr;
+    QFile* m_pingDiagnosticFile = nullptr;
+    qint64 m_pingDiagnosticStartMs = 0;
+    bool m_pingDiagnosticsEnabled = false;
+    // A synchronous match-start UDP phase is draining the socket itself.
+    // readyRead must not consume packets concurrently during these phases.
     bool m_inPrematchSync = false;
 
     // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
@@ -318,14 +356,35 @@ private:
     struct ProbeInFlight
     {
         quint64 targetUserId = 0;
-        qint64  sendMs       = 0;
+        qint64  createdMs    = 0;
+        qint64  sendMs       = 0; // first actual burst send, for RTT
+        qint64  lastSendMs   = 0;
+        qint64  nextSendMs   = 0;
+        qint64  deadlineMs   = 0;
+        int     sendRounds   = 0;
+        int     datagramsSent = 0;
+        QString origin;
+        QStringList endpoints; // canonical IPv4 "address:port" candidates
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;
+
+    // A UDP probe can arrive before the reciprocal WebSocket start. Cache the
+    // actual source endpoint briefly so the later server-started burst can use
+    // it without recursively spawning a new burst for every late packet.
+    struct RecentInboundPingEndpoint
+    {
+        QString endpoint;
+        qint64 seenMs = 0;
+    };
+    QHash<quint64, RecentInboundPingEndpoint> m_recentInboundPingEndpoints;
 
     // Last measured round-trip per peer (userId → ms). Survives between
     // measurements so the UI has a value to render even when the next probe
     // is still in flight.
-    QHash<quint64, int> m_measuredPing;
+    int recordPingSample(quint64 userId, int rttMs);
+
+    QHash<quint64, int> m_measuredPing;          // median of the sample window
+    QHash<quint64, QList<int>> m_pingSamples;    // last few raw RTT samples
 };
 
 } // namespace Dialog

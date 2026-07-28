@@ -81,6 +81,7 @@ set(RMG_SOURCES
     UserInterface/EventFilter.cpp
     UserInterface/UIResources.rc
     UserInterface/UIResources.qrc
+    UserInterface/Flags.qrc
     Thread/RomSearcherThread.cpp
     Thread/EmulationThread.cpp
     Utilities/QtKeyToSdl3Key.cpp

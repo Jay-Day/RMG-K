@@ -16,20 +16,22 @@ struct Region
 {
     std::string_view code;
     std::string_view label;
+    std::string_view flag;       // emoji; Windows renders these as letter badges
+    std::string_view shortLabel; // compact form for list columns
 };
 
 // Region codes must match what the server's HELLO handler accepts. Order
 // here also drives the indexing into kRttMatrix below — keep them in sync.
 inline constexpr std::array<Region, 9> kRegions = {{
-    {"us-east",    "North America (East)"},
-    {"us-central", "North America (Central)"},
-    {"us-west",    "North America (West)"},
-    {"sa",         "South America"},
-    {"eu-west",    "Europe (West)"},
-    {"eu-east",    "Europe (East)"},
-    {"asia-east",  "Asia (East)"},
-    {"asia-se",    "Asia (Southeast)"},
-    {"oceania",    "Oceania"},
+    {"us-east",    "North America (East)",    "🇺🇸", "NA East"},
+    {"us-central", "North America (Central)", "🇺🇸", "NA Central"},
+    {"us-west",    "North America (West)",    "🇺🇸", "NA West"},
+    {"sa",         "South America",           "🌎", "S. America"},
+    {"eu-west",    "Europe (West)",           "🇪🇺", "EU West"},
+    {"eu-east",    "Europe (East)",           "🇪🇺", "EU East"},
+    {"asia-east",  "Asia (East)",             "🌏", "Asia East"},
+    {"asia-se",    "Asia (Southeast)",        "🌏", "Asia SE"},
+    {"oceania",    "Oceania",                 "🇦🇺", "Oceania"},
 }};
 
 // Symmetric round-trip-time estimate (ms) between each region pair. These
@@ -66,6 +68,22 @@ inline QString labelFor(const QString& code)
     if (i < 0)
         return code; // unknown — show whatever the server sent verbatim
     return QLatin1String(kRegions[i].label.data(), int(kRegions[i].label.size()));
+}
+
+inline QString flagFor(const QString& code)
+{
+    const int i = regionIndex(code);
+    if (i < 0)
+        return QStringLiteral("🌐");
+    return QString::fromUtf8(kRegions[i].flag.data(), int(kRegions[i].flag.size()));
+}
+
+inline QString shortLabelFor(const QString& code)
+{
+    const int i = regionIndex(code);
+    if (i < 0)
+        return code; // unknown — show whatever the server sent verbatim
+    return QString::fromUtf8(kRegions[i].shortLabel.data(), int(kRegions[i].shortLabel.size()));
 }
 
 // Returns 0 when either code is unknown. Callers should treat 0 as "no estimate".
