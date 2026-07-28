@@ -342,6 +342,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
     buildUi();
     applyStylesheet();
+    showLobbyView();
 
     connect(m_client, &LobbyClient::stateChanged,         this, &RollbackLobbyDialog::onClientStateChanged);
     connect(m_client, &LobbyClient::helloFailed,          this, &RollbackLobbyDialog::onHelloFailed);
@@ -1973,6 +1974,8 @@ void RollbackLobbyDialog::connectWithUsername(const QString& username, const QSt
 
     updateServerMeta();
     m_client->connectToServer(m_serverUrl, m_username, {}, QString());
+
+    showLobbyView();
 }
 
 // ──────────────────────────────────────────────────────────────────────
