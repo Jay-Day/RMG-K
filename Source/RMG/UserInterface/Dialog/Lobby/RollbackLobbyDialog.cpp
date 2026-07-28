@@ -242,10 +242,10 @@ namespace
     QString pingHex(int ms)
     {
         const auto c = statusColors();
-        if (ms < 0)   return c.idle; // no measurement yet
-        if (ms <= 60) return c.ok;
-        if (ms <= 120) return c.wait;
-        return c.fail;
+        if (ms < 0)    return c.idle; // no measurement yet
+        if (ms <= 75)  return c.ok;   // excellent
+        if (ms <= 150) return c.wait; // playable
+        return c.fail;                // high latency (>150ms)
     }
 
     // Friendly label for an authoritative *room* state. Distinct from
@@ -1980,6 +1980,7 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     if (s == LobbyClient::ConnectionState::Connected)
     {
         showLobbyView();
+        onRoomListChanged();
     }
     else if (s == LobbyClient::ConnectionState::Disconnected)
     {
@@ -2922,12 +2923,14 @@ void RollbackLobbyDialog::refreshStartButton()
     const bool enoughPlayers = seated >= 2;
     const bool pingsReady    = (peersAwaitingPing == 0);
     const bool canStart      = iAmHost && waiting && enoughPlayers;
+    const int worstPing      = worstSeatPingMs();
 
     m_startBtn->setEnabled(canStart);
     m_startBtn->setToolTip(
         !iAmHost         ? QStringLiteral("Only the host can start the game.")
         : !waiting       ? QStringLiteral("Already in a match.")
         : !enoughPlayers ? QStringLiteral("Need at least 2 players to start.")
+        : (worstPing > 150) ? QString("High latency player detected (%1 ms). Auto delay will scale frames.").arg(worstPing)
         : !pingsReady    ? QStringLiteral("Starting with estimated ping (measuring…)")
                          : QString());
 }
@@ -3918,7 +3921,9 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     const QString localRomFile = localRomPathForMd5(m_currentRoomMd5);
     if (localRomFile.isEmpty())
     {
-        abortMatchStart(QString("Match start failed: you don't have the ROM for %1.").arg(m_currentRoomGame));
+        const QString err = QString("Match start failed: I don't have the ROM for %1 on my PC.").arg(m_currentRoomGame);
+        if (m_client) m_client->sendChat(CHANNEL_ROOM, err);
+        abortMatchStart(err);
         return;
     }
 
@@ -3926,7 +3931,10 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     QString prematchError;
     if (!m_client->syncPrematchManifest(resolvedPeers, local.slot, localRomFile, prematchError))
     {
-        abortMatchStart(prematchError.isEmpty() ? QStringLiteral("Pre-match sync failed.") : prematchError);
+        const QString err = prematchError.isEmpty() ? QStringLiteral("Pre-match sync failed.") : prematchError;
+        if (m_client && m_currentRoomHostId != selfId)
+            m_client->sendChat(CHANNEL_ROOM, QString("Pre-match sync failed on my PC: %1").arg(err));
+        abortMatchStart(err);
         return;
     }
     appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");
