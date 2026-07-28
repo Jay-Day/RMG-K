@@ -77,13 +77,17 @@ void LobbyConnectDialog::buildUi()
     lay->setContentsMargins(22, 16, 22, 16);
     lay->setSpacing(8);
 
-    // Centered RMG-K Emblem Logo
+    // Centered RMG-K Emblem Vector Logo
     auto* logoLabel = new QLabel(this);
-    QPixmap logoPix(":/Resource/RMGK.png");
+    QIcon svgIcon(":/Resource/RMGK.svg");
+    QPixmap logoPix;
+    if (!svgIcon.isNull())
+    {
+        logoPix = svgIcon.pixmap(QSize(130, 52));
+    }
     if (logoPix.isNull())
     {
-        const QIcon kIcon(":/Resource/Kaillera.svg");
-        if (!kIcon.isNull()) logoPix = kIcon.pixmap(QSize(96, 42));
+        logoPix.load(":/Resource/RMGK.png");
     }
     if (!logoPix.isNull())
     {

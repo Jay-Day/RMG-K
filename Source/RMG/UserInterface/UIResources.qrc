@@ -2,6 +2,7 @@
 <qresource>
   <file>Resource/RMG.png</file>
   <file>Resource/RMGK.png</file>
+  <file>Resource/RMGK.svg</file>
   <file>Resource/CoverFallback.png</file>
   <file>Resource/Kaillera.svg</file>
 
