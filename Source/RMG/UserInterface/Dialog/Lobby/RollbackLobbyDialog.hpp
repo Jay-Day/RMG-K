@@ -234,7 +234,8 @@ private:
 
     // Begin spectating a broadcast match: tell the server and ask MainWindow to
     // launch a streaming-playback session.
-    void beginSpectate(quint64 matchId, const QString& gameName);
+    void beginSpectate(quint64 matchId, const QString& gameName, bool fromStart = false);
+    void promptAndBeginSpectate(quint64 matchId, const QString& gameName);
 
     // Seat row API — 4 fixed slots rendered as a vertical player list.
     // Empty rows show a ○ dot + "Waiting…"; filled rows show ● + name + meta.
@@ -364,6 +365,7 @@ private:
     // the stale data on the wire — so we drop every keyframe/data message until we
     // see the BEGIN for the current subscribe. Reset false in beginSpectate.
     bool       m_spectateStreamArmed = false;
+    bool       m_spectateFromStart   = false;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];

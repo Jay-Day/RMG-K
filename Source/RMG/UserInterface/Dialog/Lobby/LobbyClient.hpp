@@ -179,7 +179,7 @@ public:
     void sendBroadcastEnd(quint64 matchId);
 
     // Spectate (pull a broadcast match's krec stream back down).
-    void startSpectate(quint64 matchId);
+    void startSpectate(quint64 matchId, bool fromStart = false);
     void stopSpectate(quint64 matchId);
 
     // Moderation. sendAdminAuth claims the moderator role with a password;

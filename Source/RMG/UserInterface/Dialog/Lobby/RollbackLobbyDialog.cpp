@@ -287,6 +287,9 @@ namespace
         if (pingMs >= 0)
             parts << QString("<span style='color:%1; font-weight:600;'>%2 ms</span>")
                          .arg(pingHex(pingMs)).arg(pingMs);
+        else if (!isHost)
+            parts << QString("<span style='color:%1; font-weight:600;'>...</span>")
+                         .arg(pingHex(-1)); // gris mientras mide
         return parts.join(QStringLiteral("&nbsp;·&nbsp;"));
     }
 
@@ -1253,10 +1256,7 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
     }
     if (s.metaLabel)
     {
-        // HOST badge + ping. Self never shows a ping (pingMs == -1 also means
-        // "no measurement yet" for peers we haven't probed). Ping shows up
-        // after the first PROBE_REPLY arrives, refreshed on each tick.
-        s.metaLabel->setText(seatMetaHtml(s.slot, isHost, isSelf ? -1 : pingMs, dark));
+        s.metaLabel->setText(seatMetaHtml(s.slot, isHost, pingMs, dark));
     }
 }
 
@@ -2366,25 +2366,34 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     const QString dash = QString(QChar(0x2014));
     int pingMs = -1;
     bool pingMeasured = false;
-    if (m_client && r.hostId != 0 && r.hostId != m_client->selfUserId())
+    if (m_client && r.hostId != 0)
     {
-        pingMs = m_client->measuredPingMs(r.hostId);
-        pingMeasured = (pingMs >= 0);
-        if (!pingMeasured)
+        if (r.hostId == m_client->selfUserId())
         {
-            const auto& users = m_client->users();
-            const auto hostIt = users.constFind(r.hostId);
-            if (hostIt != users.constEnd())
-                pingMs = LobbyRegions::estimatedRttMs(m_client->selfRegion(), hostIt->region);
-            if (pingMs == 0)
-                pingMs = -1;
+            pingMs = 0;
+            pingMeasured = true;
+        }
+        else
+        {
+            pingMs = m_client->measuredPingMs(r.hostId);
+            pingMeasured = (pingMs >= 0);
+            if (!pingMeasured)
+            {
+                const auto& users = m_client->users();
+                const auto hostIt = users.constFind(r.hostId);
+                if (hostIt != users.constEnd())
+                    pingMs = LobbyRegions::estimatedRttMs(m_client->selfRegion(), hostIt->region);
+                if (pingMs == 0)
+                    pingMs = -1;
+            }
         }
     }
     item->setText(2, pingMs >= 0 ? QString(pingMeasured ? "%1 ms" : "~%1 ms").arg(pingMs) : dash);
     item->setForeground(2, QColor(pingHex(pingMs)));
     item->setData(2, Qt::UserRole, pingMs);
     item->setToolTip(2,
-        pingMeasured  ? QStringLiteral("Your measured ping to the host")
+        r.hostId == (m_client ? m_client->selfUserId() : 0) ? QStringLiteral("Your room (0 ms)")
+        : pingMeasured  ? QStringLiteral("Your measured ping to the host")
         : pingMs >= 0 ? QStringLiteral("Estimated from regions — measuring…")
                       : QString());
 
@@ -2588,7 +2597,7 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
     {
         if (summary.broadcasting && summary.matchId != 0)
         {
-            beginSpectate(summary.matchId, summary.romName);
+            promptAndBeginSpectate(summary.matchId, summary.romName);
         }
         else
         {
@@ -2640,7 +2649,7 @@ void RollbackLobbyDialog::onMatchDoubleClicked(QTreeWidgetItem* item, int /*colu
             "That match isn't streaming a live replay, so there's nothing to watch.");
         return;
     }
-    beginSpectate(matchId, item->text(2));
+    promptAndBeginSpectate(matchId, item->text(2));
 }
 
 void RollbackLobbyDialog::onRoomCreateFailed(const QString& reason)
@@ -2819,7 +2828,9 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const quint64 uid = static_cast<quint64>(p.value("userId").toDouble());
         const bool slotIsHost = (uid == hostId);
         const bool slotIsSelf = (uid == m_client->selfUserId());
-        const int pingMs = slotIsSelf ? -1 : m_client->measuredPingMs(uid);
+        const int pingMs = slotIsSelf
+            ? (slotIsHost ? -1 : (m_client ? m_client->measuredPingMs(hostId) : -1))
+            : (m_client ? m_client->measuredPingMs(uid) : -1);
         // The host can remove any seated player except themselves (the host seat).
         const bool canKick = iAmHost && !slotIsHost;
         m_seats[slot - 1].userId = uid;
@@ -2910,14 +2921,14 @@ void RollbackLobbyDialog::refreshStartButton()
 
     const bool enoughPlayers = seated >= 2;
     const bool pingsReady    = (peersAwaitingPing == 0);
-    const bool canStart      = iAmHost && waiting && enoughPlayers && pingsReady;
+    const bool canStart      = iAmHost && waiting && enoughPlayers;
 
     m_startBtn->setEnabled(canStart);
     m_startBtn->setToolTip(
         !iAmHost         ? QStringLiteral("Only the host can start the game.")
         : !waiting       ? QStringLiteral("Already in a match.")
         : !enoughPlayers ? QStringLiteral("Need at least 2 players to start.")
-        : !pingsReady    ? QStringLiteral("Measuring ping to all players…")
+        : !pingsReady    ? QStringLiteral("Starting with estimated ping (measuring…)")
                          : QString());
 }
 
@@ -3039,6 +3050,11 @@ void RollbackLobbyDialog::onPingProbeTick()
     if (!m_client || m_client->state() != LobbyClient::ConnectionState::Connected)
         return;
 
+    // Do not send UDP ping probes while in a match or preparing to launch emulation.
+    // GekkoNet owns the UDP port during gameplay.
+    if (m_emulationActive || m_awaitingEmulationStart || m_currentRoomState == "in_game")
+        return;
+
     const quint64 selfId = m_client->selfUserId();
 
     // Seated peers refresh every tick — Start gating and the Auto frame delay
@@ -3072,14 +3088,23 @@ void RollbackLobbyDialog::onPingProbeTick()
 
 void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
 {
+    const quint64 selfId = m_client ? m_client->selfUserId() : 0;
+    const bool iAmHost = (m_client && m_currentRoomHostId == selfId);
+
     // Only redraw the seat that just got a measurement — avoids churning the
     // whole room view on every probe response.
     for (auto& s : m_seats)
     {
-        if (s.userId != userId || !s.metaLabel)
+        if (!s.metaLabel)
             continue;
-        s.metaLabel->setText(seatMetaHtml(s.slot, s.isHost, rttMs, isDarkTheme()));
-        break;
+        if (s.userId == userId)
+        {
+            s.metaLabel->setText(seatMetaHtml(s.slot, s.isHost, rttMs, isDarkTheme()));
+        }
+        else if (s.userId == selfId && !iAmHost && userId == m_currentRoomHostId)
+        {
+            s.metaLabel->setText(seatMetaHtml(s.slot, false, rttMs, isDarkTheme()));
+        }
     }
 
     // Auto delay follows ping — re-resolve when a fresh RTT lands. The helper
@@ -3615,10 +3640,13 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
     // frame 0 (broadcast.go spectateStart), so the spectator replays the whole match
     // (deterministic — boot-replay RNG is correct) and fast-forwards. Tests whether
     // video-on catch-up is fast enough to make keyframes unnecessary. Flip to re-enable.
-    constexpr bool kSpectateKeyframesEnabled = false;
+    // Periodic savestate keyframe: ask the engine for a checkpoint every 10 seconds.
+    // Snapshots + holds it until confirmed against rollback, then uploads it so late
+    // spectators can jump near the live edge instead of replaying from frame 0.
+    constexpr bool kSpectateKeyframesEnabled = true;
     if (kSpectateKeyframesEnabled)
     {
-        const qint64 kKeyframeIntervalMs = 60000; // ~once a minute (knob)
+        const qint64 kKeyframeIntervalMs = 10000; // ~once every 10 seconds (checkpoint)
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         if (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= kKeyframeIntervalMs)
         {
@@ -3638,14 +3666,35 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
 
 // ── Spectator ─────────────────────────────────────────────────────────
 
-void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName)
+void RollbackLobbyDialog::promptAndBeginSpectate(quint64 matchId, const QString& gameName)
+{
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle("Espectear partida en vivo");
+    msgBox.setText(QString("¿Cómo deseas ver la retransmisión de \"%1\"?").arg(gameName));
+    QPushButton* liveButton = msgBox.addButton("⚡ Ver en vivo desde ahora (Checkpoint)", QMessageBox::AcceptRole);
+    QPushButton* startButton = msgBox.addButton("🎬 Ver desde el inicio", QMessageBox::ActionRole);
+    msgBox.addButton(QMessageBox::Cancel);
+    msgBox.exec();
+
+    if (msgBox.clickedButton() == liveButton)
+    {
+        beginSpectate(matchId, gameName, false);
+    }
+    else if (msgBox.clickedButton() == startButton)
+    {
+        beginSpectate(matchId, gameName, true);
+    }
+}
+
+void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName, bool fromStart)
 {
     if (m_spectatingMatchId != 0) return; // already spectating
     m_spectatingMatchId = matchId;
     m_spectateStreamArmed = false; // wait for this subscribe's SPECTATE_BEGIN before accepting data
-    m_client->startSpectate(matchId);
+    m_spectateFromStart = fromStart;
+    m_client->startSpectate(matchId, fromStart);
     emit spectateLaunch(matchId, gameName);
-    appendChatSystemLine(CHANNEL_LOBBY, "Connecting to live replay…");
+    appendChatSystemLine(CHANNEL_LOBBY, fromStart ? "Connecting to live replay (from start)…" : "Connecting to live replay (live edge)…");
 }
 
 void RollbackLobbyDialog::stopSpectating()
@@ -3654,6 +3703,7 @@ void RollbackLobbyDialog::stopSpectating()
     m_client->stopSpectate(m_spectatingMatchId);
     m_spectatingMatchId = 0;
     m_spectateStreamArmed = false;
+    m_spectateFromStart = false;
 }
 
 void RollbackLobbyDialog::onSpectateBegan(quint64 matchId)
@@ -3676,6 +3726,7 @@ void RollbackLobbyDialog::onSpectateKeyframe(quint64 matchId, int frame, const Q
 {
     if (matchId != m_spectatingMatchId) return;
     if (!m_spectateStreamArmed) return; // stale keyframe from a previous watch — drop it
+    if (m_spectateFromStart) return; // user requested replay from start — ignore keyframes
     emit spectateStreamKeyframe(frame, savestate);
 }
 

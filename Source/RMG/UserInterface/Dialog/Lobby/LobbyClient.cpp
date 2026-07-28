@@ -56,7 +56,7 @@ namespace
     // and brief mapping-creation latency on consumer routers — NOT against
     // simultaneity failures (those need retries, which we don't do here yet).
     constexpr int ANCHOR_PUNCH_BURST = 10;
-    constexpr int MATCH_ENDPOINT_PROBE_TIMEOUT_MS = 900;
+    constexpr int MATCH_ENDPOINT_PROBE_TIMEOUT_MS = 2000;
     constexpr int MATCH_ENDPOINT_PROBE_INTERVAL_MS = 90;
     constexpr int PREMATCH_ENDPOINT_PROBE_INTERVAL_MS = 200;
 
@@ -1972,7 +1972,20 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
             const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
             if (nowMs > hostSyncDeadlineMs)
             {
-                error = QStringLiteral("Pre-match sync timed out — a player didn't respond (missing ROM or blocked connection).");
+                QStringList failedNames;
+                for (quint64 failedId : pendingAcks)
+                {
+                    for (const auto& peer : peers)
+                    {
+                        if (peer.userId == failedId)
+                        {
+                            failedNames << QString("P%1 (%2)").arg(peer.slot).arg(peer.username);
+                            break;
+                        }
+                    }
+                }
+                error = QString("Pre-match sync timed out — %1 didn't respond (blocked UDP connection or missing ROM).")
+                            .arg(failedNames.join(", "));
                 return false;
             }
 
@@ -2674,10 +2687,12 @@ void LobbyClient::sendBroadcastEnd(quint64 matchId)
     sendEnvelope("BROADCAST_END", d);
 }
 
-void LobbyClient::startSpectate(quint64 matchId)
+void LobbyClient::startSpectate(quint64 matchId, bool fromStart)
 {
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
+    if (fromStart)
+        d["fromStart"] = true;
     sendEnvelope("SPECTATE_START", d);
 }
 
