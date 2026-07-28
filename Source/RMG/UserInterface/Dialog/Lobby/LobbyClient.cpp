@@ -1467,7 +1467,23 @@ void LobbyClient::resolvePeerEndpoints(QList<LobbyMatchPeer>& peers)
         if (peer.userId == m_selfUserId)
             continue;
 
-        const QList<UdpEndpointCandidate> candidates = peerEndpointCandidates(local, peer);
+        QList<UdpEndpointCandidate> candidates = peerEndpointCandidates(local, peer);
+
+        // The lobby ping engine has often already proven a working route to
+        // this peer (learned from inbound probe sources and successful
+        // replies). The server-advertised endpoint can be useless for
+        // peer-to-peer traffic (symmetric NAT, CGNAT) even while seat pings
+        // are green, so race the proven route too. No TTL check: a stale
+        // candidate only costs a few probe packets, and the cache is cleared
+        // when the peer disconnects.
+        const auto learnedIt = m_recentInboundPingEndpoints.constFind(peer.userId);
+        if (learnedIt != m_recentInboundPingEndpoints.constEnd())
+        {
+            UdpEndpointCandidate learned;
+            if (parseEndpointString(learnedIt->endpoint, learned, QStringLiteral("ping-learned")))
+                appendEndpointCandidate(candidates, learned.address.toString(), learned.port, learned.kind);
+        }
+
         if (candidates.isEmpty())
             continue;
 
@@ -1713,6 +1729,17 @@ void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
             appendEndpointCandidate(candidates, p.publicIp, p.publicPort, QStringLiteral("public"));
         }
 
+        // Also punch the route the ping engine proved works. Sending to it
+        // opens our NAT mapping/filter toward the peer's real source endpoint,
+        // which the advertised anchor endpoint may not match.
+        const auto learnedIt = m_recentInboundPingEndpoints.constFind(p.userId);
+        if (learnedIt != m_recentInboundPingEndpoints.constEnd())
+        {
+            UdpEndpointCandidate learned;
+            if (parseEndpointString(learnedIt->endpoint, learned, QStringLiteral("ping-learned")))
+                appendEndpointCandidate(candidates, learned.address.toString(), learned.port, learned.kind);
+        }
+
         if (candidates.isEmpty())
         {
             qWarning() << "Rollback lobby punch skipped peer"
@@ -1794,13 +1821,23 @@ bool LobbyClient::syncPrematchManifest(QList<LobbyMatchPeer>& peers, int localSl
         appendEndpointCandidate(endpoints, peer.selectedIp, peer.selectedPort,
                                 peer.selectedKind.isEmpty() ? QStringLiteral("selected") : peer.selectedKind);
 
-        // If the endpoint race did not receive a reply, continue racing during
-        // pre-match sync instead of committing to an unverified fallback.
-        if (!peer.selectedEndpointVerified)
+        // Keep the advertised candidates in play even after a verified
+        // lock-on. A verified route can still be transient or die mid-sync,
+        // and the receiver already handles duplicate manifests/ACKs, so the
+        // extra datagrams are cheap insurance.
+        const auto advertised = peerEndpointCandidates(local, peer);
+        for (const auto& candidate : advertised)
+            appendEndpointCandidate(endpoints, candidate.address.toString(), candidate.port, candidate.kind);
+
+        // And the route the lobby ping engine proved works — the advertised
+        // anchor endpoint can be dead for peer-to-peer traffic (symmetric
+        // NAT, CGNAT) even while seat pings are green.
+        const auto learnedIt = m_recentInboundPingEndpoints.constFind(peer.userId);
+        if (learnedIt != m_recentInboundPingEndpoints.constEnd())
         {
-            const auto advertised = peerEndpointCandidates(local, peer);
-            for (const auto& candidate : advertised)
-                appendEndpointCandidate(endpoints, candidate.address.toString(), candidate.port, candidate.kind);
+            UdpEndpointCandidate learned;
+            if (parseEndpointString(learnedIt->endpoint, learned, QStringLiteral("ping-learned")))
+                appendEndpointCandidate(endpoints, learned.address.toString(), learned.port, learned.kind);
         }
         return endpoints;
     };
