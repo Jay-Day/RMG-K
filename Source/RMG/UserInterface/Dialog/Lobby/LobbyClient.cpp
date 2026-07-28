@@ -327,8 +327,38 @@ namespace
     }
 
 
-    QString detectLocalIPv4()
+    bool isPrivateIPv4(const QHostAddress& address)
     {
+        if (address.protocol() != QAbstractSocket::IPv4Protocol || address.isLoopback())
+            return false;
+
+        const quint32 ipv4 = address.toIPv4Address();
+        return ((ipv4 & 0xff000000u) == 0x0a000000u) ||
+               ((ipv4 & 0xfff00000u) == 0xac100000u) ||
+               ((ipv4 & 0xffff0000u) == 0xc0a80000u);
+    }
+
+    QString detectLocalIPv4(const QString& routeProbeHost)
+    {
+        // Ask the OS routing table which source address real traffic toward
+        // the lobby server will use: connect() a UDP socket (no packet is
+        // sent) and read back the chosen source. Interface enumeration order
+        // is arbitrary, and VPN/overlay adapters carrying their own 10.x
+        // address can shadow the actual LAN IP (seen in the field as a
+        // detected_local_ip that belonged to no physical adapter).
+        {
+            QHostAddress target(routeProbeHost);
+            if (target.isNull() || target.protocol() != QAbstractSocket::IPv4Protocol)
+                target = QHostAddress(QStringLiteral("8.8.8.8"));
+
+            QUdpSocket probe;
+            probe.connectToHost(target, 53);
+            if (isPrivateIPv4(probe.localAddress()))
+                return probe.localAddress().toString();
+        }
+
+        // Fallback: first private address on any up interface (pre-existing
+        // behavior), for hosts where the route probe yields nothing usable.
         for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces())
         {
             const auto flags = iface.flags();
@@ -341,20 +371,8 @@ namespace
 
             for (const QNetworkAddressEntry& entry : iface.addressEntries())
             {
-                const QHostAddress address = entry.ip();
-                if (address.protocol() != QAbstractSocket::IPv4Protocol ||
-                    address.isLoopback())
-                {
-                    continue;
-                }
-
-                const quint32 ipv4 = address.toIPv4Address();
-                const bool isPrivate =
-                    ((ipv4 & 0xff000000u) == 0x0a000000u) ||
-                    ((ipv4 & 0xfff00000u) == 0xac100000u) ||
-                    ((ipv4 & 0xffff0000u) == 0xc0a80000u);
-                if (isPrivate)
-                    return address.toString();
+                if (isPrivateIPv4(entry.ip()))
+                    return entry.ip().toString();
             }
         }
 
@@ -517,7 +535,7 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
 
     m_pendingUsername  = username;
     m_pendingRomHashes = romHashes;
-    m_pendingLocalIp   = detectLocalIPv4();
+    m_pendingLocalIp   = detectLocalIPv4(QUrl(wsUrl).host());
     m_selfUserId       = 0;
     m_users.clear();
     m_rooms.clear();
