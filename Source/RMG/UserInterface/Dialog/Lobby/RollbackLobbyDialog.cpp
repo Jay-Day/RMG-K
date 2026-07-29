@@ -892,9 +892,8 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_recordCheck->setToolTip(
         "Record this match to a .krec file on your PC.\n"
         "Local setting — each player records their own copy.");
-    const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
-    n02_kaillera_recording_enabled = recordingDefault;
-    m_recordCheck->setChecked(recordingDefault);
+    n02_kaillera_recording_enabled = true;
+    m_recordCheck->setChecked(true);
     connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
         n02_kaillera_recording_enabled = checked;
     });
@@ -902,8 +901,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     // Broadcast: stream this match's krec to the server so others can spectate.
     // Broadcasting implies recording (the stream is the krec), so ticking it
-    // also forces "Record game" on.
+    // also forces "Record game" on. Defaults to checked for host.
     m_broadcastCheck = new QCheckBox("Live Replay", this);
+    m_broadcastCheck->setChecked(true);
     m_broadcastCheck->setToolTip(
         "Let others in the lobby watch this match live.\n"
         "Implies Record game (the live replay is the .krec). Only one player\n"
