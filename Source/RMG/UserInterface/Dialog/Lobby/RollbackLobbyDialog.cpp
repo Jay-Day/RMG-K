@@ -342,7 +342,6 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
     buildUi();
     applyStylesheet();
-    showLobbyView();
 
     connect(m_client, &LobbyClient::stateChanged,         this, &RollbackLobbyDialog::onClientStateChanged);
     connect(m_client, &LobbyClient::helloFailed,          this, &RollbackLobbyDialog::onHelloFailed);
@@ -960,9 +959,8 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_recordCheck->setToolTip(
         "Record this match to a .krec file on your PC.\n"
         "Local setting — each player records their own copy.");
-    const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
-    n02_kaillera_recording_enabled = recordingDefault;
-    m_recordCheck->setChecked(recordingDefault);
+    n02_kaillera_recording_enabled = true;
+    m_recordCheck->setChecked(true);
     connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
         n02_kaillera_recording_enabled = checked;
     });
@@ -976,6 +974,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         "Let others in the lobby watch this match live.\n"
         "Implies Record game (the live replay is the .krec). Only one player\n"
         "per match streams it — whoever enables it first.");
+    m_broadcastCheck->setChecked(true);
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (checked && m_recordCheck)
             m_recordCheck->setChecked(true); // broadcasting needs the krec written
@@ -1953,28 +1952,6 @@ void RollbackLobbyDialog::onConnectClicked()
     m_client->connectToServer(m_serverUrl, m_username, {}, QString());
 
     // Transform straight into the lobby; the marquee shows live connection state.
-    showLobbyView();
-}
-
-bool RollbackLobbyDialog::isConnected() const
-{
-    return m_client && m_client->state() == LobbyClient::ConnectionState::Connected;
-}
-
-void RollbackLobbyDialog::connectWithUsername(const QString& username, const QString& serverUrl)
-{
-    if (username.isEmpty()) return;
-    m_username = username;
-    m_serverUrl = serverUrl.isEmpty() ? LobbyConnectDialog::defaultServerUrl() : serverUrl;
-
-    if (m_userLabel) m_userLabel->setText(QString("User: %1").arg(m_username));
-
-    QSettings s("RMG-K", "n02");
-    s.setValue("Lobby/Username", m_username);
-
-    updateServerMeta();
-    m_client->connectToServer(m_serverUrl, m_username, {}, QString());
-
     showLobbyView();
 }
 
