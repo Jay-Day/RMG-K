@@ -52,6 +52,9 @@ public:
         QString username;
         QString state;           // matches protocol UserState strings
         QString region;
+        QString country;         // ISO 3166-1 alpha-2 from the server; "" on old servers
+        QString clientVersion;   // peer's self-reported RMG-K build
+        QString connection;      // peer's self-reported transport ("wifi"/"lan"/...)
         quint16 pingToServer = 0;
         quint64 currentRoomId = 0;
         QString currentRoomName;
@@ -93,6 +96,9 @@ public:
         QString fromUsername;
         QString message;
         qint64 serverTimeMs = 0;
+        // Sender was a server-authenticated moderator when this was sent.
+        // Old servers never send the field, so it stays false.
+        bool fromAdmin = false;
     };
 
     explicit LobbyClient(QObject* parent = nullptr);
