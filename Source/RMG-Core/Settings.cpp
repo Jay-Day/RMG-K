@@ -359,11 +359,6 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_PacingTrace:
         setting = {SETTING_SECTION_ROLLBACK, "PacingTrace", false};
         break;
-    case SettingsID::Rollback_PingDiagnostics:
-        // Lobby connectivity tracing (Logs/lobby_ping_*.log); read at lobby
-        // connect time.
-        setting = {SETTING_SECTION_ROLLBACK, "PingDiagnostics", false};
-        break;
     case SettingsID::Rollback_PacingMode:
         // 0 = symmetric/aggressive, 1 = asymmetric/Slippi-style ("Smooth").
         // The engine hardwires Smooth and ignores this setting; it only feeds
