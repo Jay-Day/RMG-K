@@ -191,8 +191,6 @@ private:
 
     void refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
     void refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r);
-    // Right-click menu on the rooms / matches lists; moderator-only "closeroom".
-    void showAdminRoomMenu(QTreeWidget* tree, const QPoint& pos);
     // Ticks the Ongoing Matches "Duration" cells once a second.
     void updateMatchDurations();
 
@@ -299,9 +297,7 @@ private:
 
     // ── Main panels ──
     QSplitter*   m_splitter      = nullptr;
-    QSplitter*   m_browseSplitter = nullptr; // Active Rooms / Ongoing Matches divider
     QTreeWidget* m_playersTree   = nullptr;
-    int m_lobbyProbeCursor = 0; // round-robin index for lobby-wide ping probes
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;
     QTimer*      m_matchDurationTimer = nullptr;
