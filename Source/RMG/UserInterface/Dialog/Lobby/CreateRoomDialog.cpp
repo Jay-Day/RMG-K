@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QLineEdit>
+#include <QComboBox>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
@@ -27,8 +28,10 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
                                    QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle("Create Room");
+    setWindowTitle("Create Netplay Room");
     setModal(true);
+    setFixedWidth(420);
+    setMinimumHeight(440);
     // The game comes from the lobby's shared picker, not a picker of our own.
     m_romName = gameName;
     m_romMd5  = gameMd5;
@@ -41,62 +44,216 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
 
 void CreateRoomDialog::buildUi(const QString& defaultUsername)
 {
+    setStyleSheet(R"(
+        QDialog {
+            background-color: #1a1c23;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 13px;
+        }
+        QLabel {
+            color: #a0a5b5;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        QLabel#HeaderTitle {
+            color: #ffffff;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        QLineEdit, QComboBox {
+            background-color: #121318;
+            color: #ffffff;
+            border: 1px solid #2a2d3c;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 13px;
+            selection-background-color: #0084ff;
+        }
+        QLineEdit:focus, QComboBox:focus {
+            border: 1.5px solid #0084ff;
+            background-color: #14161f;
+        }
+        QComboBox::drop-down {
+            subcontrol-origin: padding;
+            subcontrol-position: top right;
+            width: 32px;
+            border: none;
+        }
+        QComboBox::down-arrow {
+            image: none;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid #8a8f9e;
+            width: 0;
+            height: 0;
+            margin-right: 10px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #1a1c23;
+            color: #ffffff;
+            selection-background-color: #0084ff;
+            border: 1px solid #2a2d3c;
+            border-radius: 6px;
+            padding: 4px;
+        }
+        QLabel#GameCard {
+            background-color: #121318;
+            color: #38b6ff;
+            border: 1px solid #2a2d3c;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        QCheckBox {
+            color: #a0a5b5;
+            font-size: 12.5px;
+            spacing: 8px;
+            font-weight: 500;
+        }
+        QCheckBox::indicator {
+            width: 17px;
+            height: 17px;
+            border-radius: 4px;
+            border: 1px solid #323544;
+            background-color: #121318;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #0084ff;
+            border-color: #0084ff;
+        }
+        QPushButton#CreateBtn {
+            background-color: #0084ff;
+            color: #ffffff;
+            border: none;
+            border-radius: 18px;
+            padding: 10px 32px;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+        QPushButton#CreateBtn:hover {
+            background-color: #1a92ff;
+        }
+        QPushButton#CreateBtn:pressed {
+            background-color: #006cd4;
+        }
+        QPushButton#CreateBtn:disabled {
+            background-color: #262a36;
+            color: #555b6e;
+        }
+        QPushButton#CancelBtn {
+            background-color: transparent;
+            color: #a0a5b5;
+            border: none;
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+        QPushButton#CancelBtn:hover {
+            color: #ffffff;
+            text-decoration: underline;
+        }
+    )");
+
     auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(24, 22, 24, 22);
+    root->setSpacing(16);
 
-    auto* form = new QFormLayout;
+    // Title Header with close button
+    auto* headerRow = new QHBoxLayout;
+    auto* headerTitle = new QLabel("Create Netplay Room", this);
+    headerTitle->setObjectName("HeaderTitle");
+    headerRow->addWidget(headerTitle);
+    headerRow->addStretch();
 
+    auto* closeBtn = new QPushButton("✕", this);
+    closeBtn->setFixedSize(24, 24);
+    closeBtn->setCursor(Qt::PointingHandCursor);
+    closeBtn->setStyleSheet("QPushButton { background: transparent; color: #8a8f9e; border: none; font-size: 15px; } QPushButton:hover { color: #ffffff; }");
+    connect(closeBtn, &QPushButton::clicked, this, &QDialog::reject);
+    headerRow->addWidget(closeBtn);
+    root->addLayout(headerRow);
+
+    // Room Name Field (Label above input)
+    auto* nameLay = new QVBoxLayout;
+    nameLay->setSpacing(6);
+    auto* nameLbl = new QLabel("Room Name", this);
     m_nameEdit = new QLineEdit(this);
     m_nameEdit->setMaxLength(48);
     if (!defaultUsername.isEmpty())
         m_nameEdit->setText(QString("%1's Room").arg(defaultUsername));
     else
         m_nameEdit->setPlaceholderText("My Room");
-    form->addRow("Room name:", m_nameEdit);
+    nameLay->addWidget(nameLbl);
+    nameLay->addWidget(m_nameEdit);
+    root->addLayout(nameLay);
 
-    m_gameLabel = new QLabel(this);
-    m_gameLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    form->addRow("Game:", m_gameLabel);
-
-    m_maxPlayersSpin = new QSpinBox(this);
-    m_maxPlayersSpin->setRange(2, 4);
-    m_maxPlayersSpin->setValue(2);
-    m_maxPlayersSpin->setSuffix(" players");
-    form->addRow("Max players:", m_maxPlayersSpin);
-
-    root->addLayout(form);
-
-    // Rollback settings (delay / prediction) are no longer surfaced here —
-    // the host configures them from the in-room view via the settings row.
-    // We still send sensible defaults to the server at creation time; the
-    // host can adjust before clicking Start Game.
-
-    // Optional password (collapsed by default)
-    auto* pwRow = new QHBoxLayout;
+    // Optional Password
+    auto* pwLay = new QVBoxLayout;
+    pwLay->setSpacing(6);
     m_passwordCheck = new QCheckBox("Password-protect this room", this);
-    pwRow->addWidget(m_passwordCheck);
-    pwRow->addStretch();
-    root->addLayout(pwRow);
+    pwLay->addWidget(m_passwordCheck);
 
     m_passwordEdit = new QLineEdit(this);
     m_passwordEdit->setPlaceholderText("Room password");
+    m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setEnabled(false);
     m_passwordEdit->setVisible(false);
-    root->addWidget(m_passwordEdit);
+    pwLay->addWidget(m_passwordEdit);
+    root->addLayout(pwLay);
+
+    // Game Field (Card display)
+    auto* gameLay = new QVBoxLayout;
+    gameLay->setSpacing(6);
+    auto* gameTitleLbl = new QLabel("Game", this);
+    m_gameLabel = new QLabel(this);
+    m_gameLabel->setObjectName("GameCard");
+    m_gameLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    gameLay->addWidget(gameTitleLbl);
+    gameLay->addWidget(m_gameLabel);
+    root->addLayout(gameLay);
+
+    // Max Players Field (Dropdown with down arrow: 2, 3, 4, 5 players)
+    auto* playersLay = new QVBoxLayout;
+    playersLay->setSpacing(6);
+    auto* playersLbl = new QLabel("Max Players", this);
+    m_maxPlayersCombo = new QComboBox(this);
+    m_maxPlayersCombo->addItem("2 players", 2);
+    m_maxPlayersCombo->addItem("3 players", 3);
+    m_maxPlayersCombo->addItem("4 players", 4);
+    m_maxPlayersCombo->addItem("5 players", 5);
+    m_maxPlayersCombo->setCurrentIndex(2); // default 4 players (index 2)
+    playersLay->addWidget(playersLbl);
+    playersLay->addWidget(m_maxPlayersCombo);
+    root->addLayout(playersLay);
 
     m_statusLabel = new QLabel(this);
-    m_statusLabel->setStyleSheet("color: gray;");
+    m_statusLabel->setStyleSheet("color: #e74c3c; font-size: 12px; font-weight: 500;");
     m_statusLabel->setWordWrap(true);
     root->addWidget(m_statusLabel);
 
-    auto* btns = new QDialogButtonBox(this);
-    m_createButton = btns->addButton("Create", QDialogButtonBox::AcceptRole);
-    m_cancelButton = btns->addButton(QDialogButtonBox::Cancel);
-    m_createButton->setDefault(true); // explicitly: Enter = Create when focus is on Create
-    m_cancelButton->setAutoDefault(false);
-    m_cancelButton->setDefault(false);
+    root->addStretch(1);
+
+    // Action Buttons
+    auto* btnRow = new QHBoxLayout;
+    btnRow->addStretch(1);
+
+    m_cancelButton = new QPushButton("Cancel", this);
+    m_cancelButton->setObjectName("CancelBtn");
+    m_cancelButton->setCursor(Qt::PointingHandCursor);
+    btnRow->addWidget(m_cancelButton);
+
+    m_createButton = new QPushButton("CREATE", this);
+    m_createButton->setObjectName("CreateBtn");
+    m_createButton->setCursor(Qt::PointingHandCursor);
+    m_createButton->setDefault(true);
+    btnRow->addWidget(m_createButton);
+
+    root->addLayout(btnRow);
+
     connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_createButton, &QPushButton::clicked, this, &CreateRoomDialog::onCreateClicked);
-    root->addWidget(btns);
 
     // Validation hooks
     connect(m_nameEdit,      &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
@@ -155,7 +312,7 @@ void CreateRoomDialog::onCreateClicked()
     m_name = m_nameEdit->text().trimmed();
     // m_romName / m_romMd5 were set from the lobby picker in the constructor.
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
-    m_maxPlayers = m_maxPlayersSpin->value();
+    m_maxPlayers = m_maxPlayersCombo ? m_maxPlayersCombo->currentData().toInt() : 4;
     m_password   = m_passwordCheck->isChecked() ? m_passwordEdit->text() : QString();
 
     saveDefaults();
@@ -176,7 +333,7 @@ void CreateRoomDialog::showCreateFailure(const QString& reason)
 void CreateRoomDialog::setFormEnabled(bool enabled)
 {
     m_nameEdit->setEnabled(enabled);
-    m_maxPlayersSpin->setEnabled(enabled);
+    if (m_maxPlayersCombo) m_maxPlayersCombo->setEnabled(enabled);
     m_passwordCheck->setEnabled(enabled);
     m_passwordEdit->setEnabled(enabled && m_passwordCheck->isChecked());
     m_createButton->setEnabled(enabled);
@@ -186,7 +343,12 @@ void CreateRoomDialog::loadDefaults()
 {
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
-    if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
+    if (s.contains("MaxPlayers") && m_maxPlayersCombo)
+    {
+        const int val = s.value("MaxPlayers").toInt();
+        const int idx = m_maxPlayersCombo->findData(val);
+        if (idx >= 0) m_maxPlayersCombo->setCurrentIndex(idx);
+    }
     // Seed the initial delay/prediction from the last in-room values the
     // host configured. The in-room view writes to the same keys.
     if (s.contains("Delay"))      m_delay = s.value("Delay").toInt();

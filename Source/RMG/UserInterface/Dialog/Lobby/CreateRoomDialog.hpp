@@ -13,6 +13,7 @@
 #include <QString>
 
 class QLineEdit;
+class QComboBox;
 class QSpinBox;
 class QCheckBox;
 class QPushButton;
@@ -75,7 +76,7 @@ private:
     // UI — delay/prediction spinners live in the in-room view now, not here.
     QLineEdit*   m_nameEdit       = nullptr;
     QLabel*      m_gameLabel      = nullptr;   // read-only game from the lobby picker
-    QSpinBox*    m_maxPlayersSpin = nullptr;
+    QComboBox*   m_maxPlayersCombo = nullptr;
     QCheckBox*   m_passwordCheck  = nullptr;
     QLineEdit*   m_passwordEdit   = nullptr;
     QPushButton* m_createButton   = nullptr;
