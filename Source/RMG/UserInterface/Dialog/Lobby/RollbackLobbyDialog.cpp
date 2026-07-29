@@ -378,6 +378,20 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_pingProbeTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onPingProbeTick);
 }
 
+bool RollbackLobbyDialog::isConnected() const
+{
+    return m_client && m_client->state() == LobbyClient::ConnectionState::Connected;
+}
+
+void RollbackLobbyDialog::connectWithUsername(const QString& username, const QString& serverUrl)
+{
+    if (!m_client)
+        return;
+    m_username = username;
+    m_serverUrl = serverUrl.isEmpty() ? QStringLiteral("ws://216.128.157.98:8080/ws") : serverUrl;
+    m_client->connectToServer(m_serverUrl, m_username, QStringList());
+}
+
 RollbackLobbyDialog::~RollbackLobbyDialog()
 {
     // Detach the recording sink before we're gone — it captures `this` and is

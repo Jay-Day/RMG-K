@@ -55,9 +55,10 @@ public:
     explicit RollbackLobbyDialog(QWidget* parent = nullptr);
     ~RollbackLobbyDialog() override;
 
-    // MainWindow refreshes this on every open so the Create Room dropdown
-    // reflects the user's latest ROM library.
     void setRomLibrary(const QMap<QString, CoreRomSettings>& roms);
+
+    bool isConnected() const;
+    void connectWithUsername(const QString& username, const QString& serverUrl = QString());
 
     // MainWindow calls these from its existing emulation-thread signal slots
     // so the lobby server stays in sync with the actual game lifecycle.
