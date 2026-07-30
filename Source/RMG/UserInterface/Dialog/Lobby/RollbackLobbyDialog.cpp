@@ -3332,7 +3332,7 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
     // frame 0 (broadcast.go spectateStart), so the spectator replays the whole match
     // (deterministic — boot-replay RNG is correct) and fast-forwards. Tests whether
     // video-on catch-up is fast enough to make keyframes unnecessary. Flip to re-enable.
-    constexpr bool kSpectateKeyframesEnabled = false;
+    constexpr bool kSpectateKeyframesEnabled = true;
     if (kSpectateKeyframesEnabled)
     {
         const qint64 kKeyframeIntervalMs = 60000; // ~once a minute (knob)
