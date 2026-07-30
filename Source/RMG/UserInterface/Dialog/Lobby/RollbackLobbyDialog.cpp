@@ -378,6 +378,20 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_pingProbeTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onPingProbeTick);
 }
 
+bool RollbackLobbyDialog::isConnected() const
+{
+    return m_client && m_client->state() == LobbyClient::ConnectionState::Connected;
+}
+
+void RollbackLobbyDialog::connectWithUsername(const QString& username, const QString& serverUrl)
+{
+    if (!m_client)
+        return;
+    m_username = username;
+    m_serverUrl = serverUrl.isEmpty() ? QStringLiteral("ws://216.128.157.98:8080/ws") : serverUrl;
+    m_client->connectToServer(m_serverUrl, m_username, QStringList());
+}
+
 RollbackLobbyDialog::~RollbackLobbyDialog()
 {
     // Detach the recording sink before we're gone — it captures `this` and is
@@ -878,9 +892,8 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_recordCheck->setToolTip(
         "Record this match to a .krec file on your PC.\n"
         "Local setting — each player records their own copy.");
-    const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
-    n02_kaillera_recording_enabled = recordingDefault;
-    m_recordCheck->setChecked(recordingDefault);
+    n02_kaillera_recording_enabled = true;
+    m_recordCheck->setChecked(true);
     connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
         n02_kaillera_recording_enabled = checked;
     });
@@ -888,8 +901,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     // Broadcast: stream this match's krec to the server so others can spectate.
     // Broadcasting implies recording (the stream is the krec), so ticking it
-    // also forces "Record game" on.
+    // also forces "Record game" on. Defaults to checked for host.
     m_broadcastCheck = new QCheckBox("Live Replay", this);
+    m_broadcastCheck->setChecked(true);
     m_broadcastCheck->setToolTip(
         "Let others in the lobby watch this match live.\n"
         "Implies Record game (the live replay is the .krec). Only one player\n"
@@ -3318,7 +3332,7 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
     // frame 0 (broadcast.go spectateStart), so the spectator replays the whole match
     // (deterministic — boot-replay RNG is correct) and fast-forwards. Tests whether
     // video-on catch-up is fast enough to make keyframes unnecessary. Flip to re-enable.
-    constexpr bool kSpectateKeyframesEnabled = false;
+    constexpr bool kSpectateKeyframesEnabled = true;
     if (kSpectateKeyframesEnabled)
     {
         const qint64 kKeyframeIntervalMs = 60000; // ~once a minute (knob)

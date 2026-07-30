@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QLineEdit>
+#include <QComboBox>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
@@ -27,8 +28,10 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
                                    QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle("Create Room");
+    setWindowTitle("Create Netplay Room");
     setModal(true);
+    setFixedWidth(380);
+    setMinimumHeight(220);
     // The game comes from the lobby's shared picker, not a picker of our own.
     m_romName = gameName;
     m_romMd5  = gameMd5;
@@ -41,67 +44,108 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
 
 void CreateRoomDialog::buildUi(const QString& defaultUsername)
 {
+    setStyleSheet(R"(
+        QLineEdit, QComboBox {
+            padding: 4px 6px;
+        }
+        QPushButton#CreateBtn {
+            background-color: #0078D7;
+            color: #ffffff;
+            border: none;
+            border-radius: 3px;
+            padding: 6px 18px;
+            font-weight: bold;
+            min-height: 24px;
+        }
+        QPushButton#CreateBtn:hover {
+            background-color: #1084e3;
+        }
+        QPushButton#CreateBtn:disabled {
+            background-color: #505050;
+            color: #888888;
+        }
+        QPushButton#CancelBtn {
+            padding: 6px 16px;
+            min-height: 24px;
+        }
+    )");
+
     auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(16, 16, 16, 16);
+    root->setSpacing(12);
 
-    auto* form = new QFormLayout;
+    auto* formLayout = new QFormLayout;
+    formLayout->setLabelAlignment(Qt::AlignLeft);
+    formLayout->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
+    formLayout->setSpacing(10);
 
+    // Room Name
     m_nameEdit = new QLineEdit(this);
     m_nameEdit->setMaxLength(48);
     if (!defaultUsername.isEmpty())
         m_nameEdit->setText(QString("%1's Room").arg(defaultUsername));
     else
         m_nameEdit->setPlaceholderText("My Room");
-    form->addRow("Room name:", m_nameEdit);
+    formLayout->addRow("Room Name:", m_nameEdit);
 
-    m_gameLabel = new QLabel(this);
-    m_gameLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    form->addRow("Game:", m_gameLabel);
-
-    m_maxPlayersSpin = new QSpinBox(this);
-    m_maxPlayersSpin->setRange(2, 4);
-    m_maxPlayersSpin->setValue(2);
-    m_maxPlayersSpin->setSuffix(" players");
-    form->addRow("Max players:", m_maxPlayersSpin);
-
-    root->addLayout(form);
-
-    // Rollback settings (delay / prediction) are no longer surfaced here —
-    // the host configures them from the in-room view via the settings row.
-    // We still send sensible defaults to the server at creation time; the
-    // host can adjust before clicking Start Game.
-
-    // Optional password (collapsed by default)
-    auto* pwRow = new QHBoxLayout;
+    // Password
     m_passwordCheck = new QCheckBox("Password-protect this room", this);
-    pwRow->addWidget(m_passwordCheck);
-    pwRow->addStretch();
-    root->addLayout(pwRow);
-
     m_passwordEdit = new QLineEdit(this);
     m_passwordEdit->setPlaceholderText("Room password");
+    m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setEnabled(false);
     m_passwordEdit->setVisible(false);
-    root->addWidget(m_passwordEdit);
+
+    auto* pwLay = new QVBoxLayout;
+    pwLay->setSpacing(4);
+    pwLay->setContentsMargins(0, 0, 0, 0);
+    pwLay->addWidget(m_passwordCheck);
+    pwLay->addWidget(m_passwordEdit);
+    formLayout->addRow("Password:", pwLay);
+
+    // Game
+    m_gameLabel = new QLabel(this);
+    m_gameLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    formLayout->addRow("Game:", m_gameLabel);
+
+    // Max Players
+    m_maxPlayersCombo = new QComboBox(this);
+    m_maxPlayersCombo->addItem("2 players", 2);
+    m_maxPlayersCombo->addItem("3 players", 3);
+    m_maxPlayersCombo->addItem("4 players", 4);
+    m_maxPlayersCombo->addItem("5 players", 5);
+    m_maxPlayersCombo->setCurrentIndex(2); // default 4 players
+    formLayout->addRow("Max Players:", m_maxPlayersCombo);
+
+    root->addLayout(formLayout);
 
     m_statusLabel = new QLabel(this);
-    m_statusLabel->setStyleSheet("color: gray;");
+    m_statusLabel->setStyleSheet("color: #e74c3c; font-weight: bold;");
     m_statusLabel->setWordWrap(true);
     root->addWidget(m_statusLabel);
 
-    auto* btns = new QDialogButtonBox(this);
-    m_createButton = btns->addButton("Create", QDialogButtonBox::AcceptRole);
-    m_cancelButton = btns->addButton(QDialogButtonBox::Cancel);
-    m_createButton->setDefault(true); // explicitly: Enter = Create when focus is on Create
-    m_cancelButton->setAutoDefault(false);
-    m_cancelButton->setDefault(false);
-    connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
-    connect(m_createButton, &QPushButton::clicked, this, &CreateRoomDialog::onCreateClicked);
-    root->addWidget(btns);
+    root->addStretch(1);
 
-    // Validation hooks
-    connect(m_nameEdit,      &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
-    connect(m_passwordCheck, &QCheckBox::toggled,     this, &CreateRoomDialog::onPasswordToggled);
-    connect(m_passwordEdit,  &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
+    // Action Buttons
+    auto* btnRow = new QHBoxLayout;
+    btnRow->addStretch(1);
+
+    m_cancelButton = new QPushButton("Cancel", this);
+    m_cancelButton->setObjectName("CancelBtn");
+    btnRow->addWidget(m_cancelButton);
+
+    m_createButton = new QPushButton("Create", this);
+    m_createButton->setObjectName("CreateBtn");
+    m_createButton->setDefault(true);
+    btnRow->addWidget(m_createButton);
+
+    root->addLayout(btnRow);
+
+    connect(m_createButton, &QPushButton::clicked, this, &CreateRoomDialog::onCreateClicked);
+    connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
+    connect(m_passwordCheck, &QCheckBox::toggled, this, &CreateRoomDialog::onPasswordToggled);
+    connect(m_nameEdit, &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
+    connect(m_passwordEdit, &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
 }
 
 QString CreateRoomDialog::displayGameName(const QString& goodName, const QString& filePath)
@@ -155,7 +199,7 @@ void CreateRoomDialog::onCreateClicked()
     m_name = m_nameEdit->text().trimmed();
     // m_romName / m_romMd5 were set from the lobby picker in the constructor.
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
-    m_maxPlayers = m_maxPlayersSpin->value();
+    m_maxPlayers = m_maxPlayersCombo ? m_maxPlayersCombo->currentData().toInt() : 4;
     m_password   = m_passwordCheck->isChecked() ? m_passwordEdit->text() : QString();
 
     saveDefaults();
@@ -176,7 +220,7 @@ void CreateRoomDialog::showCreateFailure(const QString& reason)
 void CreateRoomDialog::setFormEnabled(bool enabled)
 {
     m_nameEdit->setEnabled(enabled);
-    m_maxPlayersSpin->setEnabled(enabled);
+    if (m_maxPlayersCombo) m_maxPlayersCombo->setEnabled(enabled);
     m_passwordCheck->setEnabled(enabled);
     m_passwordEdit->setEnabled(enabled && m_passwordCheck->isChecked());
     m_createButton->setEnabled(enabled);
@@ -186,7 +230,12 @@ void CreateRoomDialog::loadDefaults()
 {
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
-    if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
+    if (s.contains("MaxPlayers") && m_maxPlayersCombo)
+    {
+        const int val = s.value("MaxPlayers").toInt();
+        const int idx = m_maxPlayersCombo->findData(val);
+        if (idx >= 0) m_maxPlayersCombo->setCurrentIndex(idx);
+    }
     // Seed the initial delay/prediction from the last in-room values the
     // host configured. The in-room view writes to the same keys.
     if (s.contains("Delay"))      m_delay = s.value("Delay").toInt();

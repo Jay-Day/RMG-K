@@ -174,7 +174,7 @@ void Gekko::MessageSystem::HandleData(GekkoNetAdapter* host, GekkoNetResult** da
             ParsePacket(addr, pkt, res->data_len);
         }
         catch (const std::exception&) {
-            printf("failed to deserialize packet\n");
+            // Stray non-GekkoNet UDP datagram (e.g. leftover ping probe or NAT punch) — ignore.
         }
 
         // cleanup :)

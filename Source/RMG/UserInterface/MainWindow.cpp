@@ -4775,8 +4775,6 @@ void MainWindow::on_Action_Rollback_Lobby(void)
     this->ensureRollbackLobbyDialog();
     // Refresh ROM library on every open so newly-added games show up.
     this->rollbackLobbyDialog->setRomLibrary(this->ui_Widget_RomBrowser->GetModelData());
-    // The lobby shows its own inline connect screen (username + Connect) when
-    // not yet connected, then transforms into the live lobby in-place.
     this->rollbackLobbyDialog->show();
     this->rollbackLobbyDialog->raise();
     this->rollbackLobbyDialog->activateWindow();
