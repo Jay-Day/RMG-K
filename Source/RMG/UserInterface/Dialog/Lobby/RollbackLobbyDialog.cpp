@@ -2459,7 +2459,8 @@ void RollbackLobbyDialog::onCreateRoomClicked()
         return;
     }
 
-    m_createRoomDialog = new CreateRoomDialog(m_username, romName, romMd5, this);
+    m_createRoomDialog = new CreateRoomDialog(
+        m_username, m_lastRoomName, romName, romMd5, this);
     connect(m_createRoomDialog, &CreateRoomDialog::createRequested,
             this, &RollbackLobbyDialog::onRoomCreateRequested);
     connect(m_createRoomDialog, &QDialog::finished, this, [this](int) {
@@ -2490,7 +2491,10 @@ void RollbackLobbyDialog::onRoomCreateRequested()
 void RollbackLobbyDialog::onRoomCreated(quint64 roomId)
 {
     if (m_createRoomDialog)
+    {
+        m_lastRoomName = m_createRoomDialog->name();
         m_createRoomDialog->accept();
+    }
     enterRoom(roomId,
         QStringLiteral("<i>Room created — waiting for players</i>"));
 }

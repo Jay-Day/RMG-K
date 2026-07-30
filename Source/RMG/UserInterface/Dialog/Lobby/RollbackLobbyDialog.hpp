@@ -393,6 +393,7 @@ private:
     class CreateRoomDialog* m_createRoomDialog = nullptr;
 
     QString  m_username;
+    QString  m_lastRoomName;
     QString  m_serverUrl;
     quint64  m_currentRoomId = 0;
 

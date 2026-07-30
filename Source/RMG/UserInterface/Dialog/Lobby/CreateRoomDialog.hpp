@@ -32,7 +32,7 @@ class CreateRoomDialog : public QDialog
 public:
     // The game is chosen in the lobby's shared picker and passed in here; this
     // dialog shows it read-only and reports it back via romName()/romMd5().
-    CreateRoomDialog(const QString& defaultUsername,
+    CreateRoomDialog(const QString& defaultUsername, const QString& defaultRoomName,
                      const QString& gameName, const QString& gameMd5,
                      QWidget* parent = nullptr);
     ~CreateRoomDialog() override = default;
@@ -67,7 +67,7 @@ private slots:
     void validateInput();
 
 private:
-    void buildUi(const QString& defaultUsername);
+    void buildUi(const QString& defaultUsername, const QString& defaultRoomName);
     void loadDefaults();
     void saveDefaults();
     void setFormEnabled(bool enabled);
