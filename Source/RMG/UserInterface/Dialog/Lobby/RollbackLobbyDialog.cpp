@@ -728,7 +728,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     m_roomsTree = new QTreeWidget(this);
     m_roomsTree->setObjectName("RoomsTree");
-    m_roomsTree->setHeaderLabels({ "Name", "Host", "Ping", "ROM", "Seats", "State" });
+    m_roomsTree->setHeaderLabels({ "Name", "Host", "Ping", "ROM", "Seats" });
     m_roomsTree->setRootIsDecorated(false);
     m_roomsTree->setSortingEnabled(true);
     m_roomsTree->setAlternatingRowColors(true);
@@ -2357,7 +2357,6 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     item->setText(1, r.hostName);
     item->setText(3, r.romName);
     item->setText(4, QString("%1/%2").arg(r.players).arg(r.maxPlayers));
-    item->setText(5, stateGlyph(r.state));
     item->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
 
     // Your ping to the host — measured by the background lobby probes when
@@ -2392,8 +2391,6 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     const bool full = (r.maxPlayers > 0 && r.players >= r.maxPlayers);
     const auto sc = statusColors();
     item->setForeground(4, QColor(full ? sc.fail : sc.ok));
-    // State: same color language as presence / seats.
-    item->setForeground(5, QColor(stateHex(r.state, dark)));
 
     // Bold the user's own room and tint its name with the P1 accent.
     QFont f = item->font(0);
