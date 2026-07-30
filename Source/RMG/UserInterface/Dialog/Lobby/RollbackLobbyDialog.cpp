@@ -37,7 +37,6 @@
 #include "n02_client.h" // setRecordingStreamSink (broadcast tee)
 
 #include <QRegularExpression>
-#include <QRegularExpressionValidator>
 
 #include <QApplication>
 #include <QPalette>
@@ -382,6 +381,10 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     m_pingProbeTimer = new QTimer(this);
     m_pingProbeTimer->setInterval(3'000);
     connect(m_pingProbeTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onPingProbeTick);
+
+    // The lobby shell is visible before a connection exists, so initialize its
+    // controls and status without waiting for a state-change signal.
+    onClientStateChanged(LobbyClient::ConnectionState::Disconnected);
 }
 
 RollbackLobbyDialog::~RollbackLobbyDialog()
@@ -416,12 +419,7 @@ void RollbackLobbyDialog::buildUi()
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // Top-level stack: the inline connect screen (0) transforms into the live
-    // lobby (1) once connected, instead of a separate modal prompt.
-    m_topStack = new QStackedWidget(this);
-    m_topStack->addWidget(buildConnectView());   // index 0
-    m_topStack->addWidget(buildLobbyView());     // index 1
-    root->addWidget(m_topStack);
+    root->addWidget(buildLobbyView());
 }
 
 QWidget* RollbackLobbyDialog::buildLobbyView()
@@ -458,96 +456,6 @@ QWidget* RollbackLobbyDialog::buildLobbyView()
 
     lay->addWidget(m_splitter, 1);
     return container;
-}
-
-QWidget* RollbackLobbyDialog::buildConnectView()
-{
-    auto* page = new QWidget(this);
-    auto* outer = new QVBoxLayout(page);
-    outer->setContentsMargins(32, 32, 32, 32);
-    outer->addStretch(1);
-
-    auto* card = new QWidget(page);
-    card->setObjectName("LobbyConnectCard");
-    card->setMaximumWidth(460);
-    auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(8, 8, 8, 8);
-    lay->setSpacing(14);
-
-    auto* title = new QLabel("RMG-K Rollback Netplay", card);
-    title->setAlignment(Qt::AlignHCenter);
-    QFont titleFont = title->font();
-    titleFont.setPointSizeF(titleFont.pointSizeF() + 4.0);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
-    lay->addWidget(title);
-
-    auto* intro = new QLabel(
-        "Rollback netplay uses GGPO-style rollback for smooth, low-latency online "
-        "play. Connect to the lobby to see who's online, create or join a room, and "
-        "start a match.\n\nPick a username other players will see — you can change "
-        "it later.", card);
-    intro->setWordWrap(true);
-    intro->setAlignment(Qt::AlignHCenter);
-    lay->addWidget(intro);
-
-    m_connectUsernameEdit = new QLineEdit(card);
-    m_connectUsernameEdit->setMaxLength(16);
-    m_connectUsernameEdit->setPlaceholderText("Username");
-    m_connectUsernameEdit->setAlignment(Qt::AlignHCenter);
-    auto* validator = new QRegularExpressionValidator(
-        QRegularExpression(R"([A-Za-z0-9_\-\.]{1,16})"), this);
-    m_connectUsernameEdit->setValidator(validator);
-    // Half-width, centered (side stretch 1 : field 2 : side stretch 1 = 50%).
-    auto* userRow = new QHBoxLayout();
-    userRow->setContentsMargins(0, 0, 0, 0);
-    userRow->addStretch(1);
-    userRow->addWidget(m_connectUsernameEdit, 2);
-    userRow->addStretch(1);
-    lay->addLayout(userRow);
-
-    m_connectStatusLabel = new QLabel(card);
-    m_connectStatusLabel->setWordWrap(true);
-    m_connectStatusLabel->setAlignment(Qt::AlignHCenter);
-    lay->addWidget(m_connectStatusLabel);
-
-    m_connectButton = new QPushButton("Connect", card);
-    m_connectButton->setDefault(true);
-    m_connectButton->setMinimumHeight(38);
-    m_connectButton->setCursor(Qt::PointingHandCursor);
-    m_connectButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    // Modern, rounded, primary-blue (matches the launcher's accent buttons).
-    m_connectButton->setStyleSheet(
-        "QPushButton {"
-        "  background-color: #0078D7;"
-        "  color: white;"
-        "  border: none;"
-        "  border-radius: 19px;"
-        "  padding: 8px 22px;"
-        "  font-weight: 600;"
-        "}"
-        "QPushButton:hover { background-color: #1c88dc; }"
-        "QPushButton:pressed { background-color: #005a9e; }"
-        "QPushButton:disabled { background-color: palette(mid); color: palette(midlight); }");
-    // Half-width, centered to match the username field.
-    auto* btnRow = new QHBoxLayout();
-    btnRow->setContentsMargins(0, 0, 0, 0);
-    btnRow->addStretch(1);
-    btnRow->addWidget(m_connectButton, 2);
-    btnRow->addStretch(1);
-    lay->addLayout(btnRow);
-
-    connect(m_connectButton, &QPushButton::clicked,
-            this, &RollbackLobbyDialog::onConnectClicked);
-    connect(m_connectUsernameEdit, &QLineEdit::returnPressed,
-            this, &RollbackLobbyDialog::onConnectClicked);
-    connect(m_connectUsernameEdit, &QLineEdit::textChanged, this, [this](const QString&) {
-        if (m_connectStatusLabel) m_connectStatusLabel->clear();
-    });
-
-    outer->addWidget(card, 0, Qt::AlignHCenter);
-    outer->addStretch(2);
-    return page;
 }
 
 // ── Marquee ──────────────────────────────────────────────────────────
@@ -1681,14 +1589,17 @@ QVariantMap RollbackLobbyDialog::selectedBrowseRom() const
 void RollbackLobbyDialog::showEvent(QShowEvent* event)
 {
     QDialog::showEvent(event);
-    // Show the inline connect screen unless we're already in a live session.
-    if (m_client->state() == LobbyClient::ConnectionState::Connected)
+    if (m_client->state() == LobbyClient::ConnectionState::Disconnected ||
+        m_client->state() == LobbyClient::ConnectionState::Failed)
     {
-        showLobbyView();
-    }
-    else
-    {
-        showConnectView();
+        QTimer::singleShot(0, this, [this]() {
+            if (!isVisible() || m_connectPromptOpen ||
+                m_client->state() == LobbyClient::ConnectionState::Connected)
+                return;
+            const QString message = m_connectPromptMessage;
+            m_connectPromptMessage.clear();
+            promptForUsername(message);
+        });
     }
 }
 
@@ -1853,80 +1764,32 @@ QString RollbackLobbyDialog::prefillUsername() const
     return name.left(16);
 }
 
-void RollbackLobbyDialog::showConnectView(const QString& statusMessage)
+void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
 {
-    if (!m_topStack)
+    if (m_connectPromptOpen || !isVisible() ||
+        m_client->state() == LobbyClient::ConnectionState::Connected)
+        return;
+
+    m_connectPromptOpen = true;
+    LobbyConnectDialog prompt(this);
+    prompt.setUsername(prefillUsername());
+    prompt.setStatusMessage(statusMessage);
+    const int result = prompt.exec();
+    m_connectPromptOpen = false;
+
+    if (result != QDialog::Accepted)
     {
+        close();
         return;
     }
 
-    if (m_connectUsernameEdit)
-    {
-        if (m_connectUsernameEdit->text().trimmed().isEmpty())
-        {
-            m_connectUsernameEdit->setText(prefillUsername());
-        }
-        m_connectUsernameEdit->setFocus();
-        m_connectUsernameEdit->selectAll();
-    }
-    if (m_connectButton)
-    {
-        m_connectButton->setEnabled(true);
-    }
-    if (m_connectStatusLabel)
-    {
-        m_connectStatusLabel->setStyleSheet(statusMessage.isEmpty() ? QString() : "color: #c0392b;");
-        m_connectStatusLabel->setText(statusMessage);
-    }
-
-    m_topStack->setCurrentIndex(0);
-}
-
-void RollbackLobbyDialog::showLobbyView()
-{
-    if (m_topStack)
-    {
-        m_topStack->setCurrentIndex(1);
-    }
-}
-
-void RollbackLobbyDialog::onConnectClicked()
-{
-    const QString username = m_connectUsernameEdit
-        ? m_connectUsernameEdit->text().trimmed()
-        : QString();
-
-    if (username.length() < 3)
-    {
-        if (m_connectStatusLabel)
-        {
-            m_connectStatusLabel->setStyleSheet("color: #c0392b;");
-            m_connectStatusLabel->setText("Username must be at least 3 characters.");
-        }
-        if (m_connectUsernameEdit) m_connectUsernameEdit->setFocus();
-        return;
-    }
-
-    m_username  = username;
-    m_serverUrl = LobbyConnectDialog::defaultServerUrl();
-    if (m_userLabel) m_userLabel->setText(QString("User: %1").arg(m_username));
-
-    // Remember it so the field pre-fills next time.
-    QSettings s("RMG-K", "n02");
-    s.setValue("Lobby/Username", m_username);
-
-    if (m_connectButton) m_connectButton->setEnabled(false);
-    if (m_connectStatusLabel)
-    {
-        m_connectStatusLabel->setStyleSheet(QString());
-        m_connectStatusLabel->setText("Connecting…");
-    }
+    m_username  = prompt.username();
+    m_serverUrl = prompt.serverUrl();
+    if (m_userLabel)
+        m_userLabel->setText(QString("User: %1").arg(m_username));
 
     updateServerMeta();
     m_client->connectToServer(m_serverUrl, m_username, {}, QString());
-
-    // Transform straight into the lobby; the marquee shows live connection state.
-    showLobbyView();
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1953,10 +1816,12 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     if (m_createRoomBtn)
         m_createRoomBtn->setEnabled(connected && m_currentRoomId == 0);
 
-    if (s == LobbyClient::ConnectionState::Disconnected)
+    if (s == LobbyClient::ConnectionState::Disconnected ||
+        s == LobbyClient::ConnectionState::Failed)
     {
         m_playersTree->clear();
         m_roomsTree->clear();
+        m_matchesTree->clear();
         m_userItems.clear();
         m_roomItems.clear();
         m_currentRoomId = 0;
@@ -1967,6 +1832,7 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         m_quickMatchActive = false;
         if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
 
+        if (m_chatViewLobby) m_chatViewLobby->clear();
         if (m_chatViewRoom) m_chatViewRoom->clear();
         if (m_roomChatInput) m_roomChatInput->setEnabled(false);
         switchToRoomsView();
@@ -1974,16 +1840,19 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     updateServerMeta();
     updateInRoomBanner();
 
-    // Drive the top-level connect ↔ lobby swap. Failed is handled by the error
-    // slots below (onConnectError/onHelloFailed), which fire just before it and
-    // show the connect screen with a message.
-    if (s == LobbyClient::ConnectionState::Connected)
+    // A normal disconnect returns to the username prompt. Failed connections
+    // are reopened by the error slots below so the server's message is retained.
+    if (s == LobbyClient::ConnectionState::Disconnected && isVisible() &&
+        !m_connectPromptOpen)
     {
-        showLobbyView();
-    }
-    else if (s == LobbyClient::ConnectionState::Disconnected)
-    {
-        showConnectView();
+        QTimer::singleShot(0, this, [this]() {
+            if (!isVisible() || m_connectPromptOpen ||
+                m_client->state() == LobbyClient::ConnectionState::Connected)
+                return;
+            const QString message = m_connectPromptMessage;
+            m_connectPromptMessage.clear();
+            promptForUsername(message);
+        });
     }
 }
 
@@ -1992,14 +1861,30 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
     QString human = reason;
     if (reason == "username_taken")    human = "That username is already in use.";
     else if (reason == "invalid_hello") human = "Server rejected the connection handshake.";
+    else if (reason == "invalid_payload") human = "That username isn't allowed.";
     else if (reason == "version_mismatch") human = "Client version is incompatible with this server.";
+    else if (reason == "server_full") human = "The lobby is currently full.";
 
-    showConnectView(human);
+    m_connectPromptMessage = human;
+    QTimer::singleShot(0, this, [this]() {
+        if (!isVisible() || m_connectPromptOpen)
+            return;
+        const QString message = m_connectPromptMessage;
+        m_connectPromptMessage.clear();
+        promptForUsername(message);
+    });
 }
 
 void RollbackLobbyDialog::onConnectError(const QString& msg)
 {
-    showConnectView("Couldn't reach the lobby: " + msg);
+    m_connectPromptMessage = "Couldn't reach the lobby: " + msg;
+    QTimer::singleShot(0, this, [this]() {
+        if (!isVisible() || m_connectPromptOpen)
+            return;
+        const QString message = m_connectPromptMessage;
+        m_connectPromptMessage.clear();
+        promptForUsername(message);
+    });
 }
 
 void RollbackLobbyDialog::updateStatusIndicator(LobbyClient::ConnectionState s)

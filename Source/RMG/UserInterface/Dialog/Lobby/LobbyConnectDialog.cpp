@@ -18,6 +18,7 @@
 #include <QRegularExpressionValidator>
 #include <QSettings>
 #include <QDialogButtonBox>
+#include <QFont>
 
 using namespace UserInterface::Dialog;
 
@@ -43,8 +44,9 @@ QString LobbyConnectDialog::defaultServerUrl()
 LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle("Connect to RMG-K Lobby");
+    setWindowTitle("Join Rollback Netplay");
     setModal(true);
+    setMinimumWidth(380);
     buildUi();
     loadSettings();
     validateInput();
@@ -53,6 +55,15 @@ LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
 void LobbyConnectDialog::buildUi()
 {
     auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(24, 20, 24, 20);
+    root->setSpacing(14);
+
+    auto* heading = new QLabel("Welcome to Netplay!", this);
+    QFont headingFont = heading->font();
+    headingFont.setBold(true);
+    headingFont.setPointSizeF(headingFont.pointSizeF() + 2.0);
+    heading->setFont(headingFont);
+    root->addWidget(heading);
 
     auto* form = new QFormLayout;
 
@@ -62,7 +73,7 @@ void LobbyConnectDialog::buildUi()
     auto* validator = new QRegularExpressionValidator(
         QRegularExpression(R"([A-Za-z0-9_\-\.]{1,16})"), this);
     m_usernameEdit->setValidator(validator);
-    form->addRow("Username:", m_usernameEdit);
+    form->addRow("Enter a username:", m_usernameEdit);
 
     root->addLayout(form);
 
@@ -77,7 +88,10 @@ void LobbyConnectDialog::buildUi()
 
     root->addWidget(btnBox);
 
-    connect(m_usernameEdit, &QLineEdit::textChanged, this, &LobbyConnectDialog::validateInput);
+    connect(m_usernameEdit, &QLineEdit::textChanged, this, [this]() {
+        m_statusMessage.clear();
+        validateInput();
+    });
 }
 
 void LobbyConnectDialog::validateInput()
@@ -88,16 +102,32 @@ void LobbyConnectDialog::validateInput()
     if (user.length() < 3)
         reason = "Username must be at least 3 characters.";
 
-    m_validationLbl->setText(reason);
+    const QString message = reason.isEmpty() ? m_statusMessage : reason;
+    m_validationLbl->setStyleSheet(
+        message.isEmpty() ? "color: gray;" : "color: #c0392b;");
+    m_validationLbl->setText(message);
     m_connectButton->setEnabled(reason.isEmpty());
 }
 
 void LobbyConnectDialog::onConnect()
 {
-    m_serverUrl = kDefaultLobbyUrl;
+    m_serverUrl = defaultServerUrl();
     m_username  = m_usernameEdit->text().trimmed();
     saveSettings();
     accept();
+}
+
+void LobbyConnectDialog::setUsername(const QString& username)
+{
+    m_usernameEdit->setText(username);
+    m_usernameEdit->setFocus();
+    m_usernameEdit->selectAll();
+}
+
+void LobbyConnectDialog::setStatusMessage(const QString& message)
+{
+    m_statusMessage = message;
+    validateInput();
 }
 
 void LobbyConnectDialog::loadSettings()
