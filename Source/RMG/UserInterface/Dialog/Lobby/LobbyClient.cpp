@@ -387,7 +387,11 @@ void LobbyClient::onWsDisconnected()
     // User ids restart when the server does — drop measurements so a recycled
     // id can't inherit another player's ping history.
     m_measuredPing.clear();
-    setState(ConnectionState::Disconnected);
+    // A socket error or HELLO_FAIL sets Failed before closing the WebSocket.
+    // Keep that state so the dialog can preserve the useful error for retry.
+    // connectToServer() permits retries from Failed.
+    if (m_state != ConnectionState::Failed)
+        setState(ConnectionState::Disconnected);
 }
 
 void LobbyClient::onWsErrorOccurred()
