@@ -22,7 +22,7 @@
 
 using namespace UserInterface::Dialog;
 
-CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
+CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername, const QString& defaultRoomName,
                                    const QString& gameName, const QString& gameMd5,
                                    QWidget* parent)
     : QDialog(parent)
@@ -32,14 +32,14 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
     // The game comes from the lobby's shared picker, not a picker of our own.
     m_romName = gameName;
     m_romMd5  = gameMd5;
-    buildUi(defaultUsername);
+    buildUi(defaultUsername, defaultRoomName);
     if (m_gameLabel)
         m_gameLabel->setText(gameName.isEmpty() ? QStringLiteral("—") : gameName);
     loadDefaults();
     validateInput();
 }
 
-void CreateRoomDialog::buildUi(const QString& defaultUsername)
+void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& defaultRoomName)
 {
     auto* root = new QVBoxLayout(this);
 
@@ -47,7 +47,9 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
 
     m_nameEdit = new QLineEdit(this);
     m_nameEdit->setMaxLength(48);
-    if (!defaultUsername.isEmpty())
+    if (!defaultRoomName.isEmpty())
+        m_nameEdit->setText(defaultRoomName);
+    else if (!defaultUsername.isEmpty())
         m_nameEdit->setText(QString("%1's Room").arg(defaultUsername));
     else
         m_nameEdit->setPlaceholderText("My Room");

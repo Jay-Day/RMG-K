@@ -33,6 +33,8 @@ public:
 
     QString serverUrl() const { return m_serverUrl; }
     QString username()  const { return m_username; }
+    void setUsername(const QString& username);
+    void setStatusMessage(const QString& message);
 
     // Production lobby endpoint every client connects to. Exposed so callers
     // that bypass this dialog (e.g. the netplay launcher's rollback tab) can
@@ -54,6 +56,7 @@ private:
 
     QString m_serverUrl;
     QString m_username;
+    QString m_statusMessage;
 };
 
 } // namespace Dialog
