@@ -258,6 +258,9 @@ private:
 
     // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
     // its slot; the seats container handles the drop and asks the server to swap.
+    // Seats may be left sparse on purpose (P1 + P3 with P2 empty) — the core
+    // sizes the session by the highest occupied seat, so a swap into an empty
+    // seat is a supported move, not something to guard against.
     void startSeatDrag(int slot, QWidget* card);
     int  seatSlotAtPos(const QPoint& pos) const;
 

@@ -2833,6 +2833,10 @@ void RollbackLobbyDialog::refreshStartButton()
     const bool iAmHost = (m_client && m_currentRoomHostId == selfId);
     const bool waiting = (m_currentRoomState == "waiting");
 
+    // Seats may be sparse — two players in P1 and P3 is a legitimate 3-port
+    // match with P2 empty, so this counts occupants without requiring them to
+    // run contiguously from P1. The core sizes the GekkoNet session by the
+    // highest occupied seat and feeds empty ports zeroed input.
     int seated = 0;
     int peersAwaitingPing = 0;
     for (const auto& s : m_seats)

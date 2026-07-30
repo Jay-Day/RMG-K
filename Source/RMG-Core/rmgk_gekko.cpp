@@ -132,7 +132,17 @@ struct PendingGekkoSave
 };
 
 GekkoSession* g_GekkoSession = nullptr;
+// Number of N64 controller ports this session drives — the highest occupied
+// seat, NOT the player count. Seats may be sparse (players in P1 and P3 with P2
+// empty), so this is >= g_GekkoActors.
 int g_GekkoPlayers = 0;
+// Number of GekkoNet actors, which is the actual player count. GekkoNet hands
+// back handles in gekko_add_actor call order, so with sparse seats the handles
+// are dense (0..g_GekkoActors-1) while g_GekkoPlayerHandles stays seat-indexed
+// with -1 in the holes. Only the two places that talk to GekkoNet's own arrays
+// — the per-frame input blob and the handle bounds check — use this; everything
+// else is per-port and wants g_GekkoPlayers.
+int g_GekkoActors = 0;
 int g_GekkoInputSize = 0;
 int g_GekkoLocalPlayer = 0;
 int g_GekkoLocalHandle = -1;
@@ -1222,8 +1232,12 @@ bool submit_local_input()
 
 bool latch_gekko_input(const GekkoGameEvent* event)
 {
+    // GekkoNet's blob is packed by handle — one entry per actor. The latched
+    // buffer we hand the PIF is packed by port — one entry per seat, including
+    // the empty ones.
+    const int actorBytes = g_GekkoActors * g_GekkoInputSize;
     const int expectedBytes = g_GekkoPlayers * g_GekkoInputSize;
-    if (event->data.adv.inputs == nullptr || static_cast<int>(event->data.adv.input_len) < expectedBytes)
+    if (event->data.adv.inputs == nullptr || static_cast<int>(event->data.adv.input_len) < actorBytes)
     {
         write_gekko_log("sync_input result=fail reason=shape");
         return false;
@@ -1238,7 +1252,15 @@ bool latch_gekko_input(const GekkoGameEvent* event)
     {
         const size_t playerIndex = static_cast<size_t>(player - 1);
         const int handle = playerIndex < g_GekkoPlayerHandles.size() ? g_GekkoPlayerHandles[playerIndex] : -1;
-        if (handle < 0 || handle >= g_GekkoPlayers)
+        // handle == -1 is an intentionally empty seat (a gap below an occupied
+        // port). start_lobby_session already proved every *occupied* seat got an
+        // actor, so a hole here is by design — leave the memset zeros in place,
+        // which the N64 reads as a controller holding nothing.
+        if (handle < 0)
+        {
+            continue;
+        }
+        if (handle >= g_GekkoActors)
         {
             write_gekko_log("sync_input result=fail reason=handle_map");
             return false;
@@ -2108,6 +2130,7 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     gekko_set_runahead(g_GekkoSession, 0);
 
     g_GekkoPlayers = players;
+    g_GekkoActors = players; // direct P2P seats are always contiguous 1..players
     g_GekkoInputSize = inputSize;
     g_GekkoLocalHandle = -1;
     g_GekkoRemoteHandle = -1;
@@ -2237,8 +2260,12 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     g_GekkoStopRequested.store(false, std::memory_order_relaxed);
     reset_gekko_log();
 
+    // `players` is the highest occupied SEAT, not the player count — seats may
+    // be sparse (P1 + P3 with P2 empty), so numRemotes can be short of
+    // players - 1. It can never exceed it: seats are unique and one is ours.
     if (gameName == nullptr || players < 2 || players > 4 || inputSize != static_cast<int>(sizeof(uint32_t)) ||
-        localPlayer < 1 || localPlayer > players || remotes == nullptr || numRemotes != players - 1)
+        localPlayer < 1 || localPlayer > players || remotes == nullptr ||
+        numRemotes < 1 || numRemotes > players - 1)
     {
         write_gekko_log("start_lobby_session result=fail reason=invalid_params");
         return false;
@@ -2302,6 +2329,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     gekko_set_runahead(g_GekkoSession, 0);
 
     g_GekkoPlayers = players;
+    g_GekkoActors = numRemotes + 1;
     g_GekkoInputSize = inputSize;
     g_GekkoLocalHandle = -1;
     g_GekkoRemoteHandle = -1;
@@ -2315,7 +2343,8 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     {
         std::ostringstream stream;
         stream << "start_lobby_session game=" << gameName
-               << " players=" << players
+               << " seats=" << players
+               << " actors=" << g_GekkoActors
                << " input_size=" << inputSize
                << " local_player=" << localPlayer
                << " local_port=" << localPort
@@ -2379,9 +2408,21 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
             }
             if (remoteIndex < 0)
             {
-                write_gekko_log("gekko_add_actor result=fail type=remote reason=no_endpoint_for_slot");
-                close_session();
-                return false;
+                // Nobody owns this seat — an intentional gap, not a missing
+                // endpoint. The caller already proved that: remote slots are
+                // unique, in range, and none collides with ours, so the only
+                // seats left unclaimed are the empty ones. Add no actor and
+                // leave g_GekkoPlayerHandles[seat-1] == -1; latch_gekko_input
+                // feeds that port zeroed input. Every peer walks seats in the
+                // same ascending order, so the surviving actors get identical
+                // handles on both ends.
+                if (g_GekkoLogEnabled)
+                {
+                    std::ostringstream stream;
+                    stream << "gekko_add_actor skipped player=" << player << " reason=empty_seat";
+                    write_gekko_log(stream.str());
+                }
+                continue;
             }
             std::string& addrString = remoteAddrStrings[static_cast<size_t>(remoteIndex)];
             GekkoNetAddress address = {};
@@ -2471,6 +2512,7 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     gekko_set_runahead(g_GekkoSession, 0);
 
     g_GekkoPlayers = players;
+    g_GekkoActors = players; // local/stress seats are always contiguous 1..players
     g_GekkoInputSize = inputSize;
     g_GekkoLocalHandle = -1;
     g_GekkoRemoteHandle = -1;
@@ -2539,6 +2581,7 @@ CORE_EXPORT void rmgk_gekko::close_session()
     }
     g_GekkoSession = nullptr;
     g_GekkoPlayers = 0;
+    g_GekkoActors = 0;
     g_GekkoInputSize = 0;
     g_GekkoLocalPlayer = 0;
     g_GekkoLocalHandle = -1;
