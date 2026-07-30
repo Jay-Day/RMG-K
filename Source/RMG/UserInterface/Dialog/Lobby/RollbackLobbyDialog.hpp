@@ -181,6 +181,7 @@ private:
     // typed-but-not-committed entry still resolves. Shared by Quick Match and
     // Create Room. Empty map when nothing valid is selected.
     QVariantMap selectedBrowseRom() const;
+    void refreshSameGameFilter();
 
     // Show the disconnected lobby behind a compact modal username prompt.
     // No server connection is attempted until the prompt is accepted.
@@ -381,6 +382,7 @@ private:
     QPushButton* m_quickMatchBtn = nullptr;   // primary CTA (blue)
     QPushButton* m_createRoomBtn = nullptr;
     QComboBox*   m_browseRomCombo = nullptr;   // library game picker (feeds Create Room)
+    QCheckBox*   m_sameGameFilterCheck = nullptr;
 
     QHash<quint64, QTreeWidgetItem*> m_userItems;
     QHash<quint64, QTreeWidgetItem*> m_roomItems;

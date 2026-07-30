@@ -614,6 +614,8 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
                 s.setValue("Rom", name);
                 s.endGroup();
             });
+    connect(m_browseRomCombo, &QComboBox::currentTextChanged,
+            this, [this](const QString&) { refreshSameGameFilter(); });
     gameRow->addWidget(gameLbl, 0);
     gameRow->addWidget(m_browseRomCombo, 1);
     lay->addLayout(gameRow);
@@ -632,7 +634,19 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     auto* roomsHeader = new QLabel("ACTIVE ROOMS", this);
     roomsHeader->setProperty("class", "SectionHeader");
-    roomsLay->addWidget(roomsHeader);
+    auto* roomsHeaderRow = new QHBoxLayout;
+    roomsHeaderRow->setContentsMargins(0, 0, 0, 0);
+    roomsHeaderRow->setSpacing(SPACING_DEFAULT);
+    roomsHeaderRow->addWidget(roomsHeader, 1);
+
+    m_sameGameFilterCheck = new QCheckBox("Same game only", this);
+    m_sameGameFilterCheck->setToolTip(
+        "Only show rooms and matches for the selected game.");
+    m_sameGameFilterCheck->setEnabled(!selectedBrowseRom().isEmpty());
+    connect(m_sameGameFilterCheck, &QCheckBox::toggled,
+            this, [this](bool) { onRoomListChanged(); });
+    roomsHeaderRow->addWidget(m_sameGameFilterCheck);
+    roomsLay->addLayout(roomsHeaderRow);
 
     m_roomsTree = new QTreeWidget(this);
     m_roomsTree->setObjectName("RoomsTree");
@@ -1525,6 +1539,7 @@ void RollbackLobbyDialog::populateBrowseRoms()
         m_browseRomCombo->addItem("No ROMs in your library — add some first");
         m_browseRomCombo->setEnabled(false);
         m_browseRomCombo->blockSignals(false);
+        refreshSameGameFilter();
         return;
     }
     m_browseRomCombo->setEnabled(true);
@@ -1564,22 +1579,31 @@ void RollbackLobbyDialog::populateBrowseRoms()
     }
 
     m_browseRomCombo->blockSignals(false);
+    refreshSameGameFilter();
 }
 
 QVariantMap RollbackLobbyDialog::selectedBrowseRom() const
 {
     if (!m_browseRomCombo || !m_browseRomCombo->isEnabled())
         return {};
-    QVariantMap data = m_browseRomCombo->currentData().toMap();
-    // Editable combo: if the user typed an exact name but didn't commit it (no
-    // index change), currentData() is stale — fall back to matching the text.
-    if (data.value("md5").toString().isEmpty())
-    {
-        const int idx = m_browseRomCombo->findText(m_browseRomCombo->currentText());
-        if (idx >= 0)
-            data = m_browseRomCombo->itemData(idx).toMap();
-    }
-    return data;
+
+    // An editable combo can retain the previous currentData while its line edit
+    // contains different text. Only accept data for the text actually shown.
+    const QString currentText = m_browseRomCombo->currentText();
+    int idx = m_browseRomCombo->currentIndex();
+    if (idx < 0 || m_browseRomCombo->itemText(idx) != currentText)
+        idx = m_browseRomCombo->findText(currentText, Qt::MatchFixedString);
+    return idx >= 0 ? m_browseRomCombo->itemData(idx).toMap() : QVariantMap{};
+}
+
+void RollbackLobbyDialog::refreshSameGameFilter()
+{
+    if (!m_sameGameFilterCheck)
+        return;
+
+    m_sameGameFilterCheck->setEnabled(!selectedBrowseRom().isEmpty());
+    if (m_sameGameFilterCheck->isChecked() && m_roomsTree && m_matchesTree)
+        onRoomListChanged();
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2169,9 +2193,30 @@ void RollbackLobbyDialog::onRoomListChanged()
     m_roomsTree->clear();
     m_matchesTree->clear();
     m_roomItems.clear();
+
+    const bool sameGameOnly =
+        m_sameGameFilterCheck && m_sameGameFilterCheck->isChecked() &&
+        m_sameGameFilterCheck->isEnabled();
+    const QVariantMap selectedRom = sameGameOnly ? selectedBrowseRom() : QVariantMap{};
+    const QString selectedMd5 = selectedRom.value("md5").toString().trimmed();
+    const QString selectedName = selectedRom.value("name").toString().trimmed();
+
     for (auto it = m_client->rooms().constBegin(); it != m_client->rooms().constEnd(); ++it)
     {
         const LobbyClient::LobbyRoomSummary& r = it.value();
+
+        if (sameGameOnly)
+        {
+            const bool sameMd5 =
+                !selectedMd5.isEmpty() && !r.romMd5.isEmpty() &&
+                selectedMd5.compare(r.romMd5, Qt::CaseInsensitive) == 0;
+            const bool sameName =
+                (selectedMd5.isEmpty() || r.romMd5.isEmpty()) &&
+                !selectedName.isEmpty() &&
+                selectedName.compare(r.romName, Qt::CaseInsensitive) == 0;
+            if (!sameMd5 && !sameName)
+                continue;
+        }
 
         // A room that's playing is a live match — show it under Ongoing Matches
         // and drop it from the joinable Active Rooms list.
