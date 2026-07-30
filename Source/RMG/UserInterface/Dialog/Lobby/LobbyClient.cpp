@@ -432,6 +432,7 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "CHAT_MSG")             handleChatMsg(data);
     else if (type == "CHAT_HISTORY_REPLY")   handleChatHistoryReply(data);
     else if (type == "PING_PROBE_REPLY")     handlePingProbeReply(data);
+    else if (type == "PING_PROBE_INCOMING")  handlePingProbeIncoming(data);
     else if (type == "MATCH_BEGIN")          handleMatchBegin(data);
     else if (type == "MATCH_PEER_LEFT")      handleMatchPeerLeft(data);
     else if (type == "QUICK_MATCH_STATUS")   handleQuickMatchStatus(data);
@@ -608,15 +609,21 @@ void LobbyClient::handleChatHistoryReply(const QJsonObject& data)
     emit chatHistoryReceived(channel, out);
 }
 
-void LobbyClient::handlePingProbeReply(const QJsonObject& data)
+// Fire a UDP PROBE at a peer's anchor socket. The peer recognises the opcode
+// and echoes back a PROBE_REPLY; we match by nonce to compute RTT. Shared by
+// the reply path (we asked) and the incoming path (the server told us someone
+// else asked about us) so both punch identically.
+void LobbyClient::sendProbeTo(quint64 userId, const QString& endpoint)
 {
-    const quint64 uid = static_cast<quint64>(data.value("targetUserId").toDouble());
-    const QString endpoint = data.value("targetEndpoint").toString();
-    emit pingProbeReply(uid, endpoint);
-
-    if (endpoint.isEmpty() || !m_udp ||
-        m_udp->state() == QAbstractSocket::UnconnectedState ||
-        m_selfUserId == 0)
+    if (endpoint.isEmpty())
+    {
+        // Server knows the user but has never seen a UDP packet from them, so
+        // there's nothing to probe. Logged because this used to fail silently
+        // and looked identical to a dropped probe.
+        qInfo() << "Rollback lobby probe skipped: no endpoint for user" << userId;
+        return;
+    }
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState || m_selfUserId == 0)
         return;
 
     const int colon = endpoint.lastIndexOf(':');
@@ -627,8 +634,6 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     if (addr.isNull() || port == 0)
         return;
 
-    // Fire a UDP PROBE at the peer's anchor socket. The peer recognises the
-    // opcode and echoes back a PROBE_REPLY; we match by nonce to compute RTT.
     const quint64 nonce = QRandomGenerator::global()->generate64();
 
     QByteArray pkt;
@@ -641,11 +646,33 @@ void LobbyClient::handlePingProbeReply(const QJsonObject& data)
     pkt.append(reinterpret_cast<const char*>(&nonceBE), sizeof(nonceBE));
 
     ProbeInFlight in;
-    in.targetUserId = uid;
+    in.targetUserId = userId;
     in.sendMs       = QDateTime::currentMSecsSinceEpoch();
     m_pendingProbes.insert(nonce, in);
 
     m_udp->writeDatagram(pkt, addr, port);
+}
+
+void LobbyClient::handlePingProbeReply(const QJsonObject& data)
+{
+    const quint64 uid = static_cast<quint64>(data.value("targetUserId").toDouble());
+    const QString endpoint = data.value("targetEndpoint").toString();
+    emit pingProbeReply(uid, endpoint);
+    sendProbeTo(uid, endpoint);
+}
+
+// The server is introducing us to a peer that asked about us, or that we were
+// just seated with. Probing back opens our NAT mapping at the same moment they
+// open theirs — without this our side stays closed and their probe is dropped.
+// We don't need a measurement from it ourselves; the PROBE_REPLY they echo is
+// what makes their reading work, and any reply we get updates ours for free.
+void LobbyClient::handlePingProbeIncoming(const QJsonObject& data)
+{
+    const quint64 uid = static_cast<quint64>(data.value("fromUserId").toDouble());
+    const QString endpoint = data.value("fromEndpoint").toString();
+    if (uid == 0 || uid == m_selfUserId)
+        return;
+    sendProbeTo(uid, endpoint);
 }
 
 void LobbyClient::handleMatchBegin(const QJsonObject& data)

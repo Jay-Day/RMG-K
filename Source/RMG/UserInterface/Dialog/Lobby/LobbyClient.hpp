@@ -140,7 +140,10 @@ public:
     // ack with a fresh ROOM_STATE so all seated peers stay in sync.
     void updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto);
 
-    // Ping probe — server replies with target's UDP endpoint; client probes directly.
+    // Ping probe — server replies with target's UDP endpoint; client probes
+    // directly. The server also introduces us to the target so they probe back
+    // at the same moment; a lone one-way probe dies at their NAT. Rate limited
+    // server-side, so callers should still avoid firing these in a loop.
     void requestPingProbe(quint64 targetUserId);
 
     // Most recent measured round-trip to this peer in milliseconds, or -1 if
@@ -275,6 +278,9 @@ private:
     void handleChatHistoryReply(const QJsonObject& data);
     void handlePingProbeReply(const QJsonObject& data);
     void handleMatchBegin(const QJsonObject& data);
+    void handlePingProbeIncoming(const QJsonObject& data);
+    // Fire one UDP PROBE at `endpoint`. Shared by the reply and incoming paths.
+    void sendProbeTo(quint64 userId, const QString& endpoint);
     void handleMatchPeerLeft(const QJsonObject& data);
     void handleQuickMatchStatus(const QJsonObject& data);
     void handleSpectateBegin(const QJsonObject& data);

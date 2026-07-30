@@ -161,6 +161,11 @@ private slots:
     // measurement from each seated peer (skipping self). Cadence is set
     // by m_pingProbeTimer's interval.
     void onPingProbeTick();
+
+    // Measure one peer because the user selected a row showing their ping.
+    // Lobby rows show the region estimate until this lands; room seats are
+    // measured continuously by onPingProbeTick regardless.
+    void probeOnDemand(quint64 userId);
     void onPingMeasured(quint64 userId, int rttMs);
 
 private:
@@ -306,7 +311,8 @@ private:
     QSplitter*   m_splitter      = nullptr;
     QSplitter*   m_browseSplitter = nullptr; // Active Rooms / Ongoing Matches divider
     QTreeWidget* m_playersTree   = nullptr;
-    int m_lobbyProbeCursor = 0; // round-robin index for lobby-wide ping probes
+    // Last on-demand probe per user id, for probeOnDemand's throttle.
+    QHash<quint64, qint64> m_lastOnDemandProbe;
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;
     QTimer*      m_matchDurationTimer = nullptr;

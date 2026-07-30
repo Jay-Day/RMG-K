@@ -681,6 +681,13 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     }
     connect(m_roomsTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onRoomDoubleClicked);
+    // Selecting a room measures the host on demand, so the ping column can be
+    // an estimate until someone actually cares about that room.
+    connect(m_roomsTree, &QTreeWidget::itemClicked, this,
+            [this](QTreeWidgetItem* item, int) {
+                if (item)
+                    probeOnDemand(item->data(0, Qt::UserRole + 1).toULongLong());
+            });
     // Moderators get a right-click "close room" action; a no-op for everyone else.
     m_roomsTree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_roomsTree, &QTreeWidget::customContextMenuRequested,
@@ -1292,6 +1299,12 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     connect(m_playersTree->header(), &QHeaderView::sectionResized, this,
             [this](int index, int, int) { clampPlayersColumns(index); });
+    // Selecting a player measures them on demand and refreshes their tooltip.
+    connect(m_playersTree, &QTreeWidget::itemClicked, this,
+            [this](QTreeWidgetItem* item, int) {
+                if (item)
+                    probeOnDemand(item->data(0, Qt::UserRole).toULongLong());
+            });
     // Click in the empty area below the rows to clear the selection, and catch
     // viewport resizes to pull the columns back in (both in eventFilter —
     // there's no built-in property for either).
@@ -2214,10 +2227,12 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         {
             // Still a region-derived number, but it's hedged as an estimate and
             // only stands in until a real UDP probe lands — unlike a region
-            // label, it isn't asserting where the player is.
+            // label, it isn't asserting where the player is. Nothing probes
+            // lobby users in the background any more, so say what makes it real
+            // rather than implying a measurement is already on its way.
             const int rtt = LobbyRegions::estimatedRttMs(m_client->selfRegion(), u.region);
-            tipLines << (rtt > 0 ? QString("Ping: ~%1 ms (estimate)").arg(rtt)
-                                 : QStringLiteral("Ping: measuring…"));
+            tipLines << (rtt > 0 ? QString("Ping: ~%1 ms (estimate — click to measure)").arg(rtt)
+                                 : QStringLiteral("Ping: click to measure"));
         }
     }
     const QString tip = tipLines.join(QChar('\n'));
@@ -2402,10 +2417,13 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     item->setText(3, r.romName);
     item->setText(4, QString("%1/%2").arg(r.players).arg(r.maxPlayers));
     item->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
+    // Host id rides along so selecting the row can measure the host on demand.
+    item->setData(0, Qt::UserRole + 1, QVariant::fromValue(r.hostId));
 
-    // Your ping to the host — measured by the background lobby probes when
-    // available, the region estimate otherwise — so a room can be judged
-    // before joining. Own room shows a dash.
+    // Your ping to the host — the real measurement once one exists, the region
+    // estimate until then — so a room can be judged before joining. Nothing is
+    // probed in the background any more; selecting the row measures it. Own
+    // room shows a dash.
     const QString dash = QString(QChar(0x2014));
     int pingMs = -1;
     bool pingMeasured = false;
@@ -2428,8 +2446,8 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     item->setData(2, Qt::UserRole, pingMs);
     item->setToolTip(2,
         pingMeasured  ? QStringLiteral("Your measured ping to the host")
-        : pingMs >= 0 ? QStringLiteral("Estimated from regions — measuring…")
-                      : QString());
+        : pingMs >= 0 ? QStringLiteral("Estimated from regions — click the row to measure")
+                      : QStringLiteral("Click the row to measure your ping to the host"));
 
     // Seats: green when there's room to join, red when full.
     const bool full = (r.maxPlayers > 0 && r.players >= r.maxPlayers);
@@ -3104,21 +3122,33 @@ void RollbackLobbyDialog::onPingProbeTick()
         }
     }
 
-    // Everyone else refreshes on a slow round-robin (a few users per tick), so
-    // the players-list hover shows a real measurement instead of the region
-    // table without probe-flooding a large lobby. A 30-player lobby cycles in
-    // ~30 s; the mutual traffic doubles as the NAT hole-punch for these pings.
-    QList<quint64> uids = m_userItems.keys();
-    std::sort(uids.begin(), uids.end());
-    uids.removeAll(selfId);
-    if (uids.isEmpty())
+    // Everyone outside the room is measured on demand — see probeOnDemand.
+    // The old slow round-robin probed a few lobby users per tick so a hover
+    // might find a real number, but in a busy lobby most rows still showed the
+    // region estimate and the whole lobby traded probe traffic continuously to
+    // populate values nobody looked at.
+}
+
+// Measure a specific peer because the user asked to see their ping, then let
+// onPingMeasured repaint whatever row is showing it. Throttled per user: the
+// server drops requests over its own flood budget, and a double-click or a
+// click-drag across rows would otherwise burn that budget on one peer and
+// starve the seat refresh that Start gating depends on.
+void RollbackLobbyDialog::probeOnDemand(quint64 userId)
+{
+    if (!m_client || userId == 0 || userId == m_client->selfUserId())
         return;
-    constexpr int kLobbyProbesPerTick = 3;
-    for (int i = 0; i < kLobbyProbesPerTick && i < uids.size(); ++i)
-    {
-        m_lobbyProbeCursor = (m_lobbyProbeCursor + 1) % uids.size();
-        m_client->requestPingProbe(uids[m_lobbyProbeCursor]);
-    }
+    if (m_client->state() != LobbyClient::ConnectionState::Connected)
+        return;
+
+    constexpr qint64 kOnDemandProbeCooldownMs = 3'000;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const auto it = m_lastOnDemandProbe.constFind(userId);
+    if (it != m_lastOnDemandProbe.constEnd() && now - it.value() < kOnDemandProbeCooldownMs)
+        return;
+    m_lastOnDemandProbe[userId] = now;
+
+    m_client->requestPingProbe(userId);
 }
 
 void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
