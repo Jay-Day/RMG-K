@@ -2058,11 +2058,13 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     else
         item->setToolTip(1, QString());
 
-    // Region column: country flag (Fightcade-style — the server geolocates the
-    // ISO country code, we render the bundled SVG) + compact region label. Old
-    // servers don't send a country, so fall back to the region's emoji badge.
-    // The ping moved into the tooltip — a measured UDP round-trip when the
-    // background probes have one, the coarse region-matrix estimate otherwise.
+    // Region column: country flag only (Fightcade-style — the server geolocates
+    // the ISO country code, we render the bundled SVG). No text label: the
+    // region is a coarse server-side bucket that often disagrees with the
+    // geolocated country sitting right next to it, so printing both invited the
+    // reader to trust a mismatch. The full region still lives in the tooltip.
+    // Old servers don't send a country, so fall back to the region's emoji
+    // badge — still a glyph, not an abbreviation.
     // U+2014 EM DASH — using QChar avoids any file-encoding ambiguity in
     // the literal.
     const QString dash = QString(QChar(0x2014));
@@ -2071,7 +2073,7 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     if (!u.country.isEmpty() && QFile::exists(flagResource))
     {
         item->setIcon(2, QIcon(flagResource));
-        item->setText(2, u.region.isEmpty() ? QString() : LobbyRegions::shortLabelFor(u.region));
+        item->setText(2, QString());
         const QLocale::Territory territory = QLocale::codeToTerritory(u.country);
         countryName = (territory != QLocale::AnyTerritory)
             ? QLocale::territoryToString(territory)
@@ -2080,15 +2082,16 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     else
     {
         item->setIcon(2, QIcon());
-        item->setText(2, u.region.isEmpty()
-            ? dash
-            : LobbyRegions::flagFor(u.region) + QChar(' ') + LobbyRegions::shortLabelFor(u.region));
+        item->setText(2, u.region.isEmpty() ? dash : LobbyRegions::flagFor(u.region));
     }
 
-    const QString regionLabel = LobbyRegions::labelFor(u.region);
-    QString tip = QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel);
+    // Built as lines so an absent field just doesn't contribute, rather than
+    // leaving a stray separator. The region is deliberately not among them: it's
+    // a coarse server-side bucket that can disagree with the geolocated country,
+    // so the country is the only location we state.
+    QStringList tipLines;
     if (!countryName.isEmpty())
-        tip = QString("Country: %1\n%2").arg(countryName, tip);
+        tipLines << QString("Country: %1").arg(countryName);
     // Self-reported transport medium ("wifi"/"lan"/...) and build, when the
     // peer's client and the server are new enough to relay them.
     const QString connLabel =
@@ -2098,21 +2101,25 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         : u.connection == QLatin1String("bluetooth") ? QStringLiteral("Bluetooth")
         : QString();
     if (!connLabel.isEmpty())
-        tip += QString("\nConnection: %1").arg(connLabel);
+        tipLines << QString("Connection: %1").arg(connLabel);
     if (!u.clientVersion.isEmpty())
-        tip += QString("\nBuild: %1").arg(u.clientVersion);
+        tipLines << QString("Build: %1").arg(u.clientVersion);
     if (u.id != m_client->selfUserId())
     {
         const int measured = m_client->measuredPingMs(u.id);
         if (measured >= 0)
-            tip += QString("\nPing: %1 ms").arg(measured);
+            tipLines << QString("Ping: %1 ms").arg(measured);
         else
         {
+            // Still a region-derived number, but it's hedged as an estimate and
+            // only stands in until a real UDP probe lands — unlike a region
+            // label, it isn't asserting where the player is.
             const int rtt = LobbyRegions::estimatedRttMs(m_client->selfRegion(), u.region);
-            tip += rtt > 0 ? QString("\nPing: ~%1 ms (regional estimate)").arg(rtt)
-                           : QStringLiteral("\nPing: measuring…");
+            tipLines << (rtt > 0 ? QString("Ping: ~%1 ms (estimate)").arg(rtt)
+                                 : QStringLiteral("Ping: measuring…"));
         }
     }
+    const QString tip = tipLines.join(QChar('\n'));
     item->setToolTip(0, tip);
     item->setToolTip(2, tip);
     item->setData(0, Qt::UserRole, QVariant::fromValue(u.id));
