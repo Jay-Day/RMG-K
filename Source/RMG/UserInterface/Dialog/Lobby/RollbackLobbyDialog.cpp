@@ -75,6 +75,7 @@
 #include <QVariant>
 #include <QIcon>
 #include <QFile>
+#include <QFontMetrics>
 #include <QLocale>
 #include <QMenu>
 #include <algorithm>
@@ -394,6 +395,9 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     // Saved here rather than closeEvent because Esc rejects the dialog
     // without a close event.
     QSettings s("RMG-K", "n02");
+    if (m_playersTree)
+        s.setValue(QString("RollbackLobby/PlayersHeaderState.c%1").arg(m_playersTree->columnCount()),
+                   m_playersTree->header()->saveState());
     if (m_roomsTree)
         s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
                    m_roomsTree->header()->saveState());
@@ -1251,12 +1255,46 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersTree->setAlternatingRowColors(true);
     m_playersTree->setFrameShape(QFrame::NoFrame);
     m_playersTree->setUniformRowHeights(true);
+    // Interactive on every section so the user can drag the dividers — Stretch
+    // and ResizeToContents both lock a column against manual resizing, which is
+    // why these three used to be fixed. Player absorbs the slack instead of the
+    // last section, so Region stays as narrow as its header text rather than
+    // being stretched across whatever space is left over.
     m_playersTree->header()->setStretchLastSection(false);
-    m_playersTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_playersTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_playersTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    // Click in the empty area below the rows to clear the selection (handled in
-    // eventFilter — there's no built-in property for this).
+    m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+    {
+        // Size State and Region to their widest expected text once, up front:
+        // the tree is empty at construction, so ResizeToContents here would
+        // measure the header labels alone and clip "Spectating" later. Region
+        // holds only a flag icon now, so its header label is the wider of the
+        // two and sets the width.
+        const QFontMetrics fm(m_playersTree->header()->font());
+        const int pad = 20; // sort indicator + section margins
+        const int stateWidth  = fm.horizontalAdvance(QStringLiteral("Spectating")) + pad;
+        const int regionWidth = fm.horizontalAdvance(QStringLiteral("Region")) + pad;
+        m_playersTree->setColumnWidth(1, stateWidth);
+        m_playersTree->setColumnWidth(2, regionWidth);
+        m_playersTree->setColumnWidth(0, 200);
+    }
+    {
+        // The column count is part of the key: restoring a state saved for a
+        // different column layout half-applies and breaks the header (missing
+        // section dividers, wrong stretch section).
+        QSettings s("RMG-K", "n02");
+        const QString key = QString("RollbackLobby/PlayersHeaderState.c%1").arg(m_playersTree->columnCount());
+        const QByteArray headerState = s.value(key).toByteArray();
+        if (!headerState.isEmpty())
+            m_playersTree->header()->restoreState(headerState);
+    }
+    // The columns are clamped to the viewport (clampPlayersColumns), so a
+    // horizontal scrollbar can never be needed — turning it off also stops Qt
+    // reserving space for one mid-drag and reflowing the row underneath.
+    m_playersTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(m_playersTree->header(), &QHeaderView::sectionResized, this,
+            [this](int index, int, int) { clampPlayersColumns(index); });
+    // Click in the empty area below the rows to clear the selection, and catch
+    // viewport resizes to pull the columns back in (both in eventFilter —
+    // there's no built-in property for either).
     m_playersTree->viewport()->installEventFilter(this);
     cardLay->addWidget(m_playersTree);
     lay->addWidget(card);
@@ -1640,14 +1678,23 @@ void RollbackLobbyDialog::closeEvent(QCloseEvent* event)
 
 bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
 {
-    // A click in the players-list viewport that doesn't land on a row clears
-    // the selection, so a highlighted name can be dismissed by clicking off it.
-    if (m_playersTree && watched == m_playersTree->viewport() &&
-        event->type() == QEvent::MouseButtonPress)
+    if (m_playersTree && watched == m_playersTree->viewport())
     {
-        auto* me = static_cast<QMouseEvent*>(event);
-        if (!m_playersTree->itemAt(me->position().toPoint()))
-            m_playersTree->clearSelection();
+        // A click in the players-list viewport that doesn't land on a row clears
+        // the selection, so a highlighted name can be dismissed by clicking off it.
+        if (event->type() == QEvent::MouseButtonPress)
+        {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (!m_playersTree->itemAt(me->position().toPoint()))
+                m_playersTree->clearSelection();
+        }
+        // Narrowing the dialog shrinks the viewport out from under columns that
+        // were already sized to it, which is the one way they'd overflow without
+        // anyone touching a divider.
+        else if (event->type() == QEvent::Resize)
+        {
+            clampPlayersColumns(-1);
+        }
         return QDialog::eventFilter(watched, event);
     }
 
@@ -1747,6 +1794,60 @@ int RollbackLobbyDialog::seatSlotAtPos(const QPoint& pos) const
             return s.slot;
     }
     return 0;
+}
+
+void RollbackLobbyDialog::clampPlayersColumns(int resizedIndex)
+{
+    // Re-entrancy: every setColumnWidth below emits sectionResized, which is the
+    // signal that called us. Without this the first correction would recurse.
+    if (m_playersTree == nullptr || m_clampingPlayersColumns)
+        return;
+
+    const int columns = m_playersTree->columnCount();
+    const int available = m_playersTree->viewport()->width();
+    // Width is 0 until the dialog is first laid out; the viewport Resize that
+    // follows re-runs this with a real number.
+    if (columns <= 0 || available <= 0)
+        return;
+
+    int total = 0;
+    for (int i = 0; i < columns; i++)
+        total += m_playersTree->columnWidth(i);
+
+    int excess = total - available;
+    if (excess <= 0)
+        return;
+
+    // Floor so a squeezed column stays grabbable rather than collapsing to a
+    // divider the user can't get hold of again.
+    constexpr int kMinColumnWidth = 36;
+
+    m_clampingPlayersColumns = true;
+
+    // Take the overflow out of the columns the user *didn't* drag first, right
+    // to left, so their drag is honored as far as it fits.
+    for (int i = columns - 1; i >= 0 && excess > 0; i--)
+    {
+        if (i == resizedIndex)
+            continue;
+        const int width = m_playersTree->columnWidth(i);
+        const int give = std::min(excess, width - kMinColumnWidth);
+        if (give > 0)
+        {
+            m_playersTree->setColumnWidth(i, width - give);
+            excess -= give;
+        }
+    }
+
+    // Everything else is already at the floor, so the dragged column absorbs
+    // what's left — this is the point where dragging simply stops widening it.
+    if (excess > 0 && resizedIndex >= 0 && resizedIndex < columns)
+    {
+        const int width = m_playersTree->columnWidth(resizedIndex);
+        m_playersTree->setColumnWidth(resizedIndex, std::max(kMinColumnWidth, width - excess));
+    }
+
+    m_clampingPlayersColumns = false;
 }
 
 QString RollbackLobbyDialog::localRomPathForMd5(const QString& md5) const

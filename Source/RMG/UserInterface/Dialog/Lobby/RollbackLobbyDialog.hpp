@@ -264,6 +264,12 @@ private:
     void startSeatDrag(int slot, QWidget* card);
     int  seatSlotAtPos(const QPoint& pos) const;
 
+    // Keep the players list's columns inside its viewport so it never scrolls
+    // horizontally. Called when a section is dragged (pass its index, so the
+    // drag is honored as far as it fits) and when the viewport is resized
+    // (pass -1). Re-entrant-safe via m_clampingPlayersColumns.
+    void clampPlayersColumns(int resizedIndex);
+
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
     // empty if the user doesn't have that ROM. Gates joining a room and resolves
     // the ROM at match start so both use identical matching.
@@ -363,6 +369,10 @@ private:
     // the stale data on the wire — so we drop every keyframe/data message until we
     // see the BEGIN for the current subscribe. Reset false in beginSpectate.
     bool       m_spectateStreamArmed = false;
+
+    // Guards clampPlayersColumns against re-entering itself: the setColumnWidth
+    // calls it makes emit sectionResized, which is what invokes it.
+    bool       m_clampingPlayersColumns = false;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
