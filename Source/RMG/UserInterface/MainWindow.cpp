@@ -3270,7 +3270,7 @@ void MainWindow::tryAutoStartNetplayOnStartup(void)
 
     this->ui_AutoStartNetplayOnStartupPending = false;
     QTimer::singleShot(0, this, [this]() {
-        this->on_Action_Netplay_BrowseSessions();
+        this->on_Action_Rollback_Lobby();
     });
 }
 
