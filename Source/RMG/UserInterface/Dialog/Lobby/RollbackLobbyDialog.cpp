@@ -3834,7 +3834,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     appendChatSystemLine(CHANNEL_ROOM, "Synchronizing pre-match settings...");
     QString prematchError;
-    if (!m_client->syncPrematchManifest(peers, local.slot, localRomFile, prematchError))
+    if (!m_client->syncPrematchManifest(peers, local.slot, m_currentRoomHostId,
+                                        localRomFile, prematchError))
     {
         abortMatchStart(prematchError.isEmpty() ? QStringLiteral("Pre-match sync failed.") : prematchError);
         return;

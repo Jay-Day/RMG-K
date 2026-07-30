@@ -191,7 +191,14 @@ public:
     // out from the same NAT mapping GekkoNet will inherit when it re-binds.
     // Peers silently drop these on their still-open anchor socket.
     void punchPeerEndpoints(const QList<LobbyMatchPeer>& peers);
-    bool syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error);
+    // `hostUserId` — not "whoever sits in seat 1" — decides who builds and
+    // broadcasts the manifest. Seat order is cosmetic and reorderable; the
+    // authority for ROM identity and cheat/gameshark sync metadata is the room's
+    // actual host. Keying this off the seat let a reordered host hand sync
+    // authority to another player, who would then sync everyone against *their*
+    // cheat set (a desync/crash, not a clean error).
+    bool syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot,
+                              quint64 hostUserId, const QString& romFile, QString& error);
 
 signals:
     void stateChanged(LobbyClient::ConnectionState newState);

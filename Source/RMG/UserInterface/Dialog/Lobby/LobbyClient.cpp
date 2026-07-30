@@ -858,7 +858,8 @@ void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
     }
 }
 
-bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot, const QString& romFile, QString& error)
+bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot,
+                                       quint64 hostUserId, const QString& romFile, QString& error)
 {
     struct PrematchSyncGuard
     {
@@ -894,6 +895,12 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
     LobbyMatchPeer host{};
     bool foundLocal = false;
     bool foundHost = false;
+    // The room's actual host is the sync authority. Fall back to the old
+    // "seat 1 is the authority" rule only when the caller couldn't resolve a
+    // host id at all (e.g. an auto-created quick-match room whose ROOM_STATE we
+    // never matched) — that's the pre-existing behavior, so this degrades
+    // rather than failing a match that would otherwise have worked.
+    const bool haveHostId = (hostUserId != 0);
     for (const auto& peer : peers)
     {
         if (peer.userId == m_selfUserId)
@@ -901,7 +908,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
             local = peer;
             foundLocal = true;
         }
-        if (peer.slot == 1)
+        if (haveHostId ? (peer.userId == hostUserId) : (peer.slot == 1))
         {
             host = peer;
             foundHost = true;
@@ -920,7 +927,9 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         return QPair<QHostAddress, quint16>(QHostAddress(ip), peer.publicPort);
     };
 
-    if (localSlot == 1)
+    // Whoever we resolved as host above sends; everyone else waits for them.
+    // Keyed off `host`, not the seat, so the two branches can never disagree.
+    if (host.userId == m_selfUserId)
     {
         std::string manifest;
         uint64_t manifestHash = 0;
