@@ -184,18 +184,20 @@ namespace
     }
 
     // ── Per-player / per-state / per-ping accents ──────────────────────
-    // Distinct seat colors so P1-P4 read apart at a glance (P1 blue,
-    // P2 red, P3 green, P4 amber — a Smash/Mario-Kart-style set). Light
+    // Distinct seat colors so P1-P4 read apart at a glance (P1 red,
+    // P2 blue, P3 yellow, P4 green — a Smash/Mario-Kart-style set). Light
     // and dark variants keep contrast on both themes; brightness mirrors
     // the way statusColors() picks Material 500 on dark / 800 on light.
+    // P3's light variant is a deep goldenrod rather than a true yellow,
+    // which would be illegible on a light background.
     QString playerAccentHex(int slot, bool dark)
     {
         switch (slot)
         {
-            case 1: return dark ? "#4aa3ff" : "#0078D7"; // blue
-            case 2: return dark ? "#ff6b66" : "#d83a34"; // red
-            case 3: return dark ? "#4caf50" : "#2e9e3f"; // green
-            case 4: return dark ? "#ffca45" : "#b5790a"; // amber
+            case 1: return dark ? "#ff6b66" : "#d83a34"; // red
+            case 2: return dark ? "#4aa3ff" : "#0078D7"; // blue
+            case 3: return dark ? "#ffca45" : "#b5790a"; // yellow
+            case 4: return dark ? "#4caf50" : "#2e9e3f"; // green
             default: return dark ? "#bdbdbd" : "#9e9e9e";
         }
     }
@@ -209,10 +211,10 @@ namespace
         RGB c;
         switch (slot)
         {
-            case 1: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
-            case 2: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
-            case 3: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
-            case 4: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            case 1: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
+            case 2: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
+            case 3: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            case 4: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
             default: c = RGB{128, 128, 128}; break;
         }
         return QString("rgba(%1, %2, %3, %4)")
@@ -227,10 +229,10 @@ namespace
         RGB c;
         switch (slot)
         {
-            case 1: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
-            case 2: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
-            case 3: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
-            case 4: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            case 1: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
+            case 2: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
+            case 3: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            case 4: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
             default: c = RGB{128, 128, 128}; break;
         }
         return QString("rgba(%1, %2, %3, 0.55)").arg(c.r).arg(c.g).arg(c.b);
@@ -1294,9 +1296,11 @@ void RollbackLobbyDialog::applyStylesheet()
         : QStringLiteral("rgba(0, 120, 215, 0.10)");
     const QString bannerBorder = QStringLiteral("rgba(0, 120, 215, 0.45)");
 
-    // Brand accent (P1 blue) for the header text, and a faint accent wash for
-    // the marquee strip so it reads as a header band rather than blank window.
-    const QString brandAccent = playerAccentHex(1, dark);
+    // Brand accent for the header text, and a faint accent wash for the marquee
+    // strip so it reads as a header band rather than blank window. Blue is the
+    // dialog's own identity, independent of the seat palette — it must not read
+    // as the caution red that marks destructive actions below.
+    const QString brandAccent = dark ? QStringLiteral("#4aa3ff") : QStringLiteral("#0078D7");
     const QString marqueeBg   = tintRgba(brandAccent, dark ? 0.16 : 0.07);
 
     // Themed chevron for the styled combos (same asset the P2P dialog uses), so
@@ -2035,13 +2039,15 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
 {
     const bool dark = isDarkTheme();
     item->setText(0, u.username);
-    // Self gets bold and an accent tint; everyone else uses default palette text.
+    // Self gets bold and the brand accent; everyone else uses default palette
+    // text. Blue, not a seat color — this list is lobby-wide, not per-seat.
     if (u.id == m_client->selfUserId())
     {
         QFont f = item->font(0);
         f.setBold(true);
         item->setFont(0, f);
-        item->setForeground(0, QColor(playerAccentHex(1, dark)));
+        item->setForeground(0, QColor(dark ? QStringLiteral("#4aa3ff")
+                                           : QStringLiteral("#0078D7")));
     }
     item->setText(1, stateGlyph(u.state));
     item->setForeground(1, QColor(stateHex(u.state, dark)));
@@ -2322,12 +2328,14 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     const auto sc = statusColors();
     item->setForeground(4, QColor(full ? sc.fail : sc.ok));
 
-    // Bold the user's own room and tint its name with the P1 accent.
+    // Bold the user's own room and tint its name with the brand accent. Blue,
+    // not a seat color — "mine" is unrelated to which seat you end up in.
     QFont f = item->font(0);
     f.setBold(mine);
     item->setFont(0, f);
     if (mine)
-        item->setForeground(0, QColor(playerAccentHex(1, dark)));
+        item->setForeground(0, QColor(dark ? QStringLiteral("#4aa3ff")
+                                           : QStringLiteral("#0078D7")));
 }
 
 void RollbackLobbyDialog::showAdminRoomMenu(QTreeWidget* tree, const QPoint& pos)
