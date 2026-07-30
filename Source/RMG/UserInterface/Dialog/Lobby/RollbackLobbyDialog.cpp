@@ -775,7 +775,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_matchesTree->setHeaderLabels({ "Players", "Duration", "ROM" });
     m_matchesTree->setRootIsDecorated(false);
     m_matchesTree->setSortingEnabled(true);
-    m_matchesTree->sortItems(0, Qt::AscendingOrder);
+    m_matchesTree->sortItems(1, Qt::AscendingOrder);
     m_matchesTree->setAlternatingRowColors(true);
     m_matchesTree->setFrameShape(QFrame::NoFrame);
     m_matchesTree->setMinimumHeight(70);
