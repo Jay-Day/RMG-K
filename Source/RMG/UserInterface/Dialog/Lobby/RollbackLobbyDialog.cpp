@@ -414,7 +414,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     // without a close event.
     QSettings s("RMG-K", "n02");
     if (m_playersTree)
-        s.setValue(QString("RollbackLobby/PlayersHeaderState.c%1").arg(m_playersTree->columnCount()),
+        s.setValue(QString("RollbackLobby/PlayersHeaderState.v2.c%1").arg(m_playersTree->columnCount()),
                    m_playersTree->header()->saveState());
     if (m_roomsTree)
         s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
@@ -1280,13 +1280,17 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersTree->setAlternatingRowColors(true);
     m_playersTree->setFrameShape(QFrame::NoFrame);
     m_playersTree->setUniformRowHeights(true);
-    // Interactive on every section so the user can drag the dividers — Stretch
-    // and ResizeToContents both lock a column against manual resizing, which is
-    // why these three used to be fixed. Player absorbs the slack instead of the
-    // last section, so Region stays as narrow as its header text rather than
-    // being stretched across whatever space is left over.
+    // Column sizing is hand-rolled in clampPlayersColumns rather than using a
+    // Qt Stretch section. Qt resizes a column via the divider on its RIGHT
+    // edge, so with three columns only two dividers physically exist: Player|
+    // State and State|Region (Region's right edge is the card border —
+    // ungrabbable). A Stretch section additionally locks its own divider,
+    // which left State as the only adjustable column. Instead: both columns
+    // Interactive, Region pinned at flag width, and the handler keeps
+    // Player = viewport − State − Region so the header always fills the card.
     m_playersTree->header()->setStretchLastSection(false);
     m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+    m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
     {
         // Size State and Region to their widest expected text once, up front:
         // the tree is empty at construction, so ResizeToContents here would
@@ -1299,17 +1303,24 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         const int regionWidth = fm.horizontalAdvance(QStringLiteral("Region")) + pad;
         m_playersTree->setColumnWidth(1, stateWidth);
         m_playersTree->setColumnWidth(2, regionWidth);
-        m_playersTree->setColumnWidth(0, 200);
     }
     {
         // The column count is part of the key: restoring a state saved for a
         // different column layout half-applies and breaks the header (missing
-        // section dividers, wrong stretch section).
+        // section dividers, wrong stretch section). v2: the v1 layout had no
+        // stretch section and a shrink-only clamp, so saved v1 states carry
+        // squeezed columns and a dead gap — leave them orphaned rather than
+        // restoring the broken shape into the fixed layout.
         QSettings s("RMG-K", "n02");
-        const QString key = QString("RollbackLobby/PlayersHeaderState.c%1").arg(m_playersTree->columnCount());
+        const QString key = QString("RollbackLobby/PlayersHeaderState.v2.c%1").arg(m_playersTree->columnCount());
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_playersTree->header()->restoreState(headerState);
+        // restoreState can resurrect per-section modes; re-pin ours. Player's
+        // width is refit by the first viewport Resize regardless of what was
+        // restored, so only State's width meaningfully survives the round trip.
+        m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+        m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
     }
     // The columns are clamped to the viewport (clampPlayersColumns), so a
     // horizontal scrollbar can never be needed — turning it off also stops Qt
@@ -1834,50 +1845,44 @@ void RollbackLobbyDialog::clampPlayersColumns(int resizedIndex)
     if (m_playersTree == nullptr || m_clampingPlayersColumns)
         return;
 
-    const int columns = m_playersTree->columnCount();
     const int available = m_playersTree->viewport()->width();
     // Width is 0 until the dialog is first laid out; the viewport Resize that
     // follows re-runs this with a real number.
-    if (columns <= 0 || available <= 0)
+    if (m_playersTree->columnCount() < 3 || available <= 0)
         return;
 
-    int total = 0;
-    for (int i = 0; i < columns; i++)
-        total += m_playersTree->columnWidth(i);
+    constexpr int kMinPlayer = 80;
+    constexpr int kMinState  = 36; // keeps a squeezed divider grabbable
 
-    int excess = total - available;
-    if (excess <= 0)
-        return;
-
-    // Floor so a squeezed column stays grabbable rather than collapsing to a
-    // divider the user can't get hold of again.
-    constexpr int kMinColumnWidth = 36;
+    int w0 = m_playersTree->columnWidth(0);
+    int w1 = m_playersTree->columnWidth(1);
+    const int w2 = m_playersTree->columnWidth(2); // Region: pinned at flag width
 
     m_clampingPlayersColumns = true;
-
-    // Take the overflow out of the columns the user *didn't* drag first, right
-    // to left, so their drag is honored as far as it fits.
-    for (int i = columns - 1; i >= 0 && excess > 0; i--)
+    if (resizedIndex == 0)
     {
-        if (i == resizedIndex)
-            continue;
-        const int width = m_playersTree->columnWidth(i);
-        const int give = std::min(excess, width - kMinColumnWidth);
-        if (give > 0)
+        // The Player|State divider was dragged: State absorbs the change so
+        // the boundary lands where the user put it.
+        w1 = available - w2 - w0;
+        if (w1 < kMinState)  { w1 = kMinState;  w0 = available - w2 - w1; }
+        if (w0 < kMinPlayer) { w0 = kMinPlayer; w1 = std::max(kMinState, available - w2 - w0); }
+        m_playersTree->setColumnWidth(1, w1);
+        m_playersTree->setColumnWidth(0, w0);
+    }
+    else
+    {
+        // State|Region divider dragged, or the viewport itself changed:
+        // Player is the fill column and absorbs the difference.
+        if (w1 < kMinState) { w1 = kMinState; m_playersTree->setColumnWidth(1, w1); }
+        w0 = available - w2 - w1;
+        if (w0 < kMinPlayer)
         {
-            m_playersTree->setColumnWidth(i, width - give);
-            excess -= give;
+            w0 = kMinPlayer;
+            w1 = std::max(kMinState, available - w2 - w0);
+            m_playersTree->setColumnWidth(1, w1);
         }
+        m_playersTree->setColumnWidth(0, w0);
     }
-
-    // Everything else is already at the floor, so the dragged column absorbs
-    // what's left — this is the point where dragging simply stops widening it.
-    if (excess > 0 && resizedIndex >= 0 && resizedIndex < columns)
-    {
-        const int width = m_playersTree->columnWidth(resizedIndex);
-        m_playersTree->setColumnWidth(resizedIndex, std::max(kMinColumnWidth, width - excess));
-    }
-
     m_clampingPlayersColumns = false;
 }
 

@@ -276,10 +276,13 @@ private:
     void startSeatDrag(int slot, QWidget* card);
     int  seatSlotAtPos(const QPoint& pos) const;
 
-    // Keep the players list's columns inside its viewport so it never scrolls
-    // horizontally. Called when a section is dragged (pass its index, so the
-    // drag is honored as far as it fits) and when the viewport is resized
-    // (pass -1). Re-entrant-safe via m_clampingPlayersColumns.
+    // Hand-rolled column fill for the players list: keeps
+    // Player = viewport − State − Region so the header always spans the card
+    // (no dead gap, no horizontal scroll) while both real dividers stay
+    // draggable — Player|State trades width with State, State|Region trades
+    // with Player, Region is pinned at flag width. Called on sectionResized
+    // (pass the index) and viewport resizes (pass -1). Re-entrant-safe via
+    // m_clampingPlayersColumns.
     void clampPlayersColumns(int resizedIndex);
 
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
