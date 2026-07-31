@@ -280,16 +280,32 @@ namespace
     // Right-aligned seat meta as rich text: an accent-colored HOST badge and a
     // ping-tier-colored "N ms". Shared by renderSeatFilled and the live ping
     // refresh in onPingMeasured so the two never drift. pingMs < 0 hides ping.
-    QString seatMetaHtml(int slot, bool isHost, int pingMs, bool dark)
+    // `status`, when set, replaces the ping cell — used to show a punch being
+    // retried or given up on, so a peer we can't reach reads as a stated
+    // outcome instead of a number that never appears.
+    QString seatMetaHtml(int slot, bool isHost, int pingMs, bool dark,
+                         const QString& status = QString())
     {
         QStringList parts;
         if (isHost)
             parts << QString("<span style='color:%1; font-weight:700;'>HOST</span>")
                          .arg(playerAccentHex(slot, dark));
-        if (pingMs >= 0)
+        if (!status.isEmpty())
+            parts << status;
+        else if (pingMs >= 0)
             parts << QString("<span style='color:%1; font-weight:600;'>%2 ms</span>")
                          .arg(pingHex(pingMs)).arg(pingMs);
         return parts.join(QStringLiteral("&nbsp;·&nbsp;"));
+    }
+
+    // Amber while we're still trying, red once we've stopped.
+    QString seatProbeStatusHtml(int attempt, int maxAttempts, bool failed, bool dark)
+    {
+        const auto c = statusColors();
+        if (failed)
+            return QString("<span style='color:%1; font-weight:600;'>unreachable</span>").arg(c.fail);
+        return QString("<span style='color:%1; font-weight:600;'>retrying %2/%3…</span>")
+                   .arg(c.wait).arg(attempt).arg(maxAttempts);
     }
 
     // A translucent fill derived from a solid hex — used for the soft pill /
@@ -363,6 +379,8 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::matchBegin,           this, &RollbackLobbyDialog::onMatchBegin);
     connect(m_client, &LobbyClient::matchPeerLeft,        this, &RollbackLobbyDialog::onMatchPeerLeft);
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
+    connect(m_client, &LobbyClient::pingProbeRetrying,    this, &RollbackLobbyDialog::onPingProbeRetrying);
+    connect(m_client, &LobbyClient::pingProbeFailed,      this, &RollbackLobbyDialog::onPingProbeFailed);
     connect(m_client, &LobbyClient::spectateBegan,        this, &RollbackLobbyDialog::onSpectateBegan);
     connect(m_client, &LobbyClient::spectateData,         this, &RollbackLobbyDialog::onSpectateData);
     connect(m_client, &LobbyClient::spectateKeyframe,     this, &RollbackLobbyDialog::onSpectateKeyframe);
@@ -3151,8 +3169,56 @@ void RollbackLobbyDialog::probeOnDemand(quint64 userId)
     m_client->requestPingProbe(userId);
 }
 
+void RollbackLobbyDialog::refreshSeatMeta(quint64 userId, const QString& statusHtml)
+{
+    for (auto& s : m_seats)
+    {
+        if (s.userId != userId || !s.metaLabel)
+            continue;
+        const int pingMs = m_client ? m_client->measuredPingMs(userId) : -1;
+        s.metaLabel->setText(seatMetaHtml(s.slot, s.isHost, pingMs, isDarkTheme(), statusHtml));
+        break;
+    }
+}
+
+void RollbackLobbyDialog::onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts)
+{
+    refreshSeatMeta(userId, seatProbeStatusHtml(attempt, maxAttempts, false, isDarkTheme()));
+}
+
+void RollbackLobbyDialog::onPingProbeFailed(quint64 userId)
+{
+    refreshSeatMeta(userId, seatProbeStatusHtml(0, 0, true, isDarkTheme()));
+
+    // Only announce for a seated player, and only once per room visit — the
+    // seat itself carries the ongoing state, and Start stays disabled anyway.
+    // Without this the host just sees a Start button that never lights up.
+    bool seated = false;
+    for (const auto& s : m_seats)
+        seated = seated || (s.userId == userId);
+    if (!seated || m_probeFailureAnnounced.contains(userId))
+        return;
+    m_probeFailureAnnounced.insert(userId);
+
+    QString name = QString::number(userId);
+    if (m_client)
+    {
+        const auto& users = m_client->users();
+        const auto it = users.constFind(userId);
+        if (it != users.constEnd())
+            name = it->username;
+    }
+    appendChatSystemLine(CHANNEL_ROOM,
+        QString("Couldn't reach %1 to measure ping — their connection may not allow "
+                "a direct link. Start stays disabled until it succeeds.").arg(name));
+}
+
 void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
 {
+    // A measurement clears any retry/unreachable text and re-arms the notice
+    // so a later failure is announced again.
+    m_probeFailureAnnounced.remove(userId);
+
     // Only redraw the seat that just got a measurement — avoids churning the
     // whole room view on every probe response.
     for (auto& s : m_seats)

@@ -19,6 +19,9 @@
 
 class QWebSocket;
 class QUdpSocket;
+class QFile;
+// Only used by reference in sendProbeBurst's signature; the .cpp includes it.
+class QHostAddress;
 
 namespace UserInterface
 {
@@ -226,6 +229,12 @@ signals:
 
     void pingProbeReply(quint64 targetUserId, const QString& endpoint);
     void pingProbeMeasured(quint64 targetUserId, int rttMs);
+    // A burst went unanswered and we're sending another. `attempt` is 1-based
+    // and counts the one now in flight. Surfaced in the room so a slow punch
+    // reads as progress rather than a hang.
+    void pingProbeRetrying(quint64 targetUserId, int attempt, int maxAttempts);
+    // Every attempt went unanswered — that peer is unreachable for now.
+    void pingProbeFailed(quint64 targetUserId);
 
     void matchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
     void matchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
@@ -279,8 +288,20 @@ private:
     void handlePingProbeReply(const QJsonObject& data);
     void handleMatchBegin(const QJsonObject& data);
     void handlePingProbeIncoming(const QJsonObject& data);
-    // Fire one UDP PROBE at `endpoint`. Shared by the reply and incoming paths.
+    // Start a probe series to `endpoint`. Shared by the reply and incoming
+    // paths. No-op if a probe to that peer is already in flight.
     void sendProbeTo(quint64 userId, const QString& endpoint);
+    // Emit one burst of identical PROBE packets for an existing series.
+    void sendProbeBurst(const QHostAddress& addr, quint16 port, quint64 nonce);
+
+    // Opt-in on-disk trace of the whole probe pipeline, for diagnosing peer
+    // pings that never resolve. Off unless Rollback_PingDiagnostics is set;
+    // read once at connect time so toggling it mid-session does nothing until
+    // the next lobby connect. One file per connection, in RMG-K's Logs folder.
+    void startPingDiagnosticLog();
+    void stopPingDiagnosticLog(const QString& reason);
+    void writePingDiagnostic(const QString& event, const QString& details = QString());
+    QString pingUserLabel(quint64 userId) const;
     void handleMatchPeerLeft(const QJsonObject& data);
     void handleQuickMatchStatus(const QJsonObject& data);
     void handleSpectateBegin(const QJsonObject& data);
@@ -296,6 +317,9 @@ private:
     void initiateUdpAnchor();
     void sendUdpRegister();
     void sendUdpKeepalive();
+    // Walks m_pendingProbes and re-bursts anything that's due. Runs on a short
+    // fixed tick rather than a timer per probe.
+    void onProbeRetryTimer();
 
     static LobbyUser parsePresenceUser(const QJsonObject& obj);
 
@@ -306,6 +330,7 @@ private:
 
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
+    QTimer* m_probeRetryTimer = nullptr;
     bool m_inPrematchSync = false;
 
     // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
@@ -322,11 +347,25 @@ private:
     QString m_udpAnchorHost;
     quint16 m_udpAnchorPort = 6364;
 
+    // Our own UDP port, pinned on the first successful bind and reused for
+    // every rebind afterwards. Peers and the server cache us as ip:port, so a
+    // port that changes when a match starts and stops silently invalidates
+    // every cached endpoint and every NAT mapping we've opened. n02's p2p core
+    // does the same thing (p2p_core.cpp captures get_port() once, then always
+    // re-initializes on that port), and releaseUdpAnchor already aborts rather
+    // than closes specifically so GekkoNet can retake this exact port.
+    // 0 means "not yet bound".
+    quint16 m_anchorLocalPort = 0;
+
     // Session state
     quint64 m_selfUserId = 0;
     QString m_observedIp;
     QString m_region;
     bool    m_isModerator = false; // set once ADMIN_AUTH_OK is received
+
+    // Ping diagnostics (see startPingDiagnosticLog).
+    QFile*  m_pingDiagnosticFile    = nullptr;
+    qint64  m_pingDiagnosticStartMs = 0;
 
     QHash<quint64, LobbyUser> m_users;
     QHash<quint64, LobbyRoomSummary> m_rooms;
@@ -337,9 +376,24 @@ private:
     struct ProbeInFlight
     {
         quint64 targetUserId = 0;
-        qint64  sendMs       = 0;
+        qint64  sendMs       = 0;  // first burst — for age/timeout accounting only
+        // Start of the most recent burst, and what RTT is measured from. Using
+        // the first burst instead would add the retry delay to the reading and
+        // report ~690 ms for a 90 ms peer answered on attempt 3, which then
+        // feeds the Auto frame delay. Retries only fire when a burst went
+        // unanswered, so a reply belongs to the latest burst unless the true
+        // RTT exceeds PROBE_RETRY_INTERVAL_MS — in which case this
+        // under-reports, bounded by that interval.
+        qint64  attemptSendMs = 0;
+        QString endpoint;          // kept so a retry can resend without re-asking the server
+        int     attempt       = 1; // 1-based; attempt PROBE_ATTEMPTS is the last
+        qint64  nextAttemptMs = 0;
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;
+    // Nonces we've already measured. A burst draws one echo per packet that
+    // arrives, so 9 of 10 replies are duplicates of a nonce we just erased —
+    // without this they'd all log as REPLY_UNMATCHED and bury the real ones.
+    QSet<quint64> m_recentlyMatchedNonces;
 
     // Last measured round-trip per peer (userId → ms). Survives between
     // measurements so the UI has a value to render even when the next probe

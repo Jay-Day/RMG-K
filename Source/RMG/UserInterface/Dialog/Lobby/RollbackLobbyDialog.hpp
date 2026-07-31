@@ -166,6 +166,13 @@ private slots:
     // Lobby rows show the region estimate until this lands; room seats are
     // measured continuously by onPingProbeTick regardless.
     void probeOnDemand(quint64 userId);
+
+    // Punch progress for a seated peer, so a slow or failing NAT punch is
+    // visible in the room rather than looking like a stalled Start button.
+    void onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts);
+    void onPingProbeFailed(quint64 userId);
+    // Repaint one seat's right-hand meta cell (ping / retry / unreachable).
+    void refreshSeatMeta(quint64 userId, const QString& statusHtml);
     void onPingMeasured(quint64 userId, int rttMs);
 
 private:
@@ -313,6 +320,9 @@ private:
     QTreeWidget* m_playersTree   = nullptr;
     // Last on-demand probe per user id, for probeOnDemand's throttle.
     QHash<quint64, qint64> m_lastOnDemandProbe;
+    // Peers we've already posted an "couldn't reach" notice about, so the 3s
+    // seat refresh doesn't repeat it every tick. Cleared on a measurement.
+    QSet<quint64> m_probeFailureAnnounced;
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;
     QTimer*      m_matchDurationTimer = nullptr;

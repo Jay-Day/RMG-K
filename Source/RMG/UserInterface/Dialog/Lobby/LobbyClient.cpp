@@ -9,7 +9,9 @@
 #include "LobbyClient.hpp"
 
 #include <RMG-Core/Cheats.hpp>
+#include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
 #include <QWebSocket>
@@ -29,7 +31,11 @@
 #include <QRandomGenerator>
 #include <QDebug>
 #include <QSet>
+#include <QFile>
+#include <QDir>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 
 using namespace UserInterface::Dialog;
 
@@ -54,6 +60,47 @@ namespace
 
     // PROBE/PROBE_REPLY packet: [magic(4) | op(1) | senderUserId(8) | nonce(8)]
     constexpr int PROBE_PACKET_SIZE = 4 + 1 + 8 + 8;
+
+    // Ping probes punch the same way every other path here does, and the same
+    // way n02/NATLinker does on JOIN: a burst, then retries. A single packet
+    // per attempt is fine on a short clean link and close to a coin flip on a
+    // long or lossy one — which is exactly how the failures presented, working
+    // for nearby peers and never for distant ones.
+    //
+    // All packets in a burst share one nonce: we only want one RTT sample and
+    // one pending entry, and the peer echoes whichever ones arrive.
+    constexpr int PROBE_BURST = 10;         // packets per attempt
+    constexpr int PROBE_ATTEMPTS = 4;       // initial burst + 3 retries
+    constexpr int PROBE_RETRY_INTERVAL_MS = 300;
+    constexpr int PROBE_RETRY_TICK_MS = 100;
+    // Bounded so a long session can't grow it without limit; only needs to
+    // outlive the echoes of one burst.
+    constexpr int PROBE_MATCHED_NONCE_CAP = 64;
+
+    // Where the opt-in ping trace lands. Prefers RMG-K's own Logs folder;
+    // falls back to a relative Logs/ so a portable install with an unwritable
+    // library dir still produces a file rather than silently logging nowhere.
+    std::filesystem::path lobbyPingLogDirectory()
+    {
+        std::error_code errorCode;
+        std::filesystem::path directory = CoreGetLibraryDirectory() / "Logs";
+
+        if (std::filesystem::is_directory(directory, errorCode) ||
+            std::filesystem::create_directories(directory, errorCode))
+        {
+            return directory.make_preferred();
+        }
+
+        errorCode.clear();
+        directory = "Logs";
+        if (std::filesystem::is_directory(directory, errorCode) ||
+            std::filesystem::create_directories(directory, errorCode))
+        {
+            return directory.make_preferred();
+        }
+
+        return std::filesystem::path();
+    }
 
     uint64_t prematchHashBytes(const std::string& data)
     {
@@ -237,6 +284,13 @@ LobbyClient::LobbyClient(QObject* parent)
     m_udpKeepaliveTimer = new QTimer(this);
     m_udpKeepaliveTimer->setInterval(UDP_KEEPALIVE_INTERVAL);
     connect(m_udpKeepaliveTimer, &QTimer::timeout, this, &LobbyClient::onUdpKeepaliveTimer);
+
+    // Always running: it's a cheap no-op with no probes in flight, and probes
+    // can start from an unsolicited introduction, not just our own request.
+    m_probeRetryTimer = new QTimer(this);
+    m_probeRetryTimer->setInterval(PROBE_RETRY_TICK_MS);
+    connect(m_probeRetryTimer, &QTimer::timeout, this, &LobbyClient::onProbeRetryTimer);
+    m_probeRetryTimer->start();
 }
 
 LobbyClient::~LobbyClient()
@@ -289,6 +343,7 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
 
 void LobbyClient::disconnectFromServer()
 {
+    stopPingDiagnosticLog(QStringLiteral("disconnect"));
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     if (m_ws && m_ws->state() != QAbstractSocket::UnconnectedState)
@@ -387,6 +442,11 @@ void LobbyClient::onWsDisconnected()
     // User ids restart when the server does — drop measurements so a recycled
     // id can't inherit another player's ping history.
     m_measuredPing.clear();
+    // In-flight probe series belong to the old connection: their endpoints and
+    // user ids are stale, so retrying them would burst at whoever now holds
+    // those ids and emit failure notices for peers we're no longer talking to.
+    m_pendingProbes.clear();
+    m_recentlyMatchedNonces.clear();
     // A socket error or HELLO_FAIL sets Failed before closing the WebSocket.
     // Keep that state so the dialog can preserve the useful error for retry.
     // connectToServer() permits retries from Failed.
@@ -466,6 +526,14 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
             m_udpAnchorPort = static_cast<quint16>(udpAnchor.mid(sep + 1).toUInt());
         }
     }
+
+    // Started here rather than at connectToServer so the trace already knows
+    // our user id and anchor — the fields every later line is keyed on.
+    startPingDiagnosticLog();
+    writePingDiagnostic(QStringLiteral("HELLO_OK"),
+                        QStringLiteral("observed_ip=%1 region=%2 anchor=%3:%4")
+                            .arg(m_observedIp, m_region, m_udpAnchorHost)
+                            .arg(m_udpAnchorPort));
 
     setState(ConnectionState::Connected);
     m_heartbeatTimer->start();
@@ -609,6 +677,90 @@ void LobbyClient::handleChatHistoryReply(const QJsonObject& data)
     emit chatHistoryReceived(channel, out);
 }
 
+void LobbyClient::startPingDiagnosticLog()
+{
+    // Read once per connection: flipping the setting mid-session shouldn't
+    // start a half-populated trace that's missing its own connect sequence.
+    if (!CoreSettingsGetBoolValue(SettingsID::Rollback_PingDiagnostics))
+        return;
+
+    if (m_pingDiagnosticFile == nullptr)
+        m_pingDiagnosticFile = new QFile(this);
+    if (m_pingDiagnosticFile->isOpen())
+        m_pingDiagnosticFile->close();
+
+    const std::filesystem::path directory = lobbyPingLogDirectory();
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
+    const QString filename = QStringLiteral("lobby_ping_%1_pid%2.log")
+                                 .arg(timestamp)
+                                 .arg(QCoreApplication::applicationPid());
+
+    QString path = filename;
+    if (!directory.empty())
+        path = QString::fromStdString((directory / filename.toStdString()).string());
+
+    m_pingDiagnosticFile->setFileName(path);
+    if (!m_pingDiagnosticFile->open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
+    {
+        qWarning() << "Rollback lobby could not open ping diagnostic log"
+                   << path << m_pingDiagnosticFile->errorString();
+        return;
+    }
+
+    m_pingDiagnosticStartMs = QDateTime::currentMSecsSinceEpoch();
+    qInfo() << "Rollback lobby ping diagnostic log" << path;
+    writePingDiagnostic(QStringLiteral("LOG_START"),
+                        QStringLiteral("path=%1 version=%2 username=%3")
+                            .arg(path,
+                                 QString::fromStdString(CoreGetVersion()),
+                                 m_pendingUsername));
+}
+
+void LobbyClient::stopPingDiagnosticLog(const QString& reason)
+{
+    if (m_pingDiagnosticFile == nullptr || !m_pingDiagnosticFile->isOpen())
+        return;
+    writePingDiagnostic(QStringLiteral("LOG_END"), QStringLiteral("reason=%1").arg(reason));
+    m_pingDiagnosticFile->close();
+}
+
+// Every line is flushed: the failures this exists to catch (hangs, and the
+// crash-or-kill that often follows) would otherwise lose the buffered tail
+// that holds the interesting part.
+void LobbyClient::writePingDiagnostic(const QString& event, const QString& details)
+{
+    if (m_pingDiagnosticFile == nullptr || !m_pingDiagnosticFile->isOpen())
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    QString cleanDetails = details;
+    cleanDetails.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    cleanDetails.replace(QLatin1Char('\r'), QLatin1Char(' '));
+
+    QString line = QStringLiteral("%1 elapsed_ms=%2 self=%3 local_udp=%4 event=%5")
+                       .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs))
+                       .arg(m_pingDiagnosticStartMs == 0 ? 0 : nowMs - m_pingDiagnosticStartMs)
+                       .arg(m_selfUserId)
+                       .arg(localUdpPort())
+                       .arg(event);
+    if (!cleanDetails.isEmpty())
+        line += QLatin1Char(' ') + cleanDetails;
+    line += QLatin1Char('\n');
+
+    m_pingDiagnosticFile->write(line.toUtf8());
+    m_pingDiagnosticFile->flush();
+}
+
+// id:username, so a trace stays readable after the fact without cross
+// referencing the presence list.
+QString LobbyClient::pingUserLabel(quint64 userId) const
+{
+    const auto it = m_users.constFind(userId);
+    if (it == m_users.constEnd())
+        return QStringLiteral("%1:<unknown>").arg(userId);
+    return QStringLiteral("%1:%2").arg(userId).arg(it->username);
+}
+
 // Fire a UDP PROBE at a peer's anchor socket. The peer recognises the opcode
 // and echoes back a PROBE_REPLY; we match by nonce to compute RTT. Shared by
 // the reply path (we asked) and the incoming path (the server told us someone
@@ -621,20 +773,73 @@ void LobbyClient::sendProbeTo(quint64 userId, const QString& endpoint)
         // there's nothing to probe. Logged because this used to fail silently
         // and looked identical to a dropped probe.
         qInfo() << "Rollback lobby probe skipped: no endpoint for user" << userId;
+        writePingDiagnostic(QStringLiteral("PROBE_SKIP"),
+                            QStringLiteral("peer=%1 reason=no_endpoint").arg(pingUserLabel(userId)));
         return;
     }
     if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState || m_selfUserId == 0)
+    {
+        writePingDiagnostic(QStringLiteral("PROBE_SKIP"),
+                            QStringLiteral("peer=%1 reason=no_socket").arg(pingUserLabel(userId)));
         return;
+    }
 
     const int colon = endpoint.lastIndexOf(':');
     if (colon <= 0)
+    {
+        writePingDiagnostic(QStringLiteral("PROBE_SKIP"),
+                            QStringLiteral("peer=%1 reason=malformed_endpoint endpoint=%2")
+                                .arg(pingUserLabel(userId), endpoint));
         return;
+    }
     const QHostAddress addr(endpoint.left(colon));
     const quint16 port = static_cast<quint16>(endpoint.mid(colon + 1).toUInt());
     if (addr.isNull() || port == 0)
+    {
+        writePingDiagnostic(QStringLiteral("PROBE_SKIP"),
+                            QStringLiteral("peer=%1 reason=unparsable_endpoint endpoint=%2")
+                                .arg(pingUserLabel(userId), endpoint));
         return;
+    }
+
+    // One probe per peer in flight at a time. A second request while a burst is
+    // still being retried would otherwise start a competing series and make the
+    // retry counter shown in the room meaningless.
+    for (auto it = m_pendingProbes.constBegin(); it != m_pendingProbes.constEnd(); ++it)
+    {
+        if (it->targetUserId == userId)
+            return;
+    }
 
     const quint64 nonce = QRandomGenerator::global()->generate64();
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+
+    ProbeInFlight in;
+    in.targetUserId  = userId;
+    in.sendMs        = nowMs;
+    in.attemptSendMs = nowMs;
+    in.endpoint      = endpoint;
+    in.attempt       = 1;
+    in.nextAttemptMs = nowMs + PROBE_RETRY_INTERVAL_MS;
+    m_pendingProbes.insert(nonce, in);
+
+    sendProbeBurst(addr, port, nonce);
+    writePingDiagnostic(QStringLiteral("PROBE_SENT"),
+                        QStringLiteral("peer=%1 endpoint=%2 nonce=%3 attempt=1/%4 burst=%5 pending=%6")
+                            .arg(pingUserLabel(userId), endpoint)
+                            .arg(nonce)
+                            .arg(PROBE_ATTEMPTS)
+                            .arg(PROBE_BURST)
+                            .arg(m_pendingProbes.size()));
+}
+
+// One burst = PROBE_BURST copies of the same packet. Defends against single
+// packet loss and against routers that need more than one outbound packet
+// before the mapping settles.
+void LobbyClient::sendProbeBurst(const QHostAddress& addr, quint16 port, quint64 nonce)
+{
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState)
+        return;
 
     QByteArray pkt;
     pkt.reserve(PROBE_PACKET_SIZE);
@@ -645,18 +850,75 @@ void LobbyClient::sendProbeTo(quint64 userId, const QString& endpoint)
     const quint64 nonceBE = qToBigEndian(nonce);
     pkt.append(reinterpret_cast<const char*>(&nonceBE), sizeof(nonceBE));
 
-    ProbeInFlight in;
-    in.targetUserId = userId;
-    in.sendMs       = QDateTime::currentMSecsSinceEpoch();
-    m_pendingProbes.insert(nonce, in);
+    for (int i = 0; i < PROBE_BURST; i++)
+        m_udp->writeDatagram(pkt, addr, port);
+}
 
-    m_udp->writeDatagram(pkt, addr, port);
+void LobbyClient::onProbeRetryTimer()
+{
+    if (m_pendingProbes.isEmpty())
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); )
+    {
+        if (nowMs < it->nextAttemptMs)
+        {
+            ++it;
+            continue;
+        }
+
+        if (it->attempt >= PROBE_ATTEMPTS)
+        {
+            // Out of attempts. Drop it here rather than leaving it for the
+            // stale sweep so the room hears about it promptly.
+            const quint64 uid = it->targetUserId;
+            writePingDiagnostic(QStringLiteral("PROBE_FAILED"),
+                                QStringLiteral("peer=%1 attempts=%2 burst=%3 age_ms=%4")
+                                    .arg(pingUserLabel(uid))
+                                    .arg(PROBE_ATTEMPTS)
+                                    .arg(PROBE_BURST)
+                                    .arg(nowMs - it->sendMs));
+            it = m_pendingProbes.erase(it);
+            emit pingProbeFailed(uid);
+            continue;
+        }
+
+        const int colon = it->endpoint.lastIndexOf(':');
+        const QHostAddress addr(it->endpoint.left(colon));
+        const quint16 port = static_cast<quint16>(it->endpoint.mid(colon + 1).toUInt());
+        if (colon <= 0 || addr.isNull() || port == 0)
+        {
+            const quint64 uid = it->targetUserId;
+            it = m_pendingProbes.erase(it);
+            emit pingProbeFailed(uid);
+            continue;
+        }
+
+        it->attempt      += 1;
+        it->attemptSendMs = nowMs;
+        it->nextAttemptMs = nowMs + PROBE_RETRY_INTERVAL_MS;
+        sendProbeBurst(addr, port, it.key());
+        writePingDiagnostic(QStringLiteral("PROBE_RETRY"),
+                            QStringLiteral("peer=%1 endpoint=%2 nonce=%3 attempt=%4/%5 burst=%6")
+                                .arg(pingUserLabel(it->targetUserId), it->endpoint)
+                                .arg(it.key())
+                                .arg(it->attempt)
+                                .arg(PROBE_ATTEMPTS)
+                                .arg(PROBE_BURST));
+        emit pingProbeRetrying(it->targetUserId, it->attempt, PROBE_ATTEMPTS);
+        ++it;
+    }
 }
 
 void LobbyClient::handlePingProbeReply(const QJsonObject& data)
 {
     const quint64 uid = static_cast<quint64>(data.value("targetUserId").toDouble());
     const QString endpoint = data.value("targetEndpoint").toString();
+    writePingDiagnostic(QStringLiteral("PROBE_REPLY_RECV"),
+                        QStringLiteral("peer=%1 endpoint=%2")
+                            .arg(pingUserLabel(uid),
+                                 endpoint.isEmpty() ? QStringLiteral("<none>") : endpoint));
     emit pingProbeReply(uid, endpoint);
     sendProbeTo(uid, endpoint);
 }
@@ -670,6 +932,10 @@ void LobbyClient::handlePingProbeIncoming(const QJsonObject& data)
 {
     const quint64 uid = static_cast<quint64>(data.value("fromUserId").toDouble());
     const QString endpoint = data.value("fromEndpoint").toString();
+    writePingDiagnostic(QStringLiteral("INTRODUCED"),
+                        QStringLiteral("peer=%1 endpoint=%2")
+                            .arg(pingUserLabel(uid),
+                                 endpoint.isEmpty() ? QStringLiteral("<none>") : endpoint));
     if (uid == 0 || uid == m_selfUserId)
         return;
     sendProbeTo(uid, endpoint);
@@ -790,11 +1056,47 @@ void LobbyClient::onHeartbeatTimer()
 
 void LobbyClient::initiateUdpAnchor()
 {
-    if (!m_udp->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress))
+    // Reclaim the port we've been using all session. Only the very first bind
+    // asks the OS to pick one; every rebind after a match must land on the same
+    // port or every peer's cached endpoint for us goes stale at once.
+    bool bound = false;
+    bool reusedPort = false;
+    if (m_anchorLocalPort != 0)
+    {
+        bound = m_udp->bind(QHostAddress::AnyIPv4, m_anchorLocalPort, QUdpSocket::ShareAddress);
+        reusedPort = bound;
+        if (!bound)
+        {
+            // GekkoNet may not have let go of it yet. Falling back to an
+            // ephemeral port loses endpoint continuity — the old behaviour —
+            // but that beats having no anchor at all, and the peers relearn us
+            // from the REGISTER below. Logged loudly because if this fires
+            // often the release/rebind ordering is what needs fixing, not this.
+            qWarning() << "lobby: could not rebind anchor port" << m_anchorLocalPort
+                       << "-" << m_udp->errorString() << "- falling back to a new port";
+            writePingDiagnostic(QStringLiteral("UDP_BIND"),
+                                QStringLiteral("result=port_taken wanted=%1 error=%2")
+                                    .arg(m_anchorLocalPort).arg(m_udp->errorString()));
+        }
+    }
+    if (!bound)
+        bound = m_udp->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress);
+
+    if (!bound)
     {
         qWarning() << "lobby: udp bind failed:" << m_udp->errorString();
+        writePingDiagnostic(QStringLiteral("UDP_BIND"),
+                            QStringLiteral("result=fail error=%1").arg(m_udp->errorString()));
         return;
     }
+
+    const quint16 previousPort = m_anchorLocalPort;
+    m_anchorLocalPort = m_udp->localPort();
+    writePingDiagnostic(QStringLiteral("UDP_BIND"),
+                        QStringLiteral("result=ok port=%1 reused=%2 previous=%3")
+                            .arg(m_anchorLocalPort)
+                            .arg(reusedPort ? "yes" : "no")
+                            .arg(previousPort));
     sendUdpRegister();
     m_udpKeepaliveTimer->start();
 }
@@ -809,7 +1111,13 @@ void LobbyClient::sendUdpRegister()
     pkt.append(static_cast<char>(ANCHOR_OP_REGISTER));
     quint64 idBE = qToBigEndian(m_selfUserId);
     pkt.append(reinterpret_cast<const char*>(&idBE), sizeof(idBE));
-    m_udp->writeDatagram(pkt, QHostAddress(m_udpAnchorHost), m_udpAnchorPort);
+    // Single fire-and-forget packet: if it's lost the server has no endpoint
+    // for us and every peer's probe of us fails until the next keepalive.
+    // Logged so that shows up as a cause rather than a mystery.
+    const qint64 written = m_udp->writeDatagram(pkt, QHostAddress(m_udpAnchorHost), m_udpAnchorPort);
+    writePingDiagnostic(QStringLiteral("ANCHOR_REGISTER"),
+                        QStringLiteral("anchor=%1:%2 bytes=%3")
+                            .arg(m_udpAnchorHost).arg(m_udpAnchorPort).arg(written));
 }
 
 void LobbyClient::sendUdpKeepalive()
@@ -1167,6 +1475,18 @@ void LobbyClient::onUdpReadyRead()
             const quint64 selfIdBE = qToBigEndian(m_selfUserId);
             std::memcpy(reply.data() + 5, &selfIdBE, sizeof(selfIdBE));
             m_udp->writeDatagram(reply, sender, senderPort);
+            // Proves the far side reached us — i.e. our NAT let their probe in.
+            // Its absence is the signature of a punch that never landed.
+            if (m_pingDiagnosticFile != nullptr)
+            {
+                quint64 fromBE = 0;
+                std::memcpy(&fromBE, datagram.constData() + 5, sizeof(fromBE));
+                writePingDiagnostic(QStringLiteral("INBOUND_PROBE"),
+                                    QStringLiteral("peer=%1 from=%2:%3")
+                                        .arg(pingUserLabel(qFromBigEndian(fromBE)),
+                                             sender.toString())
+                                        .arg(senderPort));
+            }
             break;
         }
         case ANCHOR_OP_PROBE_REPLY:
@@ -1179,12 +1499,38 @@ void LobbyClient::onUdpReadyRead()
 
             const auto it = m_pendingProbes.find(nonce);
             if (it == m_pendingProbes.end())
+            {
+                // Expected: the other 9 echoes of a burst we already measured.
+                // Silent, or they'd drown the log.
+                if (m_recentlyMatchedNonces.contains(nonce))
+                    break;
+                // Genuinely unmatched — a reply to a series we gave up on.
+                // A run of these means probes land, just too slowly.
+                writePingDiagnostic(QStringLiteral("REPLY_UNMATCHED"),
+                                    QStringLiteral("nonce=%1 from=%2:%3 reason=no_pending_probe")
+                                        .arg(nonce)
+                                        .arg(sender.toString())
+                                        .arg(senderPort));
                 break;
+            }
             const qint64 nowMs  = QDateTime::currentMSecsSinceEpoch();
-            const int    rttMs  = static_cast<int>(nowMs - it->sendMs);
+            const int    rttMs  = static_cast<int>(nowMs - it->attemptSendMs);
             const quint64 uid   = it->targetUserId;
+            const int attempt   = it->attempt;
             m_pendingProbes.erase(it);
+            if (m_recentlyMatchedNonces.size() >= PROBE_MATCHED_NONCE_CAP)
+                m_recentlyMatchedNonces.clear();
+            m_recentlyMatchedNonces.insert(nonce);
             m_measuredPing[uid] = rttMs;
+            writePingDiagnostic(QStringLiteral("RTT"),
+                                QStringLiteral("peer=%1 rtt_ms=%2 attempt=%3/%4 nonce=%5 from=%6:%7")
+                                    .arg(pingUserLabel(uid))
+                                    .arg(rttMs)
+                                    .arg(attempt)
+                                    .arg(PROBE_ATTEMPTS)
+                                    .arg(nonce)
+                                    .arg(sender.toString())
+                                    .arg(senderPort));
             emit pingProbeMeasured(uid, rttMs);
             break;
         }
@@ -1204,7 +1550,17 @@ void LobbyClient::onUdpReadyRead()
     for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); )
     {
         if (it->sendMs < cutoff)
+        {
+            // The headline symptom: we sent, nothing came back. Paired with
+            // whether an INBOUND_PROBE from that peer ever appeared, this
+            // separates "our packet died at their NAT" from "theirs died at
+            // ours" — the whole point of the mutual introduction.
+            writePingDiagnostic(QStringLiteral("PROBE_EXPIRED"),
+                                QStringLiteral("peer=%1 age_ms=%2")
+                                    .arg(pingUserLabel(it->targetUserId))
+                                    .arg(QDateTime::currentMSecsSinceEpoch() - it->sendMs));
             it = m_pendingProbes.erase(it);
+        }
         else
             ++it;
     }
@@ -1356,6 +1712,10 @@ void LobbyClient::requestPingProbe(quint64 targetUserId)
     QJsonObject d;
     d["targetUserId"] = QJsonValue(qint64(targetUserId));
     sendEnvelope("PING_PROBE_REQUEST", d);
+    // A request with no matching PROBE_REPLY_RECV after it means the server
+    // dropped us on its flood budget.
+    writePingDiagnostic(QStringLiteral("PROBE_REQUEST"),
+                        QStringLiteral("peer=%1").arg(pingUserLabel(targetUserId)));
 }
 
 void LobbyClient::reportMatchConnected(quint64 matchId, quint64 peerUserId)
