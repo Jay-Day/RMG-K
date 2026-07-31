@@ -114,6 +114,10 @@ public:
                          const QStringList& romHashes, const QString& udpAddr = QString());
     void disconnectFromServer();
 
+    // App-wide input watcher feeding the away detection: any key/mouse/touch
+    // event counts as activity. Installed on the QApplication in the ctor.
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
     ConnectionState state() const { return m_state; }
     quint64 selfUserId() const { return m_selfUserId; }
     QString selfRegion() const { return m_region; }
@@ -366,6 +370,12 @@ private:
     // Ping diagnostics (see startPingDiagnosticLog).
     QFile*  m_pingDiagnosticFile    = nullptr;
     qint64  m_pingDiagnosticStartMs = 0;
+
+    // Away detection: last app-wide input, and whether the last heartbeat
+    // reported us away (so the first input after can snap us back immediately
+    // instead of waiting out the heartbeat interval).
+    qint64  m_lastActivityMs = 0;
+    bool    m_reportedAway   = false;
 
     QHash<quint64, LobbyUser> m_users;
     QHash<quint64, LobbyRoomSummary> m_rooms;

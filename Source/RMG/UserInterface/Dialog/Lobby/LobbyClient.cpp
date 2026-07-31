@@ -31,6 +31,7 @@
 #include <QRandomGenerator>
 #include <QDebug>
 #include <QSet>
+#include <QEvent>
 #include <QFile>
 #include <QDir>
 #include <cstring>
@@ -43,6 +44,10 @@ namespace
 {
     constexpr int HEARTBEAT_INTERVAL_MS  = 15'000;
     constexpr int UDP_KEEPALIVE_INTERVAL = 20'000;
+
+    // No keyboard/mouse input for this long => report "away" on the heartbeat.
+    // Presence-only; nothing functional hangs off it.
+    constexpr qint64 AWAY_AFTER_MS = 5 * 60'000;
 
     constexpr char ANCHOR_MAGIC[4] = { 'R', 'M', 'G', 'K' };
     constexpr quint8 ANCHOR_OP_REGISTER    = 0x01;
@@ -307,6 +312,11 @@ LobbyClient::LobbyClient(QObject* parent)
     m_probeRetryTimer->setInterval(PROBE_RETRY_TICK_MS);
     connect(m_probeRetryTimer, &QTimer::timeout, this, &LobbyClient::onProbeRetryTimer);
     m_probeRetryTimer->start();
+
+    // Watch app-wide input for the away flag. Cheap: the filter only stamps a
+    // timestamp for input-type events and passes everything through.
+    m_lastActivityMs = QDateTime::currentMSecsSinceEpoch();
+    QCoreApplication::instance()->installEventFilter(this);
 }
 
 LobbyClient::~LobbyClient()
@@ -1148,7 +1158,33 @@ void LobbyClient::onHeartbeatTimer()
         return;
     QJsonObject data;
     // TODO: include measured ping to server once we add WS ping/pong sampling
+    m_reportedAway = (QDateTime::currentMSecsSinceEpoch() - m_lastActivityMs) >= AWAY_AFTER_MS;
+    data["away"] = m_reportedAway;
     sendEnvelope("HEARTBEAT", data);
+}
+
+bool LobbyClient::eventFilter(QObject* watched, QEvent* event)
+{
+    switch (event->type())
+    {
+    case QEvent::KeyPress:
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseMove:
+    case QEvent::Wheel:
+    case QEvent::TouchBegin:
+        m_lastActivityMs = QDateTime::currentMSecsSinceEpoch();
+        // First input after reporting away: snap back now rather than looking
+        // AFK for up to another heartbeat interval.
+        if (m_reportedAway && m_state == ConnectionState::Connected)
+        {
+            m_reportedAway = false;
+            onHeartbeatTimer();
+        }
+        break;
+    default:
+        break;
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 // -------- UDP anchor --------
