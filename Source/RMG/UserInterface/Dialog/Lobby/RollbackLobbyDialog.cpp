@@ -1300,9 +1300,11 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         const QFontMetrics fm(m_playersTree->header()->font());
         const int pad = 20; // section margins
         const int stateWidth  = fm.horizontalAdvance(QStringLiteral("Spectating")) + pad;
-        // Extra room on Region for the sort indicator: the column is pinned, so
-        // unlike State it can't be widened by hand when the arrow appears.
-        const int regionWidth = fm.horizontalAdvance(QStringLiteral("Region")) + pad + 16;
+        // Text width only, same as State's sizing. Trade-off: sorting by
+        // Region draws the sort arrow into this fixed width and elides the
+        // label until the sort moves elsewhere — accepted to keep the column
+        // tight.
+        const int regionWidth = fm.horizontalAdvance(QStringLiteral("Region")) + pad;
         m_playersTree->setColumnWidth(1, stateWidth);
 
         // The column count is part of the key: restoring a state saved for a
