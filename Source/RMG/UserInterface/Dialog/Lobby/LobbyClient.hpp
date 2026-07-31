@@ -377,6 +377,10 @@ private:
     {
         quint64 targetUserId = 0;
         qint64  sendMs       = 0;  // first burst — for age/timeout accounting only
+        // Second target for the same series: the peer's learned route when it
+        // differs from the advertised endpoint. Both are burst each attempt;
+        // whichever one works produces the reply.
+        QString altEndpoint;
         // Start of the most recent burst, and what RTT is measured from. Using
         // the first burst instead would add the retry delay to the reading and
         // report ~690 ms for a 90 ms peer answered on attempt 3, which then
@@ -390,6 +394,25 @@ private:
         qint64  nextAttemptMs = 0;
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;
+
+    // The address a peer's packets *actually* arrive from, learned from inbound
+    // PROBE/PROBE_REPLY traffic — n02-style reply-to-observed-source, kept.
+    // For a peer whose NAT assigns a different outgoing port per destination
+    // (CGNAT/symmetric), the server-advertised endpoint only works for talking
+    // to the server; the source their packets reach us from is the only route
+    // our own packets can take back. Refreshed on every inbound probe packet;
+    // consulted by probes and spliced over the advertised endpoint at match
+    // start when fresh.
+    struct LearnedRoute
+    {
+        QString endpoint;
+        qint64  lastSeenMs = 0;
+    };
+    QHash<quint64, LearnedRoute> m_learnedRoutes;
+    // Record `sender:port` as userId's proven route (no-op on self/zero id).
+    void learnRoute(quint64 userId, const QHostAddress& sender, quint16 senderPort);
+    // The learned endpoint if seen recently enough to trust, else empty.
+    QString freshLearnedRoute(quint64 userId) const;
     // Nonces we've already measured. A burst draws one echo per packet that
     // arrives, so 9 of 10 replies are duplicates of a nonce we just erased —
     // without this they'd all log as REPLY_UNMATCHED and bury the real ones.

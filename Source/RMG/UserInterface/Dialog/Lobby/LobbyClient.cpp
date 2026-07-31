@@ -77,6 +77,22 @@ namespace
     // outlive the echoes of one burst.
     constexpr int PROBE_MATCHED_NONCE_CAP = 64;
 
+    // How long a learned route stays trusted without fresh inbound traffic.
+    // Seated peers refresh it every ~3s via the seat probe loop; 60s tolerates
+    // a couple of missed cycles without trusting a mapping the peer's NAT has
+    // likely since expired.
+    constexpr qint64 LEARNED_ROUTE_TTL_MS = 60'000;
+
+    bool parseEndpoint(const QString& endpoint, QHostAddress& addr, quint16& port)
+    {
+        const int colon = endpoint.lastIndexOf(':');
+        if (colon <= 0)
+            return false;
+        addr = QHostAddress(endpoint.left(colon));
+        port = static_cast<quint16>(endpoint.mid(colon + 1).toUInt());
+        return !addr.isNull() && port != 0;
+    }
+
     // Where the opt-in ping trace lands. Prefers RMG-K's own Logs folder;
     // falls back to a relative Logs/ so a portable install with an unwritable
     // library dir still produces a file rather than silently logging nowhere.
@@ -447,6 +463,8 @@ void LobbyClient::onWsDisconnected()
     // those ids and emit failure notices for peers we're no longer talking to.
     m_pendingProbes.clear();
     m_recentlyMatchedNonces.clear();
+    // Learned routes are keyed by user id too — same recycled-id hazard.
+    m_learnedRoutes.clear();
     // A socket error or HELLO_FAIL sets Failed before closing the WebSocket.
     // Keep that state so the dialog can preserve the useful error for retry.
     // connectToServer() permits retries from Failed.
@@ -761,6 +779,53 @@ QString LobbyClient::pingUserLabel(quint64 userId) const
     return QStringLiteral("%1:%2").arg(userId).arg(it->username);
 }
 
+void LobbyClient::learnRoute(quint64 userId, const QHostAddress& sender, quint16 senderPort)
+{
+    if (userId == 0 || userId == m_selfUserId || senderPort == 0)
+        return;
+
+    // Normalise v4-mapped addresses so the same endpoint doesn't oscillate
+    // between "::ffff:1.2.3.4" and "1.2.3.4" spellings.
+    bool isV4 = false;
+    const quint32 v4 = sender.toIPv4Address(&isV4);
+    const QString observed = QStringLiteral("%1:%2")
+        .arg(isV4 ? QHostAddress(v4).toString() : sender.toString())
+        .arg(senderPort);
+
+    LearnedRoute& route = m_learnedRoutes[userId];
+    const bool changed = (route.endpoint != observed);
+    if (changed)
+    {
+        writePingDiagnostic(QStringLiteral("ROUTE_LEARNED"),
+                            QStringLiteral("peer=%1 endpoint=%2 previous=%3")
+                                .arg(pingUserLabel(userId), observed,
+                                     route.endpoint.isEmpty() ? QStringLiteral("<none>") : route.endpoint));
+    }
+    route.endpoint   = observed;
+    route.lastSeenMs = QDateTime::currentMSecsSinceEpoch();
+
+    // Splice into any series already in flight so the current attempt benefits
+    // instead of only the next one.
+    if (changed)
+    {
+        for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end(); ++it)
+        {
+            if (it->targetUserId == userId && it->endpoint != observed)
+                it->altEndpoint = observed;
+        }
+    }
+}
+
+QString LobbyClient::freshLearnedRoute(quint64 userId) const
+{
+    const auto it = m_learnedRoutes.constFind(userId);
+    if (it == m_learnedRoutes.constEnd())
+        return QString();
+    if (QDateTime::currentMSecsSinceEpoch() - it->lastSeenMs > LEARNED_ROUTE_TTL_MS)
+        return QString();
+    return it->endpoint;
+}
+
 // Fire a UDP PROBE at a peer's anchor socket. The peer recognises the opcode
 // and echoes back a PROBE_REPLY; we match by nonce to compute RTT. Shared by
 // the reply path (we asked) and the incoming path (the server told us someone
@@ -821,12 +886,22 @@ void LobbyClient::sendProbeTo(quint64 userId, const QString& endpoint)
     in.endpoint      = endpoint;
     in.attempt       = 1;
     in.nextAttemptMs = nowMs + PROBE_RETRY_INTERVAL_MS;
+    // If inbound traffic has shown us a different working route, burst that
+    // too. Costs one extra burst; makes CGNAT/symmetric peers reachable the
+    // moment any packet of theirs has ever landed here.
+    const QString learned = freshLearnedRoute(userId);
+    if (!learned.isEmpty() && learned != endpoint)
+        in.altEndpoint = learned;
     m_pendingProbes.insert(nonce, in);
 
     sendProbeBurst(addr, port, nonce);
+    QHostAddress altAddr; quint16 altPort = 0;
+    if (!in.altEndpoint.isEmpty() && parseEndpoint(in.altEndpoint, altAddr, altPort))
+        sendProbeBurst(altAddr, altPort, nonce);
     writePingDiagnostic(QStringLiteral("PROBE_SENT"),
-                        QStringLiteral("peer=%1 endpoint=%2 nonce=%3 attempt=1/%4 burst=%5 pending=%6")
-                            .arg(pingUserLabel(userId), endpoint)
+                        QStringLiteral("peer=%1 endpoint=%2 alt=%3 nonce=%4 attempt=1/%5 burst=%6 pending=%7")
+                            .arg(pingUserLabel(userId), endpoint,
+                                 in.altEndpoint.isEmpty() ? QStringLiteral("-") : in.altEndpoint)
                             .arg(nonce)
                             .arg(PROBE_ATTEMPTS)
                             .arg(PROBE_BURST)
@@ -884,10 +959,8 @@ void LobbyClient::onProbeRetryTimer()
             continue;
         }
 
-        const int colon = it->endpoint.lastIndexOf(':');
-        const QHostAddress addr(it->endpoint.left(colon));
-        const quint16 port = static_cast<quint16>(it->endpoint.mid(colon + 1).toUInt());
-        if (colon <= 0 || addr.isNull() || port == 0)
+        QHostAddress addr; quint16 port = 0;
+        if (!parseEndpoint(it->endpoint, addr, port))
         {
             const quint64 uid = it->targetUserId;
             it = m_pendingProbes.erase(it);
@@ -899,9 +972,13 @@ void LobbyClient::onProbeRetryTimer()
         it->attemptSendMs = nowMs;
         it->nextAttemptMs = nowMs + PROBE_RETRY_INTERVAL_MS;
         sendProbeBurst(addr, port, it.key());
+        QHostAddress altAddr; quint16 altPort = 0;
+        if (!it->altEndpoint.isEmpty() && parseEndpoint(it->altEndpoint, altAddr, altPort))
+            sendProbeBurst(altAddr, altPort, it.key());
         writePingDiagnostic(QStringLiteral("PROBE_RETRY"),
-                            QStringLiteral("peer=%1 endpoint=%2 nonce=%3 attempt=%4/%5 burst=%6")
-                                .arg(pingUserLabel(it->targetUserId), it->endpoint)
+                            QStringLiteral("peer=%1 endpoint=%2 alt=%3 nonce=%4 attempt=%5/%6 burst=%7")
+                                .arg(pingUserLabel(it->targetUserId), it->endpoint,
+                                     it->altEndpoint.isEmpty() ? QStringLiteral("-") : it->altEndpoint)
                                 .arg(it.key())
                                 .arg(it->attempt)
                                 .arg(PROBE_ATTEMPTS)
@@ -955,6 +1032,28 @@ void LobbyClient::handleMatchBegin(const QJsonObject& data)
         p.publicPort = static_cast<quint16>(o.value("publicPort").toInt());
         p.localIp    = o.value("localIp").toString();
         p.slot       = o.value("slot").toInt();
+
+        // Ping-proven route beats the server's directory entry. For a CGNAT
+        // peer the advertised endpoint is unreachable from here and the route
+        // their probes arrive from is the only one that works — splice it in
+        // before anything downstream (punch, prematch sync, GekkoNet) sees the
+        // peer list, so the whole match rides the route the pings proved.
+        const QString learned = freshLearnedRoute(p.userId);
+        QHostAddress learnedAddr; quint16 learnedPort = 0;
+        if (!learned.isEmpty() && parseEndpoint(learned, learnedAddr, learnedPort))
+        {
+            const QString advertised = QStringLiteral("%1:%2").arg(p.publicIp).arg(p.publicPort);
+            if (learned != advertised)
+            {
+                qInfo() << "Rollback lobby using learned route for" << p.username
+                        << learned << "over advertised" << advertised;
+                writePingDiagnostic(QStringLiteral("MATCH_ROUTE"),
+                                    QStringLiteral("peer=%1 learned=%2 advertised=%3")
+                                        .arg(pingUserLabel(p.userId), learned, advertised));
+                p.publicIp   = learnedAddr.toString();
+                p.publicPort = learnedPort;
+            }
+        }
         peers.append(p);
     }
     emit matchBegin(matchId, peers);
@@ -1475,18 +1574,21 @@ void LobbyClient::onUdpReadyRead()
             const quint64 selfIdBE = qToBigEndian(m_selfUserId);
             std::memcpy(reply.data() + 5, &selfIdBE, sizeof(selfIdBE));
             m_udp->writeDatagram(reply, sender, senderPort);
+
+            quint64 fromBE = 0;
+            std::memcpy(&fromBE, datagram.constData() + 5, sizeof(fromBE));
+            const quint64 fromUserId = qFromBigEndian(fromBE);
+            // This packet just proved this exact source traverses both NATs —
+            // remember it as the peer's working route (n02-style: trust caller
+            // ID over the directory).
+            learnRoute(fromUserId, sender, senderPort);
             // Proves the far side reached us — i.e. our NAT let their probe in.
             // Its absence is the signature of a punch that never landed.
-            if (m_pingDiagnosticFile != nullptr)
-            {
-                quint64 fromBE = 0;
-                std::memcpy(&fromBE, datagram.constData() + 5, sizeof(fromBE));
-                writePingDiagnostic(QStringLiteral("INBOUND_PROBE"),
-                                    QStringLiteral("peer=%1 from=%2:%3")
-                                        .arg(pingUserLabel(qFromBigEndian(fromBE)),
-                                             sender.toString())
-                                        .arg(senderPort));
-            }
+            writePingDiagnostic(QStringLiteral("INBOUND_PROBE"),
+                                QStringLiteral("peer=%1 from=%2:%3")
+                                    .arg(pingUserLabel(fromUserId),
+                                         sender.toString())
+                                    .arg(senderPort));
             break;
         }
         case ANCHOR_OP_PROBE_REPLY:
@@ -1496,6 +1598,13 @@ void LobbyClient::onUdpReadyRead()
             quint64 nonceBE = 0;
             std::memcpy(&nonceBE, datagram.constData() + 13, sizeof(nonceBE));
             const quint64 nonce = qFromBigEndian(nonceBE);
+
+            // The echoing peer stamps its own id into the sender slot, so a
+            // reply teaches us their working route too — including the
+            // duplicate echoes of a burst, which keep the TTL fresh.
+            quint64 echoerBE = 0;
+            std::memcpy(&echoerBE, datagram.constData() + 5, sizeof(echoerBE));
+            learnRoute(qFromBigEndian(echoerBE), sender, senderPort);
 
             const auto it = m_pendingProbes.find(nonce);
             if (it == m_pendingProbes.end())
