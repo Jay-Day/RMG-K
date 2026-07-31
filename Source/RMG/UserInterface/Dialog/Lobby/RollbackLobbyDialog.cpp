@@ -76,6 +76,8 @@
 #include <QIcon>
 #include <QFile>
 #include <QFontMetrics>
+#include <QStyledItemDelegate>
+#include <QPainter>
 #include <QLocale>
 #include <QMenu>
 #include <algorithm>
@@ -115,6 +117,46 @@ void setAutoComboLabel(QComboBox* combo, int resolved)
     const int idx = combo->findData(0);
     if (idx >= 0) combo->setItemText(idx, QStringLiteral("Auto (%1 f)").arg(resolved));
 }
+
+// Paints a column's icon centered in the cell instead of Qt's hard left
+// placement (item views expose no alignment control for decorations). Used by
+// the players list's Region column so the flag sits under the centered header
+// rather than hugging the cell edge. Text-only cells (the emoji/dash fallback)
+// get centered text the normal way.
+class CenterIconDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        QStyleOptionViewItem opt(option);
+        initStyleOption(&opt, index);
+
+        if (opt.icon.isNull())
+        {
+            opt.displayAlignment = Qt::AlignCenter;
+            const QWidget* widget = option.widget;
+            QStyle* style = widget ? widget->style() : QApplication::style();
+            style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget);
+            return;
+        }
+
+        // Draw the row (background, selection, alternate stripe) without the
+        // icon, then place the icon ourselves.
+        const QIcon icon = opt.icon;
+        opt.icon = QIcon();
+        opt.features &= ~QStyleOptionViewItem::HasDecoration;
+        const QWidget* widget = option.widget;
+        QStyle* style = widget ? widget->style() : QApplication::style();
+        style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget);
+
+        QRect target(QPoint(0, 0), opt.decorationSize);
+        target.moveCenter(option.rect.center());
+        icon.paint(painter, target);
+    }
+};
 
 } // namespace
 
@@ -1326,6 +1368,9 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
         m_playersTree->setColumnWidth(2, regionWidth);
     }
+    // Flags centered in the Region column (and its header label with them).
+    m_playersTree->setItemDelegateForColumn(2, new CenterIconDelegate(m_playersTree));
+    m_playersTree->headerItem()->setTextAlignment(2, Qt::AlignCenter);
     // The columns are clamped to the viewport (clampPlayersColumns), so a
     // horizontal scrollbar can never be needed — turning it off also stops Qt
     // reserving space for one mid-drag and reflowing the row underneath.
