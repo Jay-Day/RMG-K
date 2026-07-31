@@ -1298,13 +1298,13 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         // holds only a flag icon now, so its header label is the wider of the
         // two and sets the width.
         const QFontMetrics fm(m_playersTree->header()->font());
-        const int pad = 20; // sort indicator + section margins
+        const int pad = 20; // section margins
         const int stateWidth  = fm.horizontalAdvance(QStringLiteral("Spectating")) + pad;
-        const int regionWidth = fm.horizontalAdvance(QStringLiteral("Region")) + pad;
+        // Extra room on Region for the sort indicator: the column is pinned, so
+        // unlike State it can't be widened by hand when the arrow appears.
+        const int regionWidth = fm.horizontalAdvance(QStringLiteral("Region")) + pad + 16;
         m_playersTree->setColumnWidth(1, stateWidth);
-        m_playersTree->setColumnWidth(2, regionWidth);
-    }
-    {
+
         // The column count is part of the key: restoring a state saved for a
         // different column layout half-applies and breaks the header (missing
         // section dividers, wrong stretch section). v2: the v1 layout had no
@@ -1316,11 +1316,14 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_playersTree->header()->restoreState(headerState);
-        // restoreState can resurrect per-section modes; re-pin ours. Player's
-        // width is refit by the first viewport Resize regardless of what was
-        // restored, so only State's width meaningfully survives the round trip.
+        // restoreState can resurrect per-section modes and stale widths; re-pin
+        // ours AFTER it. Region's width is layout policy, not a user
+        // preference — always the computed value, never the saved one. State's
+        // saved width is the one thing that should survive the round trip;
+        // Player is refit by the first viewport Resize regardless.
         m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
         m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
+        m_playersTree->setColumnWidth(2, regionWidth);
     }
     // The columns are clamped to the viewport (clampPlayersColumns), so a
     // horizontal scrollbar can never be needed — turning it off also stops Qt
