@@ -19,6 +19,7 @@
 #include <QDialogButtonBox>
 #include <QSettings>
 #include <QFileInfo>
+#include <QIcon>
 
 using namespace UserInterface::Dialog;
 
@@ -28,6 +29,7 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername, const QString
     : QDialog(parent)
 {
     setWindowTitle("Create Room");
+    setWindowIcon(QIcon(":Resource/RMG.png"));
     setModal(true);
     // The game comes from the lobby's shared picker, not a picker of our own.
     m_romName = gameName;
