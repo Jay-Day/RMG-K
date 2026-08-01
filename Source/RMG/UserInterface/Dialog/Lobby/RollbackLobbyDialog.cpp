@@ -37,7 +37,6 @@
 #include "n02_client.h" // setRecordingStreamSink (broadcast tee)
 
 #include <QRegularExpression>
-#include <QRegularExpressionValidator>
 
 #include <QApplication>
 #include <QPalette>
@@ -74,6 +73,12 @@
 #include <QUrl>
 #include <QDebug>
 #include <QVariant>
+#include <QIcon>
+#include <QFile>
+#include <QFontMetrics>
+#include <QLocale>
+#include <QMenu>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -180,18 +185,20 @@ namespace
     }
 
     // ── Per-player / per-state / per-ping accents ──────────────────────
-    // Distinct seat colors so P1-P4 read apart at a glance (P1 blue,
-    // P2 red, P3 green, P4 amber — a Smash/Mario-Kart-style set). Light
+    // Distinct seat colors so P1-P4 read apart at a glance (P1 red,
+    // P2 blue, P3 yellow, P4 green — a Smash/Mario-Kart-style set). Light
     // and dark variants keep contrast on both themes; brightness mirrors
     // the way statusColors() picks Material 500 on dark / 800 on light.
+    // P3's light variant is a deep goldenrod rather than a true yellow,
+    // which would be illegible on a light background.
     QString playerAccentHex(int slot, bool dark)
     {
         switch (slot)
         {
-            case 1: return dark ? "#4aa3ff" : "#0078D7"; // blue
-            case 2: return dark ? "#ff6b66" : "#d83a34"; // red
-            case 3: return dark ? "#4caf50" : "#2e9e3f"; // green
-            case 4: return dark ? "#ffca45" : "#b5790a"; // amber
+            case 1: return dark ? "#ff6b66" : "#d83a34"; // red
+            case 2: return dark ? "#4aa3ff" : "#0078D7"; // blue
+            case 3: return dark ? "#ffca45" : "#b5790a"; // yellow
+            case 4: return dark ? "#4caf50" : "#2e9e3f"; // green
             default: return dark ? "#bdbdbd" : "#9e9e9e";
         }
     }
@@ -205,10 +212,10 @@ namespace
         RGB c;
         switch (slot)
         {
-            case 1: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
-            case 2: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
-            case 3: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
-            case 4: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            case 1: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
+            case 2: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
+            case 3: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            case 4: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
             default: c = RGB{128, 128, 128}; break;
         }
         return QString("rgba(%1, %2, %3, %4)")
@@ -223,10 +230,10 @@ namespace
         RGB c;
         switch (slot)
         {
-            case 1: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
-            case 2: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
-            case 3: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
-            case 4: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            case 1: c = dark ? RGB{255, 107, 102} : RGB{216, 58, 52}; break;
+            case 2: c = dark ? RGB{74, 163, 255} : RGB{0, 120, 215};  break;
+            case 3: c = dark ? RGB{255, 202, 69} : RGB{181, 121, 10}; break;
+            case 4: c = dark ? RGB{76, 175, 80} : RGB{46, 158, 63};   break;
             default: c = RGB{128, 128, 128}; break;
         }
         return QString("rgba(%1, %2, %3, 0.55)").arg(c.r).arg(c.g).arg(c.b);
@@ -273,16 +280,32 @@ namespace
     // Right-aligned seat meta as rich text: an accent-colored HOST badge and a
     // ping-tier-colored "N ms". Shared by renderSeatFilled and the live ping
     // refresh in onPingMeasured so the two never drift. pingMs < 0 hides ping.
-    QString seatMetaHtml(int slot, bool isHost, int pingMs, bool dark)
+    // `status`, when set, replaces the ping cell — used to show a punch being
+    // retried or given up on, so a peer we can't reach reads as a stated
+    // outcome instead of a number that never appears.
+    QString seatMetaHtml(int slot, bool isHost, int pingMs, bool dark,
+                         const QString& status = QString())
     {
         QStringList parts;
         if (isHost)
             parts << QString("<span style='color:%1; font-weight:700;'>HOST</span>")
                          .arg(playerAccentHex(slot, dark));
-        if (pingMs >= 0)
+        if (!status.isEmpty())
+            parts << status;
+        else if (pingMs >= 0)
             parts << QString("<span style='color:%1; font-weight:600;'>%2 ms</span>")
                          .arg(pingHex(pingMs)).arg(pingMs);
         return parts.join(QStringLiteral("&nbsp;·&nbsp;"));
+    }
+
+    // Amber while we're still trying, red once we've stopped.
+    QString seatProbeStatusHtml(int attempt, int maxAttempts, bool failed, bool dark)
+    {
+        const auto c = statusColors();
+        if (failed)
+            return QString("<span style='color:%1; font-weight:600;'>unreachable</span>").arg(c.fail);
+        return QString("<span style='color:%1; font-weight:600;'>retrying %2/%3…</span>")
+                   .arg(c.wait).arg(attempt).arg(maxAttempts);
     }
 
     // A translucent fill derived from a solid hex — used for the soft pill /
@@ -356,6 +379,8 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::matchBegin,           this, &RollbackLobbyDialog::onMatchBegin);
     connect(m_client, &LobbyClient::matchPeerLeft,        this, &RollbackLobbyDialog::onMatchPeerLeft);
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
+    connect(m_client, &LobbyClient::pingProbeRetrying,    this, &RollbackLobbyDialog::onPingProbeRetrying);
+    connect(m_client, &LobbyClient::pingProbeFailed,      this, &RollbackLobbyDialog::onPingProbeFailed);
     connect(m_client, &LobbyClient::spectateBegan,        this, &RollbackLobbyDialog::onSpectateBegan);
     connect(m_client, &LobbyClient::spectateData,         this, &RollbackLobbyDialog::onSpectateData);
     connect(m_client, &LobbyClient::spectateKeyframe,     this, &RollbackLobbyDialog::onSpectateKeyframe);
@@ -370,16 +395,36 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
     // 3 s cadence is a balance: fast enough that the displayed ping tracks real
     // conditions, slow enough that we're not flooding peers' anchor sockets. The
-    // *first* ping for a peer no longer waits on this tick — onRoomStateChanged
-    // fires an immediate probe the moment a peer is seated. Stays stopped until a
-    // room is entered.
+    // *first* ping for a seated peer doesn't wait on this tick — onRoomStateChanged
+    // fires an immediate probe the moment a peer is seated. Runs whenever the
+    // connection is up (see onClientStateChanged): seated peers refresh every
+    // tick, the rest of the lobby on a slow round-robin for the hover tooltip.
     m_pingProbeTimer = new QTimer(this);
     m_pingProbeTimer->setInterval(3'000);
     connect(m_pingProbeTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onPingProbeTick);
+
+    // The lobby shell is visible before a connection exists, so initialize its
+    // controls and status without waiting for a state-change signal.
+    onClientStateChanged(LobbyClient::ConnectionState::Disconnected);
 }
 
 RollbackLobbyDialog::~RollbackLobbyDialog()
 {
+    // Saved here rather than closeEvent because Esc rejects the dialog
+    // without a close event.
+    QSettings s("RMG-K", "n02");
+    if (m_playersTree)
+        s.setValue(QString("RollbackLobby/PlayersHeaderState.v2.c%1").arg(m_playersTree->columnCount()),
+                   m_playersTree->header()->saveState());
+    if (m_roomsTree)
+        s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
+                   m_roomsTree->header()->saveState());
+    if (m_matchesTree)
+        s.setValue(QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount()),
+                   m_matchesTree->header()->saveState());
+    if (m_browseSplitter)
+        s.setValue("RollbackLobby/BrowseSplitterState", m_browseSplitter->saveState());
+
     // Detach the recording sink before we're gone — it captures `this` and is
     // invoked on the emulation thread (emulation should already be stopped here).
     if (m_broadcasting)
@@ -398,12 +443,7 @@ void RollbackLobbyDialog::buildUi()
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // Top-level stack: the inline connect screen (0) transforms into the live
-    // lobby (1) once connected, instead of a separate modal prompt.
-    m_topStack = new QStackedWidget(this);
-    m_topStack->addWidget(buildConnectView());   // index 0
-    m_topStack->addWidget(buildLobbyView());     // index 1
-    root->addWidget(m_topStack);
+    root->addWidget(buildLobbyView());
 }
 
 QWidget* RollbackLobbyDialog::buildLobbyView()
@@ -440,96 +480,6 @@ QWidget* RollbackLobbyDialog::buildLobbyView()
 
     lay->addWidget(m_splitter, 1);
     return container;
-}
-
-QWidget* RollbackLobbyDialog::buildConnectView()
-{
-    auto* page = new QWidget(this);
-    auto* outer = new QVBoxLayout(page);
-    outer->setContentsMargins(32, 32, 32, 32);
-    outer->addStretch(1);
-
-    auto* card = new QWidget(page);
-    card->setObjectName("LobbyConnectCard");
-    card->setMaximumWidth(460);
-    auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(8, 8, 8, 8);
-    lay->setSpacing(14);
-
-    auto* title = new QLabel("RMG-K Rollback Netplay", card);
-    title->setAlignment(Qt::AlignHCenter);
-    QFont titleFont = title->font();
-    titleFont.setPointSizeF(titleFont.pointSizeF() + 4.0);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
-    lay->addWidget(title);
-
-    auto* intro = new QLabel(
-        "Rollback netplay uses GGPO-style rollback for smooth, low-latency online "
-        "play. Connect to the lobby to see who's online, create or join a room, and "
-        "start a match.\n\nPick a username other players will see — you can change "
-        "it later.", card);
-    intro->setWordWrap(true);
-    intro->setAlignment(Qt::AlignHCenter);
-    lay->addWidget(intro);
-
-    m_connectUsernameEdit = new QLineEdit(card);
-    m_connectUsernameEdit->setMaxLength(16);
-    m_connectUsernameEdit->setPlaceholderText("Username");
-    m_connectUsernameEdit->setAlignment(Qt::AlignHCenter);
-    auto* validator = new QRegularExpressionValidator(
-        QRegularExpression(R"([A-Za-z0-9_\-\.]{1,16})"), this);
-    m_connectUsernameEdit->setValidator(validator);
-    // Half-width, centered (side stretch 1 : field 2 : side stretch 1 = 50%).
-    auto* userRow = new QHBoxLayout();
-    userRow->setContentsMargins(0, 0, 0, 0);
-    userRow->addStretch(1);
-    userRow->addWidget(m_connectUsernameEdit, 2);
-    userRow->addStretch(1);
-    lay->addLayout(userRow);
-
-    m_connectStatusLabel = new QLabel(card);
-    m_connectStatusLabel->setWordWrap(true);
-    m_connectStatusLabel->setAlignment(Qt::AlignHCenter);
-    lay->addWidget(m_connectStatusLabel);
-
-    m_connectButton = new QPushButton("Connect", card);
-    m_connectButton->setDefault(true);
-    m_connectButton->setMinimumHeight(38);
-    m_connectButton->setCursor(Qt::PointingHandCursor);
-    m_connectButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    // Modern, rounded, primary-blue (matches the launcher's accent buttons).
-    m_connectButton->setStyleSheet(
-        "QPushButton {"
-        "  background-color: #0078D7;"
-        "  color: white;"
-        "  border: none;"
-        "  border-radius: 19px;"
-        "  padding: 8px 22px;"
-        "  font-weight: 600;"
-        "}"
-        "QPushButton:hover { background-color: #1c88dc; }"
-        "QPushButton:pressed { background-color: #005a9e; }"
-        "QPushButton:disabled { background-color: palette(mid); color: palette(midlight); }");
-    // Half-width, centered to match the username field.
-    auto* btnRow = new QHBoxLayout();
-    btnRow->setContentsMargins(0, 0, 0, 0);
-    btnRow->addStretch(1);
-    btnRow->addWidget(m_connectButton, 2);
-    btnRow->addStretch(1);
-    lay->addLayout(btnRow);
-
-    connect(m_connectButton, &QPushButton::clicked,
-            this, &RollbackLobbyDialog::onConnectClicked);
-    connect(m_connectUsernameEdit, &QLineEdit::returnPressed,
-            this, &RollbackLobbyDialog::onConnectClicked);
-    connect(m_connectUsernameEdit, &QLineEdit::textChanged, this, [this](const QString&) {
-        if (m_connectStatusLabel) m_connectStatusLabel->clear();
-    });
-
-    outer->addWidget(card, 0, Qt::AlignHCenter);
-    outer->addStretch(2);
-    return page;
 }
 
 // ── Marquee ──────────────────────────────────────────────────────────
@@ -688,52 +638,129 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
                 s.setValue("Rom", name);
                 s.endGroup();
             });
+    connect(m_browseRomCombo, &QComboBox::currentTextChanged,
+            this, [this](const QString&) { refreshSameGameFilter(); });
     gameRow->addWidget(gameLbl, 0);
     gameRow->addWidget(m_browseRomCombo, 1);
     lay->addLayout(gameRow);
     populateBrowseRoms(); // fill from whatever library we have so far
 
-    // ── Active Rooms ──
+    // ── Active Rooms / Ongoing Matches — panes of a vertical splitter so
+    //    the matches list height is user-adjustable ──
+    m_browseSplitter = new QSplitter(Qt::Vertical, this);
+    m_browseSplitter->setHandleWidth(1);
+    m_browseSplitter->setChildrenCollapsible(false);
+
+    auto* roomsPane = new QWidget(this);
+    auto* roomsLay = new QVBoxLayout(roomsPane);
+    roomsLay->setContentsMargins(0, 0, 0, 0);
+    roomsLay->setSpacing(SPACING_DEFAULT);
+
     auto* roomsHeader = new QLabel("ACTIVE ROOMS", this);
     roomsHeader->setProperty("class", "SectionHeader");
-    lay->addWidget(roomsHeader);
+    auto* roomsHeaderRow = new QHBoxLayout;
+    roomsHeaderRow->setContentsMargins(0, 0, 0, 0);
+    roomsHeaderRow->setSpacing(SPACING_DEFAULT);
+    roomsHeaderRow->addWidget(roomsHeader, 1);
+
+    m_sameGameFilterCheck = new QCheckBox("Same game only", this);
+    m_sameGameFilterCheck->setToolTip(
+        "Only show rooms and matches for the selected game.");
+    m_sameGameFilterCheck->setEnabled(!selectedBrowseRom().isEmpty());
+    connect(m_sameGameFilterCheck, &QCheckBox::toggled,
+            this, [this](bool) { onRoomListChanged(); });
+    roomsHeaderRow->addWidget(m_sameGameFilterCheck);
+    roomsLay->addLayout(roomsHeaderRow);
 
     m_roomsTree = new QTreeWidget(this);
     m_roomsTree->setObjectName("RoomsTree");
-    m_roomsTree->setHeaderLabels({ "Name", "Host", "ROM", "Seats", "State" });
+    m_roomsTree->setHeaderLabels({ "Name", "Host", "Ping", "ROM", "Seats" });
     m_roomsTree->setRootIsDecorated(false);
     m_roomsTree->setSortingEnabled(true);
     m_roomsTree->setAlternatingRowColors(true);
     m_roomsTree->setFrameShape(QFrame::NoFrame);
     m_roomsTree->setUniformRowHeights(true);
-    m_roomsTree->header()->setStretchLastSection(false);
-    m_roomsTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_roomsTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_roomsTree->header()->setSectionResizeMode(2, QHeaderView::Stretch);
-    m_roomsTree->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    m_roomsTree->header()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    m_roomsTree->header()->setStretchLastSection(true);
+    m_roomsTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+    m_roomsTree->setColumnWidth(0, 180);
+    m_roomsTree->setColumnWidth(1, 110);
+    m_roomsTree->setColumnWidth(2, 70);
+    m_roomsTree->setColumnWidth(3, 160);
+    m_roomsTree->setColumnWidth(4, 60);
+    {
+        // The column count is part of the key: restoring a state saved for a
+        // different column layout half-applies and breaks the header (missing
+        // section dividers, wrong stretch section).
+        QSettings s("RMG-K", "n02");
+        const QString key = QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount());
+        const QByteArray headerState = s.value(key).toByteArray();
+        if (!headerState.isEmpty())
+            m_roomsTree->header()->restoreState(headerState);
+    }
     connect(m_roomsTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onRoomDoubleClicked);
-    lay->addWidget(m_roomsTree, 1);
+    // Selecting a room measures the host on demand, so the ping column can be
+    // an estimate until someone actually cares about that room.
+    connect(m_roomsTree, &QTreeWidget::itemClicked, this,
+            [this](QTreeWidgetItem* item, int) {
+                if (item)
+                    probeOnDemand(item->data(0, Qt::UserRole + 1).toULongLong());
+            });
+    // Moderators get a right-click "close room" action; a no-op for everyone else.
+    m_roomsTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_roomsTree, &QTreeWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos) { showAdminRoomMenu(m_roomsTree, pos); });
+    roomsLay->addWidget(m_roomsTree, 1);
+    m_browseSplitter->addWidget(roomsPane);
 
     // ── Ongoing Matches ──
+    auto* matchesPane = new QWidget(this);
+    auto* matchesLay = new QVBoxLayout(matchesPane);
+    matchesLay->setContentsMargins(0, 0, 0, 0);
+    matchesLay->setSpacing(SPACING_DEFAULT);
+
     auto* matchesHeader = new QLabel("ONGOING MATCHES", this);
     matchesHeader->setProperty("class", "SectionHeader");
-    lay->addWidget(matchesHeader);
+    matchesLay->addWidget(matchesHeader);
 
     m_matchesTree = new QTreeWidget(this);
     m_matchesTree->setObjectName("MatchesTree");
     m_matchesTree->setHeaderLabels({ "Players", "Duration", "ROM" });
     m_matchesTree->setRootIsDecorated(false);
+    m_matchesTree->setSortingEnabled(true);
+    m_matchesTree->sortItems(1, Qt::AscendingOrder);
     m_matchesTree->setAlternatingRowColors(true);
     m_matchesTree->setFrameShape(QFrame::NoFrame);
-    m_matchesTree->setFixedHeight(120);
-    m_matchesTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_matchesTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_matchesTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_matchesTree->setMinimumHeight(70);
+    m_matchesTree->header()->setStretchLastSection(true);
+    m_matchesTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+    m_matchesTree->setColumnWidth(0, 220);
+    m_matchesTree->setColumnWidth(1, 80);
+    {
+        QSettings s("RMG-K", "n02");
+        const QString key = QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount());
+        const QByteArray headerState = s.value(key).toByteArray();
+        if (!headerState.isEmpty())
+            m_matchesTree->header()->restoreState(headerState);
+    }
     connect(m_matchesTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onMatchDoubleClicked);
-    lay->addWidget(m_matchesTree);
+    m_matchesTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_matchesTree, &QTreeWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos) { showAdminRoomMenu(m_matchesTree, pos); });
+    matchesLay->addWidget(m_matchesTree, 1);
+    m_browseSplitter->addWidget(matchesPane);
+
+    m_browseSplitter->setStretchFactor(0, 1);
+    m_browseSplitter->setStretchFactor(1, 0);
+    m_browseSplitter->setSizes({420, 150});
+    {
+        QSettings s("RMG-K", "n02");
+        const QByteArray splitState = s.value("RollbackLobby/BrowseSplitterState").toByteArray();
+        if (!splitState.isEmpty())
+            m_browseSplitter->restoreState(splitState);
+    }
+    lay->addWidget(m_browseSplitter, 1);
 
     // Tick the ongoing-match durations once a second (the room list only
     // refreshes on events, so the timer keeps the elapsed time live).
@@ -833,6 +860,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     auto* delayLbl = new QLabel("Frame delay:", this);
     m_delayCombo = new QComboBox(this);
     m_delayCombo->setObjectName("LobbyCombo");
+    // Re-measure when the Auto entry grows into "Auto (2 f)" so the resolved
+    // value isn't clipped.
+    m_delayCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     fillFrameCombo(m_delayCombo, "Auto");
     m_delayCombo->setToolTip(delayTip);
     // Stash the explainer so onRoomStateChanged can restore it after a
@@ -846,7 +876,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     auto* predLbl = new QLabel("Prediction:", this);
     m_predictionCombo = new QComboBox(this);
     m_predictionCombo->setObjectName("LobbyCombo");
-    fillFrameCombo(m_predictionCombo, "Default");
+    fillFrameCombo(m_predictionCombo, QString("Default (%1 f)").arg(kAutoPredictionWindow));
     m_predictionCombo->setToolTip(predictionTip);
     m_predictionCombo->setProperty("originalTip", predictionTip);
     settingsRow->addWidget(predLbl);
@@ -1243,18 +1273,74 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
 
     m_playersTree = new QTreeWidget(card);
     m_playersTree->setObjectName("PlayersTree");
-    m_playersTree->setHeaderLabels({ "Player", "State", "Est. Ping" });
+    m_playersTree->setHeaderLabels({ "Player", "State", "Region" });
     m_playersTree->setRootIsDecorated(false);
     m_playersTree->setSortingEnabled(true);
+	m_playersTree->sortItems(0, Qt::AscendingOrder);
     m_playersTree->setAlternatingRowColors(true);
     m_playersTree->setFrameShape(QFrame::NoFrame);
     m_playersTree->setUniformRowHeights(true);
+    // Column sizing is hand-rolled in clampPlayersColumns rather than using a
+    // Qt Stretch section. Qt resizes a column via the divider on its RIGHT
+    // edge, so with three columns only two dividers physically exist: Player|
+    // State and State|Region (Region's right edge is the card border —
+    // ungrabbable). A Stretch section additionally locks its own divider,
+    // which left State as the only adjustable column. Instead: both columns
+    // Interactive, Region pinned at flag width, and the handler keeps
+    // Player = viewport − State − Region so the header always fills the card.
     m_playersTree->header()->setStretchLastSection(false);
-    m_playersTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_playersTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_playersTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    // Click in the empty area below the rows to clear the selection (handled in
-    // eventFilter — there's no built-in property for this).
+    m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+    m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
+    {
+        // Size State and Region to their widest expected text once, up front:
+        // the tree is empty at construction, so ResizeToContents here would
+        // measure the header labels alone and clip "Spectating" later. Region
+        // holds only a flag icon now, so its header label is the wider of the
+        // two and sets the width.
+        const QFontMetrics fm(m_playersTree->header()->font());
+        const int pad = 20; // section margins
+        const int stateWidth  = fm.horizontalAdvance(QStringLiteral("Spectating")) + pad;
+        // Text width with a slightly tighter margin than State's — the sort
+        // indicator renders above the label in this header style, so nothing
+        // else needs the horizontal room.
+        const int regionWidth = fm.horizontalAdvance(QStringLiteral("Region")) + pad - 4;
+        m_playersTree->setColumnWidth(1, stateWidth);
+
+        // The column count is part of the key: restoring a state saved for a
+        // different column layout half-applies and breaks the header (missing
+        // section dividers, wrong stretch section). v2: the v1 layout had no
+        // stretch section and a shrink-only clamp, so saved v1 states carry
+        // squeezed columns and a dead gap — leave them orphaned rather than
+        // restoring the broken shape into the fixed layout.
+        QSettings s("RMG-K", "n02");
+        const QString key = QString("RollbackLobby/PlayersHeaderState.v2.c%1").arg(m_playersTree->columnCount());
+        const QByteArray headerState = s.value(key).toByteArray();
+        if (!headerState.isEmpty())
+            m_playersTree->header()->restoreState(headerState);
+        // restoreState can resurrect per-section modes and stale widths; re-pin
+        // ours AFTER it. Region's width is layout policy, not a user
+        // preference — always the computed value, never the saved one. State's
+        // saved width is the one thing that should survive the round trip;
+        // Player is refit by the first viewport Resize regardless.
+        m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
+        m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
+        m_playersTree->setColumnWidth(2, regionWidth);
+    }
+    // The columns are clamped to the viewport (clampPlayersColumns), so a
+    // horizontal scrollbar can never be needed — turning it off also stops Qt
+    // reserving space for one mid-drag and reflowing the row underneath.
+    m_playersTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(m_playersTree->header(), &QHeaderView::sectionResized, this,
+            [this](int index, int, int) { clampPlayersColumns(index); });
+    // Selecting a player measures them on demand and refreshes their tooltip.
+    connect(m_playersTree, &QTreeWidget::itemClicked, this,
+            [this](QTreeWidgetItem* item, int) {
+                if (item)
+                    probeOnDemand(item->data(0, Qt::UserRole).toULongLong());
+            });
+    // Click in the empty area below the rows to clear the selection, and catch
+    // viewport resizes to pull the columns back in (both in eventFilter —
+    // there's no built-in property for either).
     m_playersTree->viewport()->installEventFilter(this);
     cardLay->addWidget(m_playersTree);
     lay->addWidget(card);
@@ -1294,9 +1380,11 @@ void RollbackLobbyDialog::applyStylesheet()
         : QStringLiteral("rgba(0, 120, 215, 0.10)");
     const QString bannerBorder = QStringLiteral("rgba(0, 120, 215, 0.45)");
 
-    // Brand accent (P1 blue) for the header text, and a faint accent wash for
-    // the marquee strip so it reads as a header band rather than blank window.
-    const QString brandAccent = playerAccentHex(1, dark);
+    // Brand accent for the header text, and a faint accent wash for the marquee
+    // strip so it reads as a header band rather than blank window. Blue is the
+    // dialog's own identity, independent of the seat palette — it must not read
+    // as the caution red that marks destructive actions below.
+    const QString brandAccent = dark ? QStringLiteral("#4aa3ff") : QStringLiteral("#0078D7");
     const QString marqueeBg   = tintRgba(brandAccent, dark ? 0.16 : 0.07);
 
     // Themed chevron for the styled combos (same asset the P2P dialog uses), so
@@ -1539,6 +1627,7 @@ void RollbackLobbyDialog::populateBrowseRoms()
         m_browseRomCombo->addItem("No ROMs in your library — add some first");
         m_browseRomCombo->setEnabled(false);
         m_browseRomCombo->blockSignals(false);
+        refreshSameGameFilter();
         return;
     }
     m_browseRomCombo->setEnabled(true);
@@ -1578,22 +1667,31 @@ void RollbackLobbyDialog::populateBrowseRoms()
     }
 
     m_browseRomCombo->blockSignals(false);
+    refreshSameGameFilter();
 }
 
 QVariantMap RollbackLobbyDialog::selectedBrowseRom() const
 {
     if (!m_browseRomCombo || !m_browseRomCombo->isEnabled())
         return {};
-    QVariantMap data = m_browseRomCombo->currentData().toMap();
-    // Editable combo: if the user typed an exact name but didn't commit it (no
-    // index change), currentData() is stale — fall back to matching the text.
-    if (data.value("md5").toString().isEmpty())
-    {
-        const int idx = m_browseRomCombo->findText(m_browseRomCombo->currentText());
-        if (idx >= 0)
-            data = m_browseRomCombo->itemData(idx).toMap();
-    }
-    return data;
+
+    // An editable combo can retain the previous currentData while its line edit
+    // contains different text. Only accept data for the text actually shown.
+    const QString currentText = m_browseRomCombo->currentText();
+    int idx = m_browseRomCombo->currentIndex();
+    if (idx < 0 || m_browseRomCombo->itemText(idx) != currentText)
+        idx = m_browseRomCombo->findText(currentText, Qt::MatchFixedString);
+    return idx >= 0 ? m_browseRomCombo->itemData(idx).toMap() : QVariantMap{};
+}
+
+void RollbackLobbyDialog::refreshSameGameFilter()
+{
+    if (!m_sameGameFilterCheck)
+        return;
+
+    m_sameGameFilterCheck->setEnabled(!selectedBrowseRom().isEmpty());
+    if (m_sameGameFilterCheck->isChecked() && m_roomsTree && m_matchesTree)
+        onRoomListChanged();
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1603,14 +1701,17 @@ QVariantMap RollbackLobbyDialog::selectedBrowseRom() const
 void RollbackLobbyDialog::showEvent(QShowEvent* event)
 {
     QDialog::showEvent(event);
-    // Show the inline connect screen unless we're already in a live session.
-    if (m_client->state() == LobbyClient::ConnectionState::Connected)
+    if (m_client->state() == LobbyClient::ConnectionState::Disconnected ||
+        m_client->state() == LobbyClient::ConnectionState::Failed)
     {
-        showLobbyView();
-    }
-    else
-    {
-        showConnectView();
+        QTimer::singleShot(0, this, [this]() {
+            if (!isVisible() || m_connectPromptOpen ||
+                m_client->state() == LobbyClient::ConnectionState::Connected)
+                return;
+            const QString message = m_connectPromptMessage;
+            m_connectPromptMessage.clear();
+            promptForUsername(message);
+        });
     }
 }
 
@@ -1623,14 +1724,23 @@ void RollbackLobbyDialog::closeEvent(QCloseEvent* event)
 
 bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
 {
-    // A click in the players-list viewport that doesn't land on a row clears
-    // the selection, so a highlighted name can be dismissed by clicking off it.
-    if (m_playersTree && watched == m_playersTree->viewport() &&
-        event->type() == QEvent::MouseButtonPress)
+    if (m_playersTree && watched == m_playersTree->viewport())
     {
-        auto* me = static_cast<QMouseEvent*>(event);
-        if (!m_playersTree->itemAt(me->position().toPoint()))
-            m_playersTree->clearSelection();
+        // A click in the players-list viewport that doesn't land on a row clears
+        // the selection, so a highlighted name can be dismissed by clicking off it.
+        if (event->type() == QEvent::MouseButtonPress)
+        {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (!m_playersTree->itemAt(me->position().toPoint()))
+                m_playersTree->clearSelection();
+        }
+        // Narrowing the dialog shrinks the viewport out from under columns that
+        // were already sized to it, which is the one way they'd overflow without
+        // anyone touching a divider.
+        else if (event->type() == QEvent::Resize)
+        {
+            clampPlayersColumns(-1);
+        }
         return QDialog::eventFilter(watched, event);
     }
 
@@ -1732,6 +1842,54 @@ int RollbackLobbyDialog::seatSlotAtPos(const QPoint& pos) const
     return 0;
 }
 
+void RollbackLobbyDialog::clampPlayersColumns(int resizedIndex)
+{
+    // Re-entrancy: every setColumnWidth below emits sectionResized, which is the
+    // signal that called us. Without this the first correction would recurse.
+    if (m_playersTree == nullptr || m_clampingPlayersColumns)
+        return;
+
+    const int available = m_playersTree->viewport()->width();
+    // Width is 0 until the dialog is first laid out; the viewport Resize that
+    // follows re-runs this with a real number.
+    if (m_playersTree->columnCount() < 3 || available <= 0)
+        return;
+
+    constexpr int kMinPlayer = 80;
+    constexpr int kMinState  = 36; // keeps a squeezed divider grabbable
+
+    int w0 = m_playersTree->columnWidth(0);
+    int w1 = m_playersTree->columnWidth(1);
+    const int w2 = m_playersTree->columnWidth(2); // Region: pinned at flag width
+
+    m_clampingPlayersColumns = true;
+    if (resizedIndex == 0)
+    {
+        // The Player|State divider was dragged: State absorbs the change so
+        // the boundary lands where the user put it.
+        w1 = available - w2 - w0;
+        if (w1 < kMinState)  { w1 = kMinState;  w0 = available - w2 - w1; }
+        if (w0 < kMinPlayer) { w0 = kMinPlayer; w1 = std::max(kMinState, available - w2 - w0); }
+        m_playersTree->setColumnWidth(1, w1);
+        m_playersTree->setColumnWidth(0, w0);
+    }
+    else
+    {
+        // State|Region divider dragged, or the viewport itself changed:
+        // Player is the fill column and absorbs the difference.
+        if (w1 < kMinState) { w1 = kMinState; m_playersTree->setColumnWidth(1, w1); }
+        w0 = available - w2 - w1;
+        if (w0 < kMinPlayer)
+        {
+            w0 = kMinPlayer;
+            w1 = std::max(kMinState, available - w2 - w0);
+            m_playersTree->setColumnWidth(1, w1);
+        }
+        m_playersTree->setColumnWidth(0, w0);
+    }
+    m_clampingPlayersColumns = false;
+}
+
 QString RollbackLobbyDialog::localRomPathForMd5(const QString& md5) const
 {
     if (md5.isEmpty())
@@ -1775,80 +1933,32 @@ QString RollbackLobbyDialog::prefillUsername() const
     return name.left(16);
 }
 
-void RollbackLobbyDialog::showConnectView(const QString& statusMessage)
+void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
 {
-    if (!m_topStack)
+    if (m_connectPromptOpen || !isVisible() ||
+        m_client->state() == LobbyClient::ConnectionState::Connected)
+        return;
+
+    m_connectPromptOpen = true;
+    LobbyConnectDialog prompt(this);
+    prompt.setUsername(prefillUsername());
+    prompt.setStatusMessage(statusMessage);
+    const int result = prompt.exec();
+    m_connectPromptOpen = false;
+
+    if (result != QDialog::Accepted)
     {
+        close();
         return;
     }
 
-    if (m_connectUsernameEdit)
-    {
-        if (m_connectUsernameEdit->text().trimmed().isEmpty())
-        {
-            m_connectUsernameEdit->setText(prefillUsername());
-        }
-        m_connectUsernameEdit->setFocus();
-        m_connectUsernameEdit->selectAll();
-    }
-    if (m_connectButton)
-    {
-        m_connectButton->setEnabled(true);
-    }
-    if (m_connectStatusLabel)
-    {
-        m_connectStatusLabel->setStyleSheet(statusMessage.isEmpty() ? QString() : "color: #c0392b;");
-        m_connectStatusLabel->setText(statusMessage);
-    }
-
-    m_topStack->setCurrentIndex(0);
-}
-
-void RollbackLobbyDialog::showLobbyView()
-{
-    if (m_topStack)
-    {
-        m_topStack->setCurrentIndex(1);
-    }
-}
-
-void RollbackLobbyDialog::onConnectClicked()
-{
-    const QString username = m_connectUsernameEdit
-        ? m_connectUsernameEdit->text().trimmed()
-        : QString();
-
-    if (username.length() < 3)
-    {
-        if (m_connectStatusLabel)
-        {
-            m_connectStatusLabel->setStyleSheet("color: #c0392b;");
-            m_connectStatusLabel->setText("Username must be at least 3 characters.");
-        }
-        if (m_connectUsernameEdit) m_connectUsernameEdit->setFocus();
-        return;
-    }
-
-    m_username  = username;
-    m_serverUrl = LobbyConnectDialog::defaultServerUrl();
-    if (m_userLabel) m_userLabel->setText(QString("User: %1").arg(m_username));
-
-    // Remember it so the field pre-fills next time.
-    QSettings s("RMG-K", "n02");
-    s.setValue("Lobby/Username", m_username);
-
-    if (m_connectButton) m_connectButton->setEnabled(false);
-    if (m_connectStatusLabel)
-    {
-        m_connectStatusLabel->setStyleSheet(QString());
-        m_connectStatusLabel->setText("Connecting…");
-    }
+    m_username  = prompt.username();
+    m_serverUrl = prompt.serverUrl();
+    if (m_userLabel)
+        m_userLabel->setText(QString("User: %1").arg(m_username));
 
     updateServerMeta();
     m_client->connectToServer(m_serverUrl, m_username, {}, QString());
-
-    // Transform straight into the lobby; the marquee shows live connection state.
-    showLobbyView();
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1860,16 +1970,27 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     updateStatusIndicator(s);
 
     const bool connected = (s == LobbyClient::ConnectionState::Connected);
+    // Ping probing runs for the whole connection lifetime — it feeds the
+    // players-list hover tooltips in the lobby, not just seated peers.
+    if (m_pingProbeTimer)
+    {
+        if (connected && !m_pingProbeTimer->isActive())
+            m_pingProbeTimer->start();
+        else if (!connected)
+            m_pingProbeTimer->stop();
+    }
     m_chatInput->setEnabled(connected);
     if (m_quickMatchBtn)
         m_quickMatchBtn->setEnabled(connected && m_currentRoomId == 0);
     if (m_createRoomBtn)
         m_createRoomBtn->setEnabled(connected && m_currentRoomId == 0);
 
-    if (s == LobbyClient::ConnectionState::Disconnected)
+    if (s == LobbyClient::ConnectionState::Disconnected ||
+        s == LobbyClient::ConnectionState::Failed)
     {
         m_playersTree->clear();
         m_roomsTree->clear();
+        m_matchesTree->clear();
         m_userItems.clear();
         m_roomItems.clear();
         m_currentRoomId = 0;
@@ -1880,6 +2001,7 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         m_quickMatchActive = false;
         if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
 
+        if (m_chatViewLobby) m_chatViewLobby->clear();
         if (m_chatViewRoom) m_chatViewRoom->clear();
         if (m_roomChatInput) m_roomChatInput->setEnabled(false);
         switchToRoomsView();
@@ -1887,16 +2009,19 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     updateServerMeta();
     updateInRoomBanner();
 
-    // Drive the top-level connect ↔ lobby swap. Failed is handled by the error
-    // slots below (onConnectError/onHelloFailed), which fire just before it and
-    // show the connect screen with a message.
-    if (s == LobbyClient::ConnectionState::Connected)
+    // A normal disconnect returns to the username prompt. Failed connections
+    // are reopened by the error slots below so the server's message is retained.
+    if (s == LobbyClient::ConnectionState::Disconnected && isVisible() &&
+        !m_connectPromptOpen)
     {
-        showLobbyView();
-    }
-    else if (s == LobbyClient::ConnectionState::Disconnected)
-    {
-        showConnectView();
+        QTimer::singleShot(0, this, [this]() {
+            if (!isVisible() || m_connectPromptOpen ||
+                m_client->state() == LobbyClient::ConnectionState::Connected)
+                return;
+            const QString message = m_connectPromptMessage;
+            m_connectPromptMessage.clear();
+            promptForUsername(message);
+        });
     }
 }
 
@@ -1905,14 +2030,30 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
     QString human = reason;
     if (reason == "username_taken")    human = "That username is already in use.";
     else if (reason == "invalid_hello") human = "Server rejected the connection handshake.";
+    else if (reason == "invalid_payload") human = "That username isn't allowed.";
     else if (reason == "version_mismatch") human = "Client version is incompatible with this server.";
+    else if (reason == "server_full") human = "The lobby is currently full.";
 
-    showConnectView(human);
+    m_connectPromptMessage = human;
+    QTimer::singleShot(0, this, [this]() {
+        if (!isVisible() || m_connectPromptOpen)
+            return;
+        const QString message = m_connectPromptMessage;
+        m_connectPromptMessage.clear();
+        promptForUsername(message);
+    });
 }
 
 void RollbackLobbyDialog::onConnectError(const QString& msg)
 {
-    showConnectView("Couldn't reach the lobby: " + msg);
+    m_connectPromptMessage = "Couldn't reach the lobby: " + msg;
+    QTimer::singleShot(0, this, [this]() {
+        if (!isVisible() || m_connectPromptOpen)
+            return;
+        const QString message = m_connectPromptMessage;
+        m_connectPromptMessage.clear();
+        promptForUsername(message);
+    });
 }
 
 void RollbackLobbyDialog::updateStatusIndicator(LobbyClient::ConnectionState s)
@@ -2039,13 +2180,15 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
 {
     const bool dark = isDarkTheme();
     item->setText(0, u.username);
-    // Self gets bold and an accent tint; everyone else uses default palette text.
+    // Self gets bold and the brand accent; everyone else uses default palette
+    // text. Blue, not a seat color — this list is lobby-wide, not per-seat.
     if (u.id == m_client->selfUserId())
     {
         QFont f = item->font(0);
         f.setBold(true);
         item->setFont(0, f);
-        item->setForeground(0, QColor(playerAccentHex(1, dark)));
+        item->setForeground(0, QColor(dark ? QStringLiteral("#4aa3ff")
+                                           : QStringLiteral("#0078D7")));
     }
     item->setText(1, stateGlyph(u.state));
     item->setForeground(1, QColor(stateHex(u.state, dark)));
@@ -2056,31 +2199,72 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     else
         item->setToolTip(1, QString());
 
-    // Ping column shows an estimated round-trip between *this* client and the
-    // peer, based on region buckets the server assigned via IP geolocation.
-    // It's intentionally rough — same-region pairs read ~30 ms, transatlantic
-    // ~90, transpacific ~200. Self-row always shows "—".
+    // Region column: country flag only (Fightcade-style — the server geolocates
+    // the ISO country code, we render the bundled SVG). No text label: the
+    // region is a coarse server-side bucket that often disagrees with the
+    // geolocated country sitting right next to it, so printing both invited the
+    // reader to trust a mismatch. The full region still lives in the tooltip.
+    // Old servers don't send a country, so fall back to the region's emoji
+    // badge — still a glyph, not an abbreviation.
     // U+2014 EM DASH — using QChar avoids any file-encoding ambiguity in
     // the literal.
     const QString dash = QString(QChar(0x2014));
-    if (u.id == m_client->selfUserId())
+    const QString flagResource = QString(":/flags/%1.svg").arg(u.country.toLower());
+    QString countryName;
+    if (!u.country.isEmpty() && QFile::exists(flagResource))
     {
-        item->setText(2, dash);
-        item->setForeground(2, QColor(statusColors().idle));
+        item->setIcon(2, QIcon(flagResource));
+        item->setText(2, QString());
+        const QLocale::Territory territory = QLocale::codeToTerritory(u.country);
+        countryName = (territory != QLocale::AnyTerritory)
+            ? QLocale::territoryToString(territory)
+            : u.country;
     }
     else
     {
-        const int rtt = UserInterface::Dialog::LobbyRegions::estimatedRttMs(
-            m_client->selfRegion(), u.region);
-        item->setText(2, rtt > 0 ? QString("~%1 ms").arg(rtt) : dash);
-        // Tint by the same ping tiers as the seat cards (grey when unknown).
-        item->setForeground(2, QColor(pingHex(rtt > 0 ? rtt : -1)));
+        item->setIcon(2, QIcon());
+        item->setText(2, u.region.isEmpty() ? dash : LobbyRegions::flagFor(u.region));
     }
 
-    const QString regionLabel = UserInterface::Dialog::LobbyRegions::labelFor(u.region);
-    const QString regionTip = QString("Region: %1").arg(regionLabel.isEmpty() ? "unknown" : regionLabel);
-    item->setToolTip(0, regionTip);
-    item->setToolTip(2, regionTip); // hovering the ping shows the peer's region
+    // Built as lines so an absent field just doesn't contribute, rather than
+    // leaving a stray separator. The region is deliberately not among them: it's
+    // a coarse server-side bucket that can disagree with the geolocated country,
+    // so the country is the only location we state.
+    QStringList tipLines;
+    if (!countryName.isEmpty())
+        tipLines << QString("Country: %1").arg(countryName);
+    // Self-reported transport medium ("wifi"/"lan"/...) and build, when the
+    // peer's client and the server are new enough to relay them.
+    const QString connLabel =
+          u.connection == QLatin1String("wifi")      ? QStringLiteral("Wi-Fi")
+        : u.connection == QLatin1String("lan")       ? QStringLiteral("LAN")
+        : u.connection == QLatin1String("cellular")  ? QStringLiteral("Cellular")
+        : u.connection == QLatin1String("bluetooth") ? QStringLiteral("Bluetooth")
+        : QString();
+    if (!connLabel.isEmpty())
+        tipLines << QString("Connection: %1").arg(connLabel);
+    if (!u.clientVersion.isEmpty())
+        tipLines << QString("Build: %1").arg(u.clientVersion);
+    if (u.id != m_client->selfUserId())
+    {
+        const int measured = m_client->measuredPingMs(u.id);
+        if (measured >= 0)
+            tipLines << QString("Ping: %1 ms").arg(measured);
+        else
+        {
+            // Still a region-derived number, but it's hedged as an estimate and
+            // only stands in until a real UDP probe lands — unlike a region
+            // label, it isn't asserting where the player is. Nothing probes
+            // lobby users in the background any more, so say what makes it real
+            // rather than implying a measurement is already on its way.
+            const int rtt = LobbyRegions::estimatedRttMs(m_client->selfRegion(), u.region);
+            tipLines << (rtt > 0 ? QString("Ping: ~%1 ms (estimate — click to measure)").arg(rtt)
+                                 : QStringLiteral("Ping: click to measure"));
+        }
+    }
+    const QString tip = tipLines.join(QChar('\n'));
+    item->setToolTip(0, tip);
+    item->setToolTip(2, tip);
     item->setData(0, Qt::UserRole, QVariant::fromValue(u.id));
 }
 
@@ -2116,20 +2300,85 @@ static QString formatMatchDuration(qint64 startedAtMs)
     return QString("%1:%2").arg(m).arg(s, 2, 10, QChar('0'));
 }
 
+namespace
+{
+// Sorts the Duration column by match start time instead of the displayed
+// "m:ss" text, which orders wrong once a duration passes 10 minutes and
+// changes under the once-a-second ticker.
+class MatchTreeItem : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+
+    bool operator<(const QTreeWidgetItem& other) const override
+    {
+        const QTreeWidget* tree = treeWidget();
+        if (tree && tree->sortColumn() == 1)
+        {
+            // A later start means a shorter duration.
+            return data(1, Qt::UserRole).toLongLong() > other.data(1, Qt::UserRole).toLongLong();
+        }
+        return QTreeWidgetItem::operator<(other);
+    }
+};
+
+// Sorts the rooms list's Ping column by the numeric RTT stashed in the cell's
+// UserRole data — text like "~105 ms" orders wrong as a string. Unknown pings
+// (-1) sort to the bottom in ascending order.
+class RoomTreeItem : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+
+    bool operator<(const QTreeWidgetItem& other) const override
+    {
+        const QTreeWidget* tree = treeWidget();
+        if (tree && tree->sortColumn() == 2)
+        {
+            const int a = data(2, Qt::UserRole).toInt();
+            const int b = other.data(2, Qt::UserRole).toInt();
+            return (a < 0 ? 1'000'000 : a) < (b < 0 ? 1'000'000 : b);
+        }
+        return QTreeWidgetItem::operator<(other);
+    }
+};
+} // namespace
+
 void RollbackLobbyDialog::onRoomListChanged()
 {
     m_roomsTree->clear();
     m_matchesTree->clear();
     m_roomItems.clear();
+
+    const bool sameGameOnly =
+        m_sameGameFilterCheck && m_sameGameFilterCheck->isChecked() &&
+        m_sameGameFilterCheck->isEnabled();
+    const QVariantMap selectedRom = sameGameOnly ? selectedBrowseRom() : QVariantMap{};
+    const QString selectedMd5 = selectedRom.value("md5").toString().trimmed();
+    const QString selectedName = selectedRom.value("name").toString().trimmed();
+
     for (auto it = m_client->rooms().constBegin(); it != m_client->rooms().constEnd(); ++it)
     {
         const LobbyClient::LobbyRoomSummary& r = it.value();
+
+        if (sameGameOnly)
+        {
+            const bool sameMd5 =
+                !selectedMd5.isEmpty() && !r.romMd5.isEmpty() &&
+                selectedMd5.compare(r.romMd5, Qt::CaseInsensitive) == 0;
+            const bool sameName =
+                (selectedMd5.isEmpty() || r.romMd5.isEmpty()) &&
+                !selectedName.isEmpty() &&
+                selectedName.compare(r.romName, Qt::CaseInsensitive) == 0;
+            if (!sameMd5 && !sameName)
+                continue;
+        }
 
         // A room that's playing is a live match — show it under Ongoing Matches
         // and drop it from the joinable Active Rooms list.
         if (r.state == "in_game")
         {
-            auto* matchRow = new QTreeWidgetItem(m_matchesTree);
+            auto* matchRow = new MatchTreeItem(m_matchesTree);
             matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(" vs "));
             matchRow->setText(1, formatMatchDuration(r.startedAtMs));
             matchRow->setText(2, r.romName);
@@ -2153,7 +2402,7 @@ void RollbackLobbyDialog::onRoomListChanged()
             continue;
         }
 
-        auto* row = new QTreeWidgetItem(m_roomsTree);
+        auto* row = new RoomTreeItem(m_roomsTree);
         refreshRoomRow(row, r);
         m_roomItems.insert(it.key(), row);
     }
@@ -2192,24 +2441,82 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     const bool dark = isDarkTheme();
     item->setText(0, nameCell);
     item->setText(1, r.hostName);
-    item->setText(2, r.romName);
-    item->setText(3, QString("%1/%2").arg(r.players).arg(r.maxPlayers));
-    item->setText(4, stateGlyph(r.state));
+    item->setText(3, r.romName);
+    item->setText(4, QString("%1/%2").arg(r.players).arg(r.maxPlayers));
     item->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
+    // Host id rides along so selecting the row can measure the host on demand.
+    item->setData(0, Qt::UserRole + 1, QVariant::fromValue(r.hostId));
+
+    // Your ping to the host — the real measurement once one exists, the region
+    // estimate until then — so a room can be judged before joining. Nothing is
+    // probed in the background any more; selecting the row measures it. Own
+    // room shows a dash.
+    const QString dash = QString(QChar(0x2014));
+    int pingMs = -1;
+    bool pingMeasured = false;
+    if (m_client && r.hostId != 0 && r.hostId != m_client->selfUserId())
+    {
+        pingMs = m_client->measuredPingMs(r.hostId);
+        pingMeasured = (pingMs >= 0);
+        if (!pingMeasured)
+        {
+            const auto& users = m_client->users();
+            const auto hostIt = users.constFind(r.hostId);
+            if (hostIt != users.constEnd())
+                pingMs = LobbyRegions::estimatedRttMs(m_client->selfRegion(), hostIt->region);
+            if (pingMs == 0)
+                pingMs = -1;
+        }
+    }
+    item->setText(2, pingMs >= 0 ? QString(pingMeasured ? "%1 ms" : "~%1 ms").arg(pingMs) : dash);
+    item->setForeground(2, QColor(pingHex(pingMs)));
+    item->setData(2, Qt::UserRole, pingMs);
+    item->setToolTip(2,
+        pingMeasured  ? QStringLiteral("Your measured ping to the host")
+        : pingMs >= 0 ? QStringLiteral("Estimated from regions — click the row to measure")
+                      : QStringLiteral("Click the row to measure your ping to the host"));
 
     // Seats: green when there's room to join, red when full.
     const bool full = (r.maxPlayers > 0 && r.players >= r.maxPlayers);
     const auto sc = statusColors();
-    item->setForeground(3, QColor(full ? sc.fail : sc.ok));
-    // State: same color language as presence / seats.
-    item->setForeground(4, QColor(stateHex(r.state, dark)));
+    item->setForeground(4, QColor(full ? sc.fail : sc.ok));
 
-    // Bold the user's own room and tint its name with the P1 accent.
+    // Bold the user's own room and tint its name with the brand accent. Blue,
+    // not a seat color — "mine" is unrelated to which seat you end up in.
     QFont f = item->font(0);
     f.setBold(mine);
     item->setFont(0, f);
     if (mine)
-        item->setForeground(0, QColor(playerAccentHex(1, dark)));
+        item->setForeground(0, QColor(dark ? QStringLiteral("#4aa3ff")
+                                           : QStringLiteral("#0078D7")));
+}
+
+void RollbackLobbyDialog::showAdminRoomMenu(QTreeWidget* tree, const QPoint& pos)
+{
+    // Right-click close is a moderator tool — everyone else gets no menu.
+    if (!m_client || !m_client->isModerator())
+        return;
+
+    QTreeWidgetItem* item = tree->itemAt(pos);
+    if (!item)
+        return;
+    const quint64 roomId = item->data(0, Qt::UserRole).toULongLong();
+    if (roomId == 0)
+        return;
+
+    QMenu menu(tree);
+    QAction* closeAction = menu.addAction(tree == m_matchesTree
+        ? tr("End match && close room  (moderator)")
+        : tr("Close room  (moderator)"));
+    if (menu.exec(tree->viewport()->mapToGlobal(pos)) != closeAction)
+        return;
+
+    if (QMessageBox::question(this, tr("Close room"),
+            tr("Close \"%1\" for everyone?").arg(item->text(0))) != QMessageBox::Yes)
+        return;
+
+    m_client->sendModAction(QStringLiteral("closeroom"),
+                            QString::number(roomId), QString(), QString());
 }
 
 void RollbackLobbyDialog::onCreateRoomClicked()
@@ -2240,7 +2547,8 @@ void RollbackLobbyDialog::onCreateRoomClicked()
         return;
     }
 
-    m_createRoomDialog = new CreateRoomDialog(m_username, romName, romMd5, this);
+    m_createRoomDialog = new CreateRoomDialog(
+        m_username, m_lastRoomName, romName, romMd5, this);
     connect(m_createRoomDialog, &CreateRoomDialog::createRequested,
             this, &RollbackLobbyDialog::onRoomCreateRequested);
     connect(m_createRoomDialog, &QDialog::finished, this, [this](int) {
@@ -2271,7 +2579,10 @@ void RollbackLobbyDialog::onRoomCreateRequested()
 void RollbackLobbyDialog::onRoomCreated(quint64 roomId)
 {
     if (m_createRoomDialog)
+    {
+        m_lastRoomName = m_createRoomDialog->name();
         m_createRoomDialog->accept();
+    }
     enterRoom(roomId,
         QStringLiteral("<i>Room created — waiting for players</i>"));
 }
@@ -2339,12 +2650,6 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
 
     if (!greetingChatLine.isEmpty())
         appendChatLine(CHANNEL_ROOM, greetingChatLine);
-
-    // Start measuring actual round-trip to seated peers. Seat assignments
-    // populate via the follow-up ROOM_STATE message, which fires its own
-    // immediate probe per newly-seated peer; this timer just refreshes them.
-    if (m_pingProbeTimer && !m_pingProbeTimer->isActive())
-        m_pingProbeTimer->start();
 
     // Backstop in case ROOM_STATE seats arrive in a shape that didn't trigger a
     // per-peer probe — kick one sweep shortly after entry so ping shows promptly
@@ -2681,6 +2986,10 @@ void RollbackLobbyDialog::refreshStartButton()
     const bool iAmHost = (m_client && m_currentRoomHostId == selfId);
     const bool waiting = (m_currentRoomState == "waiting");
 
+    // Seats may be sparse — two players in P1 and P3 is a legitimate 3-port
+    // match with P2 empty, so this counts occupants without requiring them to
+    // run contiguously from P1. The core sizes the GekkoNet session by the
+    // highest occupied seat and feeds empty ports zeroed input.
     int seated = 0;
     int peersAwaitingPing = 0;
     for (const auto& s : m_seats)
@@ -2823,20 +3132,102 @@ void RollbackLobbyDialog::onStartGameClicked()
 
 void RollbackLobbyDialog::onPingProbeTick()
 {
-    if (!m_client || m_currentRoomId == 0)
+    if (!m_client || m_client->state() != LobbyClient::ConnectionState::Connected)
         return;
 
     const quint64 selfId = m_client->selfUserId();
-    for (const auto& s : m_seats)
+
+    // Seated peers refresh every tick — Start gating and the Auto frame delay
+    // hang off these measurements.
+    if (m_currentRoomId != 0)
     {
-        if (s.userId == 0 || s.userId == selfId)
-            continue;
-        m_client->requestPingProbe(s.userId);
+        for (const auto& s : m_seats)
+        {
+            if (s.userId == 0 || s.userId == selfId)
+                continue;
+            m_client->requestPingProbe(s.userId);
+        }
     }
+
+    // Everyone outside the room is measured on demand — see probeOnDemand.
+    // The old slow round-robin probed a few lobby users per tick so a hover
+    // might find a real number, but in a busy lobby most rows still showed the
+    // region estimate and the whole lobby traded probe traffic continuously to
+    // populate values nobody looked at.
+}
+
+// Measure a specific peer because the user asked to see their ping, then let
+// onPingMeasured repaint whatever row is showing it. Throttled per user: the
+// server drops requests over its own flood budget, and a double-click or a
+// click-drag across rows would otherwise burn that budget on one peer and
+// starve the seat refresh that Start gating depends on.
+void RollbackLobbyDialog::probeOnDemand(quint64 userId)
+{
+    if (!m_client || userId == 0 || userId == m_client->selfUserId())
+        return;
+    if (m_client->state() != LobbyClient::ConnectionState::Connected)
+        return;
+
+    constexpr qint64 kOnDemandProbeCooldownMs = 3'000;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const auto it = m_lastOnDemandProbe.constFind(userId);
+    if (it != m_lastOnDemandProbe.constEnd() && now - it.value() < kOnDemandProbeCooldownMs)
+        return;
+    m_lastOnDemandProbe[userId] = now;
+
+    m_client->requestPingProbe(userId);
+}
+
+void RollbackLobbyDialog::refreshSeatMeta(quint64 userId, const QString& statusHtml)
+{
+    for (auto& s : m_seats)
+    {
+        if (s.userId != userId || !s.metaLabel)
+            continue;
+        const int pingMs = m_client ? m_client->measuredPingMs(userId) : -1;
+        s.metaLabel->setText(seatMetaHtml(s.slot, s.isHost, pingMs, isDarkTheme(), statusHtml));
+        break;
+    }
+}
+
+void RollbackLobbyDialog::onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts)
+{
+    refreshSeatMeta(userId, seatProbeStatusHtml(attempt, maxAttempts, false, isDarkTheme()));
+}
+
+void RollbackLobbyDialog::onPingProbeFailed(quint64 userId)
+{
+    refreshSeatMeta(userId, seatProbeStatusHtml(0, 0, true, isDarkTheme()));
+
+    // Only announce for a seated player, and only once per room visit — the
+    // seat itself carries the ongoing state, and Start stays disabled anyway.
+    // Without this the host just sees a Start button that never lights up.
+    bool seated = false;
+    for (const auto& s : m_seats)
+        seated = seated || (s.userId == userId);
+    if (!seated || m_probeFailureAnnounced.contains(userId))
+        return;
+    m_probeFailureAnnounced.insert(userId);
+
+    QString name = QString::number(userId);
+    if (m_client)
+    {
+        const auto& users = m_client->users();
+        const auto it = users.constFind(userId);
+        if (it != users.constEnd())
+            name = it->username;
+    }
+    appendChatSystemLine(CHANNEL_ROOM,
+        QString("Couldn't reach %1 to measure ping — their connection may not allow "
+                "a direct link. Start stays disabled until it succeeds.").arg(name));
 }
 
 void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
 {
+    // A measurement clears any retry/unreachable text and re-arms the notice
+    // so a later failure is announced again.
+    m_probeFailureAnnounced.remove(userId);
+
     // Only redraw the seat that just got a measurement — avoids churning the
     // whole room view on every probe response.
     for (auto& s : m_seats)
@@ -2854,6 +3245,27 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
 
     // A peer's first ping may be what unblocks the host's Start button.
     refreshStartButton();
+
+    // Refresh the lobby row so the hover tooltip shows the fresh measurement.
+    const auto rowIt = m_userItems.constFind(userId);
+    if (rowIt != m_userItems.constEnd())
+    {
+        const auto& users = m_client->users();
+        const auto userIt = users.constFind(userId);
+        if (userIt != users.constEnd())
+            refreshPlayerRow(rowIt.value(), userIt.value());
+    }
+
+    // Rooms hosted by this user show your ping in the Active Rooms list.
+    const auto& rooms = m_client->rooms();
+    for (auto it = rooms.constBegin(); it != rooms.constEnd(); ++it)
+    {
+        if (it.value().hostId != userId)
+            continue;
+        const auto roomRowIt = m_roomItems.constFind(it.key());
+        if (roomRowIt != m_roomItems.constEnd())
+            refreshRoomRow(roomRowIt.value(), it.value());
+    }
 }
 
 int RollbackLobbyDialog::worstSeatPingMs() const
@@ -2914,7 +3326,6 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     if (m_emulationActive || m_awaitingEmulationStart)
         emit closeMatchRequested();
 
-    if (m_pingProbeTimer) m_pingProbeTimer->stop();
     for (auto& s : m_seats)
         s.userId = 0;
 
@@ -2956,6 +3367,9 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     else if (reason == QLatin1String("host_left"))
         QMessageBox::information(this, "Room closed",
             "The host closed the room.");
+    else if (reason == QLatin1String("admin_closed"))
+        QMessageBox::information(this, "Room closed",
+            "The room was closed by a moderator.");
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2983,10 +3397,42 @@ void RollbackLobbyDialog::onRoomChatSendClicked()
 
 void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& msg)
 {
+    // Discord-style @notify ping: a moderator's live message containing
+    // "@notify" is highlighted, plays the system alert sound, and flashes the
+    // lobby window. Trust comes from the server's admin stamp on the message,
+    // so a regular user typing "@notify" can't ping the lobby. History replays
+    // arrive via chatHistoryReceived, not here, so reconnecting never re-pings.
+    const bool notifyPing = msg.fromAdmin && msg.message.contains(QStringLiteral("@notify"));
+
+    // The "@notify" token is a trigger, not content — hide it from the
+    // rendered line. A bare "@notify" still needs something to show on the bar.
+    QString displayMessage = msg.message;
+    if (notifyPing)
+    {
+        displayMessage.remove(QStringLiteral("@notify"));
+        displayMessage = displayMessage.simplified();
+        if (displayMessage.isEmpty())
+            displayMessage = QStringLiteral("📣 Attention!");
+    }
+
     const auto ts = QDateTime::fromMSecsSinceEpoch(msg.serverTimeMs).toString("hh:mm");
-    const QString line = QString("[%1] <b>%2:</b> %3")
-        .arg(ts, msg.fromUsername.toHtmlEscaped(), msg.message.toHtmlEscaped());
+    QString line = QString("[%1] <b>%2:</b> %3")
+        .arg(ts, msg.fromUsername.toHtmlEscaped(), displayMessage.toHtmlEscaped());
+    if (notifyPing)
+    {
+        // Full-width bar via a one-cell table (QTextEdit's rich-text subset
+        // doesn't background-fill plain blocks). Fixed black-on-light-yellow
+        // so the highlight reads the same in light and dark themes.
+        line = QString("<table width=\"100%\" cellpadding=\"3\" style=\"background-color:#fff3b0;\">"
+                       "<tr><td style=\"color:#000000;\">%1</td></tr></table>").arg(line);
+    }
     appendChatLine(msg.channel, line);
+
+    if (notifyPing && m_client && msg.fromUserId != m_client->selfUserId())
+    {
+        QApplication::beep();
+        QApplication::alert(this);
+    }
 
     // Mirror room chat into the in-game overlay. The server relays room chat to
     // every member (including the sender), so forwarding all room messages —
@@ -2994,7 +3440,14 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
     // the dialog or via the in-game chat key.
     if (msg.channel == CHANNEL_ROOM)
     {
-        emit roomChatReceived(msg.fromUsername, msg.message);
+        emit roomChatReceived(msg.fromUsername, displayMessage);
+    }
+    else if (notifyPing)
+    {
+        // Admin @notify announcements are forced onto the in-game overlay even
+        // from the lobby channel, so mid-match players see them. MainWindow
+        // drops the line unless emulation is running.
+        emit roomChatReceived(msg.fromUsername, displayMessage);
     }
 }
 
@@ -3598,7 +4051,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     appendChatSystemLine(CHANNEL_ROOM, "Synchronizing pre-match settings...");
     QString prematchError;
-    if (!m_client->syncPrematchManifest(peers, local.slot, localRomFile, prematchError))
+    if (!m_client->syncPrematchManifest(peers, local.slot, m_currentRoomHostId,
+                                        localRomFile, prematchError))
     {
         abortMatchStart(prematchError.isEmpty() ? QStringLiteral("Pre-match sync failed.") : prematchError);
         return;

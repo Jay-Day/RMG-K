@@ -107,7 +107,6 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
-    void onConnectClicked();
     void onClientStateChanged(LobbyClient::ConnectionState s);
     void onHelloFailed(const QString& reason);
     void onConnectError(const QString& msg);
@@ -162,12 +161,23 @@ private slots:
     // measurement from each seated peer (skipping self). Cadence is set
     // by m_pingProbeTimer's interval.
     void onPingProbeTick();
+
+    // Measure one peer because the user selected a row showing their ping.
+    // Lobby rows show the region estimate until this lands; room seats are
+    // measured continuously by onPingProbeTick regardless.
+    void probeOnDemand(quint64 userId);
+
+    // Punch progress for a seated peer, so a slow or failing NAT punch is
+    // visible in the room rather than looking like a stalled Start button.
+    void onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts);
+    void onPingProbeFailed(quint64 userId);
+    // Repaint one seat's right-hand meta cell (ping / retry / unreachable).
+    void refreshSeatMeta(quint64 userId, const QString& statusHtml);
     void onPingMeasured(quint64 userId, int rttMs);
 
 private:
     void buildUi();
-    QWidget* buildConnectView();   // inline username/connect screen (index 0)
-    QWidget* buildLobbyView();     // marquee + splitter (index 1)
+    QWidget* buildLobbyView();
     QWidget* buildMarquee();
     QWidget* buildBrowseView();
     QWidget* buildInRoomView();
@@ -183,14 +193,17 @@ private:
     // typed-but-not-committed entry still resolves. Shared by Quick Match and
     // Create Room. Empty map when nothing valid is selected.
     QVariantMap selectedBrowseRom() const;
+    void refreshSameGameFilter();
 
-    // Swap the top-level stack between the connect screen and the live lobby.
-    void     showConnectView(const QString& statusMessage = QString());
-    void     showLobbyView();
+    // Show the disconnected lobby behind a compact modal username prompt.
+    // No server connection is attempted until the prompt is accepted.
+    void     promptForUsername(const QString& statusMessage = QString());
     QString  prefillUsername() const;
 
     void refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
     void refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r);
+    // Right-click menu on the rooms / matches lists; moderator-only "closeroom".
+    void showAdminRoomMenu(QTreeWidget* tree, const QPoint& pos);
     // Ticks the Ongoing Matches "Duration" cells once a second.
     void updateMatchDurations();
 
@@ -257,8 +270,20 @@ private:
 
     // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
     // its slot; the seats container handles the drop and asks the server to swap.
+    // Seats may be left sparse on purpose (P1 + P3 with P2 empty) — the core
+    // sizes the session by the highest occupied seat, so a swap into an empty
+    // seat is a supported move, not something to guard against.
     void startSeatDrag(int slot, QWidget* card);
     int  seatSlotAtPos(const QPoint& pos) const;
+
+    // Hand-rolled column fill for the players list: keeps
+    // Player = viewport − State − Region so the header always spans the card
+    // (no dead gap, no horizontal scroll) while both real dividers stay
+    // draggable — Player|State trades width with State, State|Region trades
+    // with Player, Region is pinned at flag width. Called on sectionResized
+    // (pass the index) and viewport resizes (pass -1). Re-entrant-safe via
+    // m_clampingPlayersColumns.
+    void clampPlayersColumns(int resizedIndex);
 
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
     // empty if the user doesn't have that ROM. Gates joining a room and resolves
@@ -280,11 +305,8 @@ private:
 
     LobbyClient* m_client = nullptr;
 
-    // ── Top-level stack: connect screen (0) ↔ live lobby (1) ──
-    QStackedWidget* m_topStack            = nullptr;
-    QLineEdit*      m_connectUsernameEdit = nullptr;
-    QPushButton*    m_connectButton       = nullptr;
-    QLabel*         m_connectStatusLabel  = nullptr;
+    bool    m_connectPromptOpen = false;
+    QString m_connectPromptMessage;
 
     // ── Marquee bar ──
     QFrame*  m_marquee     = nullptr;
@@ -297,7 +319,13 @@ private:
 
     // ── Main panels ──
     QSplitter*   m_splitter      = nullptr;
+    QSplitter*   m_browseSplitter = nullptr; // Active Rooms / Ongoing Matches divider
     QTreeWidget* m_playersTree   = nullptr;
+    // Last on-demand probe per user id, for probeOnDemand's throttle.
+    QHash<quint64, qint64> m_lastOnDemandProbe;
+    // Peers we've already posted an "couldn't reach" notice about, so the 3s
+    // seat refresh doesn't repeat it every tick. Cleared on a measurement.
+    QSet<quint64> m_probeFailureAnnounced;
     QTreeWidget* m_roomsTree     = nullptr;
     QTreeWidget* m_matchesTree   = nullptr;
     QTimer*      m_matchDurationTimer = nullptr;
@@ -361,6 +389,10 @@ private:
     // see the BEGIN for the current subscribe. Reset false in beginSpectate.
     bool       m_spectateStreamArmed = false;
 
+    // Guards clampPlayersColumns against re-entering itself: the setColumnWidth
+    // calls it makes emit sectionResized, which is what invokes it.
+    bool       m_clampingPlayersColumns = false;
+
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
     QWidget*   m_seatsBox        = nullptr; // container that accepts seat drops
@@ -382,6 +414,7 @@ private:
     QPushButton* m_quickMatchBtn = nullptr;   // primary CTA (blue)
     QPushButton* m_createRoomBtn = nullptr;
     QComboBox*   m_browseRomCombo = nullptr;   // library game picker (feeds Create Room)
+    QCheckBox*   m_sameGameFilterCheck = nullptr;
 
     QHash<quint64, QTreeWidgetItem*> m_userItems;
     QHash<quint64, QTreeWidgetItem*> m_roomItems;
@@ -389,6 +422,7 @@ private:
     class CreateRoomDialog* m_createRoomDialog = nullptr;
 
     QString  m_username;
+    QString  m_lastRoomName;
     QString  m_serverUrl;
     quint64  m_currentRoomId = 0;
 

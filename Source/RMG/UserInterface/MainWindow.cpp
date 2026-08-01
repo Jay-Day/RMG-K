@@ -3270,7 +3270,7 @@ void MainWindow::tryAutoStartNetplayOnStartup(void)
 
     this->ui_AutoStartNetplayOnStartupPending = false;
     QTimer::singleShot(0, this, [this]() {
-        this->on_Action_Netplay_BrowseSessions();
+        this->on_Action_Rollback_Lobby();
     });
 }
 
@@ -4775,8 +4775,8 @@ void MainWindow::on_Action_Rollback_Lobby(void)
     this->ensureRollbackLobbyDialog();
     // Refresh ROM library on every open so newly-added games show up.
     this->rollbackLobbyDialog->setRomLibrary(this->ui_Widget_RomBrowser->GetModelData());
-    // The lobby shows its own inline connect screen (username + Connect) when
-    // not yet connected, then transforms into the live lobby in-place.
+    // Show the lobby shell immediately. If disconnected, it places a compact
+    // modal username prompt over the lobby before attempting the handshake.
     this->rollbackLobbyDialog->show();
     this->rollbackLobbyDialog->raise();
     this->rollbackLobbyDialog->activateWindow();
@@ -4991,10 +4991,23 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     // captured in the lobby's onMatchBegin. Point n02 at the configured records
     // dir + app id first, since the lobby path never runs CoreInitKaillera.
     n02::setRecordsDirectory(CoreGetKailleraRecordsDirectory());
+
+    // Seats can be sparse — two players in P1 and P3 is a 3-port match with P2
+    // empty. Both the krec header and the OSD labels are per-PORT, so they need
+    // the highest occupied seat; the player count would drop the top player and
+    // shift every label past the gap. Each remotePeers entry is "slot,ip,port".
+    int seatCount = localPlayer;
+    for (const QString& peer : remotePeers)
+    {
+        const int slot = peer.section(',', 0, 0).toInt();
+        if (slot > seatCount)
+            seatCount = slot;
+    }
+
     {
         const std::string recAppName = "RMG-K " + CoreGetVersion();
         n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
-                           localPlayer, int(remotePeers.size()) + 1);
+                           localPlayer, seatCount);
     }
 
 #ifdef _WIN32
@@ -5002,7 +5015,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     // onMatchBegin captured them (slot-indexed) into recording_player_names; the
     // Kaillera and direct-rollback paths set the labels the same way, but this
     // lobby path was missing it — so port labels never appeared in lobby matches.
-    OnScreenDisplaySetKailleraPortLabels(int(remotePeers.size()) + 1, GetLiveKailleraPortLabelNames());
+    OnScreenDisplaySetKailleraPortLabels(seatCount, GetLiveKailleraPortLabelNames());
 #endif
 
     this->emulationThread->SetLobbyNetplay(remotePeers, localPort, localPlayer, frameDelay, predictionWindow);

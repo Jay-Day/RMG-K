@@ -944,9 +944,19 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             else
             {
                 CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
-                const int totalPlayers = static_cast<int>(remotes.size()) + 1;
+                // Size the session by the highest occupied SEAT, not the player
+                // count. Seats are N64 controller ports and the lobby lets them
+                // be sparse — two players in P1 and P3 is a 3-port session with
+                // one empty port, not a 2-port one. Using the count here made
+                // the slot-3 player fail its own `slot > players` check.
+                int totalSeats = player;
+                for (const auto& remote : remotes)
+                {
+                    if (remote.slot > totalSeats)
+                        totalSeats = remote.slot;
+                }
                 netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
-                    totalPlayers, static_cast<int>(sizeof(uint32_t)),
+                    totalSeats, static_cast<int>(sizeof(uint32_t)),
                     player, static_cast<unsigned short>(port),
                     remotes.data(), static_cast<int>(remotes.size()),
                     frameDelay, predictionWindow);
