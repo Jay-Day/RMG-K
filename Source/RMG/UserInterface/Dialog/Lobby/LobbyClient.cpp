@@ -462,6 +462,15 @@ void LobbyClient::onWsConnected()
 
 void LobbyClient::onWsDisconnected()
 {
+    stopPingDiagnosticLog(QStringLiteral("connection_lost"));
+    // Passive drops (server restart, network cut, server-side kick) never go
+    // through disconnectFromServer, so the anchor socket used to stay bound —
+    // and the next connect's pinned-port bind then failed against our own
+    // zombie socket, with the fallback bind failing too (a failed bind leaves
+    // QUdpSocket needing a reset before it can bind again). The session ran
+    // anchorless from there. Tear the socket down on every disconnect path.
+    if (m_udp)
+        m_udp->abort();
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     m_isModerator = false; // role is per-connection; must re-auth after reconnect
@@ -1191,6 +1200,11 @@ bool LobbyClient::eventFilter(QObject* watched, QEvent* event)
 
 void LobbyClient::initiateUdpAnchor()
 {
+    // A socket that is already bound (zombie from a passive disconnect) or
+    // left over from a failed bind cannot bind again until it's reset.
+    if (m_udp->state() != QAbstractSocket::UnconnectedState)
+        m_udp->abort();
+
     // Reclaim the port we've been using all session. Only the very first bind
     // asks the OS to pick one; every rebind after a match must land on the same
     // port or every peer's cached endpoint for us goes stale at once.
@@ -1212,6 +1226,10 @@ void LobbyClient::initiateUdpAnchor()
             writePingDiagnostic(QStringLiteral("UDP_BIND"),
                                 QStringLiteral("result=port_taken wanted=%1 error=%2")
                                     .arg(m_anchorLocalPort).arg(m_udp->errorString()));
+            // A failed bind leaves the socket unable to bind again until it's
+            // reset — without this the fallback below failed right after the
+            // pinned-port failure and the whole session ran anchorless.
+            m_udp->abort();
         }
     }
     if (!bound)
