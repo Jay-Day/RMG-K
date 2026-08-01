@@ -19,6 +19,7 @@
 #include <QSettings>
 #include <QDialogButtonBox>
 #include <QFont>
+#include <QIcon>
 
 using namespace UserInterface::Dialog;
 
@@ -45,6 +46,7 @@ LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle("Join Rollback Netplay");
+    setWindowIcon(QIcon(":Resource/RMG.png"));
     setModal(true);
     setMinimumWidth(380);
     buildUi();
