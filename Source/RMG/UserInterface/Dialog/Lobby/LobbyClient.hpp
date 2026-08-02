@@ -335,6 +335,10 @@ private:
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
     QTimer* m_probeRetryTimer = nullptr;
+    // Retries the pinned anchor port while GekkoNet's teardown still holds it
+    // (see initiateUdpAnchor). 0 deadline = no retry window active.
+    QTimer* m_anchorRetryTimer = nullptr;
+    qint64  m_anchorRetryDeadlineMs = 0;
     bool m_inPrematchSync = false;
 
     // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
