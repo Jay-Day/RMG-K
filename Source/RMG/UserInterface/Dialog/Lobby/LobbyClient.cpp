@@ -45,6 +45,11 @@ namespace
     constexpr int HEARTBEAT_INTERVAL_MS  = 15'000;
     constexpr int UDP_KEEPALIVE_INTERVAL = 20'000;
 
+    // Pinned-anchor-port rebind retry (see initiateUdpAnchor): attempt cadence
+    // and how long to keep trying before surrendering the port.
+    constexpr int ANCHOR_PORT_RETRY_INTERVAL_MS = 250;
+    constexpr qint64 ANCHOR_PORT_RETRY_WINDOW_MS = 4'000;
+
     // No keyboard/mouse input for this long => report "away" on the heartbeat.
     // Presence-only; nothing functional hangs off it.
     constexpr qint64 AWAY_AFTER_MS = 5 * 60'000;
@@ -313,6 +318,21 @@ LobbyClient::LobbyClient(QObject* parent)
     connect(m_probeRetryTimer, &QTimer::timeout, this, &LobbyClient::onProbeRetryTimer);
     m_probeRetryTimer->start();
 
+    // Single-shot; each failed pinned-port bind schedules the next attempt.
+    m_anchorRetryTimer = new QTimer(this);
+    m_anchorRetryTimer->setSingleShot(true);
+    m_anchorRetryTimer->setInterval(ANCHOR_PORT_RETRY_INTERVAL_MS);
+    connect(m_anchorRetryTimer, &QTimer::timeout, this, [this]() {
+        // Abandon the retry if the connection went away mid-window; a fresh
+        // connect starts its own window.
+        if (m_state != ConnectionState::Connected)
+        {
+            m_anchorRetryDeadlineMs = 0;
+            return;
+        }
+        initiateUdpAnchor();
+    });
+
     // Watch app-wide input for the away flag. Cheap: the filter only stamps a
     // timestamp for input-type events and passes everything through.
     m_lastActivityMs = QDateTime::currentMSecsSinceEpoch();
@@ -370,6 +390,9 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
 void LobbyClient::disconnectFromServer()
 {
     stopPingDiagnosticLog(QStringLiteral("disconnect"));
+    if (m_anchorRetryTimer)
+        m_anchorRetryTimer->stop();
+    m_anchorRetryDeadlineMs = 0;
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     if (m_ws && m_ws->state() != QAbstractSocket::UnconnectedState)
@@ -471,6 +494,9 @@ void LobbyClient::onWsDisconnected()
     // anchorless from there. Tear the socket down on every disconnect path.
     if (m_udp)
         m_udp->abort();
+    if (m_anchorRetryTimer)
+        m_anchorRetryTimer->stop();
+    m_anchorRetryDeadlineMs = 0;
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     m_isModerator = false; // role is per-connection; must re-auth after reconnect
@@ -1216,20 +1242,35 @@ void LobbyClient::initiateUdpAnchor()
         reusedPort = bound;
         if (!bound)
         {
-            // GekkoNet may not have let go of it yet. Falling back to an
-            // ephemeral port loses endpoint continuity — the old behaviour —
-            // but that beats having no anchor at all, and the peers relearn us
-            // from the REGISTER below. Logged loudly because if this fires
-            // often the release/rebind ordering is what needs fixing, not this.
-            qWarning() << "lobby: could not rebind anchor port" << m_anchorLocalPort
-                       << "-" << m_udp->errorString() << "- falling back to a new port";
-            writePingDiagnostic(QStringLiteral("UDP_BIND"),
-                                QStringLiteral("result=port_taken wanted=%1 error=%2")
-                                    .arg(m_anchorLocalPort).arg(m_udp->errorString()));
-            // A failed bind leaves the socket unable to bind again until it's
-            // reset — without this the fallback below failed right after the
-            // pinned-port failure and the whole session ran anchorless.
+            // GekkoNet hasn't let go of the port yet — the emulation thread is
+            // still tearing down while the UI-side room cleanup runs, a race
+            // of about a second. A failed bind holds nothing, and a UDP port
+            // frees the instant its socket closes (no TIME_WAIT), so instead
+            // of surrendering the port immediately — which invalidates every
+            // peer's route to us and can permanently break pairs with
+            // strict-NAT peers who can't re-punch fresh mappings — retry it
+            // briefly on a timer. Ephemeral fallback only once the window
+            // expires.
             m_udp->abort();
+
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            if (m_anchorRetryDeadlineMs == 0)
+                m_anchorRetryDeadlineMs = nowMs + ANCHOR_PORT_RETRY_WINDOW_MS;
+            if (nowMs < m_anchorRetryDeadlineMs)
+            {
+                writePingDiagnostic(QStringLiteral("UDP_BIND"),
+                                    QStringLiteral("result=port_taken_retrying wanted=%1 window_left_ms=%2")
+                                        .arg(m_anchorLocalPort)
+                                        .arg(m_anchorRetryDeadlineMs - nowMs));
+                m_anchorRetryTimer->start();
+                return;
+            }
+
+            qWarning() << "lobby: could not rebind anchor port" << m_anchorLocalPort
+                       << "after retries -" << m_udp->errorString() << "- falling back to a new port";
+            writePingDiagnostic(QStringLiteral("UDP_BIND"),
+                                QStringLiteral("result=port_retry_exhausted wanted=%1 error=%2")
+                                    .arg(m_anchorLocalPort).arg(m_udp->errorString()));
         }
     }
     if (!bound)
@@ -1240,9 +1281,12 @@ void LobbyClient::initiateUdpAnchor()
         qWarning() << "lobby: udp bind failed:" << m_udp->errorString();
         writePingDiagnostic(QStringLiteral("UDP_BIND"),
                             QStringLiteral("result=fail error=%1").arg(m_udp->errorString()));
+        m_anchorRetryDeadlineMs = 0;
         return;
     }
 
+    m_anchorRetryDeadlineMs = 0;
+    m_anchorRetryTimer->stop();
     const quint16 previousPort = m_anchorLocalPort;
     m_anchorLocalPort = m_udp->localPort();
     writePingDiagnostic(QStringLiteral("UDP_BIND"),
@@ -1570,6 +1614,11 @@ quint16 LobbyClient::localUdpPort() const
 
 void LobbyClient::releaseUdpAnchor()
 {
+    // A match is taking the socket over — the pinned port now legitimately
+    // belongs to GekkoNet, so any pending rebind retry must not fight it.
+    if (m_anchorRetryTimer)
+        m_anchorRetryTimer->stop();
+    m_anchorRetryDeadlineMs = 0;
     if (m_udpKeepaliveTimer)
         m_udpKeepaliveTimer->stop();
     if (m_udp && m_udp->state() != QAbstractSocket::UnconnectedState)
