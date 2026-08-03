@@ -399,7 +399,9 @@ void LobbyClient::disconnectFromServer()
     {
         m_ws->close();
     }
-    if (m_udp)
+    // See onWsDisconnected: a socket lent to a running match must survive the
+    // lobby connection; it's recycled by the next connect's pre-bind abort.
+    if (m_udp && !m_anchorLent)
     {
         m_udp->close();
     }
@@ -492,7 +494,12 @@ void LobbyClient::onWsDisconnected()
     // zombie socket, with the fallback bind failing too (a failed bind leaves
     // QUdpSocket needing a reset before it can bind again). The session ran
     // anchorless from there. Tear the socket down on every disconnect path.
-    if (m_udp)
+    // While a match borrows the socket, leave both the socket and the lent
+    // flag alone: aborting would cut the game's transport out from under
+    // GekkoNet, and clearing the flag would re-enable our reads mid-match
+    // (stealing game packets). The match ends through its own path; the next
+    // connect's pre-bind abort recycles the socket safely.
+    if (m_udp && !m_anchorLent)
         m_udp->abort();
     if (m_anchorRetryTimer)
         m_anchorRetryTimer->stop();
@@ -893,6 +900,14 @@ void LobbyClient::sendProbeTo(quint64 userId, const QString& endpoint)
                             QStringLiteral("peer=%1 reason=no_socket").arg(pingUserLabel(userId)));
         return;
     }
+    if (m_anchorLent)
+    {
+        // Sends would work, but the echoes come back on the lent socket where
+        // GekkoNet's filter drops them — the probe could never complete.
+        writePingDiagnostic(QStringLiteral("PROBE_SKIP"),
+                            QStringLiteral("peer=%1 reason=anchor_lent").arg(pingUserLabel(userId)));
+        return;
+    }
 
     const int colon = endpoint.lastIndexOf(':');
     if (colon <= 0)
@@ -1226,6 +1241,16 @@ bool LobbyClient::eventFilter(QObject* watched, QEvent* event)
 
 void LobbyClient::initiateUdpAnchor()
 {
+    // Reconnected to the lobby while a match still borrows the socket: leave
+    // the match's transport untouched and run without an anchor for now — the
+    // match-end reclaim will register this same socket with the fresh session.
+    if (m_anchorLent)
+    {
+        writePingDiagnostic(QStringLiteral("UDP_BIND"),
+                            QStringLiteral("result=deferred reason=anchor_lent"));
+        return;
+    }
+
     // A socket that is already bound (zombie from a passive disconnect) or
     // left over from a failed bind cannot bind again until it's reset.
     if (m_udp->state() != QAbstractSocket::UnconnectedState)
@@ -1639,6 +1664,12 @@ void LobbyClient::releaseUdpAnchor()
 
 void LobbyClient::reopenUdpAnchor()
 {
+    // Shared-socket model: the socket never went away — just resume our side.
+    if (m_anchorLent)
+    {
+        reclaimAnchorFromMatch();
+        return;
+    }
     if (m_state == ConnectionState::Connected && m_udp &&
         m_udp->state() == QAbstractSocket::UnconnectedState)
     {
@@ -1646,9 +1677,59 @@ void LobbyClient::reopenUdpAnchor()
     }
 }
 
+qintptr LobbyClient::lendAnchorToMatch()
+{
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState)
+        return -1;
+    const qintptr fd = m_udp->socketDescriptor();
+    if (fd == -1)
+        return -1;
+
+    if (m_anchorRetryTimer)
+        m_anchorRetryTimer->stop();
+    m_anchorRetryDeadlineMs = 0;
+    // Keepalives pause: GekkoNet's receive filter drops RMGK-tagged datagrams,
+    // so acks would vanish anyway, and the server keeps our endpoint entry —
+    // reclaim re-registers the same address the moment the match ends.
+    if (m_udpKeepaliveTimer)
+        m_udpKeepaliveTimer->stop();
+    m_anchorLent = true;
+    qInfo() << "Rollback lobby lending anchor socket to match"
+            << "localPort" << m_udp->localPort();
+    writePingDiagnostic(QStringLiteral("ANCHOR_LENT"),
+                        QStringLiteral("port=%1").arg(m_udp->localPort()));
+    return fd;
+}
+
+void LobbyClient::reclaimAnchorFromMatch()
+{
+    if (!m_anchorLent)
+        return;
+    m_anchorLent = false;
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState ||
+        m_state != ConnectionState::Connected)
+        return;
+    // Same socket, same port, same NAT mappings — nothing to rebind. The
+    // REGISTER is a refresh, not a re-punch; peers' learned routes to us are
+    // still valid, which is the whole point of the shared-socket model.
+    writePingDiagnostic(QStringLiteral("ANCHOR_RECLAIMED"),
+                        QStringLiteral("port=%1").arg(m_udp->localPort()));
+    sendUdpRegister();
+    if (m_udpKeepaliveTimer)
+        m_udpKeepaliveTimer->start();
+    // Drain anything that arrived between GekkoNet's last poll and now, so no
+    // stale datagram sits in the buffer wedging the read notifier.
+    if (m_udp->hasPendingDatagrams())
+        onUdpReadyRead();
+}
+
 void LobbyClient::onUdpReadyRead()
 {
     if (m_inPrematchSync)
+        return;
+    // While the socket is lent to GekkoNet, its thread owns recvfrom; reading
+    // here would steal game packets (the n02 "packet stealing" race).
+    if (m_anchorLent)
         return;
 
     while (m_udp->hasPendingDatagrams())

@@ -45,6 +45,13 @@ class rmgk_gekko
         const LobbyRemotePeer* remotes, int numRemotes,
         int localDelay, int predictionWindow);
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
+    // n02-style shared transport: adopt an already-bound UDP socket (the
+    // lobby's anchor) for the next lobby session instead of binding our own.
+    // The socket is borrowed, never closed by us; close_session clears the
+    // adoption. When no socket is adopted, start_lobby_session falls back to
+    // GekkoNet's own adapter binding localPort (the old handoff model).
+    static void set_external_socket(uintptr_t socketDescriptor);
+    static void clear_external_socket();
     static void close_session();
     static void request_stop();
     // Thread-safe: queue a remote slot (1-indexed N64 controller) to be force-

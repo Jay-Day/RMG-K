@@ -196,6 +196,17 @@ public:
     void releaseUdpAnchor();
     void reopenUdpAnchor();
 
+    // n02-style shared transport: instead of releasing the anchor socket for
+    // GekkoNet to rebind (a handoff with a whole family of races), lend the
+    // live socket itself. Returns the native descriptor, or -1 if there is no
+    // bound socket. While lent, this side stops READING (GekkoNet's thread
+    // owns recvfrom — same reader discipline n02 uses between p2p_step and
+    // p2p_modify_play_values); the port, and every peer's NAT mapping to it,
+    // never change. reclaim is idempotent and safe to call whether or not a
+    // lend happened.
+    qintptr lendAnchorToMatch();
+    void reclaimAnchorFromMatch();
+
     // Fire a burst of UDP punch packets from the anchor socket to each peer's
     // public endpoint. Call this *before* releaseUdpAnchor() so the punch goes
     // out from the same NAT mapping GekkoNet will inherit when it re-binds.
@@ -374,6 +385,10 @@ private:
     // Ping diagnostics (see startPingDiagnosticLog).
     QFile*  m_pingDiagnosticFile    = nullptr;
     qint64  m_pingDiagnosticStartMs = 0;
+
+    // True while GekkoNet borrows the anchor socket (see lendAnchorToMatch):
+    // suppresses our reads and probe sends without touching the socket.
+    bool m_anchorLent = false;
 
     // Away detection: last app-wide input, and whether the last heartbeat
     // reported us away (so the first input after can snap us back immediately

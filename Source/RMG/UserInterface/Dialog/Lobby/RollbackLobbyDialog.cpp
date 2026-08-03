@@ -4059,7 +4059,21 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");
 
-    m_client->releaseUdpAnchor();
+    // n02-style shared transport: lend the live anchor socket to GekkoNet
+    // instead of releasing the port for it to rebind. The port and every
+    // peer's NAT mapping to us survive the match; reclaim happens through the
+    // existing reopenUdpAnchor calls on the match-end paths. Falls back to
+    // the old release/rebind handoff if the descriptor can't be obtained.
+    const qintptr anchorFd = m_client->lendAnchorToMatch();
+    if (anchorFd != -1)
+    {
+        rmgk_gekko::set_external_socket(static_cast<uintptr_t>(anchorFd));
+    }
+    else
+    {
+        rmgk_gekko::clear_external_socket();
+        m_client->releaseUdpAnchor();
+    }
 
     {
         char buf[640];
