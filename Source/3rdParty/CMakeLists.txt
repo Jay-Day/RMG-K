@@ -61,8 +61,13 @@ set(SDL3NET_SOURCES
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL3 REQUIRED sdl3)
 add_library(SDL3_net STATIC ${SDL3NET_SOURCES})
-target_include_directories(SDL3_net PRIVATE ${SDL3NET_DIR}/include)
-set(SDL3NET_CFLAGS "-DUSE_SDL3NET -I${SDL3NET_DIR}/include")
+# SDL_net.c includes <SDL3/SDL.h>, so SDL3's own headers must be on the
+# search path. Required when SDL3 lives in a non-standard prefix; with a
+# system install the compiler finds them anyway, which masks the omission.
+target_include_directories(SDL3_net PRIVATE ${SDL3NET_DIR}/include ${SDL3_INCLUDE_DIRS})
+# SDL3_CFLAGS carries SDL3's -I flags for the mupen64plus-core Makefile build,
+# which compiles against SDL3 outside CMake's target model.
+set(SDL3NET_CFLAGS "-DUSE_SDL3NET -I${SDL3NET_DIR}/include ${SDL3_CFLAGS}")
 # for some reason MingW needs SDL3 to be linked after SDL3_net,
 # else we get a lot of missing symbol errors, should be harmless
 # on other platforms
