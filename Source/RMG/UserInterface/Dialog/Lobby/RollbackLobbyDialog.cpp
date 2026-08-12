@@ -381,6 +381,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
     connect(m_client, &LobbyClient::pingProbeRetrying,    this, &RollbackLobbyDialog::onPingProbeRetrying);
     connect(m_client, &LobbyClient::pingProbeFailed,      this, &RollbackLobbyDialog::onPingProbeFailed);
+    connect(m_client, &LobbyClient::pingProbeSoftFailed,  this, &RollbackLobbyDialog::onPingProbeSoftFailed);
     connect(m_client, &LobbyClient::spectateBegan,        this, &RollbackLobbyDialog::onSpectateBegan);
     connect(m_client, &LobbyClient::spectateData,         this, &RollbackLobbyDialog::onSpectateData);
     connect(m_client, &LobbyClient::spectateKeyframe,     this, &RollbackLobbyDialog::onSpectateKeyframe);
@@ -3192,7 +3193,21 @@ void RollbackLobbyDialog::refreshSeatMeta(quint64 userId, const QString& statusH
 
 void RollbackLobbyDialog::onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts)
 {
+    // Retry progress is first-contact feedback. Once a seat has a number the
+    // number *is* the display — a routine re-check that needs a second burst
+    // (typical right after a match, while the peer reclaims their socket)
+    // shouldn't churn it through amber every time.
+    if (m_client && m_client->measuredPingMs(userId) >= 0)
+        return;
     refreshSeatMeta(userId, seatProbeStatusHtml(attempt, maxAttempts, false, isDarkTheme()));
+}
+
+void RollbackLobbyDialog::onPingProbeSoftFailed(quint64 userId)
+{
+    // Clear any retry text; with no status the seat renders the cached
+    // measurement. The client escalates to onPingProbeFailed if the next
+    // series also dies, so a real outage still surfaces within two cycles.
+    refreshSeatMeta(userId, QString());
 }
 
 void RollbackLobbyDialog::onPingProbeFailed(quint64 userId)

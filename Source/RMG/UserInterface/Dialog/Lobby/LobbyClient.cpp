@@ -514,6 +514,7 @@ void LobbyClient::onWsDisconnected()
     // user ids are stale, so retrying them would burst at whoever now holds
     // those ids and emit failure notices for peers we're no longer talking to.
     m_pendingProbes.clear();
+    m_probeFailStreak.clear();
     m_recentlyMatchedNonces.clear();
     // Learned routes are keyed by user id too — same recycled-id hazard.
     m_learnedRoutes.clear();
@@ -1015,7 +1016,7 @@ void LobbyClient::onProbeRetryTimer()
                                     .arg(PROBE_BURST)
                                     .arg(nowMs - it->sendMs));
             it = m_pendingProbes.erase(it);
-            emit pingProbeFailed(uid);
+            noteProbeSeriesFailed(uid);
             continue;
         }
 
@@ -1024,7 +1025,7 @@ void LobbyClient::onProbeRetryTimer()
         {
             const quint64 uid = it->targetUserId;
             it = m_pendingProbes.erase(it);
-            emit pingProbeFailed(uid);
+            noteProbeSeriesFailed(uid);
             continue;
         }
 
@@ -1046,6 +1047,31 @@ void LobbyClient::onProbeRetryTimer()
         emit pingProbeRetrying(it->targetUserId, it->attempt, PROBE_ATTEMPTS);
         ++it;
     }
+}
+
+void LobbyClient::noteProbeSeriesFailed(quint64 userId)
+{
+    const int streak = ++m_probeFailStreak[userId];
+    // A peer we've never measured gets the hard verdict immediately — there is
+    // no number to fall back on and first contact failing is the case the
+    // retry/unreachable UI exists for. An established peer gets one free miss:
+    // right after a match the far side is usually still handing its socket
+    // back, and one aged-out series proves nothing.
+    if (streak >= 2 || !m_measuredPing.contains(userId))
+        emit pingProbeFailed(userId);
+    else
+        emit pingProbeSoftFailed(userId);
+}
+
+void LobbyClient::cancelPendingProbes(const QString& reason)
+{
+    if (m_pendingProbes.isEmpty())
+        return;
+    writePingDiagnostic(QStringLiteral("PROBE_CANCELLED"),
+                        QStringLiteral("count=%1 reason=%2")
+                            .arg(m_pendingProbes.size())
+                            .arg(reason));
+    m_pendingProbes.clear();
 }
 
 void LobbyClient::handlePingProbeReply(const QJsonObject& data)
@@ -1646,6 +1672,11 @@ void LobbyClient::releaseUdpAnchor()
     m_anchorRetryDeadlineMs = 0;
     if (m_udpKeepaliveTimer)
         m_udpKeepaliveTimer->stop();
+    // Same reasoning as lendAnchorToMatch: an in-flight series can't survive
+    // the socket going away, and letting it age out would report the match
+    // peer as unreachable.
+    cancelPendingProbes(QStringLiteral("anchor_released"));
+    m_probeFailStreak.clear();
     if (m_udp && m_udp->state() != QAbstractSocket::UnconnectedState)
     {
         qInfo() << "Rollback lobby releasing UDP anchor"
@@ -1693,6 +1724,13 @@ qintptr LobbyClient::lendAnchorToMatch()
     // reclaim re-registers the same address the moment the match ends.
     if (m_udpKeepaliveTimer)
         m_udpKeepaliveTimer->stop();
+    // A series caught in flight by the handoff would burn its retries against
+    // a socket whose echoes GekkoNet drops, then age out into a failure signal
+    // — flagging the very peer we're starting a match with as unreachable, and
+    // nothing clears it until probing resumes at match end. Drop them quietly;
+    // the miss streak resets too so the first post-match cycle starts clean.
+    cancelPendingProbes(QStringLiteral("anchor_lent"));
+    m_probeFailStreak.clear();
     m_anchorLent = true;
     qInfo() << "Rollback lobby lending anchor socket to match"
             << "localPort" << m_udp->localPort();
@@ -1815,6 +1853,7 @@ void LobbyClient::onUdpReadyRead()
                 m_recentlyMatchedNonces.clear();
             m_recentlyMatchedNonces.insert(nonce);
             m_measuredPing[uid] = rttMs;
+            m_probeFailStreak.remove(uid);
             writePingDiagnostic(QStringLiteral("RTT"),
                                 QStringLiteral("peer=%1 rtt_ms=%2 attempt=%3/%4 nonce=%5 from=%6:%7")
                                     .arg(pingUserLabel(uid))
@@ -2002,6 +2041,13 @@ void LobbyClient::swapSeats(int slotA, int slotB)
 
 void LobbyClient::requestPingProbe(quint64 targetUserId)
 {
+    // While a match borrows the socket the probe could never complete
+    // (GekkoNet's filter eats the echo), so don't even ask the server —
+    // otherwise every tick spends a round-trip to arrive at a skip. The
+    // ANCHOR_LENT/ANCHOR_RECLAIMED pair already brackets the quiet stretch
+    // in the diagnostic log.
+    if (m_anchorLent)
+        return;
     QJsonObject d;
     d["targetUserId"] = QJsonValue(qint64(targetUserId));
     sendEnvelope("PING_PROBE_REQUEST", d);

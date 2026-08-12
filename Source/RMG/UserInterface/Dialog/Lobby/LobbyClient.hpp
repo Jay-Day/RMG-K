@@ -250,6 +250,12 @@ signals:
     void pingProbeRetrying(quint64 targetUserId, int attempt, int maxAttempts);
     // Every attempt went unanswered — that peer is unreachable for now.
     void pingProbeFailed(quint64 targetUserId);
+    // A series died, but the peer has answered before and this is the first
+    // consecutive miss — almost always transient (their socket is lent to a
+    // match, or they're mid-rebind after one). The UI should fall back to the
+    // last measurement rather than declare unreachable; a second consecutive
+    // miss emits pingProbeFailed instead.
+    void pingProbeSoftFailed(quint64 targetUserId);
 
     void matchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
     void matchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
@@ -308,6 +314,13 @@ private:
     void sendProbeTo(quint64 userId, const QString& endpoint);
     // Emit one burst of identical PROBE packets for an existing series.
     void sendProbeBurst(const QHostAddress& addr, quint16 port, quint64 nonce);
+    // A probe series ran out of attempts. Routes to pingProbeFailed or
+    // pingProbeSoftFailed based on the peer's consecutive-miss streak.
+    void noteProbeSeriesFailed(quint64 userId);
+    // Drop every in-flight series without emitting failure signals — for the
+    // moments we stop probing for our own reasons (socket lent to a match),
+    // where an aged-out series says nothing about the peer.
+    void cancelPendingProbes(const QString& reason);
 
     // Opt-in on-disk trace of the whole probe pipeline, for diagnosing peer
     // pings that never resolve. Off unless Rollback_PingDiagnostics is set;
@@ -423,6 +436,12 @@ private:
         qint64  nextAttemptMs = 0;
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;
+
+    // Consecutive exhausted probe series per peer, reset by any successful
+    // reply and when a match borrows the socket. A single miss on a peer
+    // we've measured before shows as a soft failure (the seat keeps its
+    // number); the streak has to reach 2 before the UI says unreachable.
+    QHash<quint64, int> m_probeFailStreak;
 
     // The address a peer's packets *actually* arrive from, learned from inbound
     // PROBE/PROBE_REPLY traffic — n02-style reply-to-observed-source, kept.
