@@ -6,6 +6,19 @@
  */
 #ifdef NETPLAY
 
+// Must precede anything that could pull in <windows.h>, which otherwise drags
+// in the old winsock.h and collides with winsock2.h.
+#ifdef _WIN32
+#include <winsock2.h>
+// SIO_UDP_CONNRESET lives in mswsock.h under MinGW-w64 and in mstcpip.h under
+// the MSVC SDK, so pull in both and fall back to the documented control code.
+#include <mswsock.h>
+#include <mstcpip.h>
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+#endif
+
 #include "LobbyClient.hpp"
 
 #include <RMG-Core/Cheats.hpp>
@@ -992,6 +1005,32 @@ void LobbyClient::sendProbeBurst(const QHostAddress& addr, quint16 port, quint64
 
 void LobbyClient::onProbeRetryTimer()
 {
+    // Poll the socket rather than trusting readyRead alone. Qt disables read
+    // notification for an unbuffered socket whose readyRead goes unserviced,
+    // and re-arms it on the next successful read — but during a match our slot
+    // deliberately reads nothing (GekkoNet's thread owns recvfrom), so the
+    // notification is off by the time the match ends. Whether it ever comes
+    // back then depends on there happening to be a datagram queued at that
+    // instant, which is precisely the coin-flip seen in the field: the client
+    // whose match-end drain found datagrams recovered, the one that found an
+    // empty buffer stayed deaf until the process restarted. A socket serviced
+    // from two threads can't rely on Qt's notifier bookkeeping, so poll it —
+    // this is the same discipline n02 uses. Cheap: a no-op when nothing is
+    // pending, and this timer already runs continuously.
+    if (m_udp && !m_anchorLent && !m_inPrematchSync)
+    {
+        m_drainedDatagrams = 0;
+        onUdpReadyRead();
+        if (m_drainedDatagrams > 0)
+        {
+            // The notifier missed these — readyRead would have drained them
+            // already. Logged because a run of these is the signature of the
+            // stall above, and their absence means it isn't happening.
+            writePingDiagnostic(QStringLiteral("POLL_DRAIN"),
+                                QStringLiteral("datagrams=%1").arg(m_drainedDatagrams));
+        }
+    }
+
     if (m_pendingProbes.isEmpty())
         return;
 
@@ -1338,6 +1377,7 @@ void LobbyClient::initiateUdpAnchor()
 
     m_anchorRetryDeadlineMs = 0;
     m_anchorRetryTimer->stop();
+    disableUdpConnReset();
     const quint16 previousPort = m_anchorLocalPort;
     m_anchorLocalPort = m_udp->localPort();
     writePingDiagnostic(QStringLiteral("UDP_BIND"),
@@ -1347,6 +1387,34 @@ void LobbyClient::initiateUdpAnchor()
                             .arg(previousPort));
     sendUdpRegister();
     m_udpKeepaliveTimer->start();
+}
+
+// Windows delivers ICMP "port unreachable" to a *connectionless* UDP socket as
+// a WSAECONNRESET on the next receive. One peer's port going away (a match
+// partner quitting, a game socket closing) therefore poisons receives on the
+// socket that sent to it — and under the shared-transport model that is the
+// one socket the lobby also depends on, so the client keeps sending fine while
+// silently receiving nothing until the process restarts. SIO_UDP_CONNRESET
+// off is the standard fix: unreachable peers are simply ignored, which is the
+// right semantics for peer-to-peer UDP where peers come and go. No-op on
+// non-Windows; failure here is not fatal, so it's logged rather than raised.
+void LobbyClient::disableUdpConnReset()
+{
+#ifdef _WIN32
+    if (!m_udp)
+        return;
+    const qintptr fd = m_udp->socketDescriptor();
+    if (fd == -1)
+        return;
+    BOOL enable = FALSE;
+    DWORD returned = 0;
+    if (::WSAIoctl(static_cast<SOCKET>(fd), SIO_UDP_CONNRESET, &enable, sizeof(enable),
+                   nullptr, 0, &returned, nullptr, nullptr) == SOCKET_ERROR)
+    {
+        writePingDiagnostic(QStringLiteral("UDP_CONNRESET"),
+                            QStringLiteral("result=fail error=%1").arg(::WSAGetLastError()));
+    }
+#endif
 }
 
 void LobbyClient::sendUdpRegister()
@@ -1757,8 +1825,24 @@ void LobbyClient::reclaimAnchorFromMatch()
         m_udpKeepaliveTimer->start();
     // Drain anything that arrived between GekkoNet's last poll and now, so no
     // stale datagram sits in the buffer wedging the read notifier.
-    if (m_udp->hasPendingDatagrams())
-        onUdpReadyRead();
+    //
+    // Unconditional on purpose. Throughout the lend our readyRead slot returns
+    // without reading, and Qt disables the read notification for an unbuffered
+    // socket whose readyRead went unserviced — it is re-armed by the next read,
+    // not by time. Gating this drain on hasPendingDatagrams() meant that a
+    // reclaim landing on a momentarily empty buffer performed no read at all
+    // and left the notifier disabled, so the socket kept sending while silently
+    // receiving nothing until the process restarted. onUdpReadyRead is a
+    // read-until-empty loop and is safe to call with nothing pending.
+    m_drainedDatagrams = 0;
+    onUdpReadyRead();
+    // How much had piled up while nobody was reading tells us which failure we
+    // are looking at when a peer goes deaf after a match: a large backlog means
+    // datagrams were arriving and going unserviced (our reader / the notifier),
+    // while zero means nothing reached the socket at all (blocked inbound —
+    // firewall or NAT), which no amount of draining would fix.
+    writePingDiagnostic(QStringLiteral("ANCHOR_DRAIN"),
+                        QStringLiteral("datagrams=%1").arg(m_drainedDatagrams));
 }
 
 void LobbyClient::onUdpReadyRead()
@@ -1777,6 +1861,7 @@ void LobbyClient::onUdpReadyRead()
         quint16 senderPort = 0;
         datagram.resize(int(m_udp->pendingDatagramSize()));
         m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+        m_drainedDatagrams++;
 
         if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0)
             continue;

@@ -343,6 +343,9 @@ private:
     void handleModList(const QJsonObject& data);
 
     void initiateUdpAnchor();
+    // Stop Windows from failing receives with WSAECONNRESET when a peer's port
+    // becomes unreachable (see the definition). No-op elsewhere.
+    void disableUdpConnReset();
     void sendUdpRegister();
     void sendUdpKeepalive();
     // Walks m_pendingProbes and re-bursts anything that's due. Runs on a short
@@ -398,6 +401,10 @@ private:
     // Ping diagnostics (see startPingDiagnosticLog).
     QFile*  m_pingDiagnosticFile    = nullptr;
     qint64  m_pingDiagnosticStartMs = 0;
+
+    // Datagrams read since the counter was last reset. Only consulted by the
+    // match-end drain, to record how much had queued up while nobody read.
+    int m_drainedDatagrams = 0;
 
     // True while GekkoNet borrows the anchor socket (see lendAnchorToMatch):
     // suppresses our reads and probe sends without touching the socket.
