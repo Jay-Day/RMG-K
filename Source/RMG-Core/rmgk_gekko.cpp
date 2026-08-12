@@ -2394,7 +2394,15 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     (void)predictionWindow;
     return false;
 #else
+    // The lobby lends its anchor descriptor immediately before starting the
+    // match, but close_session() treats the descriptor as session state and
+    // clears it. Latch the lend across the cleanup, or every lobby match falls
+    // through to the default adapter and tries to bind a port the lobby's own
+    // socket still holds — which can never succeed under the shared-socket
+    // model (the anchor is deliberately never released).
+    const ExtSocket lentSocket = g_GekkoExternalSocket.load();
     close_session();
+    g_GekkoExternalSocket.store(lentSocket);
 
     g_GekkoLocalPlayer = localPlayer;
     g_GekkoStopRequested.store(false, std::memory_order_relaxed);
