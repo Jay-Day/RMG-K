@@ -40,6 +40,8 @@
 
 #include <QApplication>
 #include <QPalette>
+#include <QStyledItemDelegate>
+#include <QPainter>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
@@ -332,6 +334,12 @@ namespace
     // sort override below. Qt::UserRole itself already carries the user id.
     constexpr int kSearchingSortRole = Qt::UserRole + 1;
 
+    // Column-2 roles backing the painted Ping column (see PlayersItemDelegate).
+    constexpr int kPingMsRole       = Qt::UserRole + 2; // int; -1 = unknown
+    constexpr int kPingEstimateRole = Qt::UserRole + 3; // value is a region estimate
+    constexpr int kWirelessRole     = Qt::UserRole + 4; // peer self-reports wifi/cellular
+    constexpr int kShowPingRole     = Qt::UserRole + 5; // false for the self row
+
     // Player-list row that pins searching players to the top of the list no
     // matter which column or direction the user sorts by. Qt places items
     // that compare "less" first in ascending order and last in descending,
@@ -355,7 +363,105 @@ namespace
                     : Qt::AscendingOrder;
                 return order == Qt::AscendingOrder ? a : b;
             }
+            // The Ping column has no cell text (the delegate paints bars), so
+            // sort it numerically via the backing role. Unknown (-1) sinks
+            // below any real value in ascending order.
+            if (treeWidget() && treeWidget()->sortColumn() == 2)
+            {
+                const int msA = data(2, kPingMsRole).toInt();
+                const int msB = other.data(2, kPingMsRole).toInt();
+                const int kA = msA < 0 ? (1 << 30) : msA;
+                const int kB = msB < 0 ? (1 << 30) : msB;
+                if (kA != kB)
+                    return kA < kB;
+            }
             return QTreeWidgetItem::operator<(other);
+        }
+    };
+
+    // Paints the players list: column 0 gets its decoration (the country
+    // flag) moved to the RIGHT edge of the name cell, and column 2 has no
+    // text at all — it's drawn as Fightcade-style signal bars. Three bars
+    // lit = good, two = fair, one = rough, matching pingHex()'s tiers so
+    // the bars and every "N ms" elsewhere always tell the same story. A
+    // value that is only a region estimate draws translucent until a real
+    // measurement replaces it, and a peer who self-reports a wireless
+    // transport gets a warning "!" over the bars.
+    class PlayersItemDelegate : public QStyledItemDelegate
+    {
+    public:
+        using QStyledItemDelegate::QStyledItemDelegate;
+
+    protected:
+        void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
+        {
+            QStyledItemDelegate::initStyleOption(option, index);
+            if (index.column() == 0)
+                option->decorationPosition = QStyleOptionViewItem::Right;
+        }
+
+        void paint(QPainter* painter, const QStyleOptionViewItem& option,
+                   const QModelIndex& index) const override
+        {
+            if (index.column() != 2)
+            {
+                QStyledItemDelegate::paint(painter, option, index);
+                return;
+            }
+
+            // Draw the item chrome (selection, hover, alternate stripe) with
+            // no content, then paint the bars over it.
+            QStyleOptionViewItem opt = option;
+            initStyleOption(&opt, index);
+            opt.text.clear();
+            opt.icon = QIcon();
+            QStyle* style = opt.widget ? opt.widget->style() : QApplication::style();
+            style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
+
+            if (!index.data(kShowPingRole).toBool())
+                return;
+
+            const int  ping     = index.data(kPingMsRole).toInt();
+            const bool estimate = index.data(kPingEstimateRole).toBool();
+            const bool wireless = index.data(kWirelessRole).toBool();
+            const int  level    = ping < 0 ? 0 : ping <= 60 ? 3 : ping <= 120 ? 2 : 1;
+
+            QColor lit(pingHex(ping));
+            if (estimate)
+                lit.setAlpha(150);
+            QColor unlit = opt.palette.text().color();
+            unlit.setAlpha(56);
+
+            constexpr int barW = 4, gap = 2, maxH = 14;
+            const QRect r = opt.rect;
+            const int baseY = r.center().y() + maxH / 2;
+            const int x0 = r.x() + 8;
+
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing, false);
+            painter->setPen(Qt::NoPen);
+            for (int i = 0; i < 3; i++)
+            {
+                const int h = maxH * (i + 1) / 3;
+                painter->setBrush(i < level ? lit : unlit);
+                painter->drawRect(x0 + i * (barW + gap), baseY - h, barW, h);
+            }
+
+            if (wireless)
+            {
+                QFont f = opt.font;
+                f.setBold(true);
+                f.setPointSizeF(f.pointSizeF() + 1.0);
+                painter->setFont(f);
+                // Overlapping the top-right of the bars, with a 1px shadow so
+                // it stays readable over a lit bar in either theme.
+                const QRect exclR(x0 + 2 * (barW + gap), r.y(), 12, r.height());
+                painter->setPen(QColor(0, 0, 0, 140));
+                painter->drawText(exclR.translated(1, 1), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("!"));
+                painter->setPen(QColor(0xf0, 0xa0, 0x30));
+                painter->drawText(exclR, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("!"));
+            }
+            painter->restore();
         }
     };
 } // namespace
@@ -446,7 +552,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     // without a close event.
     QSettings s("RMG-K", "n02");
     if (m_playersTree)
-        s.setValue(QString("RollbackLobby/PlayersHeaderState.v2.c%1").arg(m_playersTree->columnCount()),
+        s.setValue(QString("RollbackLobby/PlayersHeaderState.v3.c%1").arg(m_playersTree->columnCount()),
                    m_playersTree->header()->saveState());
     if (m_roomsTree)
         s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
@@ -1305,13 +1411,15 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
 
     m_playersTree = new QTreeWidget(card);
     m_playersTree->setObjectName("PlayersTree");
-    m_playersTree->setHeaderLabels({ "Player", "State", "Region" });
+    m_playersTree->setHeaderLabels({ "Player", "State", "Ping" });
     m_playersTree->setRootIsDecorated(false);
     m_playersTree->setSortingEnabled(true);
 	m_playersTree->sortItems(0, Qt::AscendingOrder);
     m_playersTree->setAlternatingRowColors(true);
     m_playersTree->setFrameShape(QFrame::NoFrame);
     m_playersTree->setUniformRowHeights(true);
+    // Right-edge flags in the name column + painted signal bars in Ping.
+    m_playersTree->setItemDelegate(new PlayersItemDelegate(m_playersTree));
     // Column sizing is hand-rolled in clampPlayersColumns rather than using a
     // Qt Stretch section. Qt resizes a column via the divider on its RIGHT
     // edge, so with three columns only two dividers physically exist: Player|
@@ -1332,31 +1440,31 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         const QFontMetrics fm(m_playersTree->header()->font());
         const int pad = 20; // section margins
         const int stateWidth  = fm.horizontalAdvance(QStringLiteral("Spectating")) + pad;
-        // Text width with a slightly tighter margin than State's — the sort
-        // indicator renders above the label in this header style, so nothing
-        // else needs the horizontal room.
-        const int regionWidth = fm.horizontalAdvance(QStringLiteral("Region")) + pad - 4;
+        // Wide enough for the painted bars + wireless "!" (≈36px) and the
+        // header label, whichever is larger; the sort indicator renders above
+        // the label in this header style, so nothing else needs the room.
+        const int pingWidth = std::max(fm.horizontalAdvance(QStringLiteral("Ping")) + pad - 4, 40);
         m_playersTree->setColumnWidth(1, stateWidth);
 
         // The column count is part of the key: restoring a state saved for a
         // different column layout half-applies and breaks the header (missing
-        // section dividers, wrong stretch section). v2: the v1 layout had no
-        // stretch section and a shrink-only clamp, so saved v1 states carry
-        // squeezed columns and a dead gap — leave them orphaned rather than
-        // restoring the broken shape into the fixed layout.
+        // section dividers, wrong stretch section). v3: column 2 changed
+        // meaning (Region flag → painted Ping bars), so v2 states carry a
+        // stale sort choice and width for a column that no longer exists —
+        // leave them orphaned rather than restoring them into the new shape.
         QSettings s("RMG-K", "n02");
-        const QString key = QString("RollbackLobby/PlayersHeaderState.v2.c%1").arg(m_playersTree->columnCount());
+        const QString key = QString("RollbackLobby/PlayersHeaderState.v3.c%1").arg(m_playersTree->columnCount());
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_playersTree->header()->restoreState(headerState);
         // restoreState can resurrect per-section modes and stale widths; re-pin
-        // ours AFTER it. Region's width is layout policy, not a user
+        // ours AFTER it. Ping's width is layout policy, not a user
         // preference — always the computed value, never the saved one. State's
         // saved width is the one thing that should survive the round trip;
         // Player is refit by the first viewport Resize regardless.
         m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
         m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
-        m_playersTree->setColumnWidth(2, regionWidth);
+        m_playersTree->setColumnWidth(2, pingWidth);
     }
     // The columns are clamped to the viewport (clampPlayersColumns), so a
     // horizontal scrollbar can never be needed — turning it off also stops Qt
@@ -2244,22 +2352,17 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     else
         item->setToolTip(1, QString());
 
-    // Region column: country flag only (Fightcade-style — the server geolocates
-    // the ISO country code, we render the bundled SVG). No text label: the
-    // region is a coarse server-side bucket that often disagrees with the
-    // geolocated country sitting right next to it, so printing both invited the
-    // reader to trust a mismatch. The full region still lives in the tooltip.
-    // Old servers don't send a country, so fall back to the region's emoji
-    // badge — still a glyph, not an abbreviation.
-    // U+2014 EM DASH — using QChar avoids any file-encoding ambiguity in
-    // the literal.
-    const QString dash = QString(QChar(0x2014));
+    // Country flag rides the right edge of the NAME cell (the delegate flips
+    // column 0's decorationPosition), Fightcade-style. The server geolocates
+    // the ISO country code; we render the bundled SVG. No flag for anonymous
+    // users — and deliberately no region-badge fallback for them either,
+    // that's the coarse location leak the option exists to prevent. Old
+    // servers that send no country just show no flag.
     const QString flagResource = QString(":/flags/%1.svg").arg(u.country.toLower());
     QString countryName;
-    if (!u.country.isEmpty() && QFile::exists(flagResource))
+    if (!u.anonymous && !u.country.isEmpty() && QFile::exists(flagResource))
     {
-        item->setIcon(2, QIcon(flagResource));
-        item->setText(2, QString());
+        item->setIcon(0, QIcon(flagResource));
         const QLocale::Territory territory = QLocale::codeToTerritory(u.country);
         countryName = (territory != QLocale::AnyTerritory)
             ? QLocale::territoryToString(territory)
@@ -2267,9 +2370,30 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     }
     else
     {
-        item->setIcon(2, QIcon());
-        item->setText(2, u.region.isEmpty() ? dash : LobbyRegions::flagFor(u.region));
+        item->setIcon(0, QIcon());
     }
+
+    // Ping column: roles only — PlayersItemDelegate paints the signal bars.
+    // A real measurement wins; the region estimate stands in translucently
+    // until one lands; -1 draws the empty skeleton. Self shows no bars. The
+    // wireless flag drives the "!" warning over the bars (wifi/cellular —
+    // where the frame spikes come from; anonymity doesn't hide it, since the
+    // whole point of surfacing it is match-quality risk).
+    const bool isSelf = (u.id == m_client->selfUserId());
+    const int measured = isSelf ? -1 : m_client->measuredPingMs(u.id);
+    const int estimate = LobbyRegions::estimatedRttMs(m_client->selfRegion(), u.region);
+    const int effective = isSelf ? -1
+        : measured >= 0 ? measured
+        : estimate > 0  ? estimate
+                        : -1;
+    item->setText(2, QString());
+    item->setIcon(2, QIcon());
+    item->setData(2, kShowPingRole, !isSelf);
+    item->setData(2, kPingMsRole, effective);
+    item->setData(2, kPingEstimateRole, measured < 0);
+    item->setData(2, kWirelessRole,
+                  u.connection == QLatin1String("wifi") ||
+                  u.connection == QLatin1String("cellular"));
 
     // Built as lines so an absent field just doesn't contribute, rather than
     // leaving a stray separator. The region is deliberately not among them: it's
@@ -2290,22 +2414,17 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         tipLines << QString("Connection: %1").arg(connLabel);
     if (!u.clientVersion.isEmpty())
         tipLines << QString("Build: %1").arg(u.clientVersion);
-    if (u.id != m_client->selfUserId())
+    if (!isSelf)
     {
-        const int measured = m_client->measuredPingMs(u.id);
+        // The bars give the tier; the tooltip gives the number. An estimate is
+        // hedged and only stands in until a real UDP probe lands — say what
+        // makes it real rather than implying a measurement is on its way.
         if (measured >= 0)
             tipLines << QString("Ping: %1 ms").arg(measured);
         else
-        {
-            // Still a region-derived number, but it's hedged as an estimate and
-            // only stands in until a real UDP probe lands — unlike a region
-            // label, it isn't asserting where the player is. Nothing probes
-            // lobby users in the background any more, so say what makes it real
-            // rather than implying a measurement is already on its way.
-            const int rtt = LobbyRegions::estimatedRttMs(m_client->selfRegion(), u.region);
-            tipLines << (rtt > 0 ? QString("Ping: ~%1 ms (estimate — click to measure)").arg(rtt)
-                                 : QStringLiteral("Ping: click to measure"));
-        }
+            tipLines << (estimate > 0
+                ? QString("Ping: ~%1 ms (estimate — click to measure)").arg(estimate)
+                : QStringLiteral("Ping: click to measure"));
     }
     const QString tip = tipLines.join(QChar('\n'));
     item->setToolTip(0, tip);
