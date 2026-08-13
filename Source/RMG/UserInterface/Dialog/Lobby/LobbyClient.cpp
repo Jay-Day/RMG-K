@@ -1032,8 +1032,13 @@ void LobbyClient::onProbeRetryTimer()
     // empty buffer stayed deaf until the process restarted. A socket serviced
     // from two threads can't rely on Qt's notifier bookkeeping, so poll it —
     // this is the same discipline n02 uses. Cheap: a no-op when nothing is
-    // pending, and this timer already runs continuously.
-    if (m_udp && !m_anchorLent && !m_inPrematchSync)
+    // pending, and this timer already runs continuously. BoundState matters:
+    // this timer also ticks before connect and after disconnect, when the
+    // socket object exists but isn't bound, and hasPendingDatagrams() on an
+    // unbound socket emits a qWarning every call — ten a second, straight to
+    // the terminal on Linux.
+    if (m_udp && m_udp->state() == QAbstractSocket::BoundState &&
+        !m_anchorLent && !m_inPrematchSync)
     {
         m_drainedDatagrams = 0;
         onUdpReadyRead();
