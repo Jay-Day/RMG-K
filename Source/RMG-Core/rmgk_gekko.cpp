@@ -2444,7 +2444,15 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     const int clampedPredictionWindow = std::clamp(predictionWindow, 1, 10);
 
     GekkoConfig config = {};
-    config.num_players = static_cast<unsigned char>(players);
+    // ACTOR count, not seat count. GekkoNet's frame advance
+    // (SyncSystem::GetCurrentInputs) requires an input in every buffer
+    // 0..num_players-1, and handles are handed out densely in add order — so
+    // sizing the session by the highest occupied seat leaves the buffers above
+    // the actor count owned by nobody, no frame ever advances, and a sparse
+    // room (P1+P2+P4 with P3 empty) sits on a black screen. Seats stay sparse
+    // at the PORT layer: g_GekkoPlayers keeps the seat count and
+    // latch_gekko_input maps seat -> dense handle, zeroing the holes.
+    config.num_players = static_cast<unsigned char>(numRemotes + 1);
     config.max_spectators = 0;
     config.input_prediction_window = static_cast<unsigned char>(clampedPredictionWindow);
     config.input_size = static_cast<unsigned int>(inputSize);
