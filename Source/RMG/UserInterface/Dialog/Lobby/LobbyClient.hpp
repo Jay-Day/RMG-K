@@ -58,6 +58,10 @@ public:
         QString country;         // ISO 3166-1 alpha-2 from the server; "" on old servers
         QString clientVersion;   // peer's self-reported RMG-K build
         QString connection;      // peer's self-reported transport ("wifi"/"lan"/...)
+        // User asked the server to withhold their location: country comes back
+        // empty and the UI must not fall back to the region badge either. The
+        // region string itself still flows for ping estimation.
+        bool anonymous = false;
         quint16 pingToServer = 0;
         quint64 currentRoomId = 0;
         QString currentRoomName;

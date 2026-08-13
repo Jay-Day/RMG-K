@@ -491,6 +491,11 @@ void LobbyClient::onWsConnected()
     const QString transport = detectTransportMedium(m_ws->localAddress());
     if (!transport.isEmpty())
         data["connection"] = transport;
+    // Ask the server to withhold our country from presence and flag us
+    // anonymous, so peers show no flag at all (not even the region badge).
+    // The coarse region still flows — it drives ping estimation only.
+    if (CoreSettingsGetBoolValue(SettingsID::Rollback_HideLocation))
+        data["anonymous"] = true;
     // Standard (non-DST) UTC offset — the server uses it to split the North
     // America country bucket into east/central/west (New York -5 h, Chicago
     // -6 h, Denver -7 h, Los Angeles -8 h). standardTimeOffset is DST-immune,
@@ -2262,6 +2267,7 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.country         = obj.value("country").toString();
     u.clientVersion   = obj.value("clientVersion").toString();
     u.connection      = obj.value("connection").toString();
+    u.anonymous       = obj.value("anonymous").toBool();
     u.pingToServer    = static_cast<quint16>(obj.value("pingToServer").toInt());
     u.currentRoomId   = static_cast<quint64>(obj.value("currentRoomId").toDouble());
     u.currentRoomName = obj.value("currentRoomName").toString();

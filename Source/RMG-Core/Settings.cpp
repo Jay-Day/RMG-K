@@ -359,6 +359,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_PingDiagnostics:
         setting = {SETTING_SECTION_ROLLBACK, "PingDiagnostics", false};
         break;
+    case SettingsID::Rollback_HideLocation:
+        setting = {SETTING_SECTION_ROLLBACK, "HideLocation", false};
+        break;
     case SettingsID::Rollback_PacingTrace:
         setting = {SETTING_SECTION_ROLLBACK, "PacingTrace", false};
         break;
