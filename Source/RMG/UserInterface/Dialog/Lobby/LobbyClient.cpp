@@ -396,6 +396,11 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     }
 
     setState(ConnectionState::Connecting);
+    // Narrate the connect stages to the terminal (visible on Linux, DebugView
+    // on Windows): this line, then "WebSocket connected", then "authenticated".
+    // Whichever line is missing names the stage that stalled — a silent gap
+    // after this one means TCP itself is black-holing toward this address.
+    qInfo() << "Rollback lobby connecting to" << url.toString();
     m_ws->open(url);
 }
 
@@ -481,6 +486,7 @@ static QString detectTransportMedium(const QHostAddress& localAddress)
 
 void LobbyClient::onWsConnected()
 {
+    qInfo() << "Rollback lobby WebSocket connected, authenticating";
     setState(ConnectionState::Authenticating);
 
     QJsonObject data;
@@ -615,6 +621,8 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
     m_selfUserId  = static_cast<quint64>(data.value("userId").toDouble());
     m_observedIp  = data.value("observedIp").toString();
     m_region      = data.value("region").toString();
+    qInfo() << "Rollback lobby authenticated" << "userId" << m_selfUserId
+            << "observedIp" << m_observedIp << "region" << m_region;
 
     const QString udpAnchor = data.value("udpAnchor").toString();
     if (!udpAnchor.isEmpty() && udpAnchor != "TODO:6364")
