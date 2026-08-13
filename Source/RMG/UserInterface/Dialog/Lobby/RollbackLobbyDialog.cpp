@@ -327,6 +327,37 @@ namespace
         if (bold) f.setBold(true);
         w->setFont(f);
     }
+
+    // Column-0 role carrying "this player is searching for a match" for the
+    // sort override below. Qt::UserRole itself already carries the user id.
+    constexpr int kSearchingSortRole = Qt::UserRole + 1;
+
+    // Player-list row that pins searching players to the top of the list no
+    // matter which column or direction the user sorts by. Qt places items
+    // that compare "less" first in ascending order and last in descending,
+    // so the priority comparison pre-inverts on descending to land searching
+    // rows on top either way. Ties (both searching, or neither) fall through
+    // to the normal column comparison, so the user's chosen sort still
+    // orders each group internally.
+    class PlayerListItem : public QTreeWidgetItem
+    {
+    public:
+        using QTreeWidgetItem::QTreeWidgetItem;
+
+        bool operator<(const QTreeWidgetItem& other) const override
+        {
+            const bool a = data(0, kSearchingSortRole).toBool();
+            const bool b = other.data(0, kSearchingSortRole).toBool();
+            if (a != b)
+            {
+                const Qt::SortOrder order = treeWidget()
+                    ? treeWidget()->header()->sortIndicatorOrder()
+                    : Qt::AscendingOrder;
+                return order == Qt::AscendingOrder ? a : b;
+            }
+            return QTreeWidgetItem::operator<(other);
+        }
+    };
 } // namespace
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2139,7 +2170,7 @@ void RollbackLobbyDialog::onPresenceFull()
     m_userItems.clear();
     for (auto it = m_client->users().constBegin(); it != m_client->users().constEnd(); ++it)
     {
-        auto* row = new QTreeWidgetItem(m_playersTree);
+        auto* row = new PlayerListItem(m_playersTree);
         refreshPlayerRow(row, it.value());
         m_userItems.insert(it.key(), row);
     }
@@ -2152,9 +2183,14 @@ void RollbackLobbyDialog::onUserAdded(quint64 userId)
     auto it = users.constFind(userId);
     if (it == users.constEnd()) return;
 
-    auto* row = new QTreeWidgetItem(m_playersTree);
+    auto* row = new PlayerListItem(m_playersTree);
     refreshPlayerRow(row, it.value());
     m_userItems.insert(userId, row);
+    // A user can join already searching (quick-match from the launcher);
+    // make sure the priority placement applies from their first paint.
+    if (it.value().state == QLatin1String("searching"))
+        m_playersTree->sortItems(m_playersTree->header()->sortIndicatorSection(),
+                                 m_playersTree->header()->sortIndicatorOrder());
     updateServerMeta();
 }
 
@@ -2174,7 +2210,14 @@ void RollbackLobbyDialog::onUserUpdated(quint64 userId)
     const auto& users = m_client->users();
     auto userIt = users.constFind(userId);
     if (userIt == users.constEnd()) return;
+    const bool wasSearching = it.value()->data(0, kSearchingSortRole).toBool();
     refreshPlayerRow(it.value(), userIt.value());
+    // Qt only re-sorts when data in the current sort column changes; a state
+    // flip doesn't touch the Region column, so a viewer sorted by Region
+    // would never see the row move. Force the pass on the transition.
+    if (it.value()->data(0, kSearchingSortRole).toBool() != wasSearching)
+        m_playersTree->sortItems(m_playersTree->header()->sortIndicatorSection(),
+                                 m_playersTree->header()->sortIndicatorOrder());
 }
 
 void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u)
@@ -2191,6 +2234,7 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         item->setForeground(0, QColor(dark ? QStringLiteral("#4aa3ff")
                                            : QStringLiteral("#0078D7")));
     }
+    item->setData(0, kSearchingSortRole, u.state == QLatin1String("searching"));
     item->setText(1, stateGlyph(u.state));
     item->setForeground(1, QColor(stateHex(u.state, dark)));
 
