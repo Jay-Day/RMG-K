@@ -36,7 +36,6 @@
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QNetworkInterface>
-#include <QNetworkInformation>
 #include <QDateTime>
 #include <QTimeZone>
 #include <QCoreApplication>
@@ -447,27 +446,37 @@ void LobbyClient::sendEnvelope(const QString& type, const QJsonObject& data, con
 
 // -------- WebSocket lifecycle --------
 
-// Best-effort detection of this machine's transport medium ("wifi"/"lan"/...),
-// reported in HELLO so peers can gauge connection-quality risk Slippi-style.
-// Returns an empty string when the OS backend can't say.
-static QString detectTransportMedium()
+// Classify the transport actually carrying the lobby connection ("lan"/
+// "wifi"), reported in HELLO so peers can gauge connection-quality risk
+// Slippi-style. Deliberately NOT QNetworkInformation: its Windows transport
+// support is written against C++/WinRT and compiled out of MinGW Qt builds
+// (the backend loads but never claims the feature), and its Linux backend
+// needs both a plugin the AppImage doesn't bundle and a running
+// NetworkManager. QNetworkInterface avoids all of that — plain Win32 / sysfs
+// underneath — and is more truthful anyway: the connected socket's local
+// address names the interface the OS actually routed the lobby through, so a
+// machine with ethernet and wifi both up reports the one really in use.
+// Returns empty for anything unclassifiable (VPNs, virtual adapters) rather
+// than guessing.
+static QString detectTransportMedium(const QHostAddress& localAddress)
 {
-    if (!QNetworkInformation::instance() &&
-        !QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::TransportMedium))
+    if (localAddress.isNull())
         return QString();
-
-    const auto* info = QNetworkInformation::instance();
-    if (info == nullptr)
-        return QString();
-
-    switch (info->transportMedium())
+    for (const QNetworkInterface& ifc : QNetworkInterface::allInterfaces())
     {
-    case QNetworkInformation::TransportMedium::Ethernet:  return QStringLiteral("lan");
-    case QNetworkInformation::TransportMedium::WiFi:      return QStringLiteral("wifi");
-    case QNetworkInformation::TransportMedium::Cellular:  return QStringLiteral("cellular");
-    case QNetworkInformation::TransportMedium::Bluetooth: return QStringLiteral("bluetooth");
-    default:                                              return QString();
+        for (const QNetworkAddressEntry& entry : ifc.addressEntries())
+        {
+            if (entry.ip() != localAddress)
+                continue;
+            switch (ifc.type())
+            {
+            case QNetworkInterface::Ethernet: return QStringLiteral("lan");
+            case QNetworkInterface::Wifi:     return QStringLiteral("wifi");
+            default:                          return QString();
+            }
+        }
     }
+    return QString();
 }
 
 void LobbyClient::onWsConnected()
@@ -477,7 +486,9 @@ void LobbyClient::onWsConnected()
     QJsonObject data;
     data["username"]      = m_pendingUsername;
     data["clientVersion"] = QString::fromStdString(CoreGetVersion());
-    const QString transport = detectTransportMedium();
+    // The WebSocket is connected by the time this slot runs, so its local
+    // address reflects the route the OS actually chose for lobby traffic.
+    const QString transport = detectTransportMedium(m_ws->localAddress());
     if (!transport.isEmpty())
         data["connection"] = transport;
     // Standard (non-DST) UTC offset — the server uses it to split the North
