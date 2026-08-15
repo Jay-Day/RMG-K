@@ -7,6 +7,19 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+// winsock2.h must precede any windows.h (pulled in by later headers), or the
+// legacy winsock.h it would otherwise drag in conflicts with these APIs.
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <cerrno>
+#include <unistd.h>
+#endif
+
 #define CORE_INTERNAL
 #include "rmgk_gekko.hpp"
 
@@ -910,6 +923,133 @@ GekkoNetAdapter g_GekkoP2PAdapter{
     p2p_adapter_free
 };
 #endif
+
+// ── n02-style shared transport ───────────────────────────────────────
+// The lobby's anchor socket, adopted for the duration of a lobby session so
+// the port and its NAT mappings never change hands (n02 keeps one k_socket
+// alive for lobby and game alike; this is that model). The descriptor is
+// borrowed from Qt on the UI thread and used for sendto/recvfrom here on the
+// emulation thread — concurrent use of one UDP socket from two threads is
+// well-defined, and the lobby side stops *reading* while a session runs so
+// datagrams are never stolen from GekkoNet (the same reader-discipline n02
+// uses between p2p_step and p2p_modify_play_values).
+#ifdef _WIN32
+using ExtSocket = SOCKET;
+constexpr ExtSocket kExtSocketNone = INVALID_SOCKET;
+#else
+using ExtSocket = int;
+constexpr ExtSocket kExtSocketNone = -1;
+#endif
+static std::atomic<ExtSocket> g_GekkoExternalSocket{kExtSocketNone};
+// True while the CURRENT session runs on the adopted socket (latched at
+// start_lobby_session so a mid-session clear can't strand the adapter).
+static bool g_GekkoUsingExternalSocket = false;
+static std::vector<GekkoNetResult*> g_GekkoExtResults;
+
+static void ext_adapter_send(GekkoNetAddress* addr, const char* data, int length)
+{
+    const ExtSocket fd = g_GekkoExternalSocket.load();
+    if (fd == kExtSocketNone || addr == nullptr || addr->data == nullptr)
+    {
+        return;
+    }
+    // Address arrives as an "ip:port" string, same contract as the default
+    // asio adapter (see STOE in gekkonet.cpp).
+    const std::string endpoint(reinterpret_cast<const char*>(addr->data), addr->size);
+    const std::string::size_type colon = endpoint.rfind(':');
+    if (colon == std::string::npos)
+    {
+        return;
+    }
+    sockaddr_in out{};
+    out.sin_family = AF_INET;
+    out.sin_port = htons(static_cast<unsigned short>(std::atoi(endpoint.c_str() + colon + 1)));
+    if (inet_pton(AF_INET, endpoint.substr(0, colon).c_str(), &out.sin_addr) != 1)
+    {
+        return;
+    }
+    sendto(fd, data, length, 0, reinterpret_cast<const sockaddr*>(&out), sizeof(out));
+}
+
+static GekkoNetResult** ext_adapter_receive(int* length)
+{
+    g_GekkoExtResults.clear();
+    if (length == nullptr)
+    {
+        return g_GekkoExtResults.data();
+    }
+    const ExtSocket fd = g_GekkoExternalSocket.load();
+    if (fd == kExtSocketNone)
+    {
+        *length = 0;
+        return g_GekkoExtResults.data();
+    }
+
+    for (;;)
+    {
+        char buffer[2048];
+        sockaddr_in from{};
+#ifdef _WIN32
+        int fromLen = static_cast<int>(sizeof(from));
+#else
+        socklen_t fromLen = sizeof(from);
+#endif
+        const int received = static_cast<int>(recvfrom(fd, buffer, static_cast<int>(sizeof(buffer)), 0,
+                                                       reinterpret_cast<sockaddr*>(&from), &fromLen));
+        if (received <= 0)
+        {
+            break; // WOULDBLOCK / no more datagrams (socket is non-blocking)
+        }
+
+        // Lobby traffic (anchor keepalive acks, ping probes) shares this
+        // socket and is RMGK-magic prefixed; it isn't GekkoNet's to parse.
+        if (received >= 4 && std::memcmp(buffer, "RMGK", 4) == 0)
+        {
+            continue;
+        }
+
+        char addrText[INET_ADDRSTRLEN] = {};
+        if (inet_ntop(AF_INET, &from.sin_addr, addrText, sizeof(addrText)) == nullptr)
+        {
+            continue;
+        }
+        const std::string endpoint = std::string(addrText) + ":" + std::to_string(ntohs(from.sin_port));
+
+        GekkoNetResult* result = reinterpret_cast<GekkoNetResult*>(std::malloc(sizeof(*result)));
+        if (result == nullptr)
+        {
+            break;
+        }
+        result->addr.data = std::malloc(endpoint.size());
+        result->data = std::malloc(static_cast<size_t>(received));
+        if (result->addr.data == nullptr || result->data == nullptr)
+        {
+            std::free(result->addr.data);
+            std::free(result->data);
+            std::free(result);
+            break;
+        }
+        result->addr.size = static_cast<unsigned int>(endpoint.size());
+        std::memcpy(result->addr.data, endpoint.data(), endpoint.size());
+        result->data_len = static_cast<unsigned int>(received);
+        std::memcpy(result->data, buffer, static_cast<size_t>(received));
+        g_GekkoExtResults.push_back(result);
+    }
+
+    *length = static_cast<int>(g_GekkoExtResults.size());
+    return g_GekkoExtResults.data();
+}
+
+static void ext_adapter_free(void* data_ptr)
+{
+    std::free(data_ptr);
+}
+
+static GekkoNetAdapter g_GekkoExternalAdapter{
+    ext_adapter_send,
+    ext_adapter_receive,
+    ext_adapter_free
+};
 
 const char* gekko_session_event_name(GekkoSessionEventType type)
 {
@@ -2254,7 +2394,15 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     (void)predictionWindow;
     return false;
 #else
+    // The lobby lends its anchor descriptor immediately before starting the
+    // match, but close_session() treats the descriptor as session state and
+    // clears it. Latch the lend across the cleanup, or every lobby match falls
+    // through to the default adapter and tries to bind a port the lobby's own
+    // socket still holds — which can never succeed under the shared-socket
+    // model (the anchor is deliberately never released).
+    const ExtSocket lentSocket = g_GekkoExternalSocket.load();
     close_session();
+    g_GekkoExternalSocket.store(lentSocket);
 
     g_GekkoLocalPlayer = localPlayer;
     g_GekkoStopRequested.store(false, std::memory_order_relaxed);
@@ -2296,7 +2444,15 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     const int clampedPredictionWindow = std::clamp(predictionWindow, 1, 10);
 
     GekkoConfig config = {};
-    config.num_players = static_cast<unsigned char>(players);
+    // ACTOR count, not seat count. GekkoNet's frame advance
+    // (SyncSystem::GetCurrentInputs) requires an input in every buffer
+    // 0..num_players-1, and handles are handed out densely in add order — so
+    // sizing the session by the highest occupied seat leaves the buffers above
+    // the actor count owned by nobody, no frame ever advances, and a sparse
+    // room (P1+P2+P4 with P3 empty) sits on a black screen. Seats stay sparse
+    // at the PORT layer: g_GekkoPlayers keeps the seat count and
+    // latch_gekko_input maps seat -> dense handle, zeroing the holes.
+    config.num_players = static_cast<unsigned char>(numRemotes + 1);
     config.max_spectators = 0;
     config.input_prediction_window = static_cast<unsigned char>(clampedPredictionWindow);
     config.input_size = static_cast<unsigned int>(inputSize);
@@ -2306,24 +2462,38 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     config.check_distance = 10;
     gekko_start(g_GekkoSession, &config);
 
-    // Use GekkoNet's built-in UDP adapter directly — the lobby doesn't
-    // initialize n02's P2P core, so the n02-based transport used by
-    // start_p2p_session would have no socket to ride on. The lobby's
-    // anchor socket was released just before this call so the OS port
-    // is free for gekko_default_adapter to bind.
-    try
+    // Preferred transport: the lobby's own anchor socket, adopted whole
+    // (n02-style — one socket for lobby and game, so the port and every
+    // peer's NAT mapping to us survive the match boundary). Falls back to
+    // GekkoNet's built-in adapter binding localPort when no socket was lent
+    // (the old handoff model; the anchor was released before this call).
+    g_GekkoUsingExternalSocket = (g_GekkoExternalSocket.load() != kExtSocketNone);
+    if (g_GekkoUsingExternalSocket)
     {
-        gekko_net_adapter_set(g_GekkoSession, gekko_default_adapter(localPort));
+        gekko_net_adapter_set(g_GekkoSession, &g_GekkoExternalAdapter);
+        if (g_GekkoLogEnabled)
+        {
+            std::ostringstream stream;
+            stream << "start_lobby_session transport=shared_anchor_socket local_port=" << localPort;
+            write_gekko_log(stream.str());
+        }
     }
-    catch (const std::exception& e)
+    else
     {
-        std::ostringstream stream;
-        stream << "start_lobby_session result=fail reason=adapter local_port=" << localPort
-               << " error=" << e.what();
-        write_gekko_log(stream.str());
-        CoreSetError("GekkoNet adapter initialization failed: " + std::string(e.what()));
-        close_session();
-        return false;
+        try
+        {
+            gekko_net_adapter_set(g_GekkoSession, gekko_default_adapter(localPort));
+        }
+        catch (const std::exception& e)
+        {
+            std::ostringstream stream;
+            stream << "start_lobby_session result=fail reason=adapter local_port=" << localPort
+                   << " error=" << e.what();
+            write_gekko_log(stream.str());
+            CoreSetError("GekkoNet adapter initialization failed: " + std::string(e.what()));
+            close_session();
+            return false;
+        }
     }
 
     gekko_set_runahead(g_GekkoSession, 0);
@@ -2568,6 +2738,22 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
 #endif
 }
 
+CORE_EXPORT void rmgk_gekko::set_external_socket(uintptr_t socketDescriptor)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    g_GekkoExternalSocket.store(static_cast<ExtSocket>(socketDescriptor));
+#else
+    (void)socketDescriptor;
+#endif
+}
+
+CORE_EXPORT void rmgk_gekko::clear_external_socket()
+{
+#ifdef RMGK_HAVE_GEKKONET
+    g_GekkoExternalSocket.store(kExtSocketNone);
+#endif
+}
+
 CORE_EXPORT void rmgk_gekko::close_session()
 {
 #ifdef RMGK_HAVE_GEKKONET
@@ -2577,8 +2763,16 @@ CORE_EXPORT void rmgk_gekko::close_session()
     if (g_GekkoSession != nullptr)
     {
         gekko_destroy(&g_GekkoSession);
-        gekko_default_adapter_destroy();
+        // The adopted anchor socket is borrowed — the lobby client owns and
+        // keeps it; only the default adapter's own socket is ours to destroy.
+        if (!g_GekkoUsingExternalSocket)
+        {
+            gekko_default_adapter_destroy();
+        }
     }
+    g_GekkoUsingExternalSocket = false;
+    g_GekkoExternalSocket.store(kExtSocketNone);
+    g_GekkoExtResults.clear();
     g_GekkoSession = nullptr;
     g_GekkoPlayers = 0;
     g_GekkoActors = 0;

@@ -6,6 +6,19 @@
  */
 #ifdef NETPLAY
 
+// Must precede anything that could pull in <windows.h>, which otherwise drags
+// in the old winsock.h and collides with winsock2.h.
+#ifdef _WIN32
+#include <winsock2.h>
+// SIO_UDP_CONNRESET lives in mswsock.h under MinGW-w64 and in mstcpip.h under
+// the MSVC SDK, so pull in both and fall back to the documented control code.
+#include <mswsock.h>
+#include <mstcpip.h>
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+#endif
+
 #include "LobbyClient.hpp"
 
 #include <RMG-Core/Cheats.hpp>
@@ -23,7 +36,6 @@
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QNetworkInterface>
-#include <QNetworkInformation>
 #include <QDateTime>
 #include <QTimeZone>
 #include <QCoreApplication>
@@ -44,6 +56,11 @@ namespace
 {
     constexpr int HEARTBEAT_INTERVAL_MS  = 15'000;
     constexpr int UDP_KEEPALIVE_INTERVAL = 20'000;
+
+    // Pinned-anchor-port rebind retry (see initiateUdpAnchor): attempt cadence
+    // and how long to keep trying before surrendering the port.
+    constexpr int ANCHOR_PORT_RETRY_INTERVAL_MS = 250;
+    constexpr qint64 ANCHOR_PORT_RETRY_WINDOW_MS = 4'000;
 
     // No keyboard/mouse input for this long => report "away" on the heartbeat.
     // Presence-only; nothing functional hangs off it.
@@ -313,6 +330,21 @@ LobbyClient::LobbyClient(QObject* parent)
     connect(m_probeRetryTimer, &QTimer::timeout, this, &LobbyClient::onProbeRetryTimer);
     m_probeRetryTimer->start();
 
+    // Single-shot; each failed pinned-port bind schedules the next attempt.
+    m_anchorRetryTimer = new QTimer(this);
+    m_anchorRetryTimer->setSingleShot(true);
+    m_anchorRetryTimer->setInterval(ANCHOR_PORT_RETRY_INTERVAL_MS);
+    connect(m_anchorRetryTimer, &QTimer::timeout, this, [this]() {
+        // Abandon the retry if the connection went away mid-window; a fresh
+        // connect starts its own window.
+        if (m_state != ConnectionState::Connected)
+        {
+            m_anchorRetryDeadlineMs = 0;
+            return;
+        }
+        initiateUdpAnchor();
+    });
+
     // Watch app-wide input for the away flag. Cheap: the filter only stamps a
     // timestamp for input-type events and passes everything through.
     m_lastActivityMs = QDateTime::currentMSecsSinceEpoch();
@@ -364,19 +396,29 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     }
 
     setState(ConnectionState::Connecting);
+    // Narrate the connect stages to the terminal (visible on Linux, DebugView
+    // on Windows): this line, then "WebSocket connected", then "authenticated".
+    // Whichever line is missing names the stage that stalled — a silent gap
+    // after this one means TCP itself is black-holing toward this address.
+    qInfo() << "Rollback lobby connecting to" << url.toString();
     m_ws->open(url);
 }
 
 void LobbyClient::disconnectFromServer()
 {
     stopPingDiagnosticLog(QStringLiteral("disconnect"));
+    if (m_anchorRetryTimer)
+        m_anchorRetryTimer->stop();
+    m_anchorRetryDeadlineMs = 0;
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     if (m_ws && m_ws->state() != QAbstractSocket::UnconnectedState)
     {
         m_ws->close();
     }
-    if (m_udp)
+    // See onWsDisconnected: a socket lent to a running match must survive the
+    // lobby connection; it's recycled by the next connect's pre-bind abort.
+    if (m_udp && !m_anchorLent)
     {
         m_udp->close();
     }
@@ -409,39 +451,57 @@ void LobbyClient::sendEnvelope(const QString& type, const QJsonObject& data, con
 
 // -------- WebSocket lifecycle --------
 
-// Best-effort detection of this machine's transport medium ("wifi"/"lan"/...),
-// reported in HELLO so peers can gauge connection-quality risk Slippi-style.
-// Returns an empty string when the OS backend can't say.
-static QString detectTransportMedium()
+// Classify the transport actually carrying the lobby connection ("lan"/
+// "wifi"), reported in HELLO so peers can gauge connection-quality risk
+// Slippi-style. Deliberately NOT QNetworkInformation: its Windows transport
+// support is written against C++/WinRT and compiled out of MinGW Qt builds
+// (the backend loads but never claims the feature), and its Linux backend
+// needs both a plugin the AppImage doesn't bundle and a running
+// NetworkManager. QNetworkInterface avoids all of that — plain Win32 / sysfs
+// underneath — and is more truthful anyway: the connected socket's local
+// address names the interface the OS actually routed the lobby through, so a
+// machine with ethernet and wifi both up reports the one really in use.
+// Returns empty for anything unclassifiable (VPNs, virtual adapters) rather
+// than guessing.
+static QString detectTransportMedium(const QHostAddress& localAddress)
 {
-    if (!QNetworkInformation::instance() &&
-        !QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::TransportMedium))
+    if (localAddress.isNull())
         return QString();
-
-    const auto* info = QNetworkInformation::instance();
-    if (info == nullptr)
-        return QString();
-
-    switch (info->transportMedium())
+    for (const QNetworkInterface& ifc : QNetworkInterface::allInterfaces())
     {
-    case QNetworkInformation::TransportMedium::Ethernet:  return QStringLiteral("lan");
-    case QNetworkInformation::TransportMedium::WiFi:      return QStringLiteral("wifi");
-    case QNetworkInformation::TransportMedium::Cellular:  return QStringLiteral("cellular");
-    case QNetworkInformation::TransportMedium::Bluetooth: return QStringLiteral("bluetooth");
-    default:                                              return QString();
+        for (const QNetworkAddressEntry& entry : ifc.addressEntries())
+        {
+            if (entry.ip() != localAddress)
+                continue;
+            switch (ifc.type())
+            {
+            case QNetworkInterface::Ethernet: return QStringLiteral("lan");
+            case QNetworkInterface::Wifi:     return QStringLiteral("wifi");
+            default:                          return QString();
+            }
+        }
     }
+    return QString();
 }
 
 void LobbyClient::onWsConnected()
 {
+    qInfo() << "Rollback lobby WebSocket connected, authenticating";
     setState(ConnectionState::Authenticating);
 
     QJsonObject data;
     data["username"]      = m_pendingUsername;
     data["clientVersion"] = QString::fromStdString(CoreGetVersion());
-    const QString transport = detectTransportMedium();
+    // The WebSocket is connected by the time this slot runs, so its local
+    // address reflects the route the OS actually chose for lobby traffic.
+    const QString transport = detectTransportMedium(m_ws->localAddress());
     if (!transport.isEmpty())
         data["connection"] = transport;
+    // Ask the server to withhold our country from presence and flag us
+    // anonymous, so peers show no flag at all (not even the region badge).
+    // The coarse region still flows — it drives ping estimation only.
+    if (CoreSettingsGetBoolValue(SettingsID::Rollback_HideLocation))
+        data["anonymous"] = true;
     // Standard (non-DST) UTC offset — the server uses it to split the North
     // America country bucket into east/central/west (New York -5 h, Chicago
     // -6 h, Denver -7 h, Los Angeles -8 h). standardTimeOffset is DST-immune,
@@ -462,6 +522,23 @@ void LobbyClient::onWsConnected()
 
 void LobbyClient::onWsDisconnected()
 {
+    stopPingDiagnosticLog(QStringLiteral("connection_lost"));
+    // Passive drops (server restart, network cut, server-side kick) never go
+    // through disconnectFromServer, so the anchor socket used to stay bound —
+    // and the next connect's pinned-port bind then failed against our own
+    // zombie socket, with the fallback bind failing too (a failed bind leaves
+    // QUdpSocket needing a reset before it can bind again). The session ran
+    // anchorless from there. Tear the socket down on every disconnect path.
+    // While a match borrows the socket, leave both the socket and the lent
+    // flag alone: aborting would cut the game's transport out from under
+    // GekkoNet, and clearing the flag would re-enable our reads mid-match
+    // (stealing game packets). The match ends through its own path; the next
+    // connect's pre-bind abort recycles the socket safely.
+    if (m_udp && !m_anchorLent)
+        m_udp->abort();
+    if (m_anchorRetryTimer)
+        m_anchorRetryTimer->stop();
+    m_anchorRetryDeadlineMs = 0;
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     m_isModerator = false; // role is per-connection; must re-auth after reconnect
@@ -472,6 +549,7 @@ void LobbyClient::onWsDisconnected()
     // user ids are stale, so retrying them would burst at whoever now holds
     // those ids and emit failure notices for peers we're no longer talking to.
     m_pendingProbes.clear();
+    m_probeFailStreak.clear();
     m_recentlyMatchedNonces.clear();
     // Learned routes are keyed by user id too — same recycled-id hazard.
     m_learnedRoutes.clear();
@@ -543,6 +621,8 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
     m_selfUserId  = static_cast<quint64>(data.value("userId").toDouble());
     m_observedIp  = data.value("observedIp").toString();
     m_region      = data.value("region").toString();
+    qInfo() << "Rollback lobby authenticated" << "userId" << m_selfUserId
+            << "observedIp" << m_observedIp << "region" << m_region;
 
     const QString udpAnchor = data.value("udpAnchor").toString();
     if (!udpAnchor.isEmpty() && udpAnchor != "TODO:6364")
@@ -858,6 +938,14 @@ void LobbyClient::sendProbeTo(quint64 userId, const QString& endpoint)
                             QStringLiteral("peer=%1 reason=no_socket").arg(pingUserLabel(userId)));
         return;
     }
+    if (m_anchorLent)
+    {
+        // Sends would work, but the echoes come back on the lent socket where
+        // GekkoNet's filter drops them — the probe could never complete.
+        writePingDiagnostic(QStringLiteral("PROBE_SKIP"),
+                            QStringLiteral("peer=%1 reason=anchor_lent").arg(pingUserLabel(userId)));
+        return;
+    }
 
     const int colon = endpoint.lastIndexOf(':');
     if (colon <= 0)
@@ -941,6 +1029,37 @@ void LobbyClient::sendProbeBurst(const QHostAddress& addr, quint16 port, quint64
 
 void LobbyClient::onProbeRetryTimer()
 {
+    // Poll the socket rather than trusting readyRead alone. Qt disables read
+    // notification for an unbuffered socket whose readyRead goes unserviced,
+    // and re-arms it on the next successful read — but during a match our slot
+    // deliberately reads nothing (GekkoNet's thread owns recvfrom), so the
+    // notification is off by the time the match ends. Whether it ever comes
+    // back then depends on there happening to be a datagram queued at that
+    // instant, which is precisely the coin-flip seen in the field: the client
+    // whose match-end drain found datagrams recovered, the one that found an
+    // empty buffer stayed deaf until the process restarted. A socket serviced
+    // from two threads can't rely on Qt's notifier bookkeeping, so poll it —
+    // this is the same discipline n02 uses. Cheap: a no-op when nothing is
+    // pending, and this timer already runs continuously. BoundState matters:
+    // this timer also ticks before connect and after disconnect, when the
+    // socket object exists but isn't bound, and hasPendingDatagrams() on an
+    // unbound socket emits a qWarning every call — ten a second, straight to
+    // the terminal on Linux.
+    if (m_udp && m_udp->state() == QAbstractSocket::BoundState &&
+        !m_anchorLent && !m_inPrematchSync)
+    {
+        m_drainedDatagrams = 0;
+        onUdpReadyRead();
+        if (m_drainedDatagrams > 0)
+        {
+            // The notifier missed these — readyRead would have drained them
+            // already. Logged because a run of these is the signature of the
+            // stall above, and their absence means it isn't happening.
+            writePingDiagnostic(QStringLiteral("POLL_DRAIN"),
+                                QStringLiteral("datagrams=%1").arg(m_drainedDatagrams));
+        }
+    }
+
     if (m_pendingProbes.isEmpty())
         return;
 
@@ -965,7 +1084,7 @@ void LobbyClient::onProbeRetryTimer()
                                     .arg(PROBE_BURST)
                                     .arg(nowMs - it->sendMs));
             it = m_pendingProbes.erase(it);
-            emit pingProbeFailed(uid);
+            noteProbeSeriesFailed(uid);
             continue;
         }
 
@@ -974,7 +1093,7 @@ void LobbyClient::onProbeRetryTimer()
         {
             const quint64 uid = it->targetUserId;
             it = m_pendingProbes.erase(it);
-            emit pingProbeFailed(uid);
+            noteProbeSeriesFailed(uid);
             continue;
         }
 
@@ -996,6 +1115,31 @@ void LobbyClient::onProbeRetryTimer()
         emit pingProbeRetrying(it->targetUserId, it->attempt, PROBE_ATTEMPTS);
         ++it;
     }
+}
+
+void LobbyClient::noteProbeSeriesFailed(quint64 userId)
+{
+    const int streak = ++m_probeFailStreak[userId];
+    // A peer we've never measured gets the hard verdict immediately — there is
+    // no number to fall back on and first contact failing is the case the
+    // retry/unreachable UI exists for. An established peer gets one free miss:
+    // right after a match the far side is usually still handing its socket
+    // back, and one aged-out series proves nothing.
+    if (streak >= 2 || !m_measuredPing.contains(userId))
+        emit pingProbeFailed(userId);
+    else
+        emit pingProbeSoftFailed(userId);
+}
+
+void LobbyClient::cancelPendingProbes(const QString& reason)
+{
+    if (m_pendingProbes.isEmpty())
+        return;
+    writePingDiagnostic(QStringLiteral("PROBE_CANCELLED"),
+                        QStringLiteral("count=%1 reason=%2")
+                            .arg(m_pendingProbes.size())
+                            .arg(reason));
+    m_pendingProbes.clear();
 }
 
 void LobbyClient::handlePingProbeReply(const QJsonObject& data)
@@ -1191,6 +1335,21 @@ bool LobbyClient::eventFilter(QObject* watched, QEvent* event)
 
 void LobbyClient::initiateUdpAnchor()
 {
+    // Reconnected to the lobby while a match still borrows the socket: leave
+    // the match's transport untouched and run without an anchor for now — the
+    // match-end reclaim will register this same socket with the fresh session.
+    if (m_anchorLent)
+    {
+        writePingDiagnostic(QStringLiteral("UDP_BIND"),
+                            QStringLiteral("result=deferred reason=anchor_lent"));
+        return;
+    }
+
+    // A socket that is already bound (zombie from a passive disconnect) or
+    // left over from a failed bind cannot bind again until it's reset.
+    if (m_udp->state() != QAbstractSocket::UnconnectedState)
+        m_udp->abort();
+
     // Reclaim the port we've been using all session. Only the very first bind
     // asks the OS to pick one; every rebind after a match must land on the same
     // port or every peer's cached endpoint for us goes stale at once.
@@ -1202,15 +1361,34 @@ void LobbyClient::initiateUdpAnchor()
         reusedPort = bound;
         if (!bound)
         {
-            // GekkoNet may not have let go of it yet. Falling back to an
-            // ephemeral port loses endpoint continuity — the old behaviour —
-            // but that beats having no anchor at all, and the peers relearn us
-            // from the REGISTER below. Logged loudly because if this fires
-            // often the release/rebind ordering is what needs fixing, not this.
+            // GekkoNet hasn't let go of the port yet — the emulation thread is
+            // still tearing down while the UI-side room cleanup runs, a race
+            // of about a second. A failed bind holds nothing, and a UDP port
+            // frees the instant its socket closes (no TIME_WAIT), so instead
+            // of surrendering the port immediately — which invalidates every
+            // peer's route to us and can permanently break pairs with
+            // strict-NAT peers who can't re-punch fresh mappings — retry it
+            // briefly on a timer. Ephemeral fallback only once the window
+            // expires.
+            m_udp->abort();
+
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            if (m_anchorRetryDeadlineMs == 0)
+                m_anchorRetryDeadlineMs = nowMs + ANCHOR_PORT_RETRY_WINDOW_MS;
+            if (nowMs < m_anchorRetryDeadlineMs)
+            {
+                writePingDiagnostic(QStringLiteral("UDP_BIND"),
+                                    QStringLiteral("result=port_taken_retrying wanted=%1 window_left_ms=%2")
+                                        .arg(m_anchorLocalPort)
+                                        .arg(m_anchorRetryDeadlineMs - nowMs));
+                m_anchorRetryTimer->start();
+                return;
+            }
+
             qWarning() << "lobby: could not rebind anchor port" << m_anchorLocalPort
-                       << "-" << m_udp->errorString() << "- falling back to a new port";
+                       << "after retries -" << m_udp->errorString() << "- falling back to a new port";
             writePingDiagnostic(QStringLiteral("UDP_BIND"),
-                                QStringLiteral("result=port_taken wanted=%1 error=%2")
+                                QStringLiteral("result=port_retry_exhausted wanted=%1 error=%2")
                                     .arg(m_anchorLocalPort).arg(m_udp->errorString()));
         }
     }
@@ -1222,9 +1400,13 @@ void LobbyClient::initiateUdpAnchor()
         qWarning() << "lobby: udp bind failed:" << m_udp->errorString();
         writePingDiagnostic(QStringLiteral("UDP_BIND"),
                             QStringLiteral("result=fail error=%1").arg(m_udp->errorString()));
+        m_anchorRetryDeadlineMs = 0;
         return;
     }
 
+    m_anchorRetryDeadlineMs = 0;
+    m_anchorRetryTimer->stop();
+    disableUdpConnReset();
     const quint16 previousPort = m_anchorLocalPort;
     m_anchorLocalPort = m_udp->localPort();
     writePingDiagnostic(QStringLiteral("UDP_BIND"),
@@ -1234,6 +1416,34 @@ void LobbyClient::initiateUdpAnchor()
                             .arg(previousPort));
     sendUdpRegister();
     m_udpKeepaliveTimer->start();
+}
+
+// Windows delivers ICMP "port unreachable" to a *connectionless* UDP socket as
+// a WSAECONNRESET on the next receive. One peer's port going away (a match
+// partner quitting, a game socket closing) therefore poisons receives on the
+// socket that sent to it — and under the shared-transport model that is the
+// one socket the lobby also depends on, so the client keeps sending fine while
+// silently receiving nothing until the process restarts. SIO_UDP_CONNRESET
+// off is the standard fix: unreachable peers are simply ignored, which is the
+// right semantics for peer-to-peer UDP where peers come and go. No-op on
+// non-Windows; failure here is not fatal, so it's logged rather than raised.
+void LobbyClient::disableUdpConnReset()
+{
+#ifdef _WIN32
+    if (!m_udp)
+        return;
+    const qintptr fd = m_udp->socketDescriptor();
+    if (fd == -1)
+        return;
+    BOOL enable = FALSE;
+    DWORD returned = 0;
+    if (::WSAIoctl(static_cast<SOCKET>(fd), SIO_UDP_CONNRESET, &enable, sizeof(enable),
+                   nullptr, 0, &returned, nullptr, nullptr) == SOCKET_ERROR)
+    {
+        writePingDiagnostic(QStringLiteral("UDP_CONNRESET"),
+                            QStringLiteral("result=fail error=%1").arg(::WSAGetLastError()));
+    }
+#endif
 }
 
 void LobbyClient::sendUdpRegister()
@@ -1552,8 +1762,18 @@ quint16 LobbyClient::localUdpPort() const
 
 void LobbyClient::releaseUdpAnchor()
 {
+    // A match is taking the socket over — the pinned port now legitimately
+    // belongs to GekkoNet, so any pending rebind retry must not fight it.
+    if (m_anchorRetryTimer)
+        m_anchorRetryTimer->stop();
+    m_anchorRetryDeadlineMs = 0;
     if (m_udpKeepaliveTimer)
         m_udpKeepaliveTimer->stop();
+    // Same reasoning as lendAnchorToMatch: an in-flight series can't survive
+    // the socket going away, and letting it age out would report the match
+    // peer as unreachable.
+    cancelPendingProbes(QStringLiteral("anchor_released"));
+    m_probeFailStreak.clear();
     if (m_udp && m_udp->state() != QAbstractSocket::UnconnectedState)
     {
         qInfo() << "Rollback lobby releasing UDP anchor"
@@ -1572,6 +1792,12 @@ void LobbyClient::releaseUdpAnchor()
 
 void LobbyClient::reopenUdpAnchor()
 {
+    // Shared-socket model: the socket never went away — just resume our side.
+    if (m_anchorLent)
+    {
+        reclaimAnchorFromMatch();
+        return;
+    }
     if (m_state == ConnectionState::Connected && m_udp &&
         m_udp->state() == QAbstractSocket::UnconnectedState)
     {
@@ -1579,9 +1805,82 @@ void LobbyClient::reopenUdpAnchor()
     }
 }
 
+qintptr LobbyClient::lendAnchorToMatch()
+{
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState)
+        return -1;
+    const qintptr fd = m_udp->socketDescriptor();
+    if (fd == -1)
+        return -1;
+
+    if (m_anchorRetryTimer)
+        m_anchorRetryTimer->stop();
+    m_anchorRetryDeadlineMs = 0;
+    // Keepalives pause: GekkoNet's receive filter drops RMGK-tagged datagrams,
+    // so acks would vanish anyway, and the server keeps our endpoint entry —
+    // reclaim re-registers the same address the moment the match ends.
+    if (m_udpKeepaliveTimer)
+        m_udpKeepaliveTimer->stop();
+    // A series caught in flight by the handoff would burn its retries against
+    // a socket whose echoes GekkoNet drops, then age out into a failure signal
+    // — flagging the very peer we're starting a match with as unreachable, and
+    // nothing clears it until probing resumes at match end. Drop them quietly;
+    // the miss streak resets too so the first post-match cycle starts clean.
+    cancelPendingProbes(QStringLiteral("anchor_lent"));
+    m_probeFailStreak.clear();
+    m_anchorLent = true;
+    qInfo() << "Rollback lobby lending anchor socket to match"
+            << "localPort" << m_udp->localPort();
+    writePingDiagnostic(QStringLiteral("ANCHOR_LENT"),
+                        QStringLiteral("port=%1").arg(m_udp->localPort()));
+    return fd;
+}
+
+void LobbyClient::reclaimAnchorFromMatch()
+{
+    if (!m_anchorLent)
+        return;
+    m_anchorLent = false;
+    if (!m_udp || m_udp->state() == QAbstractSocket::UnconnectedState ||
+        m_state != ConnectionState::Connected)
+        return;
+    // Same socket, same port, same NAT mappings — nothing to rebind. The
+    // REGISTER is a refresh, not a re-punch; peers' learned routes to us are
+    // still valid, which is the whole point of the shared-socket model.
+    writePingDiagnostic(QStringLiteral("ANCHOR_RECLAIMED"),
+                        QStringLiteral("port=%1").arg(m_udp->localPort()));
+    sendUdpRegister();
+    if (m_udpKeepaliveTimer)
+        m_udpKeepaliveTimer->start();
+    // Drain anything that arrived between GekkoNet's last poll and now, so no
+    // stale datagram sits in the buffer wedging the read notifier.
+    //
+    // Unconditional on purpose. Throughout the lend our readyRead slot returns
+    // without reading, and Qt disables the read notification for an unbuffered
+    // socket whose readyRead went unserviced — it is re-armed by the next read,
+    // not by time. Gating this drain on hasPendingDatagrams() meant that a
+    // reclaim landing on a momentarily empty buffer performed no read at all
+    // and left the notifier disabled, so the socket kept sending while silently
+    // receiving nothing until the process restarted. onUdpReadyRead is a
+    // read-until-empty loop and is safe to call with nothing pending.
+    m_drainedDatagrams = 0;
+    onUdpReadyRead();
+    // How much had piled up while nobody was reading tells us which failure we
+    // are looking at when a peer goes deaf after a match: a large backlog means
+    // datagrams were arriving and going unserviced (our reader / the notifier),
+    // while zero means nothing reached the socket at all (blocked inbound —
+    // firewall or NAT), which no amount of draining would fix.
+    writePingDiagnostic(QStringLiteral("ANCHOR_DRAIN"),
+                        QStringLiteral("datagrams=%1").arg(m_drainedDatagrams));
+}
+
 void LobbyClient::onUdpReadyRead()
 {
     if (m_inPrematchSync)
+        return;
+    // While the socket is lent to GekkoNet, its thread owns recvfrom; reading
+    // here would steal game packets (the n02 "packet stealing" race).
+    if (m_anchorLent)
         return;
 
     while (m_udp->hasPendingDatagrams())
@@ -1591,6 +1890,7 @@ void LobbyClient::onUdpReadyRead()
         quint16 senderPort = 0;
         datagram.resize(int(m_udp->pendingDatagramSize()));
         m_udp->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+        m_drainedDatagrams++;
 
         if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0)
             continue;
@@ -1667,6 +1967,7 @@ void LobbyClient::onUdpReadyRead()
                 m_recentlyMatchedNonces.clear();
             m_recentlyMatchedNonces.insert(nonce);
             m_measuredPing[uid] = rttMs;
+            m_probeFailStreak.remove(uid);
             writePingDiagnostic(QStringLiteral("RTT"),
                                 QStringLiteral("peer=%1 rtt_ms=%2 attempt=%3/%4 nonce=%5 from=%6:%7")
                                     .arg(pingUserLabel(uid))
@@ -1854,6 +2155,13 @@ void LobbyClient::swapSeats(int slotA, int slotB)
 
 void LobbyClient::requestPingProbe(quint64 targetUserId)
 {
+    // While a match borrows the socket the probe could never complete
+    // (GekkoNet's filter eats the echo), so don't even ask the server —
+    // otherwise every tick spends a round-trip to arrive at a skip. The
+    // ANCHOR_LENT/ANCHOR_RECLAIMED pair already brackets the quiet stretch
+    // in the diagnostic log.
+    if (m_anchorLent)
+        return;
     QJsonObject d;
     d["targetUserId"] = QJsonValue(qint64(targetUserId));
     sendEnvelope("PING_PROBE_REQUEST", d);
@@ -1972,6 +2280,7 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.country         = obj.value("country").toString();
     u.clientVersion   = obj.value("clientVersion").toString();
     u.connection      = obj.value("connection").toString();
+    u.anonymous       = obj.value("anonymous").toBool();
     u.pingToServer    = static_cast<quint16>(obj.value("pingToServer").toInt());
     u.currentRoomId   = static_cast<quint64>(obj.value("currentRoomId").toDouble());
     u.currentRoomName = obj.value("currentRoomName").toString();

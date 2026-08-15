@@ -58,6 +58,10 @@ public:
         QString country;         // ISO 3166-1 alpha-2 from the server; "" on old servers
         QString clientVersion;   // peer's self-reported RMG-K build
         QString connection;      // peer's self-reported transport ("wifi"/"lan"/...)
+        // User asked the server to withhold their location: country comes back
+        // empty and the UI must not fall back to the region badge either. The
+        // region string itself still flows for ping estimation.
+        bool anonymous = false;
         quint16 pingToServer = 0;
         quint64 currentRoomId = 0;
         QString currentRoomName;
@@ -196,6 +200,17 @@ public:
     void releaseUdpAnchor();
     void reopenUdpAnchor();
 
+    // n02-style shared transport: instead of releasing the anchor socket for
+    // GekkoNet to rebind (a handoff with a whole family of races), lend the
+    // live socket itself. Returns the native descriptor, or -1 if there is no
+    // bound socket. While lent, this side stops READING (GekkoNet's thread
+    // owns recvfrom — same reader discipline n02 uses between p2p_step and
+    // p2p_modify_play_values); the port, and every peer's NAT mapping to it,
+    // never change. reclaim is idempotent and safe to call whether or not a
+    // lend happened.
+    qintptr lendAnchorToMatch();
+    void reclaimAnchorFromMatch();
+
     // Fire a burst of UDP punch packets from the anchor socket to each peer's
     // public endpoint. Call this *before* releaseUdpAnchor() so the punch goes
     // out from the same NAT mapping GekkoNet will inherit when it re-binds.
@@ -239,6 +254,12 @@ signals:
     void pingProbeRetrying(quint64 targetUserId, int attempt, int maxAttempts);
     // Every attempt went unanswered — that peer is unreachable for now.
     void pingProbeFailed(quint64 targetUserId);
+    // A series died, but the peer has answered before and this is the first
+    // consecutive miss — almost always transient (their socket is lent to a
+    // match, or they're mid-rebind after one). The UI should fall back to the
+    // last measurement rather than declare unreachable; a second consecutive
+    // miss emits pingProbeFailed instead.
+    void pingProbeSoftFailed(quint64 targetUserId);
 
     void matchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
     void matchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
@@ -297,6 +318,13 @@ private:
     void sendProbeTo(quint64 userId, const QString& endpoint);
     // Emit one burst of identical PROBE packets for an existing series.
     void sendProbeBurst(const QHostAddress& addr, quint16 port, quint64 nonce);
+    // A probe series ran out of attempts. Routes to pingProbeFailed or
+    // pingProbeSoftFailed based on the peer's consecutive-miss streak.
+    void noteProbeSeriesFailed(quint64 userId);
+    // Drop every in-flight series without emitting failure signals — for the
+    // moments we stop probing for our own reasons (socket lent to a match),
+    // where an aged-out series says nothing about the peer.
+    void cancelPendingProbes(const QString& reason);
 
     // Opt-in on-disk trace of the whole probe pipeline, for diagnosing peer
     // pings that never resolve. Off unless Rollback_PingDiagnostics is set;
@@ -319,6 +347,9 @@ private:
     void handleModList(const QJsonObject& data);
 
     void initiateUdpAnchor();
+    // Stop Windows from failing receives with WSAECONNRESET when a peer's port
+    // becomes unreachable (see the definition). No-op elsewhere.
+    void disableUdpConnReset();
     void sendUdpRegister();
     void sendUdpKeepalive();
     // Walks m_pendingProbes and re-bursts anything that's due. Runs on a short
@@ -335,6 +366,10 @@ private:
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
     QTimer* m_probeRetryTimer = nullptr;
+    // Retries the pinned anchor port while GekkoNet's teardown still holds it
+    // (see initiateUdpAnchor). 0 deadline = no retry window active.
+    QTimer* m_anchorRetryTimer = nullptr;
+    qint64  m_anchorRetryDeadlineMs = 0;
     bool m_inPrematchSync = false;
 
     // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
@@ -371,6 +406,14 @@ private:
     QFile*  m_pingDiagnosticFile    = nullptr;
     qint64  m_pingDiagnosticStartMs = 0;
 
+    // Datagrams read since the counter was last reset. Only consulted by the
+    // match-end drain, to record how much had queued up while nobody read.
+    int m_drainedDatagrams = 0;
+
+    // True while GekkoNet borrows the anchor socket (see lendAnchorToMatch):
+    // suppresses our reads and probe sends without touching the socket.
+    bool m_anchorLent = false;
+
     // Away detection: last app-wide input, and whether the last heartbeat
     // reported us away (so the first input after can snap us back immediately
     // instead of waiting out the heartbeat interval).
@@ -404,6 +447,12 @@ private:
         qint64  nextAttemptMs = 0;
     };
     QHash<quint64, ProbeInFlight> m_pendingProbes;
+
+    // Consecutive exhausted probe series per peer, reset by any successful
+    // reply and when a match borrows the socket. A single miss on a peer
+    // we've measured before shows as a soft failure (the seat keeps its
+    // number); the streak has to reach 2 before the UI says unreachable.
+    QHash<quint64, int> m_probeFailStreak;
 
     // The address a peer's packets *actually* arrive from, learned from inbound
     // PROBE/PROBE_REPLY traffic — n02-style reply-to-observed-source, kept.

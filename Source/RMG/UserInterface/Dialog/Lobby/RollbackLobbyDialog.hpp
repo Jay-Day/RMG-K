@@ -171,6 +171,10 @@ private slots:
     // visible in the room rather than looking like a stalled Start button.
     void onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts);
     void onPingProbeFailed(quint64 userId);
+    // First consecutive miss on a peer we've measured before — treat as
+    // transient: drop any retry text and let the seat fall back to the last
+    // measurement instead of flashing unreachable.
+    void onPingProbeSoftFailed(quint64 userId);
     // Repaint one seat's right-hand meta cell (ping / retry / unreachable).
     void refreshSeatMeta(quint64 userId, const QString& statusHtml);
     void onPingMeasured(quint64 userId, int rttMs);
