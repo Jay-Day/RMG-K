@@ -106,7 +106,47 @@
                    </item>
                   </widget>
                  </item>
+               </layout>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="languageLayout">
+                 <item>
+                  <widget class="QLabel" name="languageLabel">
+                   <property name="text">
+                    <string>Language</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QComboBox" name="languageComboBox">
+                   <item>
+                    <property name="text">
+                     <string>System Default</string>
+                    </property>
+                   </item>
+                   <item>
+                    <property name="text">
+                     <string>English</string>
+                    </property>
+                   </item>
+                   <item>
+                    <property name="text">
+                     <string>Japanese</string>
+                    </property>
+                   </item>
+                  </widget>
+                 </item>
                 </layout>
+               </item>
+               <item>
+                <widget class="QLabel" name="languageRestartNoteLabel">
+                 <property name="text">
+                  <string>Language changes take effect after restarting the application.</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
                </item>
                <item>
                 <widget class="QCheckBox" name="checkForUpdatesCheckBox">
