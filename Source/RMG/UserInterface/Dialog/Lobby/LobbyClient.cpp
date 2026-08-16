@@ -66,18 +66,6 @@ namespace
     // Presence-only; nothing functional hangs off it.
     constexpr qint64 AWAY_AFTER_MS = 5 * 60'000;
 
-    // Lobby protocol revision, sent in HELLO and gated by the server's
-    // MinLobbyProtocol. A compatibility number, not a build version: bump it
-    // ONLY alongside a change where old clients and the new server (or new
-    // clients and the old server) would break each other's matches — and bump
-    // the server's minimum in the same deploy. Server rejects with
-    // version_mismatch, which onHelloFailed renders with an update prompt.
-    //
-    // History:
-    //   1 (2026-08-16): shared-anchor-socket era — actor-count session
-    //     sizing; pre-fix builds desync sparse rooms for everyone.
-    constexpr int LOBBY_PROTOCOL_VERSION = 1;
-
     constexpr char ANCHOR_MAGIC[4] = { 'R', 'M', 'G', 'K' };
     constexpr quint8 ANCHOR_OP_REGISTER    = 0x01;
     constexpr quint8 ANCHOR_OP_KEEPALIVE   = 0x02;
@@ -504,7 +492,6 @@ void LobbyClient::onWsConnected()
     QJsonObject data;
     data["username"]      = m_pendingUsername;
     data["clientVersion"] = QString::fromStdString(CoreGetVersion());
-    data["protocol"]      = LOBBY_PROTOCOL_VERSION;
     // The WebSocket is connected by the time this slot runs, so its local
     // address reflects the route the OS actually chose for lobby traffic.
     const QString transport = detectTransportMedium(m_ws->localAddress());
