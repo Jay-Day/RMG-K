@@ -2171,7 +2171,7 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
     if (reason == "username_taken")    human = "That username is already in use.";
     else if (reason == "invalid_hello") human = "Server rejected the connection handshake.";
     else if (reason == "invalid_payload") human = "That username isn't allowed.";
-    else if (reason == "version_mismatch") human = "Client version is incompatible with this server.";
+    else if (reason == "version_mismatch") human = "This RMG-K build is too old for the lobby — please update to the latest version.";
     else if (reason == "server_full") human = "The lobby is currently full.";
 
     m_connectPromptMessage = human;
