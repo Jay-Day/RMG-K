@@ -31,6 +31,7 @@
 
 #include <RMG-Core/Callback.hpp>
 #include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Version.hpp>
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/rmgk_gekko.hpp> // request_disconnect_player (instant peer drop)
 
@@ -42,6 +43,9 @@
 #include <QPalette>
 #include <QStyledItemDelegate>
 #include <QPainter>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QJsonDocument>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
@@ -328,6 +332,43 @@ namespace
         f.setPointSize(f.pointSize() + pointDelta);
         if (bold) f.setBold(true);
         w->setFont(f);
+    }
+
+    // Semver helpers for the lobby's release-latest gate — same shapes as the
+    // updater's (MainWindow.cpp), copied rather than shared per house style.
+    QVector<int> parseSemverParts(const QString& in)
+    {
+        QString s = in.trimmed();
+        if (s.startsWith('v') || s.startsWith('V')) s.remove(0, 1);
+        if (s.isEmpty()) return {};
+        const QStringList parts = s.split('.');
+        QVector<int> out;
+        out.reserve(parts.size());
+        for (const QString& p : parts)
+        {
+            bool ok = false;
+            const int v = p.toInt(&ok);
+            if (!ok) return {};
+            out.append(v);
+        }
+        return out;
+    }
+
+    // Returns -1 if a < b, 0 if a == b, +1 if a > b.
+    int compareSemver(const QVector<int>& a, const QVector<int>& b)
+    {
+        if (a.isEmpty() && b.isEmpty()) return 0;
+        if (a.isEmpty()) return 1;
+        if (b.isEmpty()) return -1;
+        const int n = std::max(a.size(), b.size());
+        for (int i = 0; i < n; ++i)
+        {
+            const int av = (i < a.size()) ? a[i] : 0;
+            const int bv = (i < b.size()) ? b[i] : 0;
+            if (av < bv) return -1;
+            if (av > bv) return 1;
+        }
+        return 0;
     }
 
     // Column-0 role carrying "this player is searching for a match" for the
@@ -2099,7 +2140,65 @@ void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
         m_userLabel->setText(QString("User: %1").arg(m_username));
 
     updateServerMeta();
-    m_client->connectToServer(m_serverUrl, m_username, {}, QString());
+    connectAfterVersionGate();
+}
+
+// Release builds must be on the latest GitHub release to enter the lobby: an
+// outdated release gets an on-screen error and no connection. Anything that
+// isn't a release-format version (vdev-N and friends) skips the check
+// entirely — dev builds answer to the test server and its crew, not the
+// release channel. Same endpoint and semantic comparison as the updater:
+// /releases/latest reports the newest NON-prerelease, so a prerelease tag
+// compares newer and passes instead of being told to "update" backwards. An
+// unreachable or unparseable check fails OPEN — GitHub being down must not
+// lock the lobby.
+void RollbackLobbyDialog::connectAfterVersionGate()
+{
+    const QString current = QString::fromStdString(CoreGetVersion());
+    static const QRegularExpression releaseVersionRegex("^v?\\d+(?:\\.\\d+){0,2}$");
+    if (!releaseVersionRegex.match(current).hasMatch())
+    {
+        m_client->connectToServer(m_serverUrl, m_username, {}, QString());
+        return;
+    }
+
+    auto* nam = new QNetworkAccessManager(this);
+    nam->setTransferTimeout(8000);
+    connect(nam, &QNetworkAccessManager::finished, this,
+            [this, nam, current](QNetworkReply* reply)
+    {
+        nam->deleteLater();
+        reply->deleteLater();
+
+        QString latest;
+        if (reply->error() == QNetworkReply::NoError)
+        {
+            latest = QJsonDocument::fromJson(reply->readAll())
+                         .object().value("tag_name").toString();
+        }
+
+        const QVector<int> latestParts = parseSemverParts(latest);
+        if (!latestParts.isEmpty() &&
+            compareSemver(parseSemverParts(current), latestParts) < 0)
+        {
+            qInfo() << "Rollback lobby refused: build" << current
+                    << "is older than latest release" << latest;
+            m_connectPromptMessage =
+                QString("RMG-K %1 is out — update to use the netplay lobby (you're on %2).")
+                    .arg(latest, current);
+            QTimer::singleShot(0, this, [this]() {
+                if (!isVisible() || m_connectPromptOpen)
+                    return;
+                const QString message = m_connectPromptMessage;
+                m_connectPromptMessage.clear();
+                promptForUsername(message);
+            });
+            return;
+        }
+
+        m_client->connectToServer(m_serverUrl, m_username, {}, QString());
+    });
+    nam->get(QNetworkRequest(QUrl("https://api.github.com/repos/Jay-Day/RMG-K/releases/latest")));
 }
 
 // ──────────────────────────────────────────────────────────────────────

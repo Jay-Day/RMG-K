@@ -203,6 +203,10 @@ private:
     // No server connection is attempted until the prompt is accepted.
     void     promptForUsername(const QString& statusMessage = QString());
     QString  prefillUsername() const;
+    // Release-latest gate between the username prompt and connectToServer:
+    // release builds must match the newest GitHub release or are refused
+    // with an on-screen message; non-release (vdev) builds connect directly.
+    void     connectAfterVersionGate();
 
     void refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
     void refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r);
