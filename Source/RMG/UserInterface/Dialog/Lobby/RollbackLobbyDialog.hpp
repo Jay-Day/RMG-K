@@ -169,6 +169,7 @@ private slots:
 
     // Punch progress for a seated peer, so a slow or failing NAT punch is
     // visible in the room rather than looking like a stalled Start button.
+    void onIcePeerConnectionChanged(quint64 userId, bool connected);
     void onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts);
     void onPingProbeFailed(quint64 userId);
     // First consecutive miss on a peer we've measured before — treat as

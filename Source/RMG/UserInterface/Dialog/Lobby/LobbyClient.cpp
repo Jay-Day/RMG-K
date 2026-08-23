@@ -999,6 +999,7 @@ void LobbyClient::flushIceEvents()
                             QStringLiteral("peer=%1 state=%2 selected=%3")
                                 .arg(pingUserLabel(userId)).arg(state)
                                 .arg(QString::fromStdString(LobbyIce::peer_selected_addresses(userId))));
+        emit icePeerConnectionChanged(userId, LobbyIce::peer_connected(userId));
     }
 }
 

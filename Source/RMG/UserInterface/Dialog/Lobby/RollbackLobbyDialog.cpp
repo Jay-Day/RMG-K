@@ -310,6 +310,16 @@ namespace
                    .arg(c.wait).arg(attempt).arg(maxAttempts);
     }
 
+    // Shown before the first ping can be sent. ICE negotiation may take a few
+    // seconds on restrictive NATs, so leaving this cell blank makes a healthy
+    // connection look stalled.
+    QString seatIceStatusHtml()
+    {
+        const auto c = statusColors();
+        return QString("<span style='color:%1; font-weight:600;'>establishing connection…</span>")
+                   .arg(c.wait);
+    }
+
     // A translucent fill derived from a solid hex — used for the soft pill /
     // badge backgrounds so an accent reads gently over palette(window/base).
     QString tintRgba(const QString& hex, double alpha)
@@ -516,6 +526,8 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::modListReceived,      this, &RollbackLobbyDialog::onModListReceived);
     connect(m_client, &LobbyClient::matchBegin,           this, &RollbackLobbyDialog::onMatchBegin);
     connect(m_client, &LobbyClient::matchPeerLeft,        this, &RollbackLobbyDialog::onMatchPeerLeft);
+    connect(m_client, &LobbyClient::icePeerConnectionChanged,
+            this, &RollbackLobbyDialog::onIcePeerConnectionChanged);
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
     connect(m_client, &LobbyClient::pingProbeRetrying,    this, &RollbackLobbyDialog::onPingProbeRetrying);
     connect(m_client, &LobbyClient::pingProbeFailed,      this, &RollbackLobbyDialog::onPingProbeFailed);
@@ -1345,10 +1357,9 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
     }
     if (s.metaLabel)
     {
-        // HOST badge + ping. Self never shows a ping (pingMs == -1 also means
-        // "no measurement yet" for peers we haven't probed). Ping shows up
-        // after the first PROBE_REPLY arrives, refreshed on each tick.
-        s.metaLabel->setText(seatMetaHtml(s.slot, isHost, isSelf ? -1 : pingMs, dark));
+        // Self is a local zero-latency endpoint. Remote ping appears after the
+        // first reply; until then onRoomStateChanged supplies an ICE status.
+        s.metaLabel->setText(seatMetaHtml(s.slot, isHost, isSelf ? 0 : pingMs, dark));
     }
 }
 
@@ -3076,11 +3087,15 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const quint64 uid = static_cast<quint64>(p.value("userId").toDouble());
         const bool slotIsHost = (uid == hostId);
         const bool slotIsSelf = (uid == m_client->selfUserId());
-        const int pingMs = slotIsSelf ? -1 : m_client->measuredPingMs(uid);
+        const int pingMs = slotIsSelf ? 0 : m_client->measuredPingMs(uid);
         // The host can remove any seated player except themselves (the host seat).
         const bool canKick = iAmHost && !slotIsHost;
         m_seats[slot - 1].userId = uid;
         renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf, pingMs, canKick);
+        if (!slotIsSelf && pingMs < 0 && m_seats[slot - 1].metaLabel)
+            m_seats[slot - 1].metaLabel->setText(
+                seatMetaHtml(slot, slotIsHost, pingMs, isDarkTheme(),
+                             seatIceStatusHtml()));
         filled[slot - 1] = true;
     }
     for (int i = 0; i < 4; ++i)
@@ -3343,10 +3358,25 @@ void RollbackLobbyDialog::refreshSeatMeta(quint64 userId, const QString& statusH
     {
         if (s.userId != userId || !s.metaLabel)
             continue;
-        const int pingMs = m_client ? m_client->measuredPingMs(userId) : -1;
+        const bool isSelf = m_client && userId == m_client->selfUserId();
+        const int pingMs = isSelf ? 0 : (m_client ? m_client->measuredPingMs(userId) : -1);
         s.metaLabel->setText(seatMetaHtml(s.slot, s.isHost, pingMs, isDarkTheme(), statusHtml));
         break;
     }
+}
+
+void RollbackLobbyDialog::onIcePeerConnectionChanged(quint64 userId, bool connected)
+{
+    if (!m_client || userId == m_client->selfUserId())
+        return;
+
+    // Keep the connection progress visible until the first RTT replaces it.
+    // Once ICE connects, probe immediately rather than waiting up to three
+    // seconds for the periodic refresh timer.
+    if (m_client->measuredPingMs(userId) < 0)
+        refreshSeatMeta(userId, seatIceStatusHtml());
+    if (connected)
+        m_client->requestPingProbe(userId);
 }
 
 void RollbackLobbyDialog::onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts)
