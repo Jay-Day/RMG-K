@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
+#include <QSet>
 
 class QWebSocket;
 class QUdpSocket;
@@ -94,6 +95,7 @@ public:
         quint16 publicPort = 0;
         QString localIp;
         int slot = 0;
+        bool iceSupported = false;
     };
 
     struct ChatMessage
@@ -151,16 +153,18 @@ public:
     // ack with a fresh ROOM_STATE so all seated peers stay in sync.
     void updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto);
 
-    // Ping probe — server replies with target's UDP endpoint; client probes
-    // directly. The server also introduces us to the target so they probe back
-    // at the same moment; a lone one-way probe dies at their NAT. Rate limited
-    // server-side, so callers should still avoid firing these in a loop.
+    // Ping probe over the already-selected ICE candidate pair. This measures
+    // the same direct path that the rollback session will use.
     void requestPingProbe(quint64 targetUserId);
 
     // Most recent measured round-trip to this peer in milliseconds, or -1 if
     // no PROBE_REPLY has been received from them. Updated whenever a probe
     // we sent comes back.
     int measuredPingMs(quint64 userId) const;
+
+    // True when every remote in this match has negotiated a direct ICE path.
+    // error describes unsupported clients or the first incomplete peer.
+    bool allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QString* error = nullptr) const;
 
     // Quick match queue. The ROM (name + md5) scopes the search so the server
     // only pairs players queued for the same game; the name lets the matched
@@ -194,8 +198,8 @@ public:
                        const QString& duration = QString(), const QString& reason = QString());
     bool isModerator() const { return m_isModerator; }
 
-    // UDP anchor port management — exposed so the GekkoNet session can take
-    // the same local port we registered with the server (matches NAT mapping).
+    // Legacy UDP-anchor compatibility API. ICE-capable rollback-lobby matches
+    // do not call these; they remain for compatibility with older servers.
     quint16 localUdpPort() const;
     void releaseUdpAnchor();
     void reopenUdpAnchor();
@@ -313,6 +317,11 @@ private:
     void handlePingProbeReply(const QJsonObject& data);
     void handleMatchBegin(const QJsonObject& data);
     void handlePingProbeIncoming(const QJsonObject& data);
+    void handleIceSignal(const QJsonObject& data);
+    void reconcileIcePeers(const QJsonObject& roomState);
+    void resetIceMesh();
+    void flushIceEvents();
+    void sendIcePing(quint64 userId, quint64 nonce, bool reply);
     // Start a probe series to `endpoint`. Shared by the reply and incoming
     // paths. No-op if a probe to that peer is already in flight.
     void sendProbeTo(quint64 userId, const QString& endpoint);
@@ -366,6 +375,7 @@ private:
     QTimer* m_heartbeatTimer = nullptr;
     QTimer* m_udpKeepaliveTimer = nullptr;
     QTimer* m_probeRetryTimer = nullptr;
+    QTimer* m_iceTimer = nullptr;
     // Retries the pinned anchor port while GekkoNet's teardown still holds it
     // (see initiateUdpAnchor). 0 deadline = no retry window active.
     QTimer* m_anchorRetryTimer = nullptr;
@@ -401,6 +411,9 @@ private:
     QString m_observedIp;
     QString m_region;
     bool    m_isModerator = false; // set once ADMIN_AUTH_OK is received
+    quint64 m_currentIceRoomId = 0;
+    QSet<quint64> m_icePeerIds;
+    QHash<quint64, int> m_lastIceStates;
 
     // Ping diagnostics (see startPingDiagnosticLog).
     QFile*  m_pingDiagnosticFile    = nullptr;
@@ -423,7 +436,7 @@ private:
     QHash<quint64, LobbyUser> m_users;
     QHash<quint64, LobbyRoomSummary> m_rooms;
 
-    // In-flight UDP PROBE state, keyed by per-request nonce. Each entry maps
+    // In-flight direct ICE ping state, keyed by per-request nonce. Each entry maps
     // a sent probe back to the target user and the wall-clock send time so
     // we can compute RTT when PROBE_REPLY comes back.
     struct ProbeInFlight

@@ -27,6 +27,9 @@
 #include "Error.hpp"
 #include "Library.hpp"
 #include "Settings.hpp"
+#ifdef NETPLAY
+#include "LobbyIce.hpp"
+#endif
 
 #include "PreciseWait.hpp"
 
@@ -944,6 +947,7 @@ static std::atomic<ExtSocket> g_GekkoExternalSocket{kExtSocketNone};
 // True while the CURRENT session runs on the adopted socket (latched at
 // start_lobby_session so a mid-session clear can't strand the adapter).
 static bool g_GekkoUsingExternalSocket = false;
+static bool g_GekkoUsingIceAdapter = false;
 static std::vector<GekkoNetResult*> g_GekkoExtResults;
 
 static void ext_adapter_send(GekkoNetAddress* addr, const char* data, int length)
@@ -1050,6 +1054,82 @@ static GekkoNetAdapter g_GekkoExternalAdapter{
     ext_adapter_receive,
     ext_adapter_free
 };
+
+#ifdef NETPLAY
+static std::vector<GekkoNetResult*> g_GekkoIceResults;
+
+static std::uint64_t ice_user_id(const GekkoNetAddress* addr)
+{
+    if (addr == nullptr || addr->data == nullptr)
+        return 0;
+    const std::string value(reinterpret_cast<const char*>(addr->data), addr->size);
+    constexpr const char* prefix = "ice:";
+    if (value.rfind(prefix, 0) != 0)
+        return 0;
+    try
+    {
+        return std::stoull(value.substr(std::char_traits<char>::length(prefix)));
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+
+static void ice_adapter_send(GekkoNetAddress* addr, const char* data, int length)
+{
+    const std::uint64_t userId = ice_user_id(addr);
+    if (userId == 0 || length < 0 ||
+        !LobbyIce::send(userId, LobbyIceChannel::Gekko, data, static_cast<std::size_t>(length)))
+    {
+        if (g_GekkoLogEnabled)
+            write_gekko_log("ice_adapter_send result=fail");
+    }
+}
+
+static GekkoNetResult** ice_adapter_receive(int* length)
+{
+    g_GekkoIceResults.clear();
+    if (length == nullptr)
+        return g_GekkoIceResults.data();
+
+    for (LobbyIcePacket& packet : LobbyIce::take_packets(LobbyIceChannel::Gekko))
+    {
+        const std::string endpoint = "ice:" + std::to_string(packet.peerUserId);
+        GekkoNetResult* result = static_cast<GekkoNetResult*>(std::malloc(sizeof(*result)));
+        if (result == nullptr)
+            break;
+        result->addr.data = std::malloc(endpoint.size());
+        result->data = std::malloc(packet.data.size());
+        if (result->addr.data == nullptr || (result->data == nullptr && !packet.data.empty()))
+        {
+            std::free(result->addr.data);
+            std::free(result->data);
+            std::free(result);
+            break;
+        }
+        result->addr.size = static_cast<unsigned int>(endpoint.size());
+        std::memcpy(result->addr.data, endpoint.data(), endpoint.size());
+        result->data_len = static_cast<unsigned int>(packet.data.size());
+        if (!packet.data.empty())
+            std::memcpy(result->data, packet.data.data(), packet.data.size());
+        g_GekkoIceResults.push_back(result);
+    }
+    *length = static_cast<int>(g_GekkoIceResults.size());
+    return g_GekkoIceResults.data();
+}
+
+static void ice_adapter_free(void* data)
+{
+    std::free(data);
+}
+
+static GekkoNetAdapter g_GekkoIceAdapter{
+    ice_adapter_send,
+    ice_adapter_receive,
+    ice_adapter_free
+};
+#endif
 
 const char* gekko_session_event_name(GekkoSessionEventType type)
 {
@@ -2419,20 +2499,48 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
         return false;
     }
 
-    // Validate per-remote endpoints and slot uniqueness before we touch GekkoNet.
+    // Validate per-remote ICE identities (or legacy endpoints) and slot
+    // uniqueness before we touch GekkoNet.
     bool slotSeen[5] = { false, false, false, false, false }; // index 1..4
     slotSeen[localPlayer] = true;
+    bool sawIce = false;
+    bool sawLegacyEndpoint = false;
     for (int i = 0; i < numRemotes; i++)
     {
         const LobbyRemotePeer& peer = remotes[i];
         if (peer.slot < 1 || peer.slot > players || peer.slot == localPlayer ||
-            peer.ip.empty() || peer.port == 0 || slotSeen[peer.slot])
+            slotSeen[peer.slot] ||
+            (peer.userId == 0 && (peer.ip.empty() || peer.port == 0)))
         {
             write_gekko_log("start_lobby_session result=fail reason=bad_remote_peer");
             return false;
         }
+        sawIce = sawIce || peer.userId != 0;
+        sawLegacyEndpoint = sawLegacyEndpoint || peer.userId == 0;
         slotSeen[peer.slot] = true;
     }
+    if (sawIce && sawLegacyEndpoint)
+    {
+        write_gekko_log("start_lobby_session result=fail reason=mixed_lobby_transports");
+        return false;
+    }
+    bool useIce = sawIce;
+#ifdef NETPLAY
+    if (useIce)
+    {
+        for (int i = 0; i < numRemotes; ++i)
+        {
+            if (!LobbyIce::peer_connected(remotes[i].userId))
+            {
+                CoreSetError("A rollback lobby ICE peer disconnected before emulation started.");
+                write_gekko_log("start_lobby_session result=fail reason=ice_peer_not_connected");
+                return false;
+            }
+        }
+    }
+#else
+    useIce = false;
+#endif
 
     if (!gekko_create(&g_GekkoSession, GekkoGameSession))
     {
@@ -2462,12 +2570,17 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     config.check_distance = 10;
     gekko_start(g_GekkoSession, &config);
 
-    // Preferred transport: the lobby's own anchor socket, adopted whole
-    // (n02-style — one socket for lobby and game, so the port and every
-    // peer's NAT mapping to us survive the match boundary). Falls back to
-    // GekkoNet's built-in adapter binding localPort when no socket was lent
-    // (the old handoff model; the anchor was released before this call).
-    g_GekkoUsingExternalSocket = (g_GekkoExternalSocket.load() != kExtSocketNone);
+    g_GekkoUsingIceAdapter = useIce;
+    g_GekkoUsingExternalSocket = !useIce && (g_GekkoExternalSocket.load() != kExtSocketNone);
+#ifdef NETPLAY
+    if (g_GekkoUsingIceAdapter)
+    {
+        LobbyIce::take_packets(LobbyIceChannel::Gekko);
+        gekko_net_adapter_set(g_GekkoSession, &g_GekkoIceAdapter);
+        write_gekko_log("start_lobby_session transport=libjuice_ice");
+    }
+    else
+#endif
     if (g_GekkoUsingExternalSocket)
     {
         gekko_net_adapter_set(g_GekkoSession, &g_GekkoExternalAdapter);
@@ -2522,12 +2635,16 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
                << " clamped_local_delay=" << clampedLocalDelay
                << " prediction_window=" << predictionWindow
                << " clamped_prediction_window=" << clampedPredictionWindow
-               << " transport=gekko_default_udp"
+               << " transport=" << (useIce ? "libjuice_ice" :
+                    (g_GekkoUsingExternalSocket ? "shared_anchor_socket" : "gekko_default_udp"))
                << " num_remotes=" << numRemotes;
         for (int i = 0; i < numRemotes; i++)
         {
-            stream << " remote[" << i << "]=slot" << remotes[i].slot
-                   << "@" << remotes[i].ip << ":" << remotes[i].port;
+            stream << " remote[" << i << "]=slot" << remotes[i].slot;
+            if (remotes[i].userId != 0)
+                stream << "@ice:" << remotes[i].userId;
+            else
+                stream << "@" << remotes[i].ip << ":" << remotes[i].port;
         }
         write_gekko_log(stream.str());
     }
@@ -2537,7 +2654,9 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     std::vector<std::string> remoteAddrStrings(static_cast<size_t>(numRemotes));
     for (int i = 0; i < numRemotes; i++)
     {
-        remoteAddrStrings[static_cast<size_t>(i)] = remotes[i].ip + ":" + std::to_string(remotes[i].port);
+        remoteAddrStrings[static_cast<size_t>(i)] = remotes[i].userId != 0
+            ? "ice:" + std::to_string(remotes[i].userId)
+            : remotes[i].ip + ":" + std::to_string(remotes[i].port);
     }
 
     for (int player = 1; player <= players; player++)
@@ -2765,14 +2884,19 @@ CORE_EXPORT void rmgk_gekko::close_session()
         gekko_destroy(&g_GekkoSession);
         // The adopted anchor socket is borrowed — the lobby client owns and
         // keeps it; only the default adapter's own socket is ours to destroy.
-        if (!g_GekkoUsingExternalSocket)
+        if (!g_GekkoUsingExternalSocket && !g_GekkoUsingIceAdapter)
         {
             gekko_default_adapter_destroy();
         }
     }
     g_GekkoUsingExternalSocket = false;
+    g_GekkoUsingIceAdapter = false;
     g_GekkoExternalSocket.store(kExtSocketNone);
     g_GekkoExtResults.clear();
+#ifdef NETPLAY
+    g_GekkoIceResults.clear();
+    LobbyIce::take_packets(LobbyIceChannel::Gekko);
+#endif
     g_GekkoSession = nullptr;
     g_GekkoPlayers = 0;
     g_GekkoActors = 0;

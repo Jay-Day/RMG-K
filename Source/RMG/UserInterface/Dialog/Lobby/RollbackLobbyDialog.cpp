@@ -3252,12 +3252,6 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     m_currentMatchId = 0;
     if (m_dropBtn) m_dropBtn->setEnabled(false);
 
-    // Re-open the UDP anchor so the next MATCH_BEGIN can hand us a fresh
-    // local port. Without this, localUdpPort() returns 0 (socket is aborted
-    // after onMatchBegin's releaseUdpAnchor), GekkoNet binds to a random
-    // kernel-picked port for match #2, and peers send to the stale port from
-    // match #1 — black screen on every match after the first.
-    if (m_client) m_client->reopenUdpAnchor();
 }
 
 void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason)
@@ -3517,12 +3511,12 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_currentRoomPacing = 0;
     m_currentRoomHostId = 0;
     m_currentMatchId = 0;
+    m_iceWaitingMatchId = 0;
+    m_iceMatchDeadlineMs = 0;
     m_awaitingEmulationStart = false;
     m_emulationActive = false;
     m_knownSeatedUsers.clear();
     m_roomSeatsSeen = false;
-
-    if (m_client) m_client->reopenUdpAnchor();
 
     if (m_chatViewRoom) m_chatViewRoom->clear();
     if (m_roomChatInput) m_roomChatInput->setEnabled(false);
@@ -4035,6 +4029,8 @@ void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reaso
 
 void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 {
+    m_iceWaitingMatchId = 0;
+    m_iceMatchDeadlineMs = 0;
     if (!reason.isEmpty())
     {
         appendChatSystemLine(CHANNEL_ROOM, reason);
@@ -4055,14 +4051,44 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 
     if (m_dropBtn) m_dropBtn->setEnabled(false);
 
-    // No-op while the anchor is still open (these failures all happen before
-    // releaseUdpAnchor); guards the rare path where it was already torn down so
-    // ping probing keeps working without a relaunch.
-    if (m_client) m_client->reopenUdpAnchor();
 }
 
 void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers)
 {
+    QString iceError;
+    if (!m_client->allIcePeersConnected(peers, &iceError))
+    {
+        const bool unsupported = std::any_of(peers.cbegin(), peers.cend(), [this](const auto& peer) {
+            return peer.userId != m_client->selfUserId() && !peer.iceSupported;
+        });
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_iceWaitingMatchId != matchId)
+        {
+            m_iceWaitingMatchId = matchId;
+            m_iceMatchDeadlineMs = nowMs + 15'000;
+            appendChatSystemLine(CHANNEL_ROOM, "Negotiating direct ICE connections...");
+        }
+        if (unsupported || nowMs >= m_iceMatchDeadlineMs)
+        {
+            m_currentMatchId = matchId;
+            m_awaitingEmulationStart = true;
+            m_iceWaitingMatchId = 0;
+            m_iceMatchDeadlineMs = 0;
+            abortMatchStart(unsupported
+                ? QStringLiteral("Match start failed: %1").arg(iceError)
+                : QStringLiteral("Match start failed: direct ICE negotiation timed out. No TURN relay is configured."));
+            return;
+        }
+        applyRoomStateBadge("Negotiating ICE…", stateHex("connecting", isDarkTheme()));
+        QTimer::singleShot(100, this, [this, matchId, peers]() {
+            if (m_iceWaitingMatchId == matchId)
+                onMatchBegin(matchId, peers);
+        });
+        return;
+    }
+    m_iceWaitingMatchId = 0;
+    m_iceMatchDeadlineMs = 0;
+
     const QString line = QString("Match #%1 starting with %2 player(s)").arg(matchId).arg(peers.size());
     appendChatSystemLine(CHANNEL_LOBBY, line);
     appendChatSystemLine(CHANNEL_ROOM,  line);
@@ -4102,14 +4128,13 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     applyRoomStateBadge("Connecting…", stateHex("connecting", isDarkTheme()));
 
     CoreAddCallbackMessage(CoreDebugMessageType::Info,
-        QString("Rollback lobby MATCH_BEGIN: match=%1 peers=%2 self=%3 roomGame='%4' delay=%5 prediction=%6 anchorPort=%7")
+        QString("Rollback lobby MATCH_BEGIN: match=%1 peers=%2 self=%3 roomGame='%4' delay=%5 prediction=%6 transport=ice")
             .arg(matchId)
             .arg(peers.size())
             .arg(m_client->selfUserId())
             .arg(m_currentRoomGame)
             .arg(m_currentRoomDelay)
             .arg(m_currentRoomPrediction)
-            .arg(m_client->localUdpPort())
             .toUtf8().constData());
 
     const quint64 selfId = m_client->selfUserId();
@@ -4176,37 +4201,17 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         }
     }
 
-    const quint16 localPort = m_client->localUdpPort();
+    const quint16 localPort = 0;
 
     for (const auto& p : peers)
     {
         if (p.userId == selfId)
             continue;
 
-        QString endpointIp = p.publicIp;
-        QString endpointKind = "public";
-
-        if (!local.publicIp.isEmpty() &&
-            !p.publicIp.isEmpty() &&
-            local.publicIp == p.publicIp &&
-            !p.localIp.isEmpty())
-        {
-            endpointIp = p.localIp;
-            endpointKind = "local";
-        }
-
-        const QString selectedLine = QString("Rollback lobby selected endpoint: peerUser=%1 slot=%2 kind=%3 endpoint=%4:%5 localPublic=%6 peerPublic=%7 peerLocal=%8")
-            .arg(p.userId)
-            .arg(p.slot)
-            .arg(endpointKind)
-            .arg(endpointIp)
-            .arg(p.publicPort)
-            .arg(local.publicIp)
-            .arg(p.publicIp)
-            .arg(p.localIp);
+        const QString selectedLine = QString("Rollback lobby selected ICE peer: peerUser=%1 slot=%2")
+            .arg(p.userId).arg(p.slot);
         CoreAddCallbackMessage(CoreDebugMessageType::Info, selectedLine.toUtf8().constData());
-
-        remotePeers << QString("%1,%2,%3").arg(p.slot).arg(endpointIp).arg(p.publicPort);
+        remotePeers << QString("%1,ice,%2").arg(p.slot).arg(p.userId);
     }
 
     if (remotePeers.isEmpty())
@@ -4214,12 +4219,6 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         abortMatchStart("Match start failed: missing remote peer.");
         return;
     }
-
-    // Punch peer NATs from the anchor socket before handing the port to
-    // GekkoNet. Both peers receive MATCH_BEGIN within ~RTT of each other, so
-    // both fire while the other's anchor is still open — opens the NAT
-    // mapping so GekkoNet's first frame doesn't have to eat the handshake.
-    m_client->punchPeerEndpoints(peers);
 
     const QString localRomFile = localRomPathForMd5(m_currentRoomMd5);
     if (localRomFile.isEmpty())
@@ -4238,30 +4237,15 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");
 
-    // n02-style shared transport: lend the live anchor socket to GekkoNet
-    // instead of releasing the port for it to rebind. The port and every
-    // peer's NAT mapping to us survive the match; reclaim happens through the
-    // existing reopenUdpAnchor calls on the match-end paths. Falls back to
-    // the old release/rebind handoff if the descriptor can't be obtained.
-    const qintptr anchorFd = m_client->lendAnchorToMatch();
-    if (anchorFd != -1)
-    {
-        rmgk_gekko::set_external_socket(static_cast<uintptr_t>(anchorFd));
-    }
-    else
-    {
-        rmgk_gekko::clear_external_socket();
-        m_client->releaseUdpAnchor();
-    }
+    rmgk_gekko::clear_external_socket();
 
     {
         char buf[640];
         std::snprintf(buf, sizeof(buf),
-            "Lobby→matchReady (deferred 100ms): game='%s' peers=%d (%s) localPort=%u slot=%d delay=%d pred=%d",
+            "Lobby→matchReady: game='%s' peers=%d (%s) transport=ice slot=%d delay=%d pred=%d",
             m_currentRoomGame.toUtf8().constData(),
             int(remotePeers.size()),
             remotePeers.join("; ").toUtf8().constData(),
-            unsigned(localPort),
             local.slot,
             m_currentRoomDelay,
             m_currentRoomPrediction);
@@ -4273,18 +4257,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // here so the match definitively runs the host-selected model.
     CoreSettingsSetValue(SettingsID::Rollback_PacingMode, m_currentRoomPacing);
 
-    // Defer the emit so the OS finishes releasing the anchor port before
-    // GekkoNet attempts to bind it. 100ms is plenty on Windows for an UDP
-    // socket teardown to complete; without this delay the bind races.
-    const QString gameName  = m_currentRoomGame;
-    const QString romFile   = localRomFile; // resolved above by MD5 — robust for off-database ROMs
-    const int localPortInt  = int(localPort);
-    const int slot          = local.slot;
-    const int delay         = m_currentRoomDelay;
-    const int prediction    = m_currentRoomPrediction;
-    QTimer::singleShot(100, this, [this, gameName, romFile, remotePeers, localPortInt, slot, delay, prediction]() {
-        emit matchReady(gameName, romFile, remotePeers, localPortInt, slot, delay, prediction);
-    });
+    emit matchReady(m_currentRoomGame, localRomFile, remotePeers, int(localPort),
+                    local.slot, m_currentRoomDelay, m_currentRoomPrediction);
 }
 
 #endif // NETPLAY
