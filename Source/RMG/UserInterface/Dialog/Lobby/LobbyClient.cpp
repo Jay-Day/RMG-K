@@ -105,6 +105,12 @@ namespace
     // outlive the echoes of one burst.
     constexpr int PROBE_MATCHED_NONCE_CAP = 64;
 
+    constexpr quint8 ICE_PING_OP_REQUEST = 1;
+    constexpr quint8 ICE_PING_OP_REPLY   = 2;
+    constexpr quint8 ICE_PING_OP_REPORT  = 3;
+    constexpr int ICE_PING_PACKET_SIZE = 1 + int(sizeof(quint64));
+    constexpr int ICE_PING_REPORT_SIZE = 1 + int(sizeof(quint64)) + int(sizeof(quint16));
+
     // How long a learned route stays trusted without fresh inbound traffic.
     // Seated peers refresh it every ~3s via the seat probe loop; 60s tolerates
     // a couple of missed cycles without trusting a mapping the peer's NAT has
@@ -877,6 +883,10 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
     if (m_currentIceRoomId != 0 && m_currentIceRoomId != roomId)
         resetIceMesh();
     m_currentIceRoomId = roomId;
+    const quint64 hostUserId = static_cast<quint64>(roomState.value("hostId").toDouble());
+    if (m_currentIceHostUserId != 0 && m_currentIceHostUserId != hostUserId)
+        m_roomPeerPings.clear();
+    m_currentIceHostUserId = hostUserId;
 
     QSet<quint64> desired;
     for (const QJsonValue& value : roomState.value("players").toArray())
@@ -905,6 +915,9 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
         LobbyIce::remove_peer(userId);
         m_icePeerIds.remove(userId);
         m_lastIceStates.remove(userId);
+        m_roomPeerPings.remove(userId);
+        for (auto it = m_roomPeerPings.begin(); it != m_roomPeerPings.end(); ++it)
+            it.value().remove(userId);
     }
 }
 
@@ -915,6 +928,8 @@ void LobbyClient::resetIceMesh()
     m_icePeerIds.clear();
     m_lastIceStates.clear();
     m_currentIceRoomId = 0;
+    m_currentIceHostUserId = 0;
+    m_roomPeerPings.clear();
     m_pendingProbes.clear();
 }
 
@@ -932,11 +947,33 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
 
 void LobbyClient::sendIcePing(quint64 userId, quint64 nonce)
 {
-    QByteArray payload(1 + int(sizeof(quint64)), Qt::Uninitialized);
-    payload[0] = char(1);
+    QByteArray payload(ICE_PING_PACKET_SIZE, Qt::Uninitialized);
+    payload[0] = char(ICE_PING_OP_REQUEST);
     const quint64 nonceBE = qToBigEndian(nonce);
     std::memcpy(payload.data() + 1, &nonceBE, sizeof(nonceBE));
     LobbyIce::send(userId, LobbyIceChannel::Ping, payload.constData(), size_t(payload.size()));
+}
+
+void LobbyClient::sendRoomPingReport(quint64 targetUserId, int rttMs)
+{
+    // The host already measures all of its own paths. For every non-host pair,
+    // the lower user id is the sole reporter, which makes one sample sufficient
+    // and avoids two clients racing to overwrite the same unordered path.
+    if (m_currentIceHostUserId == 0 || m_currentIceHostUserId == m_selfUserId ||
+        targetUserId == 0 || targetUserId == m_currentIceHostUserId ||
+        m_selfUserId >= targetUserId || !m_icePeerIds.contains(targetUserId))
+    {
+        return;
+    }
+
+    QByteArray payload(ICE_PING_REPORT_SIZE, Qt::Uninitialized);
+    payload[0] = char(ICE_PING_OP_REPORT);
+    const quint64 targetBE = qToBigEndian(targetUserId);
+    const quint16 rttBE = qToBigEndian(static_cast<quint16>(std::clamp(rttMs, 0, 65535)));
+    std::memcpy(payload.data() + 1, &targetBE, sizeof(targetBE));
+    std::memcpy(payload.data() + 1 + sizeof(targetBE), &rttBE, sizeof(rttBE));
+    LobbyIce::send(m_currentIceHostUserId, LobbyIceChannel::Ping,
+                   payload.constData(), size_t(payload.size()));
 }
 
 void LobbyClient::flushIceEvents()
@@ -957,20 +994,48 @@ void LobbyClient::flushIceEvents()
 
     for (const LobbyIcePacket& packet : LobbyIce::take_packets(LobbyIceChannel::Ping))
     {
-        if (packet.data.size() != 1 + sizeof(quint64))
+        if (packet.data.size() == ICE_PING_REPORT_SIZE &&
+            static_cast<quint8>(packet.data[0]) == ICE_PING_OP_REPORT)
+        {
+            quint64 targetBE = 0;
+            quint16 rttBE = 0;
+            std::memcpy(&targetBE, packet.data.data() + 1, sizeof(targetBE));
+            std::memcpy(&rttBE, packet.data.data() + 1 + sizeof(targetBE), sizeof(rttBE));
+            const quint64 targetUserId = qFromBigEndian(targetBE);
+            const int rttMs = int(qFromBigEndian(rttBE));
+
+            // Reports are meaningful only to the room host, from the canonical
+            // lower-id reporter, and for two current non-host room members.
+            if (m_selfUserId == m_currentIceHostUserId &&
+                m_icePeerIds.contains(packet.peerUserId) &&
+                m_icePeerIds.contains(targetUserId) &&
+                packet.peerUserId < targetUserId &&
+                m_roomPeerPings[packet.peerUserId].value(targetUserId, -1) != rttMs)
+            {
+                m_roomPeerPings[packet.peerUserId][targetUserId] = rttMs;
+                writePingDiagnostic(QStringLiteral("ICE_PING_REPORT"),
+                                    QStringLiteral("path=%1<->%2 rtt_ms=%3")
+                                        .arg(pingUserLabel(packet.peerUserId))
+                                        .arg(pingUserLabel(targetUserId)).arg(rttMs));
+                emit roomPingMeasurementsChanged();
+            }
+            continue;
+        }
+
+        if (packet.data.size() != ICE_PING_PACKET_SIZE)
             continue;
         quint64 nonceBE = 0;
         std::memcpy(&nonceBE, packet.data.data() + 1, sizeof(nonceBE));
         const quint64 nonce = qFromBigEndian(nonceBE);
-        if (packet.data[0] == 1)
+        if (static_cast<quint8>(packet.data[0]) == ICE_PING_OP_REQUEST)
         {
             std::vector<char> reply = packet.data;
-            reply[0] = 2;
+            reply[0] = char(ICE_PING_OP_REPLY);
             LobbyIce::send(packet.peerUserId, LobbyIceChannel::Ping,
                            reply.data(), reply.size());
             continue;
         }
-        if (packet.data[0] != 2)
+        if (static_cast<quint8>(packet.data[0]) != ICE_PING_OP_REPLY)
             continue;
         const auto it = m_pendingProbes.find(nonce);
         if (it == m_pendingProbes.end() || it->targetUserId != packet.peerUserId)
@@ -986,6 +1051,7 @@ void LobbyClient::flushIceEvents()
         writePingDiagnostic(QStringLiteral("ICE_PING_REPLY"),
                             QStringLiteral("peer=%1 rtt_ms=%2 rtt_us=%3")
                                 .arg(pingUserLabel(packet.peerUserId)).arg(rttMs).arg(rttUs));
+        sendRoomPingReport(packet.peerUserId, rttMs);
         emit pingProbeMeasured(packet.peerUserId, rttMs);
     }
 
@@ -999,7 +1065,16 @@ void LobbyClient::flushIceEvents()
                             QStringLiteral("peer=%1 state=%2 selected=%3")
                                 .arg(pingUserLabel(userId)).arg(state)
                                 .arg(QString::fromStdString(LobbyIce::peer_selected_addresses(userId))));
-        emit icePeerConnectionChanged(userId, LobbyIce::peer_connected(userId));
+        const bool connected = LobbyIce::peer_connected(userId);
+        emit icePeerConnectionChanged(userId, connected);
+        if (connected && userId == m_currentIceHostUserId)
+        {
+            // A peer-to-peer measurement may have completed before our host
+            // path did. Send any canonical reports now instead of waiting for
+            // the next three-second probe cycle.
+            for (auto it = m_measuredPing.constBegin(); it != m_measuredPing.constEnd(); ++it)
+                sendRoomPingReport(it.key(), it.value());
+        }
     }
 }
 
@@ -2414,6 +2489,48 @@ int LobbyClient::measuredPingMs(quint64 userId) const
 {
     const auto it = m_measuredPing.constFind(userId);
     return it == m_measuredPing.constEnd() ? -1 : it.value();
+}
+
+int LobbyClient::worstRoomPingMs(const QList<quint64>& roomUserIds, bool* complete) const
+{
+    QSet<quint64> uniqueIds;
+    for (quint64 userId : roomUserIds)
+    {
+        if (userId != 0)
+            uniqueIds.insert(userId);
+    }
+    QList<quint64> userIds = uniqueIds.values();
+    std::sort(userIds.begin(), userIds.end());
+
+    bool allMeasured = userIds.size() >= 2;
+    int worst = -1;
+    for (int i = 0; i < userIds.size(); ++i)
+    {
+        for (int j = i + 1; j < userIds.size(); ++j)
+        {
+            const quint64 first = userIds[i];
+            const quint64 second = userIds[j];
+            int ping = -1;
+            if (first == m_selfUserId || second == m_selfUserId)
+            {
+                const quint64 remote = first == m_selfUserId ? second : first;
+                ping = measuredPingMs(remote);
+            }
+            else
+            {
+                ping = m_roomPeerPings.value(first).value(second, -1);
+            }
+
+            if (ping < 0)
+                allMeasured = false;
+            else
+                worst = std::max(worst, ping);
+        }
+    }
+
+    if (complete)
+        *complete = allMeasured;
+    return worst;
 }
 
 bool LobbyClient::allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QString* error) const

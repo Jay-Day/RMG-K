@@ -528,6 +528,8 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::matchPeerLeft,        this, &RollbackLobbyDialog::onMatchPeerLeft);
     connect(m_client, &LobbyClient::icePeerConnectionChanged,
             this, &RollbackLobbyDialog::onIcePeerConnectionChanged);
+    connect(m_client, &LobbyClient::roomPingMeasurementsChanged,
+            this, &RollbackLobbyDialog::onRoomPingMeasurementsChanged);
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
     connect(m_client, &LobbyClient::pingProbeRetrying,    this, &RollbackLobbyDialog::onPingProbeRetrying);
     connect(m_client, &LobbyClient::pingProbeFailed,      this, &RollbackLobbyDialog::onPingProbeFailed);
@@ -2802,8 +2804,8 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
 
     // Every freshly-entered room starts in Auto delay/prediction (the in-room
     // combos default to "Auto", and Create Room no longer surfaces these). This
-    // is what makes a Quick Match host resolve delay from the measured peer ping
-    // during the warmup; the host can still switch to a manual value in-room.
+    // is what makes a Quick Match host resolve delay from the room-wide ping
+    // matrix during the warmup; the host can still switch to a manual value.
     m_delayAuto      = true;
     m_predictionAuto = true;
 
@@ -2828,9 +2830,9 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
         appendChatLine(CHANNEL_ROOM, greetingChatLine);
 
     // Backstop in case ROOM_STATE seats arrive in a shape that didn't trigger a
-    // per-peer probe — kick one sweep shortly after entry so ping shows promptly
-    // and the host's Auto delay resolves before the match begins. Harmless in an
-    // empty room: onPingProbeTick skips self / unseated slots.
+    // per-peer probe — kick one sweep shortly after entry so every client starts
+    // filling the room-wide ping matrix promptly. Harmless in an empty room:
+    // onPingProbeTick skips self / unseated slots.
     QTimer::singleShot(600, this, &RollbackLobbyDialog::onPingProbeTick);
 }
 
@@ -3153,7 +3155,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         m_roomSeatsSeen = true;
     }
 
-    // Start button gating (host-only): waiting, 2+ seated, ping from everyone.
+    // Start button gating (host-only): waiting, 2+ seated, every pair measured.
     refreshStartButton();
 }
 
@@ -3171,21 +3173,19 @@ void RollbackLobbyDialog::refreshStartButton()
     // run contiguously from P1. The core sizes the GekkoNet session by the
     // highest occupied seat and feeds empty ports zeroed input.
     int seated = 0;
-    int peersAwaitingPing = 0;
+    QList<quint64> seatedUserIds;
     for (const auto& s : m_seats)
     {
         if (s.userId == 0)
             continue;
         ++seated;
-        // We never ping ourselves; every *other* seated player needs a measured
-        // ping before the host may start, so the match opens on real latency
-        // (and the Auto frame-delay has resolved from it).
-        if (s.userId != selfId && m_client && m_client->measuredPingMs(s.userId) < 0)
-            ++peersAwaitingPing;
+        seatedUserIds.append(s.userId);
     }
 
     const bool enoughPlayers = seated >= 2;
-    const bool pingsReady    = (peersAwaitingPing == 0);
+    bool pingsReady = false;
+    if (m_client)
+        m_client->worstRoomPingMs(seatedUserIds, &pingsReady);
     const bool canStart      = iAmHost && waiting && enoughPlayers && pingsReady;
 
     m_startBtn->setEnabled(canStart);
@@ -3193,7 +3193,7 @@ void RollbackLobbyDialog::refreshStartButton()
         !iAmHost         ? QStringLiteral("Only the host can start the game.")
         : !waiting       ? QStringLiteral("Already in a match.")
         : !enoughPlayers ? QStringLiteral("Need at least 2 players to start.")
-        : !pingsReady    ? QStringLiteral("Measuring ping to all players…")
+        : !pingsReady    ? QStringLiteral("Measuring every player-to-player path…")
                          : QString());
 }
 
@@ -3379,6 +3379,15 @@ void RollbackLobbyDialog::onIcePeerConnectionChanged(quint64 userId, bool connec
         m_client->requestPingProbe(userId);
 }
 
+void RollbackLobbyDialog::onRoomPingMeasurementsChanged()
+{
+    // Only the host receives non-host path reports. A fresh report can both
+    // change Auto delay and complete the matrix required to enable Start.
+    if (m_delayAuto)
+        applyHostRoomSettings(false);
+    refreshStartButton();
+}
+
 void RollbackLobbyDialog::onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts)
 {
     // Retry progress is first-contact feedback. Once a seat has a number the
@@ -3471,19 +3480,16 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
     }
 }
 
-int RollbackLobbyDialog::worstSeatPingMs() const
+int RollbackLobbyDialog::worstRoomPingMs() const
 {
     if (!m_client) return -1;
-    const quint64 selfId = m_client->selfUserId();
-    int worst = -1;
+    QList<quint64> userIds;
     for (const auto& s : m_seats)
     {
-        if (s.userId == 0 || s.userId == selfId)
-            continue;
-        const int p = m_client->measuredPingMs(s.userId);
-        if (p > worst) worst = p; // tune against the worst host↔peer link
+        if (s.userId != 0)
+            userIds.append(s.userId);
     }
-    return worst;
+    return m_client->worstRoomPingMs(userIds);
 }
 
 void RollbackLobbyDialog::applyHostRoomSettings(bool force)
@@ -3496,7 +3502,7 @@ void RollbackLobbyDialog::applyHostRoomSettings(bool force)
         return;
 
     const int effDelay = m_delayAuto
-        ? autoFrameDelayForPing(worstSeatPingMs())
+        ? autoFrameDelayForPing(worstRoomPingMs())
         : m_delayCombo->currentData().toInt();
     const int effPred = m_predictionAuto
         ? kAutoPredictionWindow
@@ -4132,7 +4138,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         QString delayMsg;
         if (m_delayAuto)
         {
-            const int worst = worstSeatPingMs();
+            const int worst = worstRoomPingMs();
             delayMsg = worst >= 0
                 ? QStringLiteral("Frame delay: %1 (auto, from %2 ms ping) · prediction %3")
                       .arg(m_currentRoomDelay).arg(worst).arg(m_currentRoomPrediction)

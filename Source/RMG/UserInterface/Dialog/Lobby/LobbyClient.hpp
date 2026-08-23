@@ -162,6 +162,11 @@ public:
     // we sent comes back.
     int measuredPingMs(quint64 userId) const;
 
+    // Worst measured RTT across every unordered pair in `roomUserIds`.
+    // Host-local paths come from our probes; non-host paths are reported to
+    // the host over ICE. `complete` is true only when every pair is known.
+    int worstRoomPingMs(const QList<quint64>& roomUserIds, bool* complete = nullptr) const;
+
     // True when every remote in this match has negotiated a direct ICE path.
     // error describes unsupported clients or the first incomplete peer.
     bool allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QString* error = nullptr) const;
@@ -255,6 +260,8 @@ signals:
     // Emitted whenever libjuice advances a peer's ICE state. `connected` is
     // true only while a validated direct candidate pair is usable.
     void icePeerConnectionChanged(quint64 targetUserId, bool connected);
+    // The host received a fresh RTT for a path between two other players.
+    void roomPingMeasurementsChanged();
     // A burst went unanswered and we're sending another. `attempt` is 1-based
     // and counts the one now in flight. Surfaced in the room so a slow punch
     // reads as progress rather than a hang.
@@ -325,6 +332,7 @@ private:
     void resetIceMesh();
     void flushIceEvents();
     void sendIcePing(quint64 userId, quint64 nonce);
+    void sendRoomPingReport(quint64 targetUserId, int rttMs);
     // Start a probe series to `endpoint`. Shared by the reply and incoming
     // paths. No-op if a probe to that peer is already in flight.
     void sendProbeTo(quint64 userId, const QString& endpoint);
@@ -415,8 +423,12 @@ private:
     QString m_region;
     bool    m_isModerator = false; // set once ADMIN_AUTH_OK is received
     quint64 m_currentIceRoomId = 0;
+    quint64 m_currentIceHostUserId = 0;
     QSet<quint64> m_icePeerIds;
     QHash<quint64, int> m_lastIceStates;
+    // Host-only matrix for non-host paths. To avoid duplicate reports, only
+    // the lower user id measures/reports each unordered pair.
+    QHash<quint64, QHash<quint64, int>> m_roomPeerPings;
 
     // Ping diagnostics (see startPingDiagnosticLog).
     QFile*  m_pingDiagnosticFile    = nullptr;

@@ -170,6 +170,7 @@ private slots:
     // Punch progress for a seated peer, so a slow or failing NAT punch is
     // visible in the room rather than looking like a stalled Start button.
     void onIcePeerConnectionChanged(quint64 userId, bool connected);
+    void onRoomPingMeasurementsChanged();
     void onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts);
     void onPingProbeFailed(quint64 userId);
     // First consecutive miss on a peer we've measured before — treat as
@@ -235,10 +236,9 @@ private:
     void    updateServerMeta();
     void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
 
-    // Host-only auto delay/prediction. worstSeatPingMs() = max measured RTT
-    // over seated peers (-1 if none). applyHostRoomSettings() resolves the
-    // Auto selections and pushes the concrete values via the lobby client.
-    int     worstSeatPingMs() const;
+    // Host-only auto delay/prediction. worstRoomPingMs() includes every direct
+    // player pair in the ICE mesh, not only host-to-peer paths.
+    int     worstRoomPingMs() const;
     void    applyHostRoomSettings(bool force);
 
     // Broadcaster lifecycle. startBroadcast arms the n02 recording sink + drain
