@@ -930,10 +930,10 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
                                    data.value("value").toString().toStdString());
 }
 
-void LobbyClient::sendIcePing(quint64 userId, quint64 nonce, bool reply)
+void LobbyClient::sendIcePing(quint64 userId, quint64 nonce)
 {
     QByteArray payload(1 + int(sizeof(quint64)), Qt::Uninitialized);
-    payload[0] = reply ? char(2) : char(1);
+    payload[0] = char(1);
     const quint64 nonceBE = qToBigEndian(nonce);
     std::memcpy(payload.data() + 1, &nonceBE, sizeof(nonceBE));
     LobbyIce::send(userId, LobbyIceChannel::Ping, payload.constData(), size_t(payload.size()));
@@ -964,7 +964,10 @@ void LobbyClient::flushIceEvents()
         const quint64 nonce = qFromBigEndian(nonceBE);
         if (packet.data[0] == 1)
         {
-            sendIcePing(packet.peerUserId, nonce, true);
+            std::vector<char> reply = packet.data;
+            reply[0] = 2;
+            LobbyIce::send(packet.peerUserId, LobbyIceChannel::Ping,
+                           reply.data(), reply.size());
             continue;
         }
         if (packet.data[0] != 2)
@@ -972,13 +975,17 @@ void LobbyClient::flushIceEvents()
         const auto it = m_pendingProbes.find(nonce);
         if (it == m_pendingProbes.end() || it->targetUserId != packet.peerUserId)
             continue;
-        const int rttMs = int(std::clamp<qint64>(
-            QDateTime::currentMSecsSinceEpoch() - it->attemptSendMs, 0, 65535));
+        const qint64 rttUs = packet.roundTripUs == 0 ? -1 : qint64(packet.roundTripUs);
+        const int rttMs = rttUs >= 0
+            ? int(std::clamp<qint64>((rttUs + 500) / 1000, 0, 65535))
+            : int(std::clamp<qint64>(
+                  QDateTime::currentMSecsSinceEpoch() - it->attemptSendMs, 0, 65535));
         m_pendingProbes.erase(it);
         m_probeFailStreak[packet.peerUserId] = 0;
         m_measuredPing[packet.peerUserId] = rttMs;
         writePingDiagnostic(QStringLiteral("ICE_PING_REPLY"),
-                            QStringLiteral("peer=%1 rtt_ms=%2").arg(pingUserLabel(packet.peerUserId)).arg(rttMs));
+                            QStringLiteral("peer=%1 rtt_ms=%2 rtt_us=%3")
+                                .arg(pingUserLabel(packet.peerUserId)).arg(rttMs).arg(rttUs));
         emit pingProbeMeasured(packet.peerUserId, rttMs);
     }
 
@@ -1299,7 +1306,7 @@ void LobbyClient::onProbeRetryTimer()
         it->attempt      += 1;
         it->attemptSendMs = nowMs;
         it->nextAttemptMs = nowMs + PROBE_RETRY_INTERVAL_MS;
-        sendIcePing(it->targetUserId, it.key(), false);
+        sendIcePing(it->targetUserId, it.key());
         writePingDiagnostic(QStringLiteral("PROBE_RETRY"),
                             QStringLiteral("peer=%1 transport=ice nonce=%2 attempt=%3/%4")
                                 .arg(pingUserLabel(it->targetUserId))
@@ -2590,7 +2597,7 @@ void LobbyClient::requestPingProbe(quint64 targetUserId)
     probe.attemptSendMs = nowMs;
     probe.nextAttemptMs = nowMs + PROBE_RETRY_INTERVAL_MS;
     m_pendingProbes.insert(nonce, probe);
-    sendIcePing(targetUserId, nonce, false);
+    sendIcePing(targetUserId, nonce);
     writePingDiagnostic(QStringLiteral("PROBE_REQUEST"),
                         QStringLiteral("peer=%1 transport=ice nonce=%2")
                             .arg(pingUserLabel(targetUserId)).arg(nonce));

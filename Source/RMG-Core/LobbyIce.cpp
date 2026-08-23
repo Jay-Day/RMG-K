@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <map>
 #include <memory>
@@ -25,6 +26,8 @@ struct Peer
     std::mutex agentMutex;
     std::atomic<LobbyIcePeerState> state{LobbyIcePeerState::Disconnected};
     std::atomic<bool> active{true};
+    std::mutex pingMutex;
+    std::map<std::uint64_t, std::uint64_t> pingSentAtUs;
     bool hasRemoteDescription = false;
     bool remoteGatheringDone = false;
     std::vector<std::string> pendingCandidates;
@@ -34,6 +37,7 @@ struct QueuedPacket
 {
     std::uint64_t peerUserId = 0;
     LobbyIceChannel channel = LobbyIceChannel::Gekko;
+    std::uint64_t roundTripUs = 0;
     std::vector<char> data;
 };
 
@@ -52,6 +56,20 @@ std::map<std::uint64_t, std::shared_ptr<Peer>> g_peers;
 std::map<std::uint64_t, std::vector<PendingRemoteSignal>> g_pendingRemoteSignals;
 std::deque<LobbyIceSignal> g_localSignals;
 std::deque<QueuedPacket> g_packets;
+
+std::uint64_t steady_now_us()
+{
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+std::uint64_t read_be_u64(const char* data)
+{
+    std::uint64_t value = 0;
+    for (int i = 0; i < 8; ++i)
+        value = (value << 8) | static_cast<unsigned char>(data[i]);
+    return value;
+}
 
 LobbyIcePeerState translate_state(juice_state_t state)
 {
@@ -98,7 +116,7 @@ void on_gathering_done(juice_agent_t*, void* userPtr)
     g_localSignals.push_back({peer->userId, "gathering_done", {}});
 }
 
-void on_recv(juice_agent_t*, const char* data, size_t size, void* userPtr)
+void on_recv(juice_agent_t* agent, const char* data, size_t size, void* userPtr)
 {
     auto* peer = static_cast<Peer*>(userPtr);
     if (peer == nullptr || data == nullptr || size < 1 ||
@@ -114,9 +132,36 @@ void on_recv(juice_agent_t*, const char* data, size_t size, void* userPtr)
         return;
     }
 
+    // Ping payload: request/reply byte plus nonce. Echo requests directly from
+    // libjuice's receive callback so the 25 ms Qt queue-poll interval is not
+    // counted as network latency. The send timestamp is tracked privately per
+    // peer, keeping the on-wire packet compatible with the first ICE client.
+    if (channel == LobbyIceChannel::Ping && size == 10 && data[1] == 1)
+    {
+        std::vector<char> reply(data, data + size);
+        reply[1] = 2;
+        if (juice_send(agent, reply.data(), reply.size()) == JUICE_ERR_SUCCESS)
+            return;
+        // If the immediate send ever fails, queue it for the existing UI-side
+        // fallback and normal retry machinery.
+    }
+
     QueuedPacket packet;
     packet.peerUserId = peer->userId;
     packet.channel = channel;
+    if (channel == LobbyIceChannel::Ping && size == 10 && data[1] == 2)
+    {
+        const std::uint64_t nonce = read_be_u64(data + 2);
+        const std::uint64_t receivedAtUs = steady_now_us();
+        std::lock_guard<std::mutex> pingLock(peer->pingMutex);
+        const auto it = peer->pingSentAtUs.find(nonce);
+        if (it != peer->pingSentAtUs.end())
+        {
+            if (receivedAtUs >= it->second)
+                packet.roundTripUs = receivedAtUs - it->second;
+            peer->pingSentAtUs.erase(it);
+        }
+    }
     packet.data.assign(data + 1, data + size);
     std::lock_guard<std::mutex> lock(g_mutex);
     g_packets.push_back(std::move(packet));
@@ -428,8 +473,32 @@ bool LobbyIce::send(std::uint64_t peerUserId, LobbyIceChannel channel,
         std::copy_n(data, size, framed.data() + 1);
     }
     std::lock_guard<std::mutex> agentLock(peer->agentMutex);
-    return peer->agent != nullptr && peer->active.load(std::memory_order_relaxed) &&
-        juice_send(peer->agent, framed.data(), framed.size()) == JUICE_ERR_SUCCESS;
+    if (peer->agent == nullptr || !peer->active.load(std::memory_order_relaxed))
+        return false;
+
+    std::uint64_t pingNonce = 0;
+    std::uint64_t pingSentAtUs = 0;
+    if (channel == LobbyIceChannel::Ping && size == 9 && framed[1] == 1)
+    {
+        pingNonce = read_be_u64(framed.data() + 2);
+        pingSentAtUs = steady_now_us();
+        std::lock_guard<std::mutex> pingLock(peer->pingMutex);
+        const std::uint64_t cutoffUs = pingSentAtUs > 60'000'000
+            ? pingSentAtUs - 60'000'000 : 0;
+        std::erase_if(peer->pingSentAtUs, [cutoffUs](const auto& entry) {
+            return entry.second < cutoffUs;
+        });
+        peer->pingSentAtUs[pingNonce] = pingSentAtUs;
+    }
+    const bool sent = juice_send(peer->agent, framed.data(), framed.size()) == JUICE_ERR_SUCCESS;
+    if (!sent && pingSentAtUs != 0)
+    {
+        std::lock_guard<std::mutex> pingLock(peer->pingMutex);
+        const auto it = peer->pingSentAtUs.find(pingNonce);
+        if (it != peer->pingSentAtUs.end() && it->second == pingSentAtUs)
+            peer->pingSentAtUs.erase(it);
+    }
+    return sent;
 }
 
 std::vector<LobbyIcePacket> LobbyIce::take_packets(LobbyIceChannel channel)
@@ -440,7 +509,7 @@ std::vector<LobbyIcePacket> LobbyIce::take_packets(LobbyIceChannel channel)
     {
         if (it->channel == channel)
         {
-            out.push_back({it->peerUserId, std::move(it->data)});
+            out.push_back({it->peerUserId, it->roundTripUs, std::move(it->data)});
             it = g_packets.erase(it);
         }
         else

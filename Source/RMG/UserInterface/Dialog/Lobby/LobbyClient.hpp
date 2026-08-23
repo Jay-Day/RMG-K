@@ -321,7 +321,7 @@ private:
     void reconcileIcePeers(const QJsonObject& roomState);
     void resetIceMesh();
     void flushIceEvents();
-    void sendIcePing(quint64 userId, quint64 nonce, bool reply);
+    void sendIcePing(quint64 userId, quint64 nonce);
     // Start a probe series to `endpoint`. Shared by the reply and incoming
     // paths. No-op if a probe to that peer is already in flight.
     void sendProbeTo(quint64 userId, const QString& endpoint);

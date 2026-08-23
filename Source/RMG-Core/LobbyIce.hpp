@@ -48,6 +48,9 @@ struct LobbyIceSignal
 struct LobbyIcePacket
 {
     std::uint64_t peerUserId = 0;
+    // Monotonic RTT measured inside the libjuice transport. Zero means this
+    // packet was not a locally tracked ping reply.
+    std::uint64_t roundTripUs = 0;
     std::vector<char> data;
 };
 
