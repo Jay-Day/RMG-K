@@ -258,8 +258,9 @@ signals:
     void pingProbeReply(quint64 targetUserId, const QString& endpoint);
     void pingProbeMeasured(quint64 targetUserId, int rttMs);
     // Emitted whenever libjuice advances a peer's ICE state. `connected` is
-    // true only while a validated direct candidate pair is usable.
-    void icePeerConnectionChanged(quint64 targetUserId, bool connected);
+    // true only while a validated direct candidate pair is usable; `failed`
+    // distinguishes an exhausted ICE attempt from one still in progress.
+    void icePeerConnectionChanged(quint64 targetUserId, bool connected, bool failed);
     // The host received a fresh RTT for a path between two other players.
     void roomPingMeasurementsChanged();
     // A burst went unanswered and we're sending another. `attempt` is 1-based

@@ -1164,7 +1164,8 @@ void LobbyClient::flushIceEvents()
                                 .arg(pingUserLabel(userId)).arg(state).arg(iceStateName(state))
                                 .arg(QString::fromStdString(LobbyIce::peer_selected_addresses(userId))));
         const bool connected = LobbyIce::peer_connected(userId);
-        emit icePeerConnectionChanged(userId, connected);
+        const bool failed = state == static_cast<int>(LobbyIcePeerState::Failed);
+        emit icePeerConnectionChanged(userId, connected, failed);
         if (connected && userId == m_currentIceHostUserId)
         {
             // A peer-to-peer measurement may have completed before our host

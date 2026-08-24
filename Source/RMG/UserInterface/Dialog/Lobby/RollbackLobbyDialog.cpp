@@ -320,6 +320,13 @@ namespace
                    .arg(c.wait);
     }
 
+    QString seatIceFailedStatusHtml()
+    {
+        const auto c = statusColors();
+        return QString("<span style='color:%1; font-weight:600;'>connection failed</span>")
+                   .arg(c.fail);
+    }
+
     // A translucent fill derived from a solid hex — used for the soft pill /
     // badge backgrounds so an accent reads gently over palette(window/base).
     QString tintRgba(const QString& hex, double alpha)
@@ -3365,15 +3372,20 @@ void RollbackLobbyDialog::refreshSeatMeta(quint64 userId, const QString& statusH
     }
 }
 
-void RollbackLobbyDialog::onIcePeerConnectionChanged(quint64 userId, bool connected)
+void RollbackLobbyDialog::onIcePeerConnectionChanged(quint64 userId, bool connected, bool failed)
 {
     if (!m_client || userId == m_client->selfUserId())
         return;
 
-    // Keep the connection progress visible until the first RTT replaces it.
+    // Keep connection progress visible until the first RTT replaces it, but
+    // do not leave a peer looking busy after ICE has exhausted every pair.
+    // Failure supersedes a cached RTT because that old measurement no longer
+    // represents a usable direct connection.
+    if (failed)
+        refreshSeatMeta(userId, seatIceFailedStatusHtml());
     // Once ICE connects, probe immediately rather than waiting up to three
     // seconds for the periodic refresh timer.
-    if (m_client->measuredPingMs(userId) < 0)
+    else if (m_client->measuredPingMs(userId) < 0)
         refreshSeatMeta(userId, seatIceStatusHtml());
     if (connected)
         m_client->requestPingProbe(userId);
