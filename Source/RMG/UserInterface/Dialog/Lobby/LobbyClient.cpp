@@ -48,6 +48,7 @@
 #include <QEvent>
 #include <QFile>
 #include <QDir>
+#include <QRegularExpression>
 #include <cstring>
 #include <algorithm>
 #include <filesystem>
@@ -110,6 +111,46 @@ namespace
     constexpr quint8 ICE_PING_OP_REPORT  = 3;
     constexpr int ICE_PING_PACKET_SIZE = 1 + int(sizeof(quint64));
     constexpr int ICE_PING_REPORT_SIZE = 1 + int(sizeof(quint64)) + int(sizeof(quint16));
+
+    QString iceStateName(int state)
+    {
+        switch (static_cast<LobbyIcePeerState>(state))
+        {
+        case LobbyIcePeerState::Disconnected: return QStringLiteral("disconnected");
+        case LobbyIcePeerState::Gathering: return QStringLiteral("gathering");
+        case LobbyIcePeerState::Connecting: return QStringLiteral("connecting");
+        case LobbyIcePeerState::Connected: return QStringLiteral("connected");
+        case LobbyIcePeerState::Completed: return QStringLiteral("completed");
+        case LobbyIcePeerState::Failed: return QStringLiteral("failed");
+        }
+        return QStringLiteral("unknown");
+    }
+
+    QString iceSignalSummary(const QString& kind, const QString& value)
+    {
+        if (kind == QStringLiteral("candidate"))
+            return QStringLiteral("candidate=%1").arg(value.trimmed());
+        if (kind == QStringLiteral("description"))
+        {
+            const int candidates = value.count(QStringLiteral("candidate:"), Qt::CaseInsensitive);
+            return QStringLiteral("bytes=%1 embedded_candidates=%2 credentials=<redacted>")
+                .arg(value.toUtf8().size()).arg(candidates);
+        }
+        if (kind == QStringLiteral("gathering_done"))
+            return QStringLiteral("complete=true");
+        return QStringLiteral("bytes=%1").arg(value.toUtf8().size());
+    }
+
+    QString redactLibjuiceMessage(QString message)
+    {
+        // DEBUG messages can contain short-lived ICE credentials. They are not
+        // useful for diagnosis and should not survive in a shareable log.
+        static const QRegularExpression secret(
+            QStringLiteral(R"((ufrag|pwd|password|username|expected|actual)=\"[^\"]*\")"),
+            QRegularExpression::CaseInsensitiveOption);
+        message.replace(secret, QStringLiteral("\\1=\"<redacted>\""));
+        return message;
+    }
 
     // How long a learned route stays trusted without fresh inbound traffic.
     // Seated peers refresh it every ~3s via the seat probe loop; 60s tolerates
@@ -731,6 +772,8 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
         if (!server.host.empty() && server.port != 0)
             turnServers.push_back(std::move(server));
     }
+    const bool iceDiagnostics = CoreSettingsGetBoolValue(SettingsID::Rollback_PingDiagnostics);
+    LobbyIce::set_diagnostics_enabled(iceDiagnostics);
     if (!LobbyIce::configure(m_selfUserId, stunHost, stunPort, turnServers))
     {
         emit connectError(QStringLiteral("Failed to initialize ICE transport."));
@@ -758,6 +801,19 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
                         QStringLiteral("observed_ip=%1 region=%2 anchor=%3:%4")
                             .arg(m_observedIp, m_region, m_udpAnchorHost)
                             .arg(m_udpAnchorPort));
+    QStringList turnEndpoints;
+    for (const LobbyIceTurnServer& server : turnServers)
+    {
+        turnEndpoints.append(QStringLiteral("%1:%2")
+                                 .arg(QString::fromStdString(server.host))
+                                 .arg(server.port));
+    }
+    writePingDiagnostic(QStringLiteral("ICE_CONFIG"),
+                        QStringLiteral("stun=%1:%2 turn_count=%3 turn=%4 libjuice_level=debug")
+                            .arg(QString::fromStdString(stunHost)).arg(stunPort)
+                            .arg(static_cast<qulonglong>(turnServers.size()))
+                            .arg(turnEndpoints.isEmpty() ? QStringLiteral("<none>")
+                                                         : turnEndpoints.join(QLatin1Char(','))));
 
     setState(ConnectionState::Connected);
     m_heartbeatTimer->start();
@@ -901,17 +957,30 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
             continue;
         }
         desired.insert(userId);
-        if (!m_icePeerIds.contains(userId) && LobbyIce::add_peer(userId))
+        if (!m_icePeerIds.contains(userId))
         {
-            m_icePeerIds.insert(userId);
-            writePingDiagnostic(QStringLiteral("ICE_PEER_ADDED"),
-                                QStringLiteral("peer=%1 room=%2").arg(pingUserLabel(userId)).arg(roomId));
+            if (LobbyIce::add_peer(userId))
+            {
+                m_icePeerIds.insert(userId);
+                writePingDiagnostic(QStringLiteral("ICE_PEER_ADDED"),
+                                    QStringLiteral("peer=%1 room=%2")
+                                        .arg(pingUserLabel(userId)).arg(roomId));
+            }
+            else
+            {
+                writePingDiagnostic(QStringLiteral("ICE_PEER_ADD_FAILED"),
+                                    QStringLiteral("peer=%1 room=%2")
+                                        .arg(pingUserLabel(userId)).arg(roomId));
+            }
         }
     }
 
     const QSet<quint64> stale = m_icePeerIds - desired;
     for (quint64 userId : stale)
     {
+        writePingDiagnostic(QStringLiteral("ICE_PEER_REMOVED"),
+                            QStringLiteral("peer=%1 room=%2 reason=not_in_room_state")
+                                .arg(pingUserLabel(userId)).arg(roomId));
         LobbyIce::remove_peer(userId);
         m_icePeerIds.remove(userId);
         m_lastIceStates.remove(userId);
@@ -940,9 +1009,22 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
     const QString kind = data.value("kind").toString();
     if (roomId == 0 || roomId != m_currentIceRoomId || fromUserId == 0 ||
         fromUserId == m_selfUserId)
+    {
+        writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN_DROPPED"),
+                            QStringLiteral("from_user=%1 signal_room=%2 current_room=%3 kind=%4 reason=scope_validation")
+                                .arg(fromUserId).arg(roomId).arg(m_currentIceRoomId).arg(kind));
         return;
-    LobbyIce::handle_remote_signal(fromUserId, kind.toStdString(),
-                                   data.value("value").toString().toStdString());
+    }
+    const QString value = data.value("value").toString();
+    const bool hadPeer = LobbyIce::has_peer(fromUserId);
+    const bool accepted = LobbyIce::handle_remote_signal(fromUserId, kind.toStdString(),
+                                                         value.toStdString());
+    writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN"),
+                        QStringLiteral("peer=%1 room=%2 kind=%3 disposition=%4 accepted=%5 %6")
+                            .arg(pingUserLabel(fromUserId)).arg(roomId).arg(kind)
+                            .arg(hadPeer ? QStringLiteral("applied") : QStringLiteral("queued"))
+                            .arg(accepted ? QStringLiteral("true") : QStringLiteral("false"))
+                            .arg(iceSignalSummary(kind, value)));
 }
 
 void LobbyClient::sendIcePing(quint64 userId, quint64 nonce)
@@ -978,6 +1060,15 @@ void LobbyClient::sendRoomPingReport(quint64 targetUserId, int rttMs)
 
 void LobbyClient::flushIceEvents()
 {
+    for (LobbyIceDiagnostic& diagnostic : LobbyIce::take_diagnostics())
+    {
+        writePingDiagnostic(QStringLiteral("LIBJUICE"),
+                            QStringLiteral("level=%1 message=%2")
+                                .arg(QString::fromStdString(diagnostic.level),
+                                     redactLibjuiceMessage(
+                                         QString::fromStdString(diagnostic.message))));
+    }
+
     if (m_ws && m_ws->state() == QAbstractSocket::ConnectedState && m_currentIceRoomId != 0)
     {
         for (LobbyIceSignal& signal : LobbyIce::take_local_signals())
@@ -988,6 +1079,13 @@ void LobbyClient::flushIceEvents()
             data["kind"] = QString::fromStdString(signal.kind);
             if (!signal.value.empty())
                 data["value"] = QString::fromStdString(signal.value);
+            const QString kind = QString::fromStdString(signal.kind);
+            const QString value = QString::fromStdString(signal.value);
+            writePingDiagnostic(QStringLiteral("ICE_SIGNAL_OUT"),
+                                QStringLiteral("peer=%1 room=%2 kind=%3 %4")
+                                    .arg(pingUserLabel(signal.peerUserId))
+                                    .arg(m_currentIceRoomId).arg(kind)
+                                    .arg(iceSignalSummary(kind, value)));
             sendEnvelope("ICE_SIGNAL", data);
         }
     }
@@ -1062,8 +1160,8 @@ void LobbyClient::flushIceEvents()
             continue;
         m_lastIceStates[userId] = state;
         writePingDiagnostic(QStringLiteral("ICE_STATE"),
-                            QStringLiteral("peer=%1 state=%2 selected=%3")
-                                .arg(pingUserLabel(userId)).arg(state)
+                            QStringLiteral("peer=%1 state=%2 state_name=%3 selected=%4")
+                                .arg(pingUserLabel(userId)).arg(state).arg(iceStateName(state))
                                 .arg(QString::fromStdString(LobbyIce::peer_selected_addresses(userId))));
         const bool connected = LobbyIce::peer_connected(userId);
         emit icePeerConnectionChanged(userId, connected);

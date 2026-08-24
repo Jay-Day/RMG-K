@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <utility>
 
 namespace
@@ -56,6 +57,10 @@ std::map<std::uint64_t, std::shared_ptr<Peer>> g_peers;
 std::map<std::uint64_t, std::vector<PendingRemoteSignal>> g_pendingRemoteSignals;
 std::deque<LobbyIceSignal> g_localSignals;
 std::deque<QueuedPacket> g_packets;
+std::atomic<bool> g_diagnosticsEnabled{false};
+std::vector<LobbyIceDiagnostic> g_diagnostics;
+std::size_t g_diagnosticsDropped = 0;
+constexpr std::size_t DIAGNOSTIC_QUEUE_CAP = 4096;
 
 std::uint64_t steady_now_us()
 {
@@ -69,6 +74,45 @@ std::uint64_t read_be_u64(const char* data)
     for (int i = 0; i < 8; ++i)
         value = (value << 8) | static_cast<unsigned char>(data[i]);
     return value;
+}
+
+const char* diagnostic_level_name(juice_log_level_t level)
+{
+    switch (level)
+    {
+    case JUICE_LOG_LEVEL_VERBOSE: return "verbose";
+    case JUICE_LOG_LEVEL_DEBUG: return "debug";
+    case JUICE_LOG_LEVEL_INFO: return "info";
+    case JUICE_LOG_LEVEL_WARN: return "warn";
+    case JUICE_LOG_LEVEL_ERROR: return "error";
+    case JUICE_LOG_LEVEL_FATAL: return "fatal";
+    case JUICE_LOG_LEVEL_NONE:
+    default: return "unknown";
+    }
+}
+
+void on_libjuice_log(juice_log_level_t level, const char* message)
+{
+    if (!g_diagnosticsEnabled.load(std::memory_order_relaxed) || message == nullptr)
+        return;
+
+    // DEBUG otherwise emits two lines for every gameplay datagram. Those say
+    // only that application traffic arrived, add no ICE diagnostic value, and
+    // would make an opt-in connection trace enormous during a match.
+    const std::string_view text(message);
+    if (text.find("Received non-STUN datagram") != std::string_view::npos ||
+        text.find("Received application datagram") != std::string_view::npos)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_diagnostics.size() >= DIAGNOSTIC_QUEUE_CAP)
+    {
+        ++g_diagnosticsDropped;
+        return;
+    }
+    g_diagnostics.push_back({diagnostic_level_name(level), message});
 }
 
 LobbyIcePeerState translate_state(juice_state_t state)
@@ -225,6 +269,42 @@ bool apply_remote_signal(const std::shared_ptr<Peer>& peer,
     return false;
 }
 } // namespace
+
+void LobbyIce::set_diagnostics_enabled(bool enabled)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_diagnostics.clear();
+        g_diagnosticsDropped = 0;
+    }
+    g_diagnosticsEnabled.store(enabled, std::memory_order_relaxed);
+    if (enabled)
+    {
+        juice_set_log_handler(on_libjuice_log);
+        // DEBUG captures candidate gathering, STUN binding, pair checks, role
+        // conflicts, and timeouts without VERBOSE's per-datagram chatter.
+        juice_set_log_level(JUICE_LOG_LEVEL_DEBUG);
+    }
+    else
+    {
+        juice_set_log_level(JUICE_LOG_LEVEL_WARN);
+        juice_set_log_handler(nullptr);
+    }
+}
+
+std::vector<LobbyIceDiagnostic> LobbyIce::take_diagnostics()
+{
+    std::vector<LobbyIceDiagnostic> out;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    out.swap(g_diagnostics);
+    if (g_diagnosticsDropped != 0)
+    {
+        out.push_back({"warn", "Diagnostic queue overflow: " +
+            std::to_string(g_diagnosticsDropped) + " libjuice messages dropped"});
+        g_diagnosticsDropped = 0;
+    }
+    return out;
+}
 
 bool LobbyIce::configure(std::uint64_t localUserId,
     const std::string& stunHost, std::uint16_t stunPort,

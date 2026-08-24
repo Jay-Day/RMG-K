@@ -346,8 +346,8 @@ private:
     // where an aged-out series says nothing about the peer.
     void cancelPendingProbes(const QString& reason);
 
-    // Opt-in on-disk trace of the whole probe pipeline, for diagnosing peer
-    // pings that never resolve. Off unless Rollback_PingDiagnostics is set;
+    // Opt-in on-disk trace of the probe and ICE pipelines, for diagnosing peer
+    // connections that never resolve. Off unless PingDiagnostics is set;
     // read once at connect time so toggling it mid-session does nothing until
     // the next lobby connect. One file per connection, in RMG-K's Logs folder.
     void startPingDiagnosticLog();

@@ -54,11 +54,22 @@ struct LobbyIcePacket
     std::vector<char> data;
 };
 
+struct LobbyIceDiagnostic
+{
+    std::string level;
+    std::string message;
+};
+
 // Process-wide room ICE mesh. Lobby signaling calls this API from the Qt UI
 // thread; GekkoNet consumes the same agents from the emulation thread.
 class LobbyIce
 {
   public:
+    // Route libjuice's native debug stream into a thread-safe queue consumed
+    // by the opt-in lobby diagnostics file.
+    static CORE_EXPORT void set_diagnostics_enabled(bool enabled);
+    static CORE_EXPORT std::vector<LobbyIceDiagnostic> take_diagnostics();
+
     static CORE_EXPORT bool configure(std::uint64_t localUserId,
         const std::string& stunHost, std::uint16_t stunPort,
         const std::vector<LobbyIceTurnServer>& turnServers = {});
