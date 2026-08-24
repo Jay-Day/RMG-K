@@ -101,7 +101,9 @@ void on_libjuice_log(juice_log_level_t level, const char* message)
     // would make an opt-in connection trace enormous during a match.
     const std::string_view text(message);
     if (text.find("Received non-STUN datagram") != std::string_view::npos ||
-        text.find("Received application datagram") != std::string_view::npos)
+        text.find("Received application datagram") != std::string_view::npos ||
+        text.find("STUN selected entry matching incoming address") != std::string_view::npos ||
+        text.find("STUN selected entry matching incoming relayed address") != std::string_view::npos)
     {
         return;
     }
