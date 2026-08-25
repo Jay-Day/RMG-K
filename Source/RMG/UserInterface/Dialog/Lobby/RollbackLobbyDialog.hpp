@@ -236,9 +236,10 @@ private:
     void    updateServerMeta();
     void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
 
-    // Host-only auto delay/prediction. worstRoomPingMs() includes every direct
-    // player pair in the ICE mesh, not only host-to-peer paths.
-    int     worstRoomPingMs() const;
+    // Delay is local to this player. Auto resolves from this client's direct
+    // RTTs to the other seats; prediction remains a shared host setting.
+    int     worstLocalPeerPingMs() const;
+    void    applyLocalFrameDelay(bool force);
     void    applyHostRoomSettings(bool force);
 
     // Broadcaster lifecycle. startBroadcast arms the n02 recording sink + drain
@@ -354,9 +355,9 @@ private:
     QLabel*    m_roomStateLabel = nullptr;   // "Waiting" / "In Game"
     QLabel*    m_roomMetaLabel  = nullptr;   // Seats 2/4 · Region NTSC
 
-    // Host-editable rollback settings (delay / prediction). Disabled for
-    // non-hosts and mid-match. Combo index maps 1:1 to the integer value
-    // (0..9), so currentIndex() is the wire value.
+    // Delay is locally editable by every player; prediction is host-editable
+    // and shared. Both lock once the match starts. Data 0 is the Auto/Default
+    // sentinel; numeric entries contain their concrete frame value.
     QComboBox* m_delayCombo      = nullptr;
     QComboBox* m_predictionCombo = nullptr;
     QComboBox* m_pacingCombo     = nullptr;  // 0 = aggressive, 1 = smooth
@@ -435,7 +436,7 @@ private:
     QString m_currentRoomMd5;
     QString m_currentRoomRegion;
     QString m_currentRoomState;
-    int     m_currentRoomDelay      = 2;
+    int     m_currentRoomDelay      = 2;   // this client's local input delay
     int     m_currentRoomPrediction = 7;
     int     m_currentRoomPacing     = 0;   // 0 = aggressive, 1 = smooth
     quint64 m_currentRoomHostId     = 0;   // seated host's user id (0 when none)
@@ -449,9 +450,8 @@ private:
     QSet<quint64> m_knownSeatedUsers;
     bool          m_roomSeatsSeen = false;
 
-    // Host-only "Auto" selections for the in-room dropdowns. Delay-auto is
-    // ping-based; prediction-auto is a fixed 7. Default on so a fresh host
-    // gets sensible tuning without thinking about it.
+    // Delay-auto is local and ping-based for every player. Prediction-auto is
+    // host-owned and fixed at 7. Both default on in a fresh room.
     bool    m_delayAuto      = true;
     bool    m_predictionAuto = true;
 

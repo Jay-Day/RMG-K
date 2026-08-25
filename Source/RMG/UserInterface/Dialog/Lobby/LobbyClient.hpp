@@ -147,10 +147,9 @@ public:
     // Server validates (host, waiting, valid slots) and rebroadcasts ROOM_STATE.
     void swapSeats(int slotA, int slotB);
 
-    // Host-only: change the room's rollback delay / prediction / pacing. The
-    // *Auto flags tell the server whether delay/prediction are host-Auto-driven
-    // so non-hosts can mirror the host's label (pacing has no Auto). Server must
-    // ack with a fresh ROOM_STATE so all seated peers stay in sync.
+    // Host-only shared prediction/pacing update. Delay remains on the wire as a
+    // legacy compatibility value; current clients own and apply delay locally.
+    // Concrete values are always sent (Auto/Default are represented by flags).
     void updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto);
 
     // Ping probe over the already-selected ICE candidate pair. This measures

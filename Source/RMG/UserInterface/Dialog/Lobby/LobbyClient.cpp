@@ -2760,10 +2760,9 @@ void LobbyClient::startRoom()
     sendEnvelope("ROOM_START");
 }
 
-// Host-only: change the active room's rollback parameters. The server's
-// ROOM_UPDATE_SETTINGS handler validates (host, state == "waiting"), clamps,
-// and rebroadcasts ROOM_STATE with the new values + auto flags so every seated
-// client picks them up and the match starts on the resolved delay.
+// Prediction and pacing remain authoritative room parameters. Delay is included
+// for compatibility with older clients, but current clients apply their own
+// local selection and ignore the echoed room delay.
 void LobbyClient::updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto)
 {
     QJsonObject d;
