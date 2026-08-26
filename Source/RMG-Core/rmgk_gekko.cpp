@@ -85,8 +85,9 @@ constexpr long long kGekkoStallSnapshotIntervalMs = 250;
 
 // Symmetric ("aggressive") model — the default. Recomputes every frame and
 // pulls a drifting client back hard from either side: a single signed
-// strength*frames_ahead correction clamped to a wide scale window. Reacts fast,
-// at the cost of nudging the ahead player's framerate a touch more visibly.
+// strength*delay-balanced-error correction clamped to a wide scale window.
+// Reacts fast, at the cost of nudging the ahead player's framerate a touch more
+// visibly.
 constexpr float  kGekkoSymTimesyncDeadzone       = 0.20f;
 constexpr double kGekkoSymTimesyncStrength       = 0.015;
 constexpr double kGekkoSymTimesyncMinScale       = 0.97;
@@ -103,9 +104,10 @@ constexpr int    kGekkoSymTimesyncIntervalFrames = 1;
 // player close to full speed while still shrinking its speculative window, so
 // it sees fewer rollback "teleports" of the remote character.
 //
-// Slippi works in microseconds of clock offset; we work in gekko_frames_ahead()
-// (signed frames, +ve = local ahead), so the windows/deadzones below are the
-// frame-unit equivalents of Slippi's 8000us / -250us deadzone and 3-frame ramp.
+// Slippi works in microseconds of clock offset; gekko_frames_ahead() gives us a
+// signed delay-balanced error (+ve = local ahead of its delay-derived target),
+// so the windows/deadzones below are the frame-unit equivalents of Slippi's
+// 8000us / -250us deadzone and 3-frame ramp.
 constexpr float  kGekkoAsymTimesyncAheadDeadzone  = 0.48f;  // tolerate being ahead by ~half a frame
 constexpr float  kGekkoAsymTimesyncBehindDeadzone = 0.015f; // but correct almost immediately when behind
 constexpr double kGekkoAsymTimesyncSpeedUpWindow  = 3.0;    // frames behind to reach full speed-up
@@ -1617,8 +1619,10 @@ void append_peer_network_stats(std::ostringstream& stream)
 
 void apply_gekko_frame_pacing()
 {
-    // Read frames_ahead every call (cheap, just a member access in
-    // GekkoSession) but only recompute the target scale on sample frames. The
+    // Read the delay-balanced frame error every call (cheap, just a member
+    // access in GekkoSession) but only recompute the target scale on sample
+    // frames. With unequal local delays, zero intentionally means the
+    // lower-delay peer is numerically ahead by the delay difference. The
     // per-frame lerp below carries the speed scale toward the cached target
     // between samples. Both the sample cadence and the target computation depend
     // on the active pacing model (see GekkoPacingMode); the lerp tail is shared.
