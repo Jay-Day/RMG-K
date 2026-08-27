@@ -70,10 +70,10 @@ void LobbyConnectDialog::buildUi()
     auto* form = new QFormLayout;
 
     m_usernameEdit = new QLineEdit(this);
-    m_usernameEdit->setMaxLength(16);
-    m_usernameEdit->setPlaceholderText("3-16 characters: letters, numbers, _ - .");
+    m_usernameEdit->setMaxLength(20);
+    m_usernameEdit->setPlaceholderText("2-20 characters: letters, numbers, _ - .");
     auto* validator = new QRegularExpressionValidator(
-        QRegularExpression(R"([A-Za-z0-9_\-\.]{1,16})"), this);
+        QRegularExpression(R"([A-Za-z0-9_\-\.]{1,20})"), this);
     m_usernameEdit->setValidator(validator);
     form->addRow("Enter a username:", m_usernameEdit);
 
@@ -101,8 +101,8 @@ void LobbyConnectDialog::validateInput()
     const QString user = m_usernameEdit->text().trimmed();
 
     QString reason;
-    if (user.length() < 3)
-        reason = "Username must be at least 3 characters.";
+    if (user.length() < 2)
+        reason = "Username must be at least 2 characters.";
 
     const QString message = reason.isEmpty() ? m_statusMessage : reason;
     m_validationLbl->setStyleSheet(

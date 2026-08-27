@@ -2067,7 +2067,7 @@ QString RollbackLobbyDialog::prefillUsername() const
     }
 
     name.remove(QRegularExpression(R"([^A-Za-z0-9_\-\.])"));
-    return name.left(16);
+    return name.left(20);
 }
 
 void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
