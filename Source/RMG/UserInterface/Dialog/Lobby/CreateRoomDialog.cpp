@@ -69,10 +69,8 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
 
     root->addLayout(form);
 
-    // Rollback settings (delay / prediction) are no longer surfaced here —
-    // the host configures them from the in-room view via the settings row.
-    // We still send sensible defaults to the server at creation time; the
-    // host can adjust before clicking Start Game.
+    // Rollback settings are not surfaced here. Each player configures local
+    // delay in the room, and prediction is fixed at 9 frames.
 
     // Optional password (collapsed by default)
     auto* pwRow = new QHBoxLayout;
@@ -154,8 +152,7 @@ void CreateRoomDialog::validateInput()
 
 void CreateRoomDialog::onCreateClicked()
 {
-    // Capture form values. Delay/prediction stay at their loadDefaults()
-    // values (or the struct defaults 2/7) — host adjusts in-room.
+    // The legacy delay and fixed prediction stay at their loadDefaults() values.
     m_name = m_nameEdit->text().trimmed();
     // m_romName / m_romMd5 were set from the lobby picker in the constructor.
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
@@ -191,10 +188,10 @@ void CreateRoomDialog::loadDefaults()
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
-    // Seed the initial delay/prediction from the last in-room values the
-    // host configured. The in-room view writes to the same keys.
-    if (s.contains("Delay"))      m_delay = s.value("Delay").toInt();
-    if (s.contains("Prediction")) m_prediction = s.value("Prediction").toInt();
+    // Seed the legacy room delay from the last local value. Prediction is a
+    // fixed lobby rule and is never loaded from older user settings.
+    if (s.contains("Delay")) m_delay = s.value("Delay").toInt();
+    m_prediction = 9;
     s.endGroup();
 }
 
@@ -204,8 +201,7 @@ void CreateRoomDialog::saveDefaults()
     s.beginGroup("Lobby/CreateRoom");
     // The game selection is persisted by the lobby's shared picker, not here.
     s.setValue("MaxPlayers", m_maxPlayers);
-    // Delay/prediction persistence moves to the in-room view; CreateRoom
-    // only consumes those defaults, doesn't write them.
+    // Delay persistence lives in the room view; CreateRoom only consumes it.
     s.endGroup();
 }
 

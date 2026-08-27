@@ -824,7 +824,8 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
 void LobbyClient::handleHelloFail(const QJsonObject& data)
 {
     const QString reason = data.value("reason").toString();
-    emit helloFailed(reason);
+    const QString message = data.value("message").toString();
+    emit helloFailed(message.isEmpty() ? reason : message);
     setState(ConnectionState::Failed);
     if (m_ws)
         m_ws->close();
@@ -2760,18 +2761,12 @@ void LobbyClient::startRoom()
     sendEnvelope("ROOM_START");
 }
 
-// Prediction and pacing remain authoritative room parameters. Delay is included
-// for compatibility with older clients, but current clients apply their own
-// local selection and ignore the echoed room delay.
-void LobbyClient::updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto)
+void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)
 {
     QJsonObject d;
-    d["delay"]          = delay;
-    d["prediction"]     = prediction;
-    d["pacing"]         = pacing;
-    d["delayAuto"]      = delayAuto;
-    d["predictionAuto"] = predictionAuto;
-    sendEnvelope("ROOM_UPDATE_SETTINGS", d);
+    d["delay"] = delay;
+    d["delayAuto"] = delayAuto;
+    sendEnvelope("ROOM_UPDATE_DELAY", d);
 }
 
 void LobbyClient::kickFromRoom(quint64 userId)

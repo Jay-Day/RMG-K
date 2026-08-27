@@ -147,10 +147,9 @@ public:
     // Server validates (host, waiting, valid slots) and rebroadcasts ROOM_STATE.
     void swapSeats(int slotA, int slotB);
 
-    // Host-only shared prediction/pacing update. Delay remains on the wire as a
-    // legacy compatibility value; current clients own and apply delay locally.
-    // Concrete values are always sent (Auto/Default are represented by flags).
-    void updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto);
+    // Publish this player's resolved local input delay for the room seat display.
+    // Each player owns this independently; Auto is resolved before sending.
+    void updateLocalFrameDelay(int delay, bool delayAuto);
 
     // Ping probe over the already-selected ICE candidate pair. This measures
     // the same direct path that the rollback session will use.
