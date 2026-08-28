@@ -169,6 +169,8 @@ private slots:
 
     // Punch progress for a seated peer, so a slow or failing NAT punch is
     // visible in the room rather than looking like a stalled Start button.
+    void onIcePeerConnectionChanged(quint64 userId, bool connected, bool failed);
+    void onRoomPingMeasurementsChanged();
     void onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts);
     void onPingProbeFailed(quint64 userId);
     // First consecutive miss on a peer we've measured before — treat as
@@ -234,11 +236,10 @@ private:
     void    updateServerMeta();
     void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
 
-    // Host-only auto delay/prediction. worstSeatPingMs() = max measured RTT
-    // over seated peers (-1 if none). applyHostRoomSettings() resolves the
-    // Auto selections and pushes the concrete values via the lobby client.
-    int     worstSeatPingMs() const;
-    void    applyHostRoomSettings(bool force);
+    // Delay is local to this player. Auto resolves only from this client's
+    // direct RTTs to the other seats.
+    int     worstLocalPeerPingMs() const;
+    void    applyLocalFrameDelay(bool force);
 
     // Broadcaster lifecycle. startBroadcast arms the n02 recording sink + drain
     // timer and sends BROADCAST_BEGIN; stopBroadcast flushes and sends
@@ -261,16 +262,17 @@ private:
         QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
-        QLabel*  metaLabel = nullptr;     // "host · 12ms" — right-aligned
+        QLabel*  metaLabel = nullptr;     // "host · 12ms · Frame Delay: 2f"
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
         int      slot      = 0;           // 1-4, drives the per-player accent color
+        int      frameDelay = -1;          // published local input delay
     };
     void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
     void renderSeatEmpty(SeatRow& row);
     void renderSeatFilled(SeatRow& row, const QString& username, bool isHost,
-                          bool isSelf, int pingMs, bool canKick);
+                          bool isSelf, int pingMs, int frameDelay, bool canKick);
 
     // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
     // its slot; the seats container handles the drop and asks the server to swap.
@@ -353,12 +355,9 @@ private:
     QLabel*    m_roomStateLabel = nullptr;   // "Waiting" / "In Game"
     QLabel*    m_roomMetaLabel  = nullptr;   // Seats 2/4 · Region NTSC
 
-    // Host-editable rollback settings (delay / prediction). Disabled for
-    // non-hosts and mid-match. Combo index maps 1:1 to the integer value
-    // (0..9), so currentIndex() is the wire value.
+    // Delay is locally editable by every player and locks once the match starts.
+    // Data 0 is the Auto sentinel; numeric entries contain concrete frame values.
     QComboBox* m_delayCombo      = nullptr;
-    QComboBox* m_predictionCombo = nullptr;
-    QComboBox* m_pacingCombo     = nullptr;  // 0 = aggressive, 1 = smooth
     bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setCurrentIndex echo
 
     // Per-player local toggle: when checked, this client writes a .krec of the
@@ -434,11 +433,13 @@ private:
     QString m_currentRoomMd5;
     QString m_currentRoomRegion;
     QString m_currentRoomState;
-    int     m_currentRoomDelay      = 2;
-    int     m_currentRoomPrediction = 7;
+    int     m_currentRoomDelay      = 2;   // this client's local input delay
+    int     m_currentRoomPrediction = 9;
     int     m_currentRoomPacing     = 0;   // 0 = aggressive, 1 = smooth
     quint64 m_currentRoomHostId     = 0;   // seated host's user id (0 when none)
     quint64 m_currentMatchId        = 0;
+    quint64 m_iceWaitingMatchId     = 0;
+    qint64  m_iceMatchDeadlineMs    = 0;
 
     // Seated user ids as of the last ROOM_STATE, used to detect when a *new*
     // player joins (so we can flash/chime). m_roomSeatsSeen suppresses the chime
@@ -446,11 +447,9 @@ private:
     QSet<quint64> m_knownSeatedUsers;
     bool          m_roomSeatsSeen = false;
 
-    // Host-only "Auto" selections for the in-room dropdowns. Delay-auto is
-    // ping-based; prediction-auto is a fixed 7. Default on so a fresh host
-    // gets sensible tuning without thinking about it.
+    // Delay-auto is local and ping-based for every player.
     bool    m_delayAuto      = true;
-    bool    m_predictionAuto = true;
+    bool    m_localDelayPublished = false;
 
     bool m_awaitingEmulationStart = false;
     bool m_emulationActive        = false;

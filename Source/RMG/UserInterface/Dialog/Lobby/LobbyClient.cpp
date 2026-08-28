@@ -24,6 +24,7 @@
 #include <RMG-Core/Cheats.hpp>
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/LobbyIce.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
@@ -41,14 +42,19 @@
 #include <QCoreApplication>
 #include <QtEndian>
 #include <QRandomGenerator>
+#include <QThread>
 #include <QDebug>
 #include <QSet>
 #include <QEvent>
 #include <QFile>
 #include <QDir>
+#include <QRegularExpression>
 #include <cstring>
+#include <algorithm>
 #include <filesystem>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 using namespace UserInterface::Dialog;
 
@@ -74,6 +80,7 @@ namespace
     constexpr quint8 ANCHOR_OP_PROBE_REPLY = 0x05; // peer → client: ping echo
     constexpr quint8 ANCHOR_OP_PREMATCH_MANIFEST = 0x06;
     constexpr quint8 ANCHOR_OP_PREMATCH_ACK      = 0x07;
+    constexpr quint8 ANCHOR_OP_PREMATCH_FRAGMENT = 0x08;
 
     // Burst size for NAT punch-through. Defends against single-packet loss
     // and brief mapping-creation latency on consumer routers — NOT against
@@ -98,6 +105,52 @@ namespace
     // Bounded so a long session can't grow it without limit; only needs to
     // outlive the echoes of one burst.
     constexpr int PROBE_MATCHED_NONCE_CAP = 64;
+
+    constexpr quint8 ICE_PING_OP_REQUEST = 1;
+    constexpr quint8 ICE_PING_OP_REPLY   = 2;
+    constexpr quint8 ICE_PING_OP_REPORT  = 3;
+    constexpr int ICE_PING_PACKET_SIZE = 1 + int(sizeof(quint64));
+    constexpr int ICE_PING_REPORT_SIZE = 1 + int(sizeof(quint64)) + int(sizeof(quint16));
+
+    QString iceStateName(int state)
+    {
+        switch (static_cast<LobbyIcePeerState>(state))
+        {
+        case LobbyIcePeerState::Disconnected: return QStringLiteral("disconnected");
+        case LobbyIcePeerState::Gathering: return QStringLiteral("gathering");
+        case LobbyIcePeerState::Connecting: return QStringLiteral("connecting");
+        case LobbyIcePeerState::Connected: return QStringLiteral("connected");
+        case LobbyIcePeerState::Completed: return QStringLiteral("completed");
+        case LobbyIcePeerState::Failed: return QStringLiteral("failed");
+        }
+        return QStringLiteral("unknown");
+    }
+
+    QString iceSignalSummary(const QString& kind, const QString& value)
+    {
+        if (kind == QStringLiteral("candidate"))
+            return QStringLiteral("candidate=%1").arg(value.trimmed());
+        if (kind == QStringLiteral("description"))
+        {
+            const int candidates = value.count(QStringLiteral("candidate:"), Qt::CaseInsensitive);
+            return QStringLiteral("bytes=%1 embedded_candidates=%2 credentials=<redacted>")
+                .arg(value.toUtf8().size()).arg(candidates);
+        }
+        if (kind == QStringLiteral("gathering_done"))
+            return QStringLiteral("complete=true");
+        return QStringLiteral("bytes=%1").arg(value.toUtf8().size());
+    }
+
+    QString redactLibjuiceMessage(QString message)
+    {
+        // DEBUG messages can contain short-lived ICE credentials. They are not
+        // useful for diagnosis and should not survive in a shareable log.
+        static const QRegularExpression secret(
+            QStringLiteral(R"((ufrag|pwd|password|username|expected|actual)=\"[^\"]*\")"),
+            QRegularExpression::CaseInsensitiveOption);
+        message.replace(secret, QStringLiteral("\\1=\"<redacted>\""));
+        return message;
+    }
 
     // How long a learned route stays trusted without fresh inbound traffic.
     // Seated peers refresh it every ~3s via the seat probe loop; 60s tolerates
@@ -189,6 +242,37 @@ namespace
         return true;
     }
 
+    void appendPrematchU16(QByteArray& data, quint16 value)
+    {
+        data.append(static_cast<char>(value & 0xffu));
+        data.append(static_cast<char>((value >> 8) & 0xffu));
+    }
+
+    void appendPrematchU32(QByteArray& data, quint32 value)
+    {
+        for (int i = 0; i < 4; ++i)
+            data.append(static_cast<char>((value >> (i * 8)) & 0xffu));
+    }
+
+    bool readPrematchU16(const QByteArray& data, int offset, quint16& value)
+    {
+        if (offset < 0 || data.size() < offset + 2)
+            return false;
+        value = static_cast<quint16>(static_cast<unsigned char>(data[offset])) |
+            (static_cast<quint16>(static_cast<unsigned char>(data[offset + 1])) << 8);
+        return true;
+    }
+
+    bool readPrematchU32(const QByteArray& data, int offset, quint32& value)
+    {
+        if (offset < 0 || data.size() < offset + 4)
+            return false;
+        value = 0;
+        for (int i = 0; i < 4; ++i)
+            value |= static_cast<quint32>(static_cast<unsigned char>(data[offset + i])) << (i * 8);
+        return true;
+    }
+
     bool buildPrematchManifest(const QString& romFile, std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
     {
         std::vector<CoreCheat> cheats;
@@ -262,6 +346,36 @@ namespace
         return readPrematchU64(packet, 13, manifestHash);
     }
 
+    QList<QByteArray> fragmentPrematchPacket(const QByteArray& packet,
+        quint64 senderUserId, uint64_t manifestHash)
+    {
+        constexpr int kPayloadBytes = 1000;
+        if (packet.size() <= kPayloadBytes)
+            return {packet};
+
+        const int count = (packet.size() + kPayloadBytes - 1) / kPayloadBytes;
+        if (count > 2048)
+            return {};
+        QList<QByteArray> fragments;
+        fragments.reserve(count);
+        for (int index = 0; index < count; ++index)
+        {
+            QByteArray fragment;
+            fragment.reserve(29 + kPayloadBytes);
+            fragment.append(ANCHOR_MAGIC, 4);
+            fragment.append(static_cast<char>(ANCHOR_OP_PREMATCH_FRAGMENT));
+            const quint64 senderBE = qToBigEndian(senderUserId);
+            fragment.append(reinterpret_cast<const char*>(&senderBE), sizeof(senderBE));
+            appendPrematchU64(fragment, manifestHash);
+            appendPrematchU16(fragment, static_cast<quint16>(index));
+            appendPrematchU16(fragment, static_cast<quint16>(count));
+            appendPrematchU32(fragment, static_cast<quint32>(packet.size()));
+            fragment.append(packet.mid(index * kPayloadBytes, kPayloadBytes));
+            fragments.append(std::move(fragment));
+        }
+        return fragments;
+    }
+
 
     QString detectLocalIPv4()
     {
@@ -329,6 +443,13 @@ LobbyClient::LobbyClient(QObject* parent)
     m_probeRetryTimer->setInterval(PROBE_RETRY_TICK_MS);
     connect(m_probeRetryTimer, &QTimer::timeout, this, &LobbyClient::onProbeRetryTimer);
     m_probeRetryTimer->start();
+
+    // libjuice callbacks run on its worker thread. Poll their thread-safe
+    // queues here so all WebSocket signaling and ping UI stays on Qt's thread.
+    m_iceTimer = new QTimer(this);
+    m_iceTimer->setInterval(25);
+    connect(m_iceTimer, &QTimer::timeout, this, &LobbyClient::flushIceEvents);
+    m_iceTimer->start();
 
     // Single-shot; each failed pinned-port bind schedules the next attempt.
     m_anchorRetryTimer = new QTimer(this);
@@ -412,6 +533,8 @@ void LobbyClient::disconnectFromServer()
     m_anchorRetryDeadlineMs = 0;
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
+    resetIceMesh();
+    LobbyIce::reset();
     if (m_ws && m_ws->state() != QAbstractSocket::UnconnectedState)
     {
         m_ws->close();
@@ -514,6 +637,7 @@ void LobbyClient::onWsConnected()
     for (const auto& h : m_pendingRomHashes)
         romArr.append(h);
     data["romHashes"] = romArr;
+    data["iceSupported"] = true;
     if (!m_pendingLocalIp.isEmpty())
         data["localIp"] = m_pendingLocalIp;
 
@@ -523,6 +647,8 @@ void LobbyClient::onWsConnected()
 void LobbyClient::onWsDisconnected()
 {
     stopPingDiagnosticLog(QStringLiteral("connection_lost"));
+    resetIceMesh();
+    LobbyIce::reset();
     // Passive drops (server restart, network cut, server-side kick) never go
     // through disconnectFromServer, so the anchor socket used to stay bound —
     // and the next connect's pinned-port bind then failed against our own
@@ -599,6 +725,7 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "CHAT_HISTORY_REPLY")   handleChatHistoryReply(data);
     else if (type == "PING_PROBE_REPLY")     handlePingProbeReply(data);
     else if (type == "PING_PROBE_INCOMING")  handlePingProbeIncoming(data);
+    else if (type == "ICE_SIGNAL")           handleIceSignal(data);
     else if (type == "MATCH_BEGIN")          handleMatchBegin(data);
     else if (type == "MATCH_PEER_LEFT")      handleMatchPeerLeft(data);
     else if (type == "QUICK_MATCH_STATUS")   handleQuickMatchStatus(data);
@@ -621,6 +748,38 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
     m_selfUserId  = static_cast<quint64>(data.value("userId").toDouble());
     m_observedIp  = data.value("observedIp").toString();
     m_region      = data.value("region").toString();
+
+    std::string stunHost = "stun.l.google.com";
+    quint16 stunPort = 19302;
+    std::vector<LobbyIceTurnServer> turnServers;
+    const QJsonObject ice = data.value("ice").toObject();
+    const QJsonObject stun = ice.value("stun").toObject();
+    if (!stun.value("host").toString().isEmpty())
+        stunHost = stun.value("host").toString().toStdString();
+    if (stun.value("port").toInt() > 0 && stun.value("port").toInt() <= 65535)
+        stunPort = static_cast<quint16>(stun.value("port").toInt());
+    for (const QJsonValue& value : ice.value("turn").toArray())
+    {
+        const QJsonObject object = value.toObject();
+        LobbyIceTurnServer server;
+        server.host = object.value("host").toString().toStdString();
+        const int port = object.value("port").toInt(3478);
+        if (port < 1 || port > 65535)
+            continue;
+        server.port = static_cast<quint16>(port);
+        server.username = object.value("username").toString().toStdString();
+        server.password = object.value("password").toString().toStdString();
+        if (!server.host.empty() && server.port != 0)
+            turnServers.push_back(std::move(server));
+    }
+    const bool iceDiagnostics = CoreSettingsGetBoolValue(SettingsID::Rollback_PingDiagnostics);
+    LobbyIce::set_diagnostics_enabled(iceDiagnostics);
+    if (!LobbyIce::configure(m_selfUserId, stunHost, stunPort, turnServers))
+    {
+        emit connectError(QStringLiteral("Failed to initialize ICE transport."));
+        setState(ConnectionState::Failed);
+        return;
+    }
     qInfo() << "Rollback lobby authenticated" << "userId" << m_selfUserId
             << "observedIp" << m_observedIp << "region" << m_region;
 
@@ -642,16 +801,31 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
                         QStringLiteral("observed_ip=%1 region=%2 anchor=%3:%4")
                             .arg(m_observedIp, m_region, m_udpAnchorHost)
                             .arg(m_udpAnchorPort));
+    QStringList turnEndpoints;
+    for (const LobbyIceTurnServer& server : turnServers)
+    {
+        turnEndpoints.append(QStringLiteral("%1:%2")
+                                 .arg(QString::fromStdString(server.host))
+                                 .arg(server.port));
+    }
+    writePingDiagnostic(QStringLiteral("ICE_CONFIG"),
+                        QStringLiteral("stun=%1:%2 turn_count=%3 turn=%4 libjuice_level=debug")
+                            .arg(QString::fromStdString(stunHost)).arg(stunPort)
+                            .arg(static_cast<qulonglong>(turnServers.size()))
+                            .arg(turnEndpoints.isEmpty() ? QStringLiteral("<none>")
+                                                         : turnEndpoints.join(QLatin1Char(','))));
 
     setState(ConnectionState::Connected);
     m_heartbeatTimer->start();
-    initiateUdpAnchor();
+    // ICE owns the UDP sockets. The legacy lobby anchor is intentionally not
+    // opened by ICE-capable clients.
 }
 
 void LobbyClient::handleHelloFail(const QJsonObject& data)
 {
     const QString reason = data.value("reason").toString();
-    emit helloFailed(reason);
+    const QString message = data.value("message").toString();
+    emit helloFailed(message.isEmpty() ? reason : message);
     setState(ConnectionState::Failed);
     if (m_ws)
         m_ws->close();
@@ -736,16 +910,19 @@ void LobbyClient::handleRoomCreateFail(const QJsonObject& data)
 
 void LobbyClient::handleRoomLeft(const QJsonObject& data)
 {
+    resetIceMesh();
     emit roomLeft(data.value("reason").toString());
 }
 
 void LobbyClient::handleRoomState(const QJsonObject& data)
 {
+    reconcileIcePeers(data);
     emit roomStateChanged(data);
 }
 
 void LobbyClient::handleRoomJoinOk(const QJsonObject& data)
 {
+    reconcileIcePeers(data);
     emit roomJoinOk(static_cast<quint64>(data.value("id").toDouble()));
     emit roomStateChanged(data);
 }
@@ -753,6 +930,252 @@ void LobbyClient::handleRoomJoinOk(const QJsonObject& data)
 void LobbyClient::handleRoomJoinFail(const QJsonObject& data)
 {
     emit roomJoinFailed(data.value("reason").toString());
+}
+
+void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
+{
+    const quint64 roomId = static_cast<quint64>(roomState.value("id").toDouble());
+    if (roomId == 0)
+        return;
+    if (m_currentIceRoomId != 0 && m_currentIceRoomId != roomId)
+        resetIceMesh();
+    m_currentIceRoomId = roomId;
+    const quint64 hostUserId = static_cast<quint64>(roomState.value("hostId").toDouble());
+    if (m_currentIceHostUserId != 0 && m_currentIceHostUserId != hostUserId)
+        m_roomPeerPings.clear();
+    m_currentIceHostUserId = hostUserId;
+
+    QSet<quint64> desired;
+    for (const QJsonValue& value : roomState.value("players").toArray())
+    {
+        const QJsonObject player = value.toObject();
+        const quint64 userId = static_cast<quint64>(player.value("userId").toDouble());
+        if (userId == 0 || userId == m_selfUserId)
+            continue;
+        if (!player.value("iceSupported").toBool())
+        {
+            qWarning() << "Rollback lobby peer does not support ICE" << userId;
+            continue;
+        }
+        desired.insert(userId);
+        if (!m_icePeerIds.contains(userId))
+        {
+            if (LobbyIce::add_peer(userId))
+            {
+                m_icePeerIds.insert(userId);
+                writePingDiagnostic(QStringLiteral("ICE_PEER_ADDED"),
+                                    QStringLiteral("peer=%1 room=%2")
+                                        .arg(pingUserLabel(userId)).arg(roomId));
+            }
+            else
+            {
+                writePingDiagnostic(QStringLiteral("ICE_PEER_ADD_FAILED"),
+                                    QStringLiteral("peer=%1 room=%2")
+                                        .arg(pingUserLabel(userId)).arg(roomId));
+            }
+        }
+    }
+
+    const QSet<quint64> stale = m_icePeerIds - desired;
+    for (quint64 userId : stale)
+    {
+        writePingDiagnostic(QStringLiteral("ICE_PEER_REMOVED"),
+                            QStringLiteral("peer=%1 room=%2 reason=not_in_room_state")
+                                .arg(pingUserLabel(userId)).arg(roomId));
+        LobbyIce::remove_peer(userId);
+        m_icePeerIds.remove(userId);
+        m_lastIceStates.remove(userId);
+        m_roomPeerPings.remove(userId);
+        for (auto it = m_roomPeerPings.begin(); it != m_roomPeerPings.end(); ++it)
+            it.value().remove(userId);
+    }
+}
+
+void LobbyClient::resetIceMesh()
+{
+    for (quint64 userId : std::as_const(m_icePeerIds))
+        LobbyIce::remove_peer(userId);
+    m_icePeerIds.clear();
+    m_lastIceStates.clear();
+    m_currentIceRoomId = 0;
+    m_currentIceHostUserId = 0;
+    m_roomPeerPings.clear();
+    m_pendingProbes.clear();
+}
+
+void LobbyClient::handleIceSignal(const QJsonObject& data)
+{
+    const quint64 roomId = static_cast<quint64>(data.value("roomId").toDouble());
+    const quint64 fromUserId = static_cast<quint64>(data.value("fromUserId").toDouble());
+    const QString kind = data.value("kind").toString();
+    if (roomId == 0 || roomId != m_currentIceRoomId || fromUserId == 0 ||
+        fromUserId == m_selfUserId)
+    {
+        writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN_DROPPED"),
+                            QStringLiteral("from_user=%1 signal_room=%2 current_room=%3 kind=%4 reason=scope_validation")
+                                .arg(fromUserId).arg(roomId).arg(m_currentIceRoomId).arg(kind));
+        return;
+    }
+    const QString value = data.value("value").toString();
+    const bool hadPeer = LobbyIce::has_peer(fromUserId);
+    const bool accepted = LobbyIce::handle_remote_signal(fromUserId, kind.toStdString(),
+                                                         value.toStdString());
+    writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN"),
+                        QStringLiteral("peer=%1 room=%2 kind=%3 disposition=%4 accepted=%5 %6")
+                            .arg(pingUserLabel(fromUserId)).arg(roomId).arg(kind)
+                            .arg(hadPeer ? QStringLiteral("applied") : QStringLiteral("queued"))
+                            .arg(accepted ? QStringLiteral("true") : QStringLiteral("false"))
+                            .arg(iceSignalSummary(kind, value)));
+}
+
+void LobbyClient::sendIcePing(quint64 userId, quint64 nonce)
+{
+    QByteArray payload(ICE_PING_PACKET_SIZE, Qt::Uninitialized);
+    payload[0] = char(ICE_PING_OP_REQUEST);
+    const quint64 nonceBE = qToBigEndian(nonce);
+    std::memcpy(payload.data() + 1, &nonceBE, sizeof(nonceBE));
+    LobbyIce::send(userId, LobbyIceChannel::Ping, payload.constData(), size_t(payload.size()));
+}
+
+void LobbyClient::sendRoomPingReport(quint64 targetUserId, int rttMs)
+{
+    // The host already measures all of its own paths. For every non-host pair,
+    // the lower user id is the sole reporter, which makes one sample sufficient
+    // and avoids two clients racing to overwrite the same unordered path.
+    if (m_currentIceHostUserId == 0 || m_currentIceHostUserId == m_selfUserId ||
+        targetUserId == 0 || targetUserId == m_currentIceHostUserId ||
+        m_selfUserId >= targetUserId || !m_icePeerIds.contains(targetUserId))
+    {
+        return;
+    }
+
+    QByteArray payload(ICE_PING_REPORT_SIZE, Qt::Uninitialized);
+    payload[0] = char(ICE_PING_OP_REPORT);
+    const quint64 targetBE = qToBigEndian(targetUserId);
+    const quint16 rttBE = qToBigEndian(static_cast<quint16>(std::clamp(rttMs, 0, 65535)));
+    std::memcpy(payload.data() + 1, &targetBE, sizeof(targetBE));
+    std::memcpy(payload.data() + 1 + sizeof(targetBE), &rttBE, sizeof(rttBE));
+    LobbyIce::send(m_currentIceHostUserId, LobbyIceChannel::Ping,
+                   payload.constData(), size_t(payload.size()));
+}
+
+void LobbyClient::flushIceEvents()
+{
+    for (LobbyIceDiagnostic& diagnostic : LobbyIce::take_diagnostics())
+    {
+        writePingDiagnostic(QStringLiteral("LIBJUICE"),
+                            QStringLiteral("level=%1 message=%2")
+                                .arg(QString::fromStdString(diagnostic.level),
+                                     redactLibjuiceMessage(
+                                         QString::fromStdString(diagnostic.message))));
+    }
+
+    if (m_ws && m_ws->state() == QAbstractSocket::ConnectedState && m_currentIceRoomId != 0)
+    {
+        for (LobbyIceSignal& signal : LobbyIce::take_local_signals())
+        {
+            QJsonObject data;
+            data["targetUserId"] = QJsonValue(qint64(signal.peerUserId));
+            data["roomId"] = QJsonValue(qint64(m_currentIceRoomId));
+            data["kind"] = QString::fromStdString(signal.kind);
+            if (!signal.value.empty())
+                data["value"] = QString::fromStdString(signal.value);
+            const QString kind = QString::fromStdString(signal.kind);
+            const QString value = QString::fromStdString(signal.value);
+            writePingDiagnostic(QStringLiteral("ICE_SIGNAL_OUT"),
+                                QStringLiteral("peer=%1 room=%2 kind=%3 %4")
+                                    .arg(pingUserLabel(signal.peerUserId))
+                                    .arg(m_currentIceRoomId).arg(kind)
+                                    .arg(iceSignalSummary(kind, value)));
+            sendEnvelope("ICE_SIGNAL", data);
+        }
+    }
+
+    for (const LobbyIcePacket& packet : LobbyIce::take_packets(LobbyIceChannel::Ping))
+    {
+        if (packet.data.size() == ICE_PING_REPORT_SIZE &&
+            static_cast<quint8>(packet.data[0]) == ICE_PING_OP_REPORT)
+        {
+            quint64 targetBE = 0;
+            quint16 rttBE = 0;
+            std::memcpy(&targetBE, packet.data.data() + 1, sizeof(targetBE));
+            std::memcpy(&rttBE, packet.data.data() + 1 + sizeof(targetBE), sizeof(rttBE));
+            const quint64 targetUserId = qFromBigEndian(targetBE);
+            const int rttMs = int(qFromBigEndian(rttBE));
+
+            // Reports are meaningful only to the room host, from the canonical
+            // lower-id reporter, and for two current non-host room members.
+            if (m_selfUserId == m_currentIceHostUserId &&
+                m_icePeerIds.contains(packet.peerUserId) &&
+                m_icePeerIds.contains(targetUserId) &&
+                packet.peerUserId < targetUserId &&
+                m_roomPeerPings[packet.peerUserId].value(targetUserId, -1) != rttMs)
+            {
+                m_roomPeerPings[packet.peerUserId][targetUserId] = rttMs;
+                writePingDiagnostic(QStringLiteral("ICE_PING_REPORT"),
+                                    QStringLiteral("path=%1<->%2 rtt_ms=%3")
+                                        .arg(pingUserLabel(packet.peerUserId))
+                                        .arg(pingUserLabel(targetUserId)).arg(rttMs));
+                emit roomPingMeasurementsChanged();
+            }
+            continue;
+        }
+
+        if (packet.data.size() != ICE_PING_PACKET_SIZE)
+            continue;
+        quint64 nonceBE = 0;
+        std::memcpy(&nonceBE, packet.data.data() + 1, sizeof(nonceBE));
+        const quint64 nonce = qFromBigEndian(nonceBE);
+        if (static_cast<quint8>(packet.data[0]) == ICE_PING_OP_REQUEST)
+        {
+            std::vector<char> reply = packet.data;
+            reply[0] = char(ICE_PING_OP_REPLY);
+            LobbyIce::send(packet.peerUserId, LobbyIceChannel::Ping,
+                           reply.data(), reply.size());
+            continue;
+        }
+        if (static_cast<quint8>(packet.data[0]) != ICE_PING_OP_REPLY)
+            continue;
+        const auto it = m_pendingProbes.find(nonce);
+        if (it == m_pendingProbes.end() || it->targetUserId != packet.peerUserId)
+            continue;
+        const qint64 rttUs = packet.roundTripUs == 0 ? -1 : qint64(packet.roundTripUs);
+        const int rttMs = rttUs >= 0
+            ? int(std::clamp<qint64>((rttUs + 500) / 1000, 0, 65535))
+            : int(std::clamp<qint64>(
+                  QDateTime::currentMSecsSinceEpoch() - it->attemptSendMs, 0, 65535));
+        m_pendingProbes.erase(it);
+        m_probeFailStreak[packet.peerUserId] = 0;
+        m_measuredPing[packet.peerUserId] = rttMs;
+        writePingDiagnostic(QStringLiteral("ICE_PING_REPLY"),
+                            QStringLiteral("peer=%1 rtt_ms=%2 rtt_us=%3")
+                                .arg(pingUserLabel(packet.peerUserId)).arg(rttMs).arg(rttUs));
+        sendRoomPingReport(packet.peerUserId, rttMs);
+        emit pingProbeMeasured(packet.peerUserId, rttMs);
+    }
+
+    for (quint64 userId : std::as_const(m_icePeerIds))
+    {
+        const int state = static_cast<int>(LobbyIce::peer_state(userId));
+        if (m_lastIceStates.value(userId, -1) == state)
+            continue;
+        m_lastIceStates[userId] = state;
+        writePingDiagnostic(QStringLiteral("ICE_STATE"),
+                            QStringLiteral("peer=%1 state=%2 state_name=%3 selected=%4")
+                                .arg(pingUserLabel(userId)).arg(state).arg(iceStateName(state))
+                                .arg(QString::fromStdString(LobbyIce::peer_selected_addresses(userId))));
+        const bool connected = LobbyIce::peer_connected(userId);
+        const bool failed = state == static_cast<int>(LobbyIcePeerState::Failed);
+        emit icePeerConnectionChanged(userId, connected, failed);
+        if (connected && userId == m_currentIceHostUserId)
+        {
+            // A peer-to-peer measurement may have completed before our host
+            // path did. Send any canonical reports now instead of waiting for
+            // the next three-second probe cycle.
+            for (auto it = m_measuredPing.constBegin(); it != m_measuredPing.constEnd(); ++it)
+                sendRoomPingReport(it.key(), it.value());
+        }
+    }
 }
 
 void LobbyClient::handleChatMsg(const QJsonObject& data)
@@ -1029,37 +1452,6 @@ void LobbyClient::sendProbeBurst(const QHostAddress& addr, quint16 port, quint64
 
 void LobbyClient::onProbeRetryTimer()
 {
-    // Poll the socket rather than trusting readyRead alone. Qt disables read
-    // notification for an unbuffered socket whose readyRead goes unserviced,
-    // and re-arms it on the next successful read — but during a match our slot
-    // deliberately reads nothing (GekkoNet's thread owns recvfrom), so the
-    // notification is off by the time the match ends. Whether it ever comes
-    // back then depends on there happening to be a datagram queued at that
-    // instant, which is precisely the coin-flip seen in the field: the client
-    // whose match-end drain found datagrams recovered, the one that found an
-    // empty buffer stayed deaf until the process restarted. A socket serviced
-    // from two threads can't rely on Qt's notifier bookkeeping, so poll it —
-    // this is the same discipline n02 uses. Cheap: a no-op when nothing is
-    // pending, and this timer already runs continuously. BoundState matters:
-    // this timer also ticks before connect and after disconnect, when the
-    // socket object exists but isn't bound, and hasPendingDatagrams() on an
-    // unbound socket emits a qWarning every call — ten a second, straight to
-    // the terminal on Linux.
-    if (m_udp && m_udp->state() == QAbstractSocket::BoundState &&
-        !m_anchorLent && !m_inPrematchSync)
-    {
-        m_drainedDatagrams = 0;
-        onUdpReadyRead();
-        if (m_drainedDatagrams > 0)
-        {
-            // The notifier missed these — readyRead would have drained them
-            // already. Logged because a run of these is the signature of the
-            // stall above, and their absence means it isn't happening.
-            writePingDiagnostic(QStringLiteral("POLL_DRAIN"),
-                                QStringLiteral("datagrams=%1").arg(m_drainedDatagrams));
-        }
-    }
-
     if (m_pendingProbes.isEmpty())
         return;
 
@@ -1078,20 +1470,10 @@ void LobbyClient::onProbeRetryTimer()
             // stale sweep so the room hears about it promptly.
             const quint64 uid = it->targetUserId;
             writePingDiagnostic(QStringLiteral("PROBE_FAILED"),
-                                QStringLiteral("peer=%1 attempts=%2 burst=%3 age_ms=%4")
+                                QStringLiteral("peer=%1 transport=ice attempts=%2 age_ms=%3")
                                     .arg(pingUserLabel(uid))
                                     .arg(PROBE_ATTEMPTS)
-                                    .arg(PROBE_BURST)
                                     .arg(nowMs - it->sendMs));
-            it = m_pendingProbes.erase(it);
-            noteProbeSeriesFailed(uid);
-            continue;
-        }
-
-        QHostAddress addr; quint16 port = 0;
-        if (!parseEndpoint(it->endpoint, addr, port))
-        {
-            const quint64 uid = it->targetUserId;
             it = m_pendingProbes.erase(it);
             noteProbeSeriesFailed(uid);
             continue;
@@ -1100,18 +1482,13 @@ void LobbyClient::onProbeRetryTimer()
         it->attempt      += 1;
         it->attemptSendMs = nowMs;
         it->nextAttemptMs = nowMs + PROBE_RETRY_INTERVAL_MS;
-        sendProbeBurst(addr, port, it.key());
-        QHostAddress altAddr; quint16 altPort = 0;
-        if (!it->altEndpoint.isEmpty() && parseEndpoint(it->altEndpoint, altAddr, altPort))
-            sendProbeBurst(altAddr, altPort, it.key());
+        sendIcePing(it->targetUserId, it.key());
         writePingDiagnostic(QStringLiteral("PROBE_RETRY"),
-                            QStringLiteral("peer=%1 endpoint=%2 alt=%3 nonce=%4 attempt=%5/%6 burst=%7")
-                                .arg(pingUserLabel(it->targetUserId), it->endpoint,
-                                     it->altEndpoint.isEmpty() ? QStringLiteral("-") : it->altEndpoint)
+                            QStringLiteral("peer=%1 transport=ice nonce=%2 attempt=%3/%4")
+                                .arg(pingUserLabel(it->targetUserId))
                                 .arg(it.key())
                                 .arg(it->attempt)
-                                .arg(PROBE_ATTEMPTS)
-                                .arg(PROBE_BURST));
+                                .arg(PROBE_ATTEMPTS));
         emit pingProbeRetrying(it->targetUserId, it->attempt, PROBE_ATTEMPTS);
         ++it;
     }
@@ -1186,28 +1563,7 @@ void LobbyClient::handleMatchBegin(const QJsonObject& data)
         p.publicPort = static_cast<quint16>(o.value("publicPort").toInt());
         p.localIp    = o.value("localIp").toString();
         p.slot       = o.value("slot").toInt();
-
-        // Ping-proven route beats the server's directory entry. For a CGNAT
-        // peer the advertised endpoint is unreachable from here and the route
-        // their probes arrive from is the only one that works — splice it in
-        // before anything downstream (punch, prematch sync, GekkoNet) sees the
-        // peer list, so the whole match rides the route the pings proved.
-        const QString learned = freshLearnedRoute(p.userId);
-        QHostAddress learnedAddr; quint16 learnedPort = 0;
-        if (!learned.isEmpty() && parseEndpoint(learned, learnedAddr, learnedPort))
-        {
-            const QString advertised = QStringLiteral("%1:%2").arg(p.publicIp).arg(p.publicPort);
-            if (learned != advertised)
-            {
-                qInfo() << "Rollback lobby using learned route for" << p.username
-                        << learned << "over advertised" << advertised;
-                writePingDiagnostic(QStringLiteral("MATCH_ROUTE"),
-                                    QStringLiteral("peer=%1 learned=%2 advertised=%3")
-                                        .arg(pingUserLabel(p.userId), learned, advertised));
-                p.publicIp   = learnedAddr.toString();
-                p.publicPort = learnedPort;
-            }
-        }
+        p.iceSupported = o.value("iceSupported").toBool();
         peers.append(p);
     }
     emit matchBegin(matchId, peers);
@@ -1541,6 +1897,222 @@ void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
 bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot,
                                        quint64 hostUserId, const QString& romFile, QString& error)
 {
+    error.clear();
+    if (m_selfUserId == 0 || localSlot < 1)
+    {
+        error = "Pre-match sync failed: missing local identity";
+        return false;
+    }
+    if (romFile.isEmpty())
+    {
+        error = "Pre-match sync failed: local ROM path was not resolved";
+        return false;
+    }
+    if (!allIcePeersConnected(peers, &error))
+    {
+        error = QStringLiteral("Pre-match sync failed: %1").arg(error);
+        return false;
+    }
+
+    LobbyMatchPeer local{};
+    LobbyMatchPeer host{};
+    bool foundLocal = false;
+    bool foundHost = false;
+    const bool haveHostId = (hostUserId != 0);
+    for (const LobbyMatchPeer& peer : peers)
+    {
+        if (peer.userId == m_selfUserId)
+        {
+            local = peer;
+            foundLocal = true;
+        }
+        if (haveHostId ? (peer.userId == hostUserId) : (peer.slot == 1))
+        {
+            host = peer;
+            foundHost = true;
+        }
+    }
+    if (!foundLocal || !foundHost)
+    {
+        error = "Pre-match sync failed: incomplete peer list";
+        return false;
+    }
+
+    constexpr qint64 kPrematchSyncTimeoutMs = 10'000;
+    LobbyIce::take_packets(LobbyIceChannel::Prematch);
+
+    if (host.userId == m_selfUserId)
+    {
+        std::string manifest;
+        uint64_t manifestHash = 0;
+        size_t cheatCount = 0;
+        if (!buildPrematchManifest(romFile, manifest, manifestHash, cheatCount))
+        {
+            error = QString::fromStdString(CoreGetError().empty()
+                ? std::string("Pre-match sync failed: could not build manifest") : CoreGetError());
+            return false;
+        }
+
+        const QByteArray packet = buildPrematchPacket(
+            ANCHOR_OP_PREMATCH_MANIFEST, m_selfUserId, manifestHash, manifest);
+        const QList<QByteArray> outboundPackets = fragmentPrematchPacket(
+            packet, m_selfUserId, manifestHash);
+        if (outboundPackets.isEmpty())
+        {
+            error = QStringLiteral("Pre-match sync failed: settings manifest is too large.");
+            return false;
+        }
+        QSet<quint64> pendingAcks;
+        for (const LobbyMatchPeer& peer : peers)
+        {
+            if (peer.userId != m_selfUserId)
+                pendingAcks.insert(peer.userId);
+        }
+
+        const qint64 deadlineMs = QDateTime::currentMSecsSinceEpoch() + kPrematchSyncTimeoutMs;
+        qint64 nextSendMs = 0;
+        while (!pendingAcks.isEmpty())
+        {
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            if (nowMs > deadlineMs)
+            {
+                error = QStringLiteral("Pre-match sync timed out — a player's direct ICE connection stopped responding.");
+                return false;
+            }
+            if (nowMs >= nextSendMs)
+            {
+                for (quint64 userId : std::as_const(pendingAcks))
+                {
+                    for (const QByteArray& outbound : outboundPackets)
+                        LobbyIce::send(userId, LobbyIceChannel::Prematch,
+                                       outbound.constData(), size_t(outbound.size()));
+                }
+                nextSendMs = nowMs + 100;
+            }
+
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            for (const LobbyIcePacket& icePacket : LobbyIce::take_packets(LobbyIceChannel::Prematch))
+            {
+                const QByteArray datagram(icePacket.data.data(), int(icePacket.data.size()));
+                if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
+                    static_cast<quint8>(datagram.at(4)) != ANCHOR_OP_PREMATCH_ACK)
+                    continue;
+                quint64 senderUserId = 0;
+                uint64_t ackHash = 0;
+                if (readPrematchSenderAndHash(datagram, senderUserId, ackHash) &&
+                    senderUserId == icePacket.peerUserId && ackHash == manifestHash)
+                    pendingAcks.remove(senderUserId);
+            }
+            QThread::msleep(10);
+        }
+
+        if (!applyPrematchManifest(manifest, manifestHash, cheatCount))
+        {
+            error = QString::fromStdString(CoreGetError());
+            return false;
+        }
+        qInfo() << "Rollback lobby ICE prematch host complete"
+                << "hash" << static_cast<qulonglong>(manifestHash)
+                << "cheats" << static_cast<qulonglong>(cheatCount);
+        return true;
+    }
+
+    const qint64 deadlineMs = QDateTime::currentMSecsSinceEpoch() + kPrematchSyncTimeoutMs;
+    uint64_t fragmentHash = 0;
+    int fragmentCount = 0;
+    quint32 fragmentTotalBytes = 0;
+    QList<QByteArray> fragmentParts;
+    while (QDateTime::currentMSecsSinceEpoch() <= deadlineMs)
+    {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        for (const LobbyIcePacket& icePacket : LobbyIce::take_packets(LobbyIceChannel::Prematch))
+        {
+            if (icePacket.peerUserId != host.userId)
+                continue;
+            QByteArray datagram(icePacket.data.data(), int(icePacket.data.size()));
+            if (datagram.size() >= 29 && std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) == 0 &&
+                static_cast<quint8>(datagram.at(4)) == ANCHOR_OP_PREMATCH_FRAGMENT)
+            {
+                quint64 senderUserId = 0;
+                uint64_t incomingHash = 0;
+                quint16 index = 0;
+                quint16 count = 0;
+                quint32 totalBytes = 0;
+                if (!readPrematchSenderAndHash(datagram, senderUserId, incomingHash) ||
+                    senderUserId != host.userId ||
+                    !readPrematchU16(datagram, 21, index) ||
+                    !readPrematchU16(datagram, 23, count) ||
+                    !readPrematchU32(datagram, 25, totalBytes) ||
+                    count == 0 || count > 2048 || index >= count ||
+                    totalBytes == 0 || totalBytes > 2 * 1024 * 1024)
+                    continue;
+                if (fragmentHash != incomingHash || fragmentCount != count ||
+                    fragmentTotalBytes != totalBytes)
+                {
+                    fragmentHash = incomingHash;
+                    fragmentCount = count;
+                    fragmentTotalBytes = totalBytes;
+                    fragmentParts.clear();
+                    fragmentParts.resize(count);
+                }
+                fragmentParts[index] = datagram.mid(29);
+                bool complete = true;
+                for (const QByteArray& part : std::as_const(fragmentParts))
+                    complete = complete && !part.isEmpty();
+                if (!complete)
+                    continue;
+                datagram.clear();
+                datagram.reserve(int(fragmentTotalBytes));
+                for (const QByteArray& part : std::as_const(fragmentParts))
+                    datagram.append(part);
+                if (datagram.size() != int(fragmentTotalBytes))
+                    continue;
+            }
+            if (datagram.size() < 5 || std::memcmp(datagram.constData(), ANCHOR_MAGIC, 4) != 0 ||
+                static_cast<quint8>(datagram.at(4)) != ANCHOR_OP_PREMATCH_MANIFEST)
+                continue;
+
+            quint64 senderUserId = 0;
+            uint64_t manifestHash = 0;
+            if (!readPrematchSenderAndHash(datagram, senderUserId, manifestHash) ||
+                senderUserId != host.userId)
+                continue;
+            if (fragmentHash != 0 && manifestHash != fragmentHash)
+                continue;
+            const int manifestOffset = 4 + 1 + 8 + 8;
+            const std::string manifest(datagram.constData() + manifestOffset,
+                                       datagram.constData() + datagram.size());
+            if (prematchHashBytes(manifest) != manifestHash)
+            {
+                error = QStringLiteral("Pre-match sync failed: settings manifest was corrupted in transit.");
+                return false;
+            }
+            size_t cheatCount = 0;
+            if (!applyPrematchManifest(manifest, manifestHash, cheatCount))
+            {
+                error = QString::fromStdString(CoreGetError());
+                return false;
+            }
+
+            const QByteArray ack = buildPrematchPacket(
+                ANCHOR_OP_PREMATCH_ACK, m_selfUserId, manifestHash);
+            for (int i = 0; i < 8; ++i)
+            {
+                LobbyIce::send(host.userId, LobbyIceChannel::Prematch,
+                               ack.constData(), size_t(ack.size()));
+            }
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            qInfo() << "Rollback lobby ICE prematch client complete"
+                    << "hash" << static_cast<qulonglong>(manifestHash)
+                    << "cheats" << static_cast<qulonglong>(cheatCount);
+            return true;
+        }
+        QThread::msleep(10);
+    }
+    error = QStringLiteral("Pre-match sync timed out — never heard from the host over ICE.");
+    return false;
+
+#if 0 // Retained temporarily for protocol archaeology; the rollback lobby uses ICE above.
     struct PrematchSyncGuard
     {
         LobbyClient& client;
@@ -1753,6 +2325,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
             return true;
         }
     }
+#endif
 }
 
 quint16 LobbyClient::localUdpPort() const
@@ -2018,6 +2591,74 @@ int LobbyClient::measuredPingMs(quint64 userId) const
     return it == m_measuredPing.constEnd() ? -1 : it.value();
 }
 
+int LobbyClient::worstRoomPingMs(const QList<quint64>& roomUserIds, bool* complete) const
+{
+    QSet<quint64> uniqueIds;
+    for (quint64 userId : roomUserIds)
+    {
+        if (userId != 0)
+            uniqueIds.insert(userId);
+    }
+    QList<quint64> userIds = uniqueIds.values();
+    std::sort(userIds.begin(), userIds.end());
+
+    bool allMeasured = userIds.size() >= 2;
+    int worst = -1;
+    for (int i = 0; i < userIds.size(); ++i)
+    {
+        for (int j = i + 1; j < userIds.size(); ++j)
+        {
+            const quint64 first = userIds[i];
+            const quint64 second = userIds[j];
+            int ping = -1;
+            if (first == m_selfUserId || second == m_selfUserId)
+            {
+                const quint64 remote = first == m_selfUserId ? second : first;
+                ping = measuredPingMs(remote);
+            }
+            else
+            {
+                ping = m_roomPeerPings.value(first).value(second, -1);
+            }
+
+            if (ping < 0)
+                allMeasured = false;
+            else
+                worst = std::max(worst, ping);
+        }
+    }
+
+    if (complete)
+        *complete = allMeasured;
+    return worst;
+}
+
+bool LobbyClient::allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QString* error) const
+{
+    for (const LobbyMatchPeer& peer : peers)
+    {
+        if (peer.userId == m_selfUserId)
+            continue;
+        if (!peer.iceSupported)
+        {
+            if (error)
+                *error = QStringLiteral("%1 is using a lobby client without ICE support.")
+                             .arg(peer.username.isEmpty() ? QString::number(peer.userId) : peer.username);
+            return false;
+        }
+        if (!LobbyIce::peer_connected(peer.userId))
+        {
+            if (error)
+                *error = QStringLiteral("Waiting for a direct ICE connection to %1.")
+                             .arg(peer.username.isEmpty() ? QString::number(peer.userId) : peer.username);
+            return false;
+        }
+    }
+    if (error)
+        error->clear();
+    return true;
+}
+
 // -------- Chat API --------
 
 void LobbyClient::sendChat(const QString& channel, const QString& message)
@@ -2120,19 +2761,12 @@ void LobbyClient::startRoom()
     sendEnvelope("ROOM_START");
 }
 
-// Host-only: change the active room's rollback parameters. The server's
-// ROOM_UPDATE_SETTINGS handler validates (host, state == "waiting"), clamps,
-// and rebroadcasts ROOM_STATE with the new values + auto flags so every seated
-// client picks them up and the match starts on the resolved delay.
-void LobbyClient::updateRoomSettings(int delay, int prediction, int pacing, bool delayAuto, bool predictionAuto)
+void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)
 {
     QJsonObject d;
-    d["delay"]          = delay;
-    d["prediction"]     = prediction;
-    d["pacing"]         = pacing;
-    d["delayAuto"]      = delayAuto;
-    d["predictionAuto"] = predictionAuto;
-    sendEnvelope("ROOM_UPDATE_SETTINGS", d);
+    d["delay"] = delay;
+    d["delayAuto"] = delayAuto;
+    sendEnvelope("ROOM_UPDATE_DELAY", d);
 }
 
 void LobbyClient::kickFromRoom(quint64 userId)
@@ -2155,20 +2789,29 @@ void LobbyClient::swapSeats(int slotA, int slotB)
 
 void LobbyClient::requestPingProbe(quint64 targetUserId)
 {
-    // While a match borrows the socket the probe could never complete
-    // (GekkoNet's filter eats the echo), so don't even ask the server —
-    // otherwise every tick spends a round-trip to arrive at a skip. The
-    // ANCHOR_LENT/ANCHOR_RECLAIMED pair already brackets the quiet stretch
-    // in the diagnostic log.
-    if (m_anchorLent)
+    if (targetUserId == 0 || targetUserId == m_selfUserId ||
+        !LobbyIce::peer_connected(targetUserId))
         return;
-    QJsonObject d;
-    d["targetUserId"] = QJsonValue(qint64(targetUserId));
-    sendEnvelope("PING_PROBE_REQUEST", d);
-    // A request with no matching PROBE_REPLY_RECV after it means the server
-    // dropped us on its flood budget.
+    for (auto it = m_pendingProbes.cbegin(); it != m_pendingProbes.cend(); ++it)
+    {
+        if (it->targetUserId == targetUserId)
+            return;
+    }
+
+    quint64 nonce = QRandomGenerator::global()->generate64();
+    while (nonce == 0 || m_pendingProbes.contains(nonce))
+        nonce = QRandomGenerator::global()->generate64();
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    ProbeInFlight probe;
+    probe.targetUserId = targetUserId;
+    probe.sendMs = nowMs;
+    probe.attemptSendMs = nowMs;
+    probe.nextAttemptMs = nowMs + PROBE_RETRY_INTERVAL_MS;
+    m_pendingProbes.insert(nonce, probe);
+    sendIcePing(targetUserId, nonce);
     writePingDiagnostic(QStringLiteral("PROBE_REQUEST"),
-                        QStringLiteral("peer=%1").arg(pingUserLabel(targetUserId)));
+                        QStringLiteral("peer=%1 transport=ice nonce=%2")
+                            .arg(pingUserLabel(targetUserId)).arg(nonce));
 }
 
 void LobbyClient::reportMatchConnected(quint64 matchId, quint64 peerUserId)

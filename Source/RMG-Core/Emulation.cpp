@@ -205,13 +205,21 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
         {
             peer.slot = std::stoi(tok.substr(0, firstComma));
             peer.ip = tok.substr(firstComma + 1, secondComma - firstComma - 1);
-            const int parsedPort = std::stoi(tok.substr(secondComma + 1));
-            if (parsedPort <= 0 || parsedPort > 65535 || peer.ip.empty() ||
-                peer.slot < 1 || peer.slot > 4)
+            if (peer.ip == "ice")
             {
-                return false;
+                peer.userId = std::stoull(tok.substr(secondComma + 1));
+                if (peer.userId == 0)
+                    return false;
             }
-            peer.port = static_cast<unsigned short>(parsedPort);
+            else
+            {
+                const int parsedPort = std::stoi(tok.substr(secondComma + 1));
+                if (parsedPort <= 0 || parsedPort > 65535 || peer.ip.empty())
+                    return false;
+                peer.port = static_cast<unsigned short>(parsedPort);
+            }
+            if (peer.slot < 1 || peer.slot > 4)
+                return false;
         }
         catch (...)
         {

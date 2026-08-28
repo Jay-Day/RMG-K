@@ -24,6 +24,7 @@
 struct LobbyRemotePeer
 {
     int slot = 0;              // 1-indexed N64 controller slot
+    std::uint64_t userId = 0;  // lobby identity used by the ICE adapter
     std::string ip;            // IPv4 dotted quad
     unsigned short port = 0;
 };
@@ -36,10 +37,9 @@ class rmgk_gekko
 
     static bool start_p2p_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow);
-    // Lobby variant: uses GekkoNet's built-in UDP adapter directly instead of
-    // riding on n02's P2P socket. Takes an explicit list of remote peers
-    // (slot + endpoint) so 3-/4-player sessions can wire each remote actor
-    // to its own peer address.
+    // Lobby variant: uses the room's libjuice ICE mesh. It remains separate
+    // from the n02/connect-code transport and takes one lobby identity per
+    // remote controller slot.
     static bool start_lobby_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort,
         const LobbyRemotePeer* remotes, int numRemotes,

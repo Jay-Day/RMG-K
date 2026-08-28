@@ -107,8 +107,9 @@ int autoFrameDelayForPing(int ping)
     return 5;
 }
 
-// Auto prediction is a fixed value so users don't have to think about it.
-constexpr int kAutoPredictionWindow = 7;
+// Lobby prediction is deliberately not user-configurable. All current clients
+// use the same generous rollback window.
+constexpr int kLobbyPredictionWindow = 9;
 
 // Show the resolved value on the "Auto" entry, e.g. "Auto (3 f)".
 void setAutoComboLabel(QComboBox* combo, int resolved)
@@ -279,13 +280,14 @@ namespace
         return c.idle;
     }
 
-    // Right-aligned seat meta as rich text: an accent-colored HOST badge and a
-    // ping-tier-colored "N ms". Shared by renderSeatFilled and the live ping
-    // refresh in onPingMeasured so the two never drift. pingMs < 0 hides ping.
+    // Right-aligned seat meta as rich text: an accent-colored HOST badge,
+    // ping-tier-colored "N ms", and the player's published local frame delay.
+    // Shared by renderSeatFilled and live refreshes so the render paths never
+    // drift. pingMs < 0 hides ping; frameDelay < 0 hides the delay.
     // `status`, when set, replaces the ping cell — used to show a punch being
     // retried or given up on, so a peer we can't reach reads as a stated
     // outcome instead of a number that never appears.
-    QString seatMetaHtml(int slot, bool isHost, int pingMs, bool dark,
+    QString seatMetaHtml(int slot, bool isHost, int pingMs, int frameDelay, bool dark,
                          const QString& status = QString())
     {
         QStringList parts;
@@ -297,6 +299,9 @@ namespace
         else if (pingMs >= 0)
             parts << QString("<span style='color:%1; font-weight:600;'>%2 ms</span>")
                          .arg(pingHex(pingMs)).arg(pingMs);
+        if (frameDelay >= 0)
+            parts << QStringLiteral("<span style='font-weight:600;'>Frame Delay: %1f</span>")
+                         .arg(frameDelay);
         return parts.join(QStringLiteral("&nbsp;·&nbsp;"));
     }
 
@@ -308,6 +313,23 @@ namespace
             return QString("<span style='color:%1; font-weight:600;'>unreachable</span>").arg(c.fail);
         return QString("<span style='color:%1; font-weight:600;'>retrying %2/%3…</span>")
                    .arg(c.wait).arg(attempt).arg(maxAttempts);
+    }
+
+    // Shown before the first ping can be sent. ICE negotiation may take a few
+    // seconds on restrictive NATs, so leaving this cell blank makes a healthy
+    // connection look stalled.
+    QString seatIceStatusHtml()
+    {
+        const auto c = statusColors();
+        return QString("<span style='color:%1; font-weight:600;'>establishing connection…</span>")
+                   .arg(c.wait);
+    }
+
+    QString seatIceFailedStatusHtml()
+    {
+        const auto c = statusColors();
+        return QString("<span style='color:%1; font-weight:600;'>connection failed</span>")
+                   .arg(c.fail);
     }
 
     // A translucent fill derived from a solid hex — used for the soft pill /
@@ -516,6 +538,10 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::modListReceived,      this, &RollbackLobbyDialog::onModListReceived);
     connect(m_client, &LobbyClient::matchBegin,           this, &RollbackLobbyDialog::onMatchBegin);
     connect(m_client, &LobbyClient::matchPeerLeft,        this, &RollbackLobbyDialog::onMatchPeerLeft);
+    connect(m_client, &LobbyClient::icePeerConnectionChanged,
+            this, &RollbackLobbyDialog::onIcePeerConnectionChanged);
+    connect(m_client, &LobbyClient::roomPingMeasurementsChanged,
+            this, &RollbackLobbyDialog::onRoomPingMeasurementsChanged);
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
     connect(m_client, &LobbyClient::pingProbeRetrying,    this, &RollbackLobbyDialog::onPingProbeRetrying);
     connect(m_client, &LobbyClient::pingProbeFailed,      this, &RollbackLobbyDialog::onPingProbeFailed);
@@ -729,7 +755,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_quickMatchBtn->setCursor(Qt::PointingHandCursor);
     m_quickMatchBtn->setToolTip(
         "Auto-match with another player searching for the selected game.\n"
-        "Defaults to delay 2 / prediction 7.");
+        "Uses your automatic frame delay and a fixed 9-frame prediction window.");
 
     m_createRoomBtn = new QPushButton("Create Room…", this);
     m_createRoomBtn->setObjectName("CreateRoomBtn");
@@ -955,14 +981,14 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_roomSubtitle->setWordWrap(true);
     lay->addWidget(m_roomSubtitle);
 
-    // Meta line (Seats / Region) — plain rich text. Delay and prediction
-    // live in the editable settings row below instead of read-only chips.
+    // Meta line (Seats / Region) — plain rich text. Local delay lives in the
+    // editable settings row below instead of a read-only chip.
     m_roomMetaLabel = new QLabel("—", this);
     m_roomMetaLabel->setTextFormat(Qt::RichText);
     m_roomMetaLabel->setContentsMargins(0, SPACING_TIGHT, 0, 0);
     lay->addWidget(m_roomMetaLabel);
 
-    // ── Rollback settings row (host-editable) ──
+    // ── Rollback settings row ──
     auto* settingsRow = new QHBoxLayout;
     settingsRow->setContentsMargins(0, SPACING_TIGHT, 0, 0);
     settingsRow->setSpacing(SPACING_DEFAULT);
@@ -972,13 +998,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         "Higher delay = fewer rollbacks but more input latency.\n"
         "Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.\n"
         "\n"
-        "Host-only. All players will use the same value.");
-    const QString predictionTip = QStringLiteral(
-        "Maximum frames the rollback engine may predict ahead.\n"
-        "Higher prediction = more network tolerance.\n"
-        "Recommended: 7 (matches Slippi default).\n"
-        "\n"
-        "Host-only. All players will use the same value.");
+        "Local setting — each player may choose a different value.");
 
     // Frame values exposed in the dropdown. 0 is intentionally omitted —
     // GekkoNet's zero-delay path still has open bugs (see project memory:
@@ -986,17 +1006,16 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     // users until that's resolved. Editing this list updates the UI; the
     // server's clamp range governs what values it'll actually accept.
     static const QList<int> FRAME_OPTIONS = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-    // The auto entry is data 0 (a value the numeric list never uses), inserted
-    // at the top of each combo. Delay's auto resolves from ping (labelled
-    // "Auto"); prediction's is a fixed 7 (labelled "Default").
+    // The Auto entry is data 0 (a value the numeric list never uses). It resolves
+    // independently from this client's direct pings to the other seats.
     auto fillFrameCombo = [](QComboBox* combo, const QString& autoLabel) {
         combo->addItem(autoLabel, 0);
         for (int v : FRAME_OPTIONS)
             combo->addItem(QString("%1 f").arg(v), v);
-        combo->setCurrentIndex(0); // default to the auto/default entry
+        combo->setCurrentIndex(0); // default to Auto
     };
 
-    auto* delayLbl = new QLabel("Frame delay:", this);
+    auto* delayLbl = new QLabel("Your frame delay:", this);
     m_delayCombo = new QComboBox(this);
     m_delayCombo->setObjectName("LobbyCombo");
     // Re-measure when the Auto entry grows into "Auto (2 f)" so the resolved
@@ -1009,25 +1028,6 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_delayCombo->setProperty("originalTip", delayTip);
     settingsRow->addWidget(delayLbl);
     settingsRow->addWidget(m_delayCombo);
-
-    settingsRow->addSpacing(SPACING_DEFAULT * 2);
-
-    auto* predLbl = new QLabel("Prediction:", this);
-    m_predictionCombo = new QComboBox(this);
-    m_predictionCombo->setObjectName("LobbyCombo");
-    fillFrameCombo(m_predictionCombo, QString("Default (%1 f)").arg(kAutoPredictionWindow));
-    m_predictionCombo->setToolTip(predictionTip);
-    m_predictionCombo->setProperty("originalTip", predictionTip);
-    settingsRow->addWidget(predLbl);
-    settingsRow->addWidget(m_predictionCombo);
-
-    // Pacing is no longer user-selectable — the engine hardwires the Smooth
-    // (asymmetric) model. The combo survives hidden and pinned to Smooth
-    // because the room-settings sync paths require all three combos non-null;
-    // it just always reports 1.
-    m_pacingCombo = new QComboBox(this);
-    m_pacingCombo->addItem("Smooth", 1);
-    m_pacingCombo->hide();
 
     settingsRow->addStretch(1);
     lay->addLayout(settingsRow);
@@ -1072,21 +1072,15 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     lay->addLayout(toggleRow);
 
-    // Both combos share the same change handler. Skip emits while we're
-    // applying values from a ROOM_STATE refresh — otherwise we'd ping-pong
-    // a settings update back to the server on every server-driven refresh.
-    auto pushSettings = [this]() {
+    // Delay is local: changing it never changes another player's value. The
+    // resolved number is published so it can be shown beside this player's seat.
+    auto applyDelay = [this]() {
         if (m_suppressSettingsSignal) return;
         if (m_currentRoomId == 0) return;
-        if (!m_client) return;
-        // A combo's "Auto" entry has data 0; track each mode, then resolve and
-        // push the concrete values (applyHostRoomSettings never sends 0).
-        m_delayAuto      = (m_delayCombo->currentData().toInt() == 0);
-        m_predictionAuto = (m_predictionCombo->currentData().toInt() == 0);
-        applyHostRoomSettings(true);
+        m_delayAuto = (m_delayCombo->currentData().toInt() == 0);
+        applyLocalFrameDelay(true);
     };
-    connect(m_delayCombo,      QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
-    connect(m_predictionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, pushSettings);
+    connect(m_delayCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, applyDelay);
 
     // ── Seats — bold section header + vertical player-list rows ──
     auto* seatsHeader = new QLabel("SEATS", this);
@@ -1259,6 +1253,7 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
 {
     s.isHost = false;
     s.userId = 0;
+    s.frameDelay = -1;
 
     // Muted, dashed card — clearly "open seat" without competing with the
     // filled, color-tinted player cards.
@@ -1297,9 +1292,10 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
 }
 
 void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, bool isHost,
-                                           bool isSelf, int pingMs, bool canKick)
+                                           bool isSelf, int pingMs, int frameDelay, bool canKick)
 {
     s.isHost = isHost;
+    s.frameDelay = frameDelay;
     if (s.kickButton) s.kickButton->setVisible(canKick);
 
     const bool dark = isDarkTheme();
@@ -1345,10 +1341,10 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
     }
     if (s.metaLabel)
     {
-        // HOST badge + ping. Self never shows a ping (pingMs == -1 also means
-        // "no measurement yet" for peers we haven't probed). Ping shows up
-        // after the first PROBE_REPLY arrives, refreshed on each tick.
-        s.metaLabel->setText(seatMetaHtml(s.slot, isHost, isSelf ? -1 : pingMs, dark));
+        // Self is a local zero-latency endpoint. Remote ping appears after the
+        // first reply; until then onRoomStateChanged supplies an ICE status.
+        s.metaLabel->setText(
+            seatMetaHtml(s.slot, isHost, isSelf ? 0 : pingMs, frameDelay, dark));
     }
 }
 
@@ -2071,7 +2067,7 @@ QString RollbackLobbyDialog::prefillUsername() const
     }
 
     name.remove(QRegularExpression(R"([^A-Za-z0-9_\-\.])"));
-    return name.left(16);
+    return name.left(20);
 }
 
 void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
@@ -2172,7 +2168,9 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
     if (reason == "username_taken")    human = "That username is already in use.";
     else if (reason == "invalid_hello") human = "Server rejected the connection handshake.";
     else if (reason == "invalid_payload") human = "That username isn't allowed.";
-    else if (reason == "version_mismatch") human = "Client version is incompatible with this server.";
+    else if (reason == "version_mismatch") human =
+        "Your RMG-K client is out of date. This lobby requires RMG-K 9.13 "
+        "or vdev-2367 or newer.";
     else if (reason == "server_full") human = "The lobby is currently full.";
 
     m_connectPromptMessage = human;
@@ -2789,12 +2787,19 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     m_quickMatchActive = false;
     if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
 
-    // Every freshly-entered room starts in Auto delay/prediction (the in-room
-    // combos default to "Auto", and Create Room no longer surfaces these). This
-    // is what makes a Quick Match host resolve delay from the measured peer ping
-    // during the warmup; the host can still switch to a manual value in-room.
-    m_delayAuto      = true;
-    m_predictionAuto = true;
+    // Every freshly-entered room starts in Auto delay. It is a per-player
+    // selection, so reset this client's combo here instead of ever copying the
+    // legacy room delay from ROOM_STATE.
+    m_delayAuto = true;
+    m_localDelayPublished = false;
+    m_currentRoomDelay = autoFrameDelayForPing(-1);
+    if (m_delayCombo)
+    {
+        m_suppressSettingsSignal = true;
+        m_delayCombo->setCurrentIndex(m_delayCombo->findData(0));
+        setAutoComboLabel(m_delayCombo, m_currentRoomDelay);
+        m_suppressSettingsSignal = false;
+    }
 
     // Fresh room — don't chime for the seats already present in the first
     // ROOM_STATE; only for players who join after we've settled in.
@@ -2817,9 +2822,9 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
         appendChatLine(CHANNEL_ROOM, greetingChatLine);
 
     // Backstop in case ROOM_STATE seats arrive in a shape that didn't trigger a
-    // per-peer probe — kick one sweep shortly after entry so ping shows promptly
-    // and the host's Auto delay resolves before the match begins. Harmless in an
-    // empty room: onPingProbeTick skips self / unseated slots.
+    // per-peer probe — kick one sweep shortly after entry so every client starts
+    // filling the room-wide ping matrix promptly. Harmless in an empty room:
+    // onPingProbeTick skips self / unseated slots.
     QTimer::singleShot(600, this, &RollbackLobbyDialog::onPingProbeTick);
 }
 
@@ -2916,13 +2921,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     const QString romName = rom.value("name").toString();
     const QString romMd5 = rom.value("md5").toString();
     const QString romRegion = rom.value("region").toString();
-    const int delay = roomState.value("delay").toInt();
-    const int prediction = roomState.value("prediction").toInt();
     const int pacing = roomState.value("pacing").toInt() == 1 ? 1 : 0;
-    // Whether the host left each value on "Auto" — lets non-hosts mirror the
-    // host's "Auto (N f)" / "Default" labels instead of a bare number.
-    const bool roomDelayAuto = roomState.value("delayAuto").toBool();
-    const bool roomPredictionAuto = roomState.value("predictionAuto").toBool();
     const int maxPlayers = roomState.value("maxPlayers").toInt();
     const QString state = roomState.value("state").toString();
     const quint64 hostId = static_cast<quint64>(roomState.value("hostId").toDouble());
@@ -2931,8 +2930,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_currentRoomGame       = romName;
     m_currentRoomMd5        = romMd5;
     m_currentRoomRegion     = romRegion;
-    m_currentRoomDelay      = delay;
-    m_currentRoomPrediction = prediction;
+    m_currentRoomPrediction = kLobbyPredictionWindow;
     m_currentRoomPacing     = pacing;
     m_currentRoomHostId     = hostId;
 
@@ -2993,65 +2991,21 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         metaParts << QString("<b>Region:</b> %1").arg(romRegion);
     m_roomMetaLabel->setText(metaParts.join("  ·  "));
 
-    // Sync the delay / prediction combos with the authoritative room state.
-    // Suppress the currentIndexChanged signal during the assignment so the
-    // combo doesn't immediately re-send an UPDATE for the same value we
-    // just received from the server.
-    if (m_delayCombo && m_predictionCombo && m_pacingCombo)
+    // Room refreshes never assign the local delay selection. Every player owns
+    // their combo; it only locks after the match begins.
+    if (m_delayCombo)
     {
-        static const QString tipDisabledNotHost = QStringLiteral(
-            "Only the host can change rollback settings.");
         static const QString tipDisabledMidMatch = QStringLiteral(
             "Can't change settings during a match.");
 
-        const bool editable = iAmHost && state == "waiting";
-        m_suppressSettingsSignal = true;
-        // Look up the index for the server-supplied value via findData
-        // since the combo's index no longer maps 1:1 to the value (0/Auto is
-        // not a real value). Falls back to the floor entry if the server
-        // somehow handed us a value we don't expose.
-        auto pickIndex = [](QComboBox* combo, int value) {
-            const int idx = combo->findData(value);
-            return idx >= 0 ? idx : 0;
-        };
-        // Show the "Auto"/"Default" entry whenever the value is auto-driven, so
-        // every seat displays the same thing. The host trusts their own local
-        // m_*Auto (the server echo of the resolved number must not knock their
-        // combo off Auto); non-hosts trust the room's auto flags. When not auto,
-        // everyone shows the concrete resolved value.
-        const bool showDelayAuto = editable ? m_delayAuto : roomDelayAuto;
-        const bool showPredAuto  = editable ? m_predictionAuto : roomPredictionAuto;
-        if (showDelayAuto)
-            m_delayCombo->setCurrentIndex(m_delayCombo->findData(0));
-        else
-            m_delayCombo->setCurrentIndex(pickIndex(m_delayCombo, delay));
-        if (showPredAuto)
-            m_predictionCombo->setCurrentIndex(m_predictionCombo->findData(0));
-        else
-            m_predictionCombo->setCurrentIndex(pickIndex(m_predictionCombo, prediction));
-        // Pacing is a plain 2-choice value (no Auto): mirror the room's value on
-        // every seat.
-        m_pacingCombo->setCurrentIndex(pickIndex(m_pacingCombo, pacing));
-        // Keep the delay "Auto" entry's label showing the live resolved value.
-        // (Prediction's "Default" entry is a plain, fixed label.)
-        setAutoComboLabel(m_delayCombo, delay);
-        m_delayCombo->setEnabled(editable);
-        m_predictionCombo->setEnabled(editable);
-        m_pacingCombo->setEnabled(editable);
+        const bool delayEditable = state == "waiting";
+        setAutoComboLabel(m_delayCombo, m_currentRoomDelay);
+        m_delayCombo->setEnabled(delayEditable);
 
-        const QString delayTip = editable
+        const QString delayTip = delayEditable
             ? m_delayCombo->property("originalTip").toString()
-            : (iAmHost ? tipDisabledMidMatch : tipDisabledNotHost);
-        const QString predTip = editable
-            ? m_predictionCombo->property("originalTip").toString()
-            : (iAmHost ? tipDisabledMidMatch : tipDisabledNotHost);
-        const QString pacingTip = editable
-            ? m_pacingCombo->property("originalTip").toString()
-            : (iAmHost ? tipDisabledMidMatch : tipDisabledNotHost);
+            : tipDisabledMidMatch;
         m_delayCombo->setToolTip(delayTip);
-        m_predictionCombo->setToolTip(predTip);
-        m_pacingCombo->setToolTip(pacingTip);
-        m_suppressSettingsSignal = false;
     }
 
     // Broadcasting is host-only — one authoritative stream per match. Hide the
@@ -3076,11 +3030,19 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const quint64 uid = static_cast<quint64>(p.value("userId").toDouble());
         const bool slotIsHost = (uid == hostId);
         const bool slotIsSelf = (uid == m_client->selfUserId());
-        const int pingMs = slotIsSelf ? -1 : m_client->measuredPingMs(uid);
+        const int pingMs = slotIsSelf ? 0 : m_client->measuredPingMs(uid);
+        const int frameDelay = slotIsSelf
+            ? m_currentRoomDelay
+            : p.value("frameDelay").toInt(-1);
         // The host can remove any seated player except themselves (the host seat).
         const bool canKick = iAmHost && !slotIsHost;
         m_seats[slot - 1].userId = uid;
-        renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf, pingMs, canKick);
+        renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf,
+                         pingMs, frameDelay, canKick);
+        if (!slotIsSelf && pingMs < 0 && m_seats[slot - 1].metaLabel)
+            m_seats[slot - 1].metaLabel->setText(
+                seatMetaHtml(slot, slotIsHost, pingMs, frameDelay, isDarkTheme(),
+                             seatIceStatusHtml()));
         filled[slot - 1] = true;
     }
     for (int i = 0; i < 4; ++i)
@@ -3125,8 +3087,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             if (uid == selfId || m_knownSeatedUsers.contains(uid))
                 continue;
             // Probe a newly-seated peer immediately so their ping appears within
-            // an RTT instead of waiting on the next probe tick — and so the host's
-            // Auto delay resolves from real ping before the match begins.
+            // an RTT instead of waiting on the next probe tick — and so this
+            // player's Auto delay resolves from real ping before the match begins.
             if (m_client) m_client->requestPingProbe(uid);
             sawNewPeer = true;
         }
@@ -3138,7 +3100,11 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         m_roomSeatsSeen = true;
     }
 
-    // Start button gating (host-only): waiting, 2+ seated, ping from everyone.
+    // Start button gating (host-only): waiting, 2+ seated, every pair measured.
+    // Re-resolve local Auto after seat changes too: a join/leave can change this
+    // player's worst relevant path even before another probe result arrives.
+    if (m_delayAuto)
+        applyLocalFrameDelay(false);
     refreshStartButton();
 }
 
@@ -3156,21 +3122,19 @@ void RollbackLobbyDialog::refreshStartButton()
     // run contiguously from P1. The core sizes the GekkoNet session by the
     // highest occupied seat and feeds empty ports zeroed input.
     int seated = 0;
-    int peersAwaitingPing = 0;
+    QList<quint64> seatedUserIds;
     for (const auto& s : m_seats)
     {
         if (s.userId == 0)
             continue;
         ++seated;
-        // We never ping ourselves; every *other* seated player needs a measured
-        // ping before the host may start, so the match opens on real latency
-        // (and the Auto frame-delay has resolved from it).
-        if (s.userId != selfId && m_client && m_client->measuredPingMs(s.userId) < 0)
-            ++peersAwaitingPing;
+        seatedUserIds.append(s.userId);
     }
 
     const bool enoughPlayers = seated >= 2;
-    const bool pingsReady    = (peersAwaitingPing == 0);
+    bool pingsReady = false;
+    if (m_client)
+        m_client->worstRoomPingMs(seatedUserIds, &pingsReady);
     const bool canStart      = iAmHost && waiting && enoughPlayers && pingsReady;
 
     m_startBtn->setEnabled(canStart);
@@ -3178,7 +3142,7 @@ void RollbackLobbyDialog::refreshStartButton()
         !iAmHost         ? QStringLiteral("Only the host can start the game.")
         : !waiting       ? QStringLiteral("Already in a match.")
         : !enoughPlayers ? QStringLiteral("Need at least 2 players to start.")
-        : !pingsReady    ? QStringLiteral("Measuring ping to all players…")
+        : !pingsReady    ? QStringLiteral("Measuring every player-to-player path…")
                          : QString());
 }
 
@@ -3252,12 +3216,6 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     m_currentMatchId = 0;
     if (m_dropBtn) m_dropBtn->setEnabled(false);
 
-    // Re-open the UDP anchor so the next MATCH_BEGIN can hand us a fresh
-    // local port. Without this, localUdpPort() returns 0 (socket is aborted
-    // after onMatchBegin's releaseUdpAnchor), GekkoNet binds to a random
-    // kernel-picked port for match #2, and peers send to the stale port from
-    // match #1 — black screen on every match after the first.
-    if (m_client) m_client->reopenUdpAnchor();
 }
 
 void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason)
@@ -3349,10 +3307,38 @@ void RollbackLobbyDialog::refreshSeatMeta(quint64 userId, const QString& statusH
     {
         if (s.userId != userId || !s.metaLabel)
             continue;
-        const int pingMs = m_client ? m_client->measuredPingMs(userId) : -1;
-        s.metaLabel->setText(seatMetaHtml(s.slot, s.isHost, pingMs, isDarkTheme(), statusHtml));
+        const bool isSelf = m_client && userId == m_client->selfUserId();
+        const int pingMs = isSelf ? 0 : (m_client ? m_client->measuredPingMs(userId) : -1);
+        s.metaLabel->setText(
+            seatMetaHtml(s.slot, s.isHost, pingMs, s.frameDelay, isDarkTheme(), statusHtml));
         break;
     }
+}
+
+void RollbackLobbyDialog::onIcePeerConnectionChanged(quint64 userId, bool connected, bool failed)
+{
+    if (!m_client || userId == m_client->selfUserId())
+        return;
+
+    // Keep connection progress visible until the first RTT replaces it, but
+    // do not leave a peer looking busy after ICE has exhausted every pair.
+    // Failure supersedes a cached RTT because that old measurement no longer
+    // represents a usable direct connection.
+    if (failed)
+        refreshSeatMeta(userId, seatIceFailedStatusHtml());
+    // Once ICE connects, probe immediately rather than waiting up to three
+    // seconds for the periodic refresh timer.
+    else if (m_client->measuredPingMs(userId) < 0)
+        refreshSeatMeta(userId, seatIceStatusHtml());
+    if (connected)
+        m_client->requestPingProbe(userId);
+}
+
+void RollbackLobbyDialog::onRoomPingMeasurementsChanged()
+{
+    // Only the host receives non-host path reports. They complete the matrix
+    // required to enable Start, but no longer affect anyone's local delay.
+    refreshStartButton();
 }
 
 void RollbackLobbyDialog::onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts)
@@ -3413,14 +3399,15 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
     {
         if (s.userId != userId || !s.metaLabel)
             continue;
-        s.metaLabel->setText(seatMetaHtml(s.slot, s.isHost, rttMs, isDarkTheme()));
+        s.metaLabel->setText(
+            seatMetaHtml(s.slot, s.isHost, rttMs, s.frameDelay, isDarkTheme()));
         break;
     }
 
-    // Auto delay follows ping — re-resolve when a fresh RTT lands. The helper
-    // only acts when we're the host of a waiting room with Auto selected.
+    // Auto delay follows this player's own direct peer RTTs. Every seated client
+    // runs this path independently, so their resolved delays may differ.
     if (m_delayAuto)
-        applyHostRoomSettings(false);
+        applyLocalFrameDelay(false);
 
     // A peer's first ping may be what unblocks the host's Start button.
     refreshStartButton();
@@ -3447,7 +3434,7 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
     }
 }
 
-int RollbackLobbyDialog::worstSeatPingMs() const
+int RollbackLobbyDialog::worstLocalPeerPingMs() const
 {
     if (!m_client) return -1;
     const quint64 selfId = m_client->selfUserId();
@@ -3456,48 +3443,50 @@ int RollbackLobbyDialog::worstSeatPingMs() const
     {
         if (s.userId == 0 || s.userId == selfId)
             continue;
-        const int p = m_client->measuredPingMs(s.userId);
-        if (p > worst) worst = p; // tune against the worst host↔peer link
+        const int ping = m_client->measuredPingMs(s.userId);
+        if (ping >= 0)
+            worst = std::max(worst, ping);
     }
     return worst;
 }
 
-void RollbackLobbyDialog::applyHostRoomSettings(bool force)
+void RollbackLobbyDialog::applyLocalFrameDelay(bool force)
 {
-    if (m_currentRoomId == 0 || !m_client || !m_delayCombo || !m_predictionCombo || !m_pacingCombo)
-        return;
-    // The delay combo is enabled only for the host of a waiting room, so its
-    // enabled state doubles as the "I'm allowed to push settings now" gate.
-    if (!m_delayCombo->isEnabled())
+    if (m_currentRoomId == 0 || m_currentRoomState != "waiting" || !m_delayCombo)
         return;
 
-    const int effDelay = m_delayAuto
-        ? autoFrameDelayForPing(worstSeatPingMs())
+    const int delay = m_delayAuto
+        ? autoFrameDelayForPing(worstLocalPeerPingMs())
         : m_delayCombo->currentData().toInt();
-    const int effPred = m_predictionAuto
-        ? kAutoPredictionWindow
-        : m_predictionCombo->currentData().toInt();
-    const int effPacing = m_pacingCombo->currentData().toInt() == 1 ? 1 : 0;
-
-    // Delay's "Auto" entry shows the resolved value, e.g. "Auto (4 f)".
-    // Prediction's "Default" entry stays a plain label (always 7, not ping-based).
-    if (m_delayAuto) setAutoComboLabel(m_delayCombo, effDelay);
-
-    if (!force && effDelay == m_currentRoomDelay && effPred == m_currentRoomPrediction &&
-        effPacing == m_currentRoomPacing)
+    if (m_delayAuto)
+        setAutoComboLabel(m_delayCombo, delay);
+    if (!force && delay == m_currentRoomDelay && m_localDelayPublished)
         return;
 
-    m_client->updateRoomSettings(effDelay, effPred, effPacing, m_delayAuto, m_predictionAuto);
+    m_currentRoomDelay = delay;
+    if (m_client)
+    {
+        const quint64 selfId = m_client->selfUserId();
+        for (auto& seat : m_seats)
+        {
+            if (seat.userId != selfId)
+                continue;
+            seat.frameDelay = delay;
+            refreshSeatMeta(selfId, QString());
+            break;
+        }
+    }
 
-    // Persist the concrete resolved values (never the Auto sentinel 0) so
-    // CreateRoomDialog seeds a valid delay/prediction for the next room. Pacing
-    // also rides the engine setting so a freshly created room defaults to it.
+    // Persist the concrete local value (never the Auto sentinel) as the legacy
+    // create-room seed. Auto mode itself intentionally resets for each room.
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
-    s.setValue("Delay",      effDelay);
-    s.setValue("Prediction", effPred);
+    s.setValue("Delay", delay);
     s.endGroup();
-    CoreSettingsSetValue(SettingsID::Rollback_PacingMode, effPacing);
+
+    m_localDelayPublished = true;
+    if (m_client)
+        m_client->updateLocalFrameDelay(delay, m_delayAuto);
 }
 
 void RollbackLobbyDialog::onRoomLeft(const QString& reason)
@@ -3513,16 +3502,17 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_currentRoomRegion.clear();
     m_currentRoomState.clear();
     m_currentRoomDelay = 2;
-    m_currentRoomPrediction = 7;
+    m_currentRoomPrediction = kLobbyPredictionWindow;
     m_currentRoomPacing = 0;
     m_currentRoomHostId = 0;
     m_currentMatchId = 0;
+    m_iceWaitingMatchId = 0;
+    m_iceMatchDeadlineMs = 0;
     m_awaitingEmulationStart = false;
     m_emulationActive = false;
     m_knownSeatedUsers.clear();
     m_roomSeatsSeen = false;
-
-    if (m_client) m_client->reopenUdpAnchor();
+    m_localDelayPublished = false;
 
     if (m_chatViewRoom) m_chatViewRoom->clear();
     if (m_roomChatInput) m_roomChatInput->setEnabled(false);
@@ -4035,6 +4025,8 @@ void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reaso
 
 void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 {
+    m_iceWaitingMatchId = 0;
+    m_iceMatchDeadlineMs = 0;
     if (!reason.isEmpty())
     {
         appendChatSystemLine(CHANNEL_ROOM, reason);
@@ -4055,40 +4047,67 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 
     if (m_dropBtn) m_dropBtn->setEnabled(false);
 
-    // No-op while the anchor is still open (these failures all happen before
-    // releaseUdpAnchor); guards the rare path where it was already torn down so
-    // ping probing keeps working without a relaunch.
-    if (m_client) m_client->reopenUdpAnchor();
 }
 
 void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers)
 {
+    QString iceError;
+    if (!m_client->allIcePeersConnected(peers, &iceError))
+    {
+        const bool unsupported = std::any_of(peers.cbegin(), peers.cend(), [this](const auto& peer) {
+            return peer.userId != m_client->selfUserId() && !peer.iceSupported;
+        });
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_iceWaitingMatchId != matchId)
+        {
+            m_iceWaitingMatchId = matchId;
+            m_iceMatchDeadlineMs = nowMs + 15'000;
+            appendChatSystemLine(CHANNEL_ROOM, "Negotiating direct ICE connections...");
+        }
+        if (unsupported || nowMs >= m_iceMatchDeadlineMs)
+        {
+            m_currentMatchId = matchId;
+            m_awaitingEmulationStart = true;
+            m_iceWaitingMatchId = 0;
+            m_iceMatchDeadlineMs = 0;
+            abortMatchStart(unsupported
+                ? QStringLiteral("Match start failed: %1").arg(iceError)
+                : QStringLiteral("Match start failed: direct ICE negotiation timed out. No TURN relay is configured."));
+            return;
+        }
+        applyRoomStateBadge("Negotiating ICE…", stateHex("connecting", isDarkTheme()));
+        QTimer::singleShot(100, this, [this, matchId, peers]() {
+            if (m_iceWaitingMatchId == matchId)
+                onMatchBegin(matchId, peers);
+        });
+        return;
+    }
+    m_iceWaitingMatchId = 0;
+    m_iceMatchDeadlineMs = 0;
+
     const QString line = QString("Match #%1 starting with %2 player(s)").arg(matchId).arg(peers.size());
     appendChatSystemLine(CHANNEL_LOBBY, line);
     appendChatSystemLine(CHANNEL_ROOM,  line);
 
-    // The host announces the rollback delay the room is about to play on, so
-    // everyone sees it in chat (and on the in-game overlay) — especially useful
-    // when Auto resolved it from ping. One authoritative message, gated to the
-    // host so a 4-player match doesn't print it four times.
-    if (m_client && m_currentRoomHostId == m_client->selfUserId())
+    // Delay is local now, so show each player their own resolved value without
+    // broadcasting a misleading room-wide setting.
     {
         QString delayMsg;
         if (m_delayAuto)
         {
-            const int worst = worstSeatPingMs();
+            const int worst = worstLocalPeerPingMs();
             delayMsg = worst >= 0
-                ? QStringLiteral("Frame delay: %1 (auto, from %2 ms ping) · prediction %3")
+                ? QStringLiteral("Your frame delay: %1 (auto, from %2 ms ping) · prediction %3")
                       .arg(m_currentRoomDelay).arg(worst).arg(m_currentRoomPrediction)
-                : QStringLiteral("Frame delay: %1 (auto) · prediction %2")
+                : QStringLiteral("Your frame delay: %1 (auto) · prediction %2")
                       .arg(m_currentRoomDelay).arg(m_currentRoomPrediction);
         }
         else
         {
-            delayMsg = QStringLiteral("Frame delay: %1 · prediction %2")
+            delayMsg = QStringLiteral("Your frame delay: %1 · prediction %2")
                            .arg(m_currentRoomDelay).arg(m_currentRoomPrediction);
         }
-        m_client->sendChat(CHANNEL_ROOM, delayMsg);
+        appendChatSystemLine(CHANNEL_ROOM, delayMsg);
     }
 
     m_currentMatchId = matchId;
@@ -4102,14 +4121,13 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     applyRoomStateBadge("Connecting…", stateHex("connecting", isDarkTheme()));
 
     CoreAddCallbackMessage(CoreDebugMessageType::Info,
-        QString("Rollback lobby MATCH_BEGIN: match=%1 peers=%2 self=%3 roomGame='%4' delay=%5 prediction=%6 anchorPort=%7")
+        QString("Rollback lobby MATCH_BEGIN: match=%1 peers=%2 self=%3 roomGame='%4' delay=%5 prediction=%6 transport=ice")
             .arg(matchId)
             .arg(peers.size())
             .arg(m_client->selfUserId())
             .arg(m_currentRoomGame)
             .arg(m_currentRoomDelay)
             .arg(m_currentRoomPrediction)
-            .arg(m_client->localUdpPort())
             .toUtf8().constData());
 
     const quint64 selfId = m_client->selfUserId();
@@ -4176,37 +4194,17 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         }
     }
 
-    const quint16 localPort = m_client->localUdpPort();
+    const quint16 localPort = 0;
 
     for (const auto& p : peers)
     {
         if (p.userId == selfId)
             continue;
 
-        QString endpointIp = p.publicIp;
-        QString endpointKind = "public";
-
-        if (!local.publicIp.isEmpty() &&
-            !p.publicIp.isEmpty() &&
-            local.publicIp == p.publicIp &&
-            !p.localIp.isEmpty())
-        {
-            endpointIp = p.localIp;
-            endpointKind = "local";
-        }
-
-        const QString selectedLine = QString("Rollback lobby selected endpoint: peerUser=%1 slot=%2 kind=%3 endpoint=%4:%5 localPublic=%6 peerPublic=%7 peerLocal=%8")
-            .arg(p.userId)
-            .arg(p.slot)
-            .arg(endpointKind)
-            .arg(endpointIp)
-            .arg(p.publicPort)
-            .arg(local.publicIp)
-            .arg(p.publicIp)
-            .arg(p.localIp);
+        const QString selectedLine = QString("Rollback lobby selected ICE peer: peerUser=%1 slot=%2")
+            .arg(p.userId).arg(p.slot);
         CoreAddCallbackMessage(CoreDebugMessageType::Info, selectedLine.toUtf8().constData());
-
-        remotePeers << QString("%1,%2,%3").arg(p.slot).arg(endpointIp).arg(p.publicPort);
+        remotePeers << QString("%1,ice,%2").arg(p.slot).arg(p.userId);
     }
 
     if (remotePeers.isEmpty())
@@ -4214,12 +4212,6 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         abortMatchStart("Match start failed: missing remote peer.");
         return;
     }
-
-    // Punch peer NATs from the anchor socket before handing the port to
-    // GekkoNet. Both peers receive MATCH_BEGIN within ~RTT of each other, so
-    // both fire while the other's anchor is still open — opens the NAT
-    // mapping so GekkoNet's first frame doesn't have to eat the handshake.
-    m_client->punchPeerEndpoints(peers);
 
     const QString localRomFile = localRomPathForMd5(m_currentRoomMd5);
     if (localRomFile.isEmpty())
@@ -4238,30 +4230,15 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");
 
-    // n02-style shared transport: lend the live anchor socket to GekkoNet
-    // instead of releasing the port for it to rebind. The port and every
-    // peer's NAT mapping to us survive the match; reclaim happens through the
-    // existing reopenUdpAnchor calls on the match-end paths. Falls back to
-    // the old release/rebind handoff if the descriptor can't be obtained.
-    const qintptr anchorFd = m_client->lendAnchorToMatch();
-    if (anchorFd != -1)
-    {
-        rmgk_gekko::set_external_socket(static_cast<uintptr_t>(anchorFd));
-    }
-    else
-    {
-        rmgk_gekko::clear_external_socket();
-        m_client->releaseUdpAnchor();
-    }
+    rmgk_gekko::clear_external_socket();
 
     {
         char buf[640];
         std::snprintf(buf, sizeof(buf),
-            "Lobby→matchReady (deferred 100ms): game='%s' peers=%d (%s) localPort=%u slot=%d delay=%d pred=%d",
+            "Lobby→matchReady: game='%s' peers=%d (%s) transport=ice slot=%d delay=%d pred=%d",
             m_currentRoomGame.toUtf8().constData(),
             int(remotePeers.size()),
             remotePeers.join("; ").toUtf8().constData(),
-            unsigned(localPort),
             local.slot,
             m_currentRoomDelay,
             m_currentRoomPrediction);
@@ -4273,18 +4250,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // here so the match definitively runs the host-selected model.
     CoreSettingsSetValue(SettingsID::Rollback_PacingMode, m_currentRoomPacing);
 
-    // Defer the emit so the OS finishes releasing the anchor port before
-    // GekkoNet attempts to bind it. 100ms is plenty on Windows for an UDP
-    // socket teardown to complete; without this delay the bind races.
-    const QString gameName  = m_currentRoomGame;
-    const QString romFile   = localRomFile; // resolved above by MD5 — robust for off-database ROMs
-    const int localPortInt  = int(localPort);
-    const int slot          = local.slot;
-    const int delay         = m_currentRoomDelay;
-    const int prediction    = m_currentRoomPrediction;
-    QTimer::singleShot(100, this, [this, gameName, romFile, remotePeers, localPortInt, slot, delay, prediction]() {
-        emit matchReady(gameName, romFile, remotePeers, localPortInt, slot, delay, prediction);
-    });
+    emit matchReady(m_currentRoomGame, localRomFile, remotePeers, int(localPort),
+                    local.slot, m_currentRoomDelay, m_currentRoomPrediction);
 }
 
 #endif // NETPLAY

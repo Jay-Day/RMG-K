@@ -248,9 +248,10 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
     this->rollbackPingDiagnosticsCheckBox = new QCheckBox("Enable lobby ping diagnostics logging", rollbackLoggingGroupBox);
     this->rollbackPingDiagnosticsCheckBox->setToolTip(
-        "Write a detailed lobby_ping_*.log file (in the Logs folder) tracing lobby ping\n"
-        "probes and NAT hole-punching. Only useful when debugging connection problems\n"
-        "with another player. Applies the next time you connect to the lobby.");
+        "Write a detailed lobby_ping_*.log file (in the Logs folder) tracing ICE/STUN\n"
+        "candidate gathering, signaling, connectivity checks, and peer pings. Candidate\n"
+        "addresses are included, but ICE credentials are redacted. Only useful when\n"
+        "debugging connection problems. Applies the next time you connect to the lobby.");
     this->rollbackHideLocationCheckBox = new QCheckBox("Hide my location from other players", rollbackTab);
     this->rollbackHideLocationCheckBox->setToolTip(
         "Your row in the netplay lobby shows no country flag, and no country in its\n"

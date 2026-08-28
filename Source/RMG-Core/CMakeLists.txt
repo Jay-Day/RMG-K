@@ -57,6 +57,7 @@ set(RMG_CORE_SOURCES
 
 if (NETPLAY)
     add_definitions(-DNETPLAY)
+    list(APPEND RMG_CORE_SOURCES LobbyIce.cpp)
 endif(NETPLAY)
 
 if (PORTABLE_INSTALL)
@@ -82,6 +83,10 @@ target_link_libraries(RMG-Core PRIVATE
     ${MINIZIP_LIBRARIES}
     lzma
 )
+
+if (NETPLAY)
+    target_link_libraries(RMG-Core PRIVATE LibJuice::LibJuiceStatic)
+endif()
 
 # Link n02 static library for Kaillera netplay support
 # PRIVATE prevents n02 from being transitively linked into RMG.exe,
