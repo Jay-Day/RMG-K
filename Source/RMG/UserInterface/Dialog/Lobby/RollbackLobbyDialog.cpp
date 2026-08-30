@@ -111,11 +111,12 @@ int autoFrameDelayForPing(int ping)
 // lobby behavior and Slippi's traditional default.
 constexpr int kDefaultPredictionWindow = 7;
 
-// Show the resolved value on the "Auto" entry, e.g. "Auto (3 f)".
+// Show the resolved value on the delay combo's Auto entry (data -1),
+// e.g. "Auto (3 f)".
 void setAutoComboLabel(QComboBox* combo, int resolved)
 {
     if (!combo) return;
-    const int idx = combo->findData(0);
+    const int idx = combo->findData(-1);
     if (idx >= 0) combo->setItemText(idx, QStringLiteral("Auto (%1 f)").arg(resolved));
 }
 
@@ -1009,10 +1010,15 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         "\n"
         "Room setting — only the host may change this value.");
 
-    static const QList<int> DELAY_OPTIONS = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    // Delay 0 is intentionally omitted — GekkoNet's zero-delay path still has
+    // open bugs (see project memory: 0-delay host crash with non-zero analog
+    // drift), so we hide it from users until that's resolved. Editing this
+    // list updates the UI; the server's clamp range governs what values it'll
+    // actually accept.
+    static const QList<int> DELAY_OPTIONS = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
     static const QList<int> PREDICTION_OPTIONS = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-    // Delay uses -1 for Auto so numeric zero remains selectable. Prediction can
-    // continue using zero as its Default sentinel because its range begins at 1.
+    // Delay keeps -1 as its Auto sentinel; prediction uses zero as its Default
+    // sentinel since both ranges begin at 1.
     auto fillFrameCombo = [](QComboBox* combo, const QString& autoLabel,
                              int sentinel, const QList<int>& options) {
         combo->addItem(autoLabel, sentinel);
