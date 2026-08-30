@@ -147,10 +147,11 @@ public:
     // Server validates (host, waiting, valid slots) and rebroadcasts ROOM_STATE.
     void swapSeats(int slotA, int slotB);
 
-    // Publish this player's resolved local rollback settings for the room seat
-    // display. Each player owns both values independently.
-    void updateLocalRollbackSettings(int delay, bool delayAuto,
-                                     int prediction, bool predictionAuto);
+    // Publish this player's resolved local input delay for the room seat display.
+    void updateLocalFrameDelay(int delay, bool delayAuto);
+
+    // Publish the host-controlled prediction window for the whole room.
+    void updateRoomPrediction(int prediction, bool predictionAuto);
 
     // Ping probe over the already-selected ICE candidate pair. This measures
     // the same direct path that the rollback session will use.
