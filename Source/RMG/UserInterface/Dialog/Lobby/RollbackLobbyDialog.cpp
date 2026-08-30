@@ -302,9 +302,6 @@ namespace
         else if (pingMs >= 0)
             parts << QString("<span style='color:%1; font-weight:600;'>%2 ms</span>")
                          .arg(pingHex(pingMs)).arg(pingMs);
-        if (frameDelay >= 0)
-            parts << QStringLiteral("<span style='font-weight:600;'>Frame Delay: %1f</span>")
-                         .arg(frameDelay);
         return parts.join(QStringLiteral("&nbsp;·&nbsp;"));
     }
 
