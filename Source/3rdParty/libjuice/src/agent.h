@@ -24,9 +24,12 @@
 
 // RFC 8445: Agents MUST NOT use an RTO value smaller than 500 ms.
 #define MIN_STUN_RETRANSMISSION_TIMEOUT 500 // msecs
-#define LAST_STUN_RETRANSMISSION_TIMEOUT (MIN_STUN_RETRANSMISSION_TIMEOUT * 16)
-#define MAX_STUN_CHECK_RETRANSMISSION_COUNT 6  // exponential backoff, total 39500ms
-#define MAX_STUN_SERVER_RETRANSMISSION_COUNT 5 // total 23500ms
+#define LAST_STUN_RETRANSMISSION_TIMEOUT (MIN_STUN_RETRANSMISSION_TIMEOUT * 2)
+#define LAST_STUN_CHECK_RESPONSE_TIMEOUT MIN_STUN_RETRANSMISSION_TIMEOUT
+// Connectivity checks use a fixed 500 ms cadence: six sends at 0, 500, 1000,
+// 1500, 2000, and 2500 ms, followed by a final 500 ms response window.
+#define MAX_STUN_CHECK_RETRANSMISSION_COUNT 5
+#define MAX_STUN_SERVER_RETRANSMISSION_COUNT 3
 #define STUN_TCP_TIMEOUT LAST_STUN_RETRANSMISSION_TIMEOUT
 
 // RFC 8445: ICE agents SHOULD use a default Ta value, 50 ms, but MAY use another value based on the
@@ -40,7 +43,7 @@
 // ICE Patiently Awaiting Connectivity timer
 // RFC 8863: The RECOMMENDED duration for the PAC timer is equal to the agent's connectivity check
 // transaction timeout, including all retransmissions.
-#define ICE_PAC_TIMEOUT 39500 // msecs
+#define ICE_PAC_TIMEOUT 3000 // msecs
 
 // Consent freshness
 // RFC 7675: Consent expires after 30 seconds.

@@ -111,6 +111,11 @@ namespace
     constexpr quint8 ICE_PING_OP_REPORT  = 3;
     constexpr int ICE_PING_PACKET_SIZE = 1 + int(sizeof(quint64));
     constexpr int ICE_PING_REPORT_SIZE = 1 + int(sizeof(quint64)) + int(sizeof(quint16));
+    // Twenty three-second ICE generations give each peer pair up to 60 seconds.
+    // Every failed generation gets fresh credentials and a different local UDP
+    // port; only the twentieth failure reaches the UI.
+    constexpr int MAX_ICE_AUTO_RESTARTS = 19;
+    constexpr int MAX_ICE_CONNECTION_ATTEMPTS = MAX_ICE_AUTO_RESTARTS + 1;
 
     QString iceStateName(int state)
     {
@@ -960,9 +965,16 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
         desired.insert(userId);
         if (!m_icePeerIds.contains(userId))
         {
+            if (!m_iceGenerations.contains(userId))
+                m_iceGenerations.insert(userId, 0);
+            if (!m_iceRestartAttempts.contains(userId))
+                m_iceRestartAttempts.insert(userId, 0);
             if (LobbyIce::add_peer(userId))
             {
                 m_icePeerIds.insert(userId);
+                emit icePeerConnectionAttemptChanged(
+                    userId, m_iceRestartAttempts.value(userId, 0) + 1,
+                    MAX_ICE_CONNECTION_ATTEMPTS);
                 writePingDiagnostic(QStringLiteral("ICE_PEER_ADDED"),
                                     QStringLiteral("peer=%1 room=%2")
                                         .arg(pingUserLabel(userId)).arg(roomId));
@@ -985,6 +997,8 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
         LobbyIce::remove_peer(userId);
         m_icePeerIds.remove(userId);
         m_lastIceStates.remove(userId);
+        m_iceGenerations.remove(userId);
+        m_iceRestartAttempts.remove(userId);
         m_roomPeerPings.remove(userId);
         for (auto it = m_roomPeerPings.begin(); it != m_roomPeerPings.end(); ++it)
             it.value().remove(userId);
@@ -997,6 +1011,8 @@ void LobbyClient::resetIceMesh()
         LobbyIce::remove_peer(userId);
     m_icePeerIds.clear();
     m_lastIceStates.clear();
+    m_iceGenerations.clear();
+    m_iceRestartAttempts.clear();
     m_currentIceRoomId = 0;
     m_currentIceHostUserId = 0;
     m_roomPeerPings.clear();
@@ -1008,6 +1024,7 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
     const quint64 roomId = static_cast<quint64>(data.value("roomId").toDouble());
     const quint64 fromUserId = static_cast<quint64>(data.value("fromUserId").toDouble());
     const QString kind = data.value("kind").toString();
+    const quint32 generation = static_cast<quint32>(data.value("generation").toInt());
     if (roomId == 0 || roomId != m_currentIceRoomId || fromUserId == 0 ||
         fromUserId == m_selfUserId)
     {
@@ -1016,16 +1033,120 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
                                 .arg(fromUserId).arg(roomId).arg(m_currentIceRoomId).arg(kind));
         return;
     }
+
+    const quint32 currentGeneration = m_iceGenerations.value(fromUserId, 0);
+    if (generation < currentGeneration)
+    {
+        writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN_DROPPED"),
+                            QStringLiteral("peer=%1 room=%2 kind=%3 generation=%4 current_generation=%5 reason=stale_generation")
+                                .arg(pingUserLabel(fromUserId)).arg(roomId).arg(kind)
+                                .arg(generation).arg(currentGeneration));
+        return;
+    }
+
+    if (kind == QStringLiteral("restart"))
+    {
+        if (generation == 0 || generation == currentGeneration)
+        {
+            writePingDiagnostic(QStringLiteral("ICE_RESTART_IN_IGNORED"),
+                                QStringLiteral("peer=%1 room=%2 generation=%3 current_generation=%4 reason=invalid_or_duplicate")
+                                    .arg(pingUserLabel(fromUserId)).arg(roomId)
+                                    .arg(generation).arg(currentGeneration));
+            return;
+        }
+
+        if (!m_icePeerIds.contains(fromUserId))
+        {
+            LobbyIce::remove_peer(fromUserId);
+            m_iceGenerations[fromUserId] = generation;
+            m_iceRestartAttempts[fromUserId] =
+                m_iceRestartAttempts.value(fromUserId, 0) + 1;
+            writePingDiagnostic(QStringLiteral("ICE_RESTART_IN_QUEUED"),
+                                QStringLiteral("peer=%1 room=%2 generation=%3")
+                                    .arg(pingUserLabel(fromUserId)).arg(roomId).arg(generation));
+            return;
+        }
+
+        restartIcePeer(fromUserId, generation, QStringLiteral("remote_request"), false);
+        return;
+    }
+
+    // A generation-scoped description is also an implicit restart request.
+    // This covers a client that reconnects between the explicit restart and
+    // the new description without ever allowing old candidates into its agent.
+    if (generation > currentGeneration)
+    {
+        if (m_icePeerIds.contains(fromUserId))
+            restartIcePeer(fromUserId, generation, QStringLiteral("new_generation_signal"), false);
+        else
+        {
+            LobbyIce::remove_peer(fromUserId);
+            m_iceGenerations[fromUserId] = generation;
+        }
+    }
+
     const QString value = data.value("value").toString();
     const bool hadPeer = LobbyIce::has_peer(fromUserId);
     const bool accepted = LobbyIce::handle_remote_signal(fromUserId, kind.toStdString(),
                                                          value.toStdString());
     writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN"),
-                        QStringLiteral("peer=%1 room=%2 kind=%3 disposition=%4 accepted=%5 %6")
+                        QStringLiteral("peer=%1 room=%2 kind=%3 generation=%4 disposition=%5 accepted=%6 %7")
                             .arg(pingUserLabel(fromUserId)).arg(roomId).arg(kind)
+                            .arg(generation)
                             .arg(hadPeer ? QStringLiteral("applied") : QStringLiteral("queued"))
                             .arg(accepted ? QStringLiteral("true") : QStringLiteral("false"))
                             .arg(iceSignalSummary(kind, value)));
+}
+
+bool LobbyClient::restartIcePeer(quint64 userId, quint32 generation,
+                                 const QString& reason, bool notifyPeer)
+{
+    if (m_currentIceRoomId == 0 || !m_icePeerIds.contains(userId) ||
+        generation == 0 || generation <= m_iceGenerations.value(userId, 0) ||
+        m_iceRestartAttempts.value(userId, 0) >= MAX_ICE_AUTO_RESTARTS)
+    {
+        return false;
+    }
+
+    if (notifyPeer)
+    {
+        QJsonObject data;
+        data["targetUserId"] = QJsonValue(qint64(userId));
+        data["roomId"] = QJsonValue(qint64(m_currentIceRoomId));
+        data["kind"] = QStringLiteral("restart");
+        data["generation"] = int(generation);
+        writePingDiagnostic(QStringLiteral("ICE_RESTART_OUT"),
+                            QStringLiteral("peer=%1 room=%2 generation=%3 reason=%4")
+                                .arg(pingUserLabel(userId)).arg(m_currentIceRoomId)
+                                .arg(generation).arg(reason));
+        sendEnvelope("ICE_SIGNAL", data);
+    }
+
+    m_iceGenerations[userId] = generation;
+    m_iceRestartAttempts[userId] = m_iceRestartAttempts.value(userId, 0) + 1;
+    m_lastIceStates.remove(userId);
+    emit icePeerConnectionAttemptChanged(
+        userId, m_iceRestartAttempts.value(userId) + 1,
+        MAX_ICE_CONNECTION_ATTEMPTS);
+
+    for (auto it = m_pendingProbes.begin(); it != m_pendingProbes.end();)
+    {
+        if (it->targetUserId == userId)
+            it = m_pendingProbes.erase(it);
+        else
+            ++it;
+    }
+
+    LobbyIce::remove_peer(userId);
+    const bool added = LobbyIce::add_peer(userId);
+    writePingDiagnostic(QStringLiteral("ICE_RESTART_APPLIED"),
+                        QStringLiteral("peer=%1 room=%2 generation=%3 reason=%4 added=%5")
+                            .arg(pingUserLabel(userId)).arg(m_currentIceRoomId)
+                            .arg(generation).arg(reason)
+                            .arg(added ? QStringLiteral("true") : QStringLiteral("false")));
+    if (!added)
+        emit icePeerConnectionChanged(userId, false, true);
+    return added;
 }
 
 void LobbyClient::sendIcePing(quint64 userId, quint64 nonce)
@@ -1078,14 +1199,16 @@ void LobbyClient::flushIceEvents()
             data["targetUserId"] = QJsonValue(qint64(signal.peerUserId));
             data["roomId"] = QJsonValue(qint64(m_currentIceRoomId));
             data["kind"] = QString::fromStdString(signal.kind);
+            data["generation"] = int(m_iceGenerations.value(signal.peerUserId, 0));
             if (!signal.value.empty())
                 data["value"] = QString::fromStdString(signal.value);
             const QString kind = QString::fromStdString(signal.kind);
             const QString value = QString::fromStdString(signal.value);
             writePingDiagnostic(QStringLiteral("ICE_SIGNAL_OUT"),
-                                QStringLiteral("peer=%1 room=%2 kind=%3 %4")
+                                QStringLiteral("peer=%1 room=%2 kind=%3 generation=%4 %5")
                                     .arg(pingUserLabel(signal.peerUserId))
                                     .arg(m_currentIceRoomId).arg(kind)
+                                    .arg(m_iceGenerations.value(signal.peerUserId, 0))
                                     .arg(iceSignalSummary(kind, value)));
             sendEnvelope("ICE_SIGNAL", data);
         }
@@ -1154,6 +1277,7 @@ void LobbyClient::flushIceEvents()
         emit pingProbeMeasured(packet.peerUserId, rttMs);
     }
 
+    std::vector<quint64> peersToRestart;
     for (quint64 userId : std::as_const(m_icePeerIds))
     {
         const int state = static_cast<int>(LobbyIce::peer_state(userId));
@@ -1166,6 +1290,16 @@ void LobbyClient::flushIceEvents()
                                 .arg(QString::fromStdString(LobbyIce::peer_selected_addresses(userId))));
         const bool connected = LobbyIce::peer_connected(userId);
         const bool failed = state == static_cast<int>(LobbyIcePeerState::Failed);
+        if (failed && m_iceRestartAttempts.value(userId, 0) < MAX_ICE_AUTO_RESTARTS)
+        {
+            // Keep the seat in its connecting state while the coordinated
+            // replacement happens; only the fresh session's failure is final.
+            emit icePeerConnectionChanged(userId, false, false);
+            peersToRestart.push_back(userId);
+            continue;
+        }
+        if (state == static_cast<int>(LobbyIcePeerState::Completed))
+            m_iceRestartAttempts[userId] = 0;
         emit icePeerConnectionChanged(userId, connected, failed);
         if (connected && userId == m_currentIceHostUserId)
         {
@@ -1175,6 +1309,12 @@ void LobbyClient::flushIceEvents()
             for (auto it = m_measuredPing.constBegin(); it != m_measuredPing.constEnd(); ++it)
                 sendRoomPingReport(it.key(), it.value());
         }
+    }
+
+    for (quint64 userId : peersToRestart)
+    {
+        const quint32 nextGeneration = m_iceGenerations.value(userId, 0) + 1;
+        restartIcePeer(userId, nextGeneration, QStringLiteral("connectivity_failed"), true);
     }
 }
 
@@ -2761,12 +2901,15 @@ void LobbyClient::startRoom()
     sendEnvelope("ROOM_START");
 }
 
-void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)
+void LobbyClient::updateLocalRollbackSettings(int delay, bool delayAuto,
+                                              int prediction, bool predictionAuto)
 {
     QJsonObject d;
     d["delay"] = delay;
     d["delayAuto"] = delayAuto;
-    sendEnvelope("ROOM_UPDATE_DELAY", d);
+    d["prediction"] = prediction;
+    d["predictionAuto"] = predictionAuto;
+    sendEnvelope("ROOM_UPDATE_PLAYER_SETTINGS", d);
 }
 
 void LobbyClient::kickFromRoom(quint64 userId)

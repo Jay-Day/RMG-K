@@ -54,6 +54,11 @@ std::string g_stunHost;
 std::uint16_t g_stunPort = 0;
 std::vector<LobbyIceTurnServer> g_turnServers;
 std::map<std::uint64_t, std::shared_ptr<Peer>> g_peers;
+// Consecutive agents for a peer alternate between disjoint IANA dynamic-port
+// ranges. This guarantees that an ICE restart cannot reuse its prior local UDP
+// port while still leaving thousands of ports available if individual binds
+// collide with another process or peer agent.
+std::map<std::uint64_t, bool> g_nextPeerUsesUpperPortRange;
 std::map<std::uint64_t, std::vector<PendingRemoteSignal>> g_pendingRemoteSignals;
 std::deque<LobbyIceSignal> g_localSignals;
 std::deque<QueuedPacket> g_packets;
@@ -61,6 +66,9 @@ std::atomic<bool> g_diagnosticsEnabled{false};
 std::vector<LobbyIceDiagnostic> g_diagnostics;
 std::size_t g_diagnosticsDropped = 0;
 constexpr std::size_t DIAGNOSTIC_QUEUE_CAP = 4096;
+constexpr std::uint16_t DYNAMIC_PORT_RANGE_BEGIN = 49152;
+constexpr std::uint16_t DYNAMIC_PORT_RANGE_MIDDLE = 57344;
+constexpr std::uint16_t DYNAMIC_PORT_RANGE_END = 65535;
 
 std::uint64_t steady_now_us()
 {
@@ -337,6 +345,7 @@ void LobbyIce::reset()
             peers.push_back(peer);
         }
         g_peers.clear();
+        g_nextPeerUsesUpperPortRange.clear();
         g_pendingRemoteSignals.clear();
         g_localSignals.clear();
         g_packets.clear();
@@ -360,6 +369,7 @@ bool LobbyIce::add_peer(std::uint64_t peerUserId)
 {
     std::string stunHost;
     std::uint16_t stunPort = 0;
+    bool useUpperPortRange = false;
     std::vector<LobbyIceTurnServer> turnServers;
     std::vector<PendingRemoteSignal> pending;
     auto peer = std::make_shared<Peer>();
@@ -376,6 +386,8 @@ bool LobbyIce::add_peer(std::uint64_t peerUserId)
         {
             return true;
         }
+        useUpperPortRange = g_nextPeerUsesUpperPortRange[peerUserId];
+        g_nextPeerUsesUpperPortRange[peerUserId] = !useUpperPortRange;
         stunHost = g_stunHost;
         stunPort = g_stunPort;
         turnServers = g_turnServers;
@@ -400,6 +412,10 @@ bool LobbyIce::add_peer(std::uint64_t peerUserId)
     config.concurrency_mode = JUICE_CONCURRENCY_MODE_POLL;
     config.stun_server_host = stunHost.c_str();
     config.stun_server_port = stunPort;
+    config.local_port_range_begin = useUpperPortRange ?
+        DYNAMIC_PORT_RANGE_MIDDLE : DYNAMIC_PORT_RANGE_BEGIN;
+    config.local_port_range_end = useUpperPortRange ?
+        DYNAMIC_PORT_RANGE_END : static_cast<std::uint16_t>(DYNAMIC_PORT_RANGE_MIDDLE - 1);
     config.turn_servers = juiceTurnServers.empty() ? nullptr : juiceTurnServers.data();
     config.turn_servers_count = static_cast<int>(juiceTurnServers.size());
     config.cb_state_changed = on_state_changed;
@@ -451,6 +467,11 @@ void LobbyIce::remove_peer(std::uint64_t peerUserId)
     std::shared_ptr<Peer> peer;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
+        // Removing a peer is also the generation boundary for any signaling
+        // that arrived before its agent existed. Otherwise an old description
+        // queued during a room-state race can poison the replacement agent
+        // before its fresh credentials arrive.
+        g_pendingRemoteSignals.erase(peerUserId);
         const auto it = g_peers.find(peerUserId);
         if (it == g_peers.end())
         {

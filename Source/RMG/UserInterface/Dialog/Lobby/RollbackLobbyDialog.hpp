@@ -170,6 +170,7 @@ private slots:
     // Punch progress for a seated peer, so a slow or failing NAT punch is
     // visible in the room rather than looking like a stalled Start button.
     void onIcePeerConnectionChanged(quint64 userId, bool connected, bool failed);
+    void onIcePeerConnectionAttemptChanged(quint64 userId, int attempt, int maxAttempts);
     void onRoomPingMeasurementsChanged();
     void onPingProbeRetrying(quint64 userId, int attempt, int maxAttempts);
     void onPingProbeFailed(quint64 userId);
@@ -236,10 +237,10 @@ private:
     void    updateServerMeta();
     void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
 
-    // Delay is local to this player. Auto resolves only from this client's
-    // direct RTTs to the other seats.
+    // Delay and prediction are local to this player. Delay Auto resolves from
+    // this client's direct RTTs; prediction Default resolves to seven frames.
     int     worstLocalPeerPingMs() const;
-    void    applyLocalFrameDelay(bool force);
+    void    applyLocalRollbackSettings(bool force);
 
     // Broadcaster lifecycle. startBroadcast arms the n02 recording sink + drain
     // timer and sends BROADCAST_BEGIN; stopBroadcast flushes and sends
@@ -262,17 +263,21 @@ private:
         QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
-        QLabel*  metaLabel = nullptr;     // "host · 12ms · Frame Delay: 2f"
+        QLabel*  metaLabel = nullptr;     // "host · Delay/Prediction: 2f/7f · 12ms"
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
         int      slot      = 0;           // 1-4, drives the per-player accent color
         int      frameDelay = -1;          // published local input delay
+        int      predictionWindow = -1;    // published local prediction window
+        int      iceAttempt = 1;            // current ICE generation, one-based
+        int      iceMaxAttempts = 20;
     };
     void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
     void renderSeatEmpty(SeatRow& row);
     void renderSeatFilled(SeatRow& row, const QString& username, bool isHost,
-                          bool isSelf, int pingMs, int frameDelay, bool canKick);
+                          bool isSelf, int pingMs, int frameDelay,
+                          int predictionWindow, bool canKick);
 
     // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
     // its slot; the seats container handles the drop and asks the server to swap.
@@ -355,9 +360,10 @@ private:
     QLabel*    m_roomStateLabel = nullptr;   // "Waiting" / "In Game"
     QLabel*    m_roomMetaLabel  = nullptr;   // Seats 2/4 · Region NTSC
 
-    // Delay is locally editable by every player and locks once the match starts.
-    // Data 0 is the Auto sentinel; numeric entries contain concrete frame values.
+    // Both rollback values are locally editable and lock once the match starts.
+    // Data 0 is the Auto/Default sentinel; numeric entries are concrete values.
     QComboBox* m_delayCombo      = nullptr;
+    QComboBox* m_predictionCombo = nullptr;
     bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setCurrentIndex echo
 
     // Per-player local toggle: when checked, this client writes a .krec of the
@@ -434,7 +440,7 @@ private:
     QString m_currentRoomRegion;
     QString m_currentRoomState;
     int     m_currentRoomDelay      = 2;   // this client's local input delay
-    int     m_currentRoomPrediction = 9;
+    int     m_currentRoomPrediction = 7;
     int     m_currentRoomPacing     = 0;   // 0 = aggressive, 1 = smooth
     quint64 m_currentRoomHostId     = 0;   // seated host's user id (0 when none)
     quint64 m_currentMatchId        = 0;
@@ -447,9 +453,10 @@ private:
     QSet<quint64> m_knownSeatedUsers;
     bool          m_roomSeatsSeen = false;
 
-    // Delay-auto is local and ping-based for every player.
-    bool    m_delayAuto      = true;
-    bool    m_localDelayPublished = false;
+    // Both selections are local. Prediction's Default entry resolves to 7.
+    bool    m_delayAuto = true;
+    bool    m_predictionAuto = true;
+    bool    m_localRollbackSettingsPublished = false;
 
     bool m_awaitingEmulationStart = false;
     bool m_emulationActive        = false;

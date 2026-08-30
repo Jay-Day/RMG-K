@@ -70,7 +70,7 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     root->addLayout(form);
 
     // Rollback settings are not surfaced here. Each player configures local
-    // delay in the room, and prediction is fixed at 9 frames.
+    // delay and prediction in the room.
 
     // Optional password (collapsed by default)
     auto* pwRow = new QHBoxLayout;
@@ -152,7 +152,7 @@ void CreateRoomDialog::validateInput()
 
 void CreateRoomDialog::onCreateClicked()
 {
-    // The legacy delay and fixed prediction stay at their loadDefaults() values.
+    // The legacy room seeds stay at their loadDefaults() values.
     m_name = m_nameEdit->text().trimmed();
     // m_romName / m_romMd5 were set from the lobby picker in the constructor.
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
@@ -188,10 +188,10 @@ void CreateRoomDialog::loadDefaults()
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
-    // Seed the legacy room delay from the last local value. Prediction is a
-    // fixed lobby rule and is never loaded from older user settings.
+    // Seed legacy room fields for older clients. Current clients publish their
+    // own rollback settings after entering the room.
     if (s.contains("Delay")) m_delay = s.value("Delay").toInt();
-    m_prediction = 9;
+    m_prediction = 7;
     s.endGroup();
 }
 
@@ -201,7 +201,7 @@ void CreateRoomDialog::saveDefaults()
     s.beginGroup("Lobby/CreateRoom");
     // The game selection is persisted by the lobby's shared picker, not here.
     s.setValue("MaxPlayers", m_maxPlayers);
-    // Delay persistence lives in the room view; CreateRoom only consumes it.
+    // Rollback-setting persistence lives in the room view.
     s.endGroup();
 }
 

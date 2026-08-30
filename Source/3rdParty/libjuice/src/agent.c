@@ -963,10 +963,16 @@ int agent_bookkeeping(juice_agent_t *agent, timestamp_t *next_timestamp) {
 				if (ret >= 0) {
 					--entry->retransmissions;
 					if (entry->retransmissions < 0) {
-						entry->next_transmission = now + LAST_STUN_RETRANSMISSION_TIMEOUT;
+						entry->next_transmission = now +
+						    (entry->type == AGENT_STUN_ENTRY_TYPE_CHECK
+						         ? LAST_STUN_CHECK_RESPONSE_TIMEOUT
+						         : LAST_STUN_RETRANSMISSION_TIMEOUT);
 					} else {
 						entry->next_transmission = now + entry->retransmission_timeout;
-						entry->retransmission_timeout *= 2;
+						// A short ICE generation needs repeated chances on the same NAT
+						// mapping. Server and TURN transactions retain exponential backoff.
+						if (entry->type != AGENT_STUN_ENTRY_TYPE_CHECK)
+							entry->retransmission_timeout *= 2;
 					}
 					continue;
 				}
@@ -1218,7 +1224,7 @@ int agent_bookkeeping(juice_agent_t *agent, timestamp_t *next_timestamp) {
 			}
 		}
 
-	} else if (pending_count == 0 && agent->pac_timestamp) {
+	} else if (agent->pac_timestamp) {
 		// RFC 8863: While the timer is still running, the ICE agent MUST NOT update a checklist
 		// state from Running to Failed, even if there are no pairs left in the checklist to check.
 		if (now >= agent->pac_timestamp) {
