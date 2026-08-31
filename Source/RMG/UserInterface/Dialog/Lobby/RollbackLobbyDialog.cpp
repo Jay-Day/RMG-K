@@ -599,7 +599,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
         s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
                    m_roomsTree->header()->saveState());
     if (m_matchesTree)
-        s.setValue(QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount()),
+        s.setValue(QString("RollbackLobby/MatchesHeaderState.v2.c%1").arg(m_matchesTree->columnCount()),
                    m_matchesTree->header()->saveState());
     if (m_browseSplitter)
         s.setValue("RollbackLobby/BrowseSplitterState", m_browseSplitter->saveState());
@@ -918,10 +918,15 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     m_matchesTree = new QTreeWidget(this);
     m_matchesTree->setObjectName("MatchesTree");
-    m_matchesTree->setHeaderLabels({ "Players", "Duration", "ROM" });
+    // Column order mirrors Active Rooms — the wide ROM column second-to-last
+    // with a narrow stat column (Duration, like Seats) at the right edge — so
+    // the two trees resize identically under clampTreeColumns. With ROM last,
+    // the divider beside it traded against ROM's whole width, which no divider
+    // in the rooms tree does.
+    m_matchesTree->setHeaderLabels({ "Players", "ROM", "Duration" });
     m_matchesTree->setRootIsDecorated(false);
     m_matchesTree->setSortingEnabled(true);
-    m_matchesTree->sortItems(1, Qt::AscendingOrder);
+    m_matchesTree->sortItems(2, Qt::AscendingOrder);
     m_matchesTree->setAlternatingRowColors(true);
     m_matchesTree->setFrameShape(QFrame::NoFrame);
     m_matchesTree->setMinimumHeight(70);
@@ -929,11 +934,13 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_matchesTree->header()->setStretchLastSection(false);
     m_matchesTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     m_matchesTree->setColumnWidth(0, 220);
-    m_matchesTree->setColumnWidth(1, 80);
-    m_matchesTree->setColumnWidth(2, 160);
+    m_matchesTree->setColumnWidth(1, 160);
+    m_matchesTree->setColumnWidth(2, 80);
     {
+        // v2: ROM and Duration swapped places, so unversioned states carry
+        // widths and a sort column for the old order — leave them orphaned.
         QSettings s("RMG-K", "n02");
-        const QString key = QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount());
+        const QString key = QString("RollbackLobby/MatchesHeaderState.v2.c%1").arg(m_matchesTree->columnCount());
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_matchesTree->header()->restoreState(headerState);
@@ -2588,7 +2595,7 @@ static QString formatMatchDuration(qint64 startedAtMs)
 
 namespace
 {
-// Sorts the Duration column by match start time instead of the displayed
+// Sorts the Duration column (2) by match start time instead of the displayed
 // "m:ss" text, which orders wrong once a duration passes 10 minutes and
 // changes under the once-a-second ticker.
 class MatchTreeItem : public QTreeWidgetItem
@@ -2599,10 +2606,10 @@ public:
     bool operator<(const QTreeWidgetItem& other) const override
     {
         const QTreeWidget* tree = treeWidget();
-        if (tree && tree->sortColumn() == 1)
+        if (tree && tree->sortColumn() == 2)
         {
             // A later start means a shorter duration.
-            return data(1, Qt::UserRole).toLongLong() > other.data(1, Qt::UserRole).toLongLong();
+            return data(2, Qt::UserRole).toLongLong() > other.data(2, Qt::UserRole).toLongLong();
         }
         return QTreeWidgetItem::operator<(other);
     }
@@ -2666,11 +2673,11 @@ void RollbackLobbyDialog::onRoomListChanged()
         {
             auto* matchRow = new MatchTreeItem(m_matchesTree);
             matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(" vs "));
-            matchRow->setText(1, formatMatchDuration(r.startedAtMs));
-            matchRow->setText(2, r.romName);
+            matchRow->setText(1, r.romName);
+            matchRow->setText(2, formatMatchDuration(r.startedAtMs));
             matchRow->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
             matchRow->setData(0, Qt::UserRole + 1, QVariant::fromValue(r.matchId)); // 0 unless broadcast
-            matchRow->setData(1, Qt::UserRole, r.startedAtMs); // for the duration ticker
+            matchRow->setData(2, Qt::UserRole, r.startedAtMs); // for the duration ticker
 
             // A live-replay match turns green with a watch hint; double-clicking
             // it watches live.
@@ -2703,7 +2710,7 @@ void RollbackLobbyDialog::updateMatchDurations()
     for (int i = 0; i < m_matchesTree->topLevelItemCount(); ++i)
     {
         QTreeWidgetItem* item = m_matchesTree->topLevelItem(i);
-        item->setText(1, formatMatchDuration(item->data(1, Qt::UserRole).toLongLong()));
+        item->setText(2, formatMatchDuration(item->data(2, Qt::UserRole).toLongLong()));
     }
 }
 
@@ -3030,7 +3037,7 @@ void RollbackLobbyDialog::onMatchDoubleClicked(QTreeWidgetItem* item, int /*colu
             "That match isn't streaming a live replay, so there's nothing to watch.");
         return;
     }
-    beginSpectate(matchId, item->text(2));
+    beginSpectate(matchId, item->text(1)); // ROM name column
 }
 
 void RollbackLobbyDialog::onRoomCreateFailed(const QString& reason)
