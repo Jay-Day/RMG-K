@@ -72,7 +72,7 @@ private:
     void saveDefaults();
     void setFormEnabled(bool enabled);
 
-    // UI — local delay lives in the room view; prediction is fixed at 9.
+    // UI — local delay and prediction live in the room view.
     QLineEdit*   m_nameEdit       = nullptr;
     QLabel*      m_gameLabel      = nullptr;   // read-only game from the lobby picker
     QSpinBox*    m_maxPlayersSpin = nullptr;
@@ -89,7 +89,7 @@ private:
     QString m_romRegion;
     int     m_maxPlayers = 2;
     int     m_delay      = 2;
-    int     m_prediction = 9;
+    int     m_prediction = 7;
     QString m_password;
 };
 
