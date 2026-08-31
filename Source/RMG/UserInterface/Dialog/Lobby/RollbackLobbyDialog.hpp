@@ -296,11 +296,13 @@ private:
     void clampPlayersColumns(int resizedIndex);
 
     // Same idea for the browse trees (Active Rooms / Ongoing Matches), but
-    // generalized to any column count: the column right of a dragged divider
-    // absorbs the change, column 0 absorbs viewport resizes, and the header
-    // always spans the viewport exactly so a horizontal scrollbar is never
-    // needed. Called on sectionResized (pass the index) and viewport resizes
-    // (pass -1). Re-entrant-safe via m_clampingBrowseColumns.
+    // generalized to any column count: the column right of a dragged middle
+    // divider absorbs the change, the last column is a bounded remainder
+    // whose adjacent divider is frozen (dragging it never resizes the last
+    // column), column 0 absorbs viewport resizes, and the header always
+    // spans the viewport exactly so a horizontal scrollbar is never needed.
+    // Called on sectionResized (pass the index) and viewport resizes (pass
+    // -1). Re-entrant-safe via m_clampingBrowseColumns.
     void clampBrowseColumns(QTreeWidget* tree, int resizedIndex);
 
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or

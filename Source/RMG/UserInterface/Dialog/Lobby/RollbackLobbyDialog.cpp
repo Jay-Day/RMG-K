@@ -2138,12 +2138,24 @@ void RollbackLobbyDialog::clampBrowseColumns(QTreeWidget* tree, int resizedIndex
     for (int i = 0; i < count; ++i)
         widths[i] = tree->columnWidth(i);
 
-    // Qt resizes a column via the divider on its RIGHT edge, so giving the
-    // change to the next column keeps the boundary where the user put it.
-    // Viewport resizes (index -1) — and resizes of the last column, which has
-    // no real divider of its own — are absorbed by the fill column instead.
-    const int absorber = (resizedIndex >= 0 && resizedIndex < count - 1)
-        ? resizedIndex + 1 : 0;
+    // Qt resizes a column via the divider on its RIGHT edge, so a middle
+    // divider gives the change to the next column and the boundary lands
+    // where the user put it. The LAST column is different: it's the bounded
+    // remainder (Seats / ROM here, Region in the players list), so the
+    // divider next to it never trades with it — the drag is undone instead
+    // by refitting the dragged column, which freezes that divider and keeps
+    // the last column stable. Without this the two trees felt different:
+    // matches' Duration|ROM divider resized ROM (its absorber), while rooms'
+    // ROM|Seats divider was effectively stuck on Seats' tiny slack.
+    // Viewport resizes (index -1) are absorbed by the fill column.
+    const int next = resizedIndex + 1;
+    int absorber;
+    if (resizedIndex < 0)
+        absorber = 0;               // viewport changed: the fill absorbs
+    else if (next < count - 1 || count == 2)
+        absorber = next;            // middle divider: the neighbor trades
+    else
+        absorber = resizedIndex;    // would spill into the last column: undo
 
     const auto fitToViewport = [&](int target) {
         int others = 0;
