@@ -1,6 +1,54 @@
 [916B8B5B-780B85A4-C:45]
 Name=Super Smash Bros. (U)
 
+$!!Netplay Required: Unlock Everything
+Note=Unlocks all characters, mushroom kingdom, item switch, and sound test.
+810A4938 0FF0
+800A4937 00FF
+
+$!Netplay Optional\Quick Start
+Note=Jumps right to the character select screen with everything configured.
+800A4D0F 0003
+800A4D0B 0002
+800A4D11 0001
+800A4D24 0000
+800A4AD0 0010
+800A4D0B 0002
+800A4D24 0000
+
+$!Netplay Optional\Dreamland Neutral Spawns
+Note=Spawns P1 and P2 on side platforms of Dreamland. Cheat swaps P1 and P4 so it doesn't make all stages have neutral spawns. To avoid freezing recheck this cheat after booting up the game.
+810FAF9C 0800
+810FAF9E C981
+810FAFA0 2400
+81032604 3408
+81032606 0000
+81032608 1504
+8103260A 0002
+8103260C 2400
+81032610 3404
+81032612 0003
+81032614 3C07
+81032616 8013
+81032618 0803
+8103261A EBE9
+8103261C 8CE7
+8103261E 1380
+
+$!Netplay Optional\No Whispy or Tornados
+Note=Disables hazards on Dreamland and Hyrule Castle.
+81131410 00FF
+
+$!Netplay Optional\No Music (SFX Only)
+Note=Disables music, leaving sound effects only.
+81099110 FFFF
+81099112 FFFF
+
+$!Netplay Optional\Timer with Stocks
+Note=Allows stocks and timer to be used at the same time.
+800A4D0B 0003
+8013A789 0080
+
 $Bonus Stage Character Modifier (Training Mode)
 Note=Only put this on after you have alreay Chose your Character on the Main Menu,& Do not use more then 1 Character Modifier at a time.Using this Code This could also result freezing at the end of the Level.
 8018F1D3 00??
@@ -26,15 +74,8 @@ Note=Only put this on after you have alreay Chose your Character on the Main Men
 18 Polygon Kirby
 1A Giant Donkey Kong
 
-$Enable Item Switch Menu  (All Modes)
-Note=Go into Vs Mode & then Vs Options & then Press Up On the D-Pad Or Analogue Stick & then click the A Button to enter the Item Switch Menu. This Cheat Works For All Modes
-811348E2 0004
-
 $Give Kirby A Wierd Blow-Up
 8025E158 000A
-
-$Have All Characters
-810A4938 0FF0
 
 $P1 Press Down On D-Pad To Make Items Appear In Random Spots
 D109EFA4 0400
@@ -245,9 +286,6 @@ $Story Mode\Player 4\Low % Health
 
 $Story Mode\Skip Straight To Master Hand
 800A4AE7 000D
-
-$VS. Mode\Have Mushroom Kindom
-800A4937 00FF
 
 $VS. Mode\Infinite Time
 810A4D1E 43CB
