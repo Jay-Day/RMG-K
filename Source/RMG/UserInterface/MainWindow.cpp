@@ -33,6 +33,7 @@
 #include "UserInterface/EventFilter.hpp"
 #include "Utilities/QtKeyToSdl3Key.hpp"
 #include "Utilities/QtMessageBox.hpp"
+#include "Utilities/UpdaterEnvCheck.hpp"
 #include "OnScreenDisplay.hpp"
 #include "Callbacks.hpp"
 #include "VidExt.hpp"
@@ -1623,7 +1624,14 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->updateActions(false, false);
 
 #ifdef UPDATER
-    this->checkForUpdates(true, false);
+    if (UpdaterEnvCheck::ShouldAllowUpdater())
+    {
+        this->checkForUpdates(true, false);
+    }
+    else
+    {
+        this->action_Help_Update->setVisible(false); 
+    }
 #else
     this->action_Help_Update->setVisible(false);
 #endif // UPDATER

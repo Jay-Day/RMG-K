@@ -86,6 +86,7 @@ set(RMG_SOURCES
     Thread/EmulationThread.cpp
     Utilities/QtKeyToSdl3Key.cpp
     Utilities/QtMessageBox.cpp
+    Utilities/UpdaterEnvCheck.cpp
     OnScreenDisplay.cpp
     Callbacks.cpp
     VidExt.cpp
