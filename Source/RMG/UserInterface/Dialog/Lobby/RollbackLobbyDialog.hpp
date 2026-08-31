@@ -286,24 +286,15 @@ private:
     void startSeatDrag(int slot, QWidget* card);
     int  seatSlotAtPos(const QPoint& pos) const;
 
-    // Hand-rolled column fill for the players list: keeps
-    // Player = viewport − State − Region so the header always spans the card
-    // (no dead gap, no horizontal scroll) while both real dividers stay
-    // draggable — Player|State trades width with State, State|Region trades
-    // with Player, Region is pinned at flag width. Called on sectionResized
+    // Hand-rolled column fill shared by the players, rooms, and matches
+    // trees: the column right of a dragged divider absorbs the change (so
+    // every column is resizable, the last one via the divider on its left),
+    // column 0 absorbs viewport resizes, minimum widths keep squeezed
+    // dividers grabbable, and the header always spans the viewport exactly
+    // so a horizontal scrollbar is never needed. Called on sectionResized
     // (pass the index) and viewport resizes (pass -1). Re-entrant-safe via
-    // m_clampingPlayersColumns.
-    void clampPlayersColumns(int resizedIndex);
-
-    // Same idea for the browse trees (Active Rooms / Ongoing Matches), but
-    // generalized to any column count: the column right of a dragged middle
-    // divider absorbs the change, the last column is a bounded remainder
-    // whose adjacent divider is frozen (dragging it never resizes the last
-    // column), column 0 absorbs viewport resizes, and the header always
-    // spans the viewport exactly so a horizontal scrollbar is never needed.
-    // Called on sectionResized (pass the index) and viewport resizes (pass
-    // -1). Re-entrant-safe via m_clampingBrowseColumns.
-    void clampBrowseColumns(QTreeWidget* tree, int resizedIndex);
+    // m_clampingTreeColumns.
+    void clampTreeColumns(QTreeWidget* tree, int resizedIndex);
 
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
     // empty if the user doesn't have that ROM. Gates joining a room and resolves
@@ -408,13 +399,11 @@ private:
     // see the BEGIN for the current subscribe. Reset false in beginSpectate.
     bool       m_spectateStreamArmed = false;
 
-    // Guards clampPlayersColumns against re-entering itself: the setColumnWidth
-    // calls it makes emit sectionResized, which is what invokes it.
-    bool       m_clampingPlayersColumns = false;
-
-    // Same guard for clampBrowseColumns. One flag covers both browse trees:
-    // the corrections are synchronous, so the two never interleave.
-    bool       m_clampingBrowseColumns = false;
+    // Guards clampTreeColumns against re-entering itself: the setColumnWidth
+    // calls it makes emit sectionResized, which is what invokes it. One flag
+    // covers all three trees: the corrections are synchronous, so they never
+    // interleave.
+    bool       m_clampingTreeColumns = false;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
