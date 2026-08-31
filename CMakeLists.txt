@@ -213,13 +213,13 @@ install(FILES ${MUPEN64PLUS_PLUGIN_GFX_PARALLEL}
 )
 
 if (INSTALL_DESKTOP_FILE)
-    install(FILES Package/com.github.Rosalie241.RMG.desktop
+    install(FILES Package/com.github.JayDay.RMG-K.desktop
         DESTINATION ${DESKTOP_INSTALL_PATH}
     )
-    install(FILES Package/com.github.Rosalie241.RMG.svg
+    install(FILES Package/com.github.JayDay.RMG-K.svg
         DESTINATION ${ICON_INSTALL_PATH}
     )
-    install(FILES Package/com.github.Rosalie241.RMG.metainfo.xml
+    install(FILES Package/com.github.JayDay.RMG-K.metainfo.xml
         DESTINATION ${METAINFO_INSTALL_PATH}
     )
 endif(INSTALL_DESKTOP_FILE)

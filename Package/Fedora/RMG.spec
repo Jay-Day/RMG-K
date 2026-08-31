@@ -57,9 +57,9 @@ Rosalie's Mupen GUI is a free and open-source mupen64plus front-end written in C
 /usr/lib64/libRMG-Core.so
 /usr/lib64/RMG/
 /usr/share/RMG/
-/usr/share/applications/com.github.Rosalie241.RMG.desktop
-/usr/share/icons/hicolor/scalable/apps/com.github.Rosalie241.RMG.svg
-/usr/share/metainfo/com.github.Rosalie241.RMG.metainfo.xml
+/usr/share/applications/com.github.JayDay.RMG-K.desktop
+/usr/share/icons/hicolor/scalable/apps/com.github.JayDay.RMG-K.svg
+/usr/share/metainfo/com.github.JayDay.RMG-K.metainfo.xml
 
 %changelog
 %autochangelog

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RMG-Gekkonet
+Comment=Play Nintendo 64 games online with rollback netcode
+Exec=RMG-K %f
+TryExec=RMG-K
+Icon=com.github.JayDay.RMG-K
+Terminal=false
+Categories=Game;Emulator;Qt;
+MimeType=application/x-n64-rom;
+Keywords=emulator;mupen64plus;n64;netplay;rollback;kaillera;RMG;
