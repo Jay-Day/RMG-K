@@ -81,6 +81,7 @@
 #include <QLocale>
 #include <QMenu>
 #include <algorithm>
+#include <vector>
 #include <cstdio>
 #include <cstring>
 
@@ -512,6 +513,15 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     setWindowModality(Qt::NonModal);
     resize(1180, 720);
     setObjectName("RollbackLobbyDialog");
+    {
+        // The dialog instance is kept alive between opens, so its size carries
+        // within a run on its own — but only the saved geometry survives an
+        // app restart. The 1180×720 above is the first-run default.
+        QSettings s("RMG-K", "n02");
+        const QByteArray geometry = s.value("RollbackLobby/WindowGeometry").toByteArray();
+        if (!geometry.isEmpty())
+            restoreGeometry(geometry);
+    }
 
     m_client = new LobbyClient(this);
 
@@ -581,6 +591,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     // Saved here rather than closeEvent because Esc rejects the dialog
     // without a close event.
     QSettings s("RMG-K", "n02");
+    s.setValue("RollbackLobby/WindowGeometry", saveGeometry());
     if (m_playersTree)
         s.setValue(QString("RollbackLobby/PlayersHeaderState.v3.c%1").arg(m_playersTree->columnCount()),
                    m_playersTree->header()->saveState());
@@ -588,7 +599,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
         s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
                    m_roomsTree->header()->saveState());
     if (m_matchesTree)
-        s.setValue(QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount()),
+        s.setValue(QString("RollbackLobby/MatchesHeaderState.v2.c%1").arg(m_matchesTree->columnCount()),
                    m_matchesTree->header()->saveState());
     if (m_browseSplitter)
         s.setValue("RollbackLobby/BrowseSplitterState", m_browseSplitter->saveState());
@@ -849,7 +860,10 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_roomsTree->setAlternatingRowColors(true);
     m_roomsTree->setFrameShape(QFrame::NoFrame);
     m_roomsTree->setUniformRowHeights(true);
-    m_roomsTree->header()->setStretchLastSection(true);
+    // Columns are clamped to the viewport like the players list
+    // (clampTreeColumns): no Qt Stretch section, Name is the fill column, and
+    // a horizontal scrollbar can never be needed.
+    m_roomsTree->header()->setStretchLastSection(false);
     m_roomsTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     m_roomsTree->setColumnWidth(0, 180);
     m_roomsTree->setColumnWidth(1, 110);
@@ -865,7 +879,17 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_roomsTree->header()->restoreState(headerState);
+        // restoreState can resurrect a stretch section and per-section modes
+        // (older saves have stretch-last baked in); re-pin ours AFTER it. Any
+        // overflowing restored widths are pulled back in by the first viewport
+        // Resize.
+        m_roomsTree->header()->setStretchLastSection(false);
+        m_roomsTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     }
+    m_roomsTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(m_roomsTree->header(), &QHeaderView::sectionResized, this,
+            [this](int index, int, int) { clampTreeColumns(m_roomsTree, index); });
+    m_roomsTree->viewport()->installEventFilter(this);
     connect(m_roomsTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onRoomDoubleClicked);
     // Selecting a room measures the host on demand, so the ping column can be
@@ -894,24 +918,39 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     m_matchesTree = new QTreeWidget(this);
     m_matchesTree->setObjectName("MatchesTree");
-    m_matchesTree->setHeaderLabels({ "Players", "Duration", "ROM" });
+    // Column order mirrors Active Rooms — the wide ROM column second-to-last
+    // with a narrow stat column (Duration, like Seats) at the right edge — so
+    // the two trees resize identically under clampTreeColumns. With ROM last,
+    // the divider beside it traded against ROM's whole width, which no divider
+    // in the rooms tree does.
+    m_matchesTree->setHeaderLabels({ "Players", "ROM", "Duration" });
     m_matchesTree->setRootIsDecorated(false);
     m_matchesTree->setSortingEnabled(true);
-    m_matchesTree->sortItems(1, Qt::AscendingOrder);
+    m_matchesTree->sortItems(2, Qt::AscendingOrder);
     m_matchesTree->setAlternatingRowColors(true);
     m_matchesTree->setFrameShape(QFrame::NoFrame);
     m_matchesTree->setMinimumHeight(70);
-    m_matchesTree->header()->setStretchLastSection(true);
+    // Clamped to the viewport like the rooms tree above; Players is the fill.
+    m_matchesTree->header()->setStretchLastSection(false);
     m_matchesTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     m_matchesTree->setColumnWidth(0, 220);
-    m_matchesTree->setColumnWidth(1, 80);
+    m_matchesTree->setColumnWidth(1, 160);
+    m_matchesTree->setColumnWidth(2, 80);
     {
+        // v2: ROM and Duration swapped places, so unversioned states carry
+        // widths and a sort column for the old order — leave them orphaned.
         QSettings s("RMG-K", "n02");
-        const QString key = QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount());
+        const QString key = QString("RollbackLobby/MatchesHeaderState.v2.c%1").arg(m_matchesTree->columnCount());
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_matchesTree->header()->restoreState(headerState);
+        m_matchesTree->header()->setStretchLastSection(false);
+        m_matchesTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     }
+    m_matchesTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(m_matchesTree->header(), &QHeaderView::sectionResized, this,
+            [this](int index, int, int) { clampTreeColumns(m_matchesTree, index); });
+    m_matchesTree->viewport()->installEventFilter(this);
     connect(m_matchesTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onMatchDoubleClicked);
     m_matchesTree->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1456,23 +1495,18 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersTree->setUniformRowHeights(true);
     // Right-edge flags in the name column + painted signal bars in Ping.
     m_playersTree->setItemDelegate(new PlayersItemDelegate(m_playersTree));
-    // Column sizing is hand-rolled in clampPlayersColumns rather than using a
-    // Qt Stretch section. Qt resizes a column via the divider on its RIGHT
-    // edge, so with three columns only two dividers physically exist: Player|
-    // State and State|Region (Region's right edge is the card border —
-    // ungrabbable). A Stretch section additionally locks its own divider,
-    // which left State as the only adjustable column. Instead: both columns
-    // Interactive, Region pinned at flag width, and the handler keeps
-    // Player = viewport − State − Region so the header always fills the card.
+    // Columns are clamped to the viewport (clampTreeColumns, shared with the
+    // browse trees) rather than using a Qt Stretch section: a Stretch section
+    // locks its own divider, whereas the clamp keeps every divider live —
+    // each trades with the column on its right, so even the last column is
+    // resizable via the divider on its left — while the header always fills
+    // the card.
     m_playersTree->header()->setStretchLastSection(false);
     m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
-    m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
     {
-        // Size State and Region to their widest expected text once, up front:
-        // the tree is empty at construction, so ResizeToContents here would
-        // measure the header labels alone and clip "Spectating" later. Region
-        // holds only a flag icon now, so its header label is the wider of the
-        // two and sets the width.
+        // Size State and Ping to their widest expected content once, up
+        // front: the tree is empty at construction, so ResizeToContents here
+        // would measure the header labels alone and clip "Spectating" later.
         const QFontMetrics fm(m_playersTree->header()->font());
         const int pad = 20; // section margins
         const int stateWidth  = fm.horizontalAdvance(QStringLiteral("Spectating")) + pad;
@@ -1481,6 +1515,7 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         // the label in this header style, so nothing else needs the room.
         const int pingWidth = std::max(fm.horizontalAdvance(QStringLiteral("Ping")) + pad - 4, 40);
         m_playersTree->setColumnWidth(1, stateWidth);
+        m_playersTree->setColumnWidth(2, pingWidth);
 
         // The column count is part of the key: restoring a state saved for a
         // different column layout half-applies and breaks the header (missing
@@ -1493,21 +1528,19 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_playersTree->header()->restoreState(headerState);
-        // restoreState can resurrect per-section modes and stale widths; re-pin
-        // ours AFTER it. Ping's width is layout policy, not a user
-        // preference — always the computed value, never the saved one. State's
-        // saved width is the one thing that should survive the round trip;
-        // Player is refit by the first viewport Resize regardless.
+        // restoreState can resurrect per-section modes (older saves have Ping
+        // pinned Fixed); re-pin ours AFTER it. The computed widths above are
+        // only first-run defaults — saved widths win, and Player is refit by
+        // the first viewport Resize regardless.
+        m_playersTree->header()->setStretchLastSection(false);
         m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
-        m_playersTree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
-        m_playersTree->setColumnWidth(2, pingWidth);
     }
-    // The columns are clamped to the viewport (clampPlayersColumns), so a
-    // horizontal scrollbar can never be needed — turning it off also stops Qt
-    // reserving space for one mid-drag and reflowing the row underneath.
+    // The columns always span the viewport exactly, so a horizontal scrollbar
+    // can never be needed — turning it off also stops Qt reserving space for
+    // one mid-drag and reflowing the row underneath.
     m_playersTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     connect(m_playersTree->header(), &QHeaderView::sectionResized, this,
-            [this](int index, int, int) { clampPlayersColumns(index); });
+            [this](int index, int, int) { clampTreeColumns(m_playersTree, index); });
     // Selecting a player measures them on demand and refreshes their tooltip.
     connect(m_playersTree, &QTreeWidget::itemClicked, this,
             [this](QTreeWidgetItem* item, int) {
@@ -1915,9 +1948,26 @@ bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
         // anyone touching a divider.
         else if (event->type() == QEvent::Resize)
         {
-            clampPlayersColumns(-1);
+            clampTreeColumns(m_playersTree, -1);
         }
         return QDialog::eventFilter(watched, event);
+    }
+
+    // The browse trees are clamped the same way: a viewport resize (window
+    // resize, vertical scrollbar appearing) is the one way their columns can
+    // overflow without anyone touching a divider.
+    if (event->type() == QEvent::Resize)
+    {
+        if (m_roomsTree && watched == m_roomsTree->viewport())
+        {
+            clampTreeColumns(m_roomsTree, -1);
+            return QDialog::eventFilter(watched, event);
+        }
+        if (m_matchesTree && watched == m_matchesTree->viewport())
+        {
+            clampTreeColumns(m_matchesTree, -1);
+            return QDialog::eventFilter(watched, event);
+        }
     }
 
     // ── Seat reorder: start a drag from a seat's grip handle ──
@@ -2018,52 +2068,93 @@ int RollbackLobbyDialog::seatSlotAtPos(const QPoint& pos) const
     return 0;
 }
 
-void RollbackLobbyDialog::clampPlayersColumns(int resizedIndex)
+void RollbackLobbyDialog::clampTreeColumns(QTreeWidget* tree, int resizedIndex)
 {
-    // Re-entrancy: every setColumnWidth below emits sectionResized, which is the
-    // signal that called us. Without this the first correction would recurse.
-    if (m_playersTree == nullptr || m_clampingPlayersColumns)
+    // Shared column clamp for the players, rooms, and matches trees.
+    // Re-entrancy: every setColumnWidth below emits sectionResized, which is
+    // the signal that called us.
+    if (tree == nullptr || m_clampingTreeColumns)
         return;
 
-    const int available = m_playersTree->viewport()->width();
+    const int count     = tree->columnCount();
+    const int available = tree->viewport()->width();
     // Width is 0 until the dialog is first laid out; the viewport Resize that
     // follows re-runs this with a real number.
-    if (m_playersTree->columnCount() < 3 || available <= 0)
+    if (count < 2 || available <= 0)
         return;
 
-    constexpr int kMinPlayer = 80;
-    constexpr int kMinState  = 36; // keeps a squeezed divider grabbable
+    // Column 0 is the text-heavy fill in every tree; the others only need to
+    // keep a squeezed divider grabbable.
+    const auto minFor = [](int index) { return index == 0 ? 80 : 36; };
 
-    int w0 = m_playersTree->columnWidth(0);
-    int w1 = m_playersTree->columnWidth(1);
-    const int w2 = m_playersTree->columnWidth(2); // Region: pinned at flag width
+    std::vector<int> widths(count);
+    for (int i = 0; i < count; ++i)
+        widths[i] = tree->columnWidth(i);
+    // Floor everything first: Qt's own minimum section size is font-derived
+    // and a drag can push a column below ours.
+    for (int i = 0; i < count; ++i)
+        widths[i] = std::max(widths[i], minFor(i));
 
-    m_clampingPlayersColumns = true;
-    if (resizedIndex == 0)
-    {
-        // The Player|State divider was dragged: State absorbs the change so
-        // the boundary lands where the user put it.
-        w1 = available - w2 - w0;
-        if (w1 < kMinState)  { w1 = kMinState;  w0 = available - w2 - w1; }
-        if (w0 < kMinPlayer) { w0 = kMinPlayer; w1 = std::max(kMinState, available - w2 - w0); }
-        m_playersTree->setColumnWidth(1, w1);
-        m_playersTree->setColumnWidth(0, w0);
-    }
-    else
-    {
-        // State|Region divider dragged, or the viewport itself changed:
-        // Player is the fill column and absorbs the difference.
-        if (w1 < kMinState) { w1 = kMinState; m_playersTree->setColumnWidth(1, w1); }
-        w0 = available - w2 - w1;
-        if (w0 < kMinPlayer)
+    // Qt resizes a column via the divider on its RIGHT edge, so giving the
+    // change to the next column keeps the boundary where the user put it and
+    // makes every column resizable — the last one via the divider on its
+    // left. Viewport resizes (index -1) — and direct resizes of the last
+    // column, whose own right edge is the viewport border — are absorbed by
+    // the fill column instead.
+    const int absorber = (resizedIndex >= 0 && resizedIndex < count - 1)
+        ? resizedIndex + 1 : 0;
+
+    const auto fitToViewport = [&](int target) {
+        int others = 0;
+        for (int i = 0; i < count; ++i)
         {
-            w0 = kMinPlayer;
-            w1 = std::max(kMinState, available - w2 - w0);
-            m_playersTree->setColumnWidth(1, w1);
+            if (i != target)
+                others += widths[i];
         }
-        m_playersTree->setColumnWidth(0, w0);
+        widths[target] = available - others;
+    };
+
+    fitToViewport(absorber);
+    if (widths[absorber] < minFor(absorber))
+    {
+        // The drag squeezed the absorber to its floor: pin it there and push
+        // the shortfall back into the dragged column, then — if that bottoms
+        // out too — into the remaining columns, right to left.
+        widths[absorber] = minFor(absorber);
+        int deficit = -available;
+        for (int i = 0; i < count; ++i)
+            deficit += widths[i];
+
+        const int dragged = (resizedIndex >= 0 && resizedIndex < count &&
+                             resizedIndex != absorber) ? resizedIndex : -1;
+        std::vector<int> order;
+        if (dragged >= 0)
+            order.push_back(dragged);
+        for (int i = count - 1; i >= 0; --i)
+        {
+            if (i != absorber && i != dragged)
+                order.push_back(i);
+        }
+        for (int i : order)
+        {
+            if (deficit <= 0)
+                break;
+            const int give = std::min(deficit, widths[i] - minFor(i));
+            if (give > 0)
+            {
+                widths[i] -= give;
+                deficit   -= give;
+            }
+        }
     }
-    m_clampingPlayersColumns = false;
+
+    m_clampingTreeColumns = true;
+    for (int i = 0; i < count; ++i)
+    {
+        if (widths[i] != tree->columnWidth(i))
+            tree->setColumnWidth(i, widths[i]);
+    }
+    m_clampingTreeColumns = false;
 }
 
 QString RollbackLobbyDialog::localRomPathForMd5(const QString& md5) const
@@ -2504,7 +2595,7 @@ static QString formatMatchDuration(qint64 startedAtMs)
 
 namespace
 {
-// Sorts the Duration column by match start time instead of the displayed
+// Sorts the Duration column (2) by match start time instead of the displayed
 // "m:ss" text, which orders wrong once a duration passes 10 minutes and
 // changes under the once-a-second ticker.
 class MatchTreeItem : public QTreeWidgetItem
@@ -2515,10 +2606,10 @@ public:
     bool operator<(const QTreeWidgetItem& other) const override
     {
         const QTreeWidget* tree = treeWidget();
-        if (tree && tree->sortColumn() == 1)
+        if (tree && tree->sortColumn() == 2)
         {
             // A later start means a shorter duration.
-            return data(1, Qt::UserRole).toLongLong() > other.data(1, Qt::UserRole).toLongLong();
+            return data(2, Qt::UserRole).toLongLong() > other.data(2, Qt::UserRole).toLongLong();
         }
         return QTreeWidgetItem::operator<(other);
     }
@@ -2582,11 +2673,11 @@ void RollbackLobbyDialog::onRoomListChanged()
         {
             auto* matchRow = new MatchTreeItem(m_matchesTree);
             matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(" vs "));
-            matchRow->setText(1, formatMatchDuration(r.startedAtMs));
-            matchRow->setText(2, r.romName);
+            matchRow->setText(1, r.romName);
+            matchRow->setText(2, formatMatchDuration(r.startedAtMs));
             matchRow->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
             matchRow->setData(0, Qt::UserRole + 1, QVariant::fromValue(r.matchId)); // 0 unless broadcast
-            matchRow->setData(1, Qt::UserRole, r.startedAtMs); // for the duration ticker
+            matchRow->setData(2, Qt::UserRole, r.startedAtMs); // for the duration ticker
 
             // A live-replay match turns green with a watch hint; double-clicking
             // it watches live.
@@ -2619,7 +2710,7 @@ void RollbackLobbyDialog::updateMatchDurations()
     for (int i = 0; i < m_matchesTree->topLevelItemCount(); ++i)
     {
         QTreeWidgetItem* item = m_matchesTree->topLevelItem(i);
-        item->setText(1, formatMatchDuration(item->data(1, Qt::UserRole).toLongLong()));
+        item->setText(2, formatMatchDuration(item->data(2, Qt::UserRole).toLongLong()));
     }
 }
 
@@ -2946,7 +3037,7 @@ void RollbackLobbyDialog::onMatchDoubleClicked(QTreeWidgetItem* item, int /*colu
             "That match isn't streaming a live replay, so there's nothing to watch.");
         return;
     }
-    beginSpectate(matchId, item->text(2));
+    beginSpectate(matchId, item->text(1)); // ROM name column
 }
 
 void RollbackLobbyDialog::onRoomCreateFailed(const QString& reason)
