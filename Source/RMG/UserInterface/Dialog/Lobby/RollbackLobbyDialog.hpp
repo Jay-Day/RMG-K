@@ -295,6 +295,14 @@ private:
     // m_clampingPlayersColumns.
     void clampPlayersColumns(int resizedIndex);
 
+    // Same idea for the browse trees (Active Rooms / Ongoing Matches), but
+    // generalized to any column count: the column right of a dragged divider
+    // absorbs the change, column 0 absorbs viewport resizes, and the header
+    // always spans the viewport exactly so a horizontal scrollbar is never
+    // needed. Called on sectionResized (pass the index) and viewport resizes
+    // (pass -1). Re-entrant-safe via m_clampingBrowseColumns.
+    void clampBrowseColumns(QTreeWidget* tree, int resizedIndex);
+
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
     // empty if the user doesn't have that ROM. Gates joining a room and resolves
     // the ROM at match start so both use identical matching.
@@ -401,6 +409,10 @@ private:
     // Guards clampPlayersColumns against re-entering itself: the setColumnWidth
     // calls it makes emit sectionResized, which is what invokes it.
     bool       m_clampingPlayersColumns = false;
+
+    // Same guard for clampBrowseColumns. One flag covers both browse trees:
+    // the corrections are synchronous, so the two never interleave.
+    bool       m_clampingBrowseColumns = false;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];

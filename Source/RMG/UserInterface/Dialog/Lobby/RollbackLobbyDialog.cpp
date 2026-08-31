@@ -81,6 +81,7 @@
 #include <QLocale>
 #include <QMenu>
 #include <algorithm>
+#include <vector>
 #include <cstdio>
 #include <cstring>
 
@@ -512,6 +513,15 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     setWindowModality(Qt::NonModal);
     resize(1180, 720);
     setObjectName("RollbackLobbyDialog");
+    {
+        // The dialog instance is kept alive between opens, so its size carries
+        // within a run on its own — but only the saved geometry survives an
+        // app restart. The 1180×720 above is the first-run default.
+        QSettings s("RMG-K", "n02");
+        const QByteArray geometry = s.value("RollbackLobby/WindowGeometry").toByteArray();
+        if (!geometry.isEmpty())
+            restoreGeometry(geometry);
+    }
 
     m_client = new LobbyClient(this);
 
@@ -581,6 +591,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     // Saved here rather than closeEvent because Esc rejects the dialog
     // without a close event.
     QSettings s("RMG-K", "n02");
+    s.setValue("RollbackLobby/WindowGeometry", saveGeometry());
     if (m_playersTree)
         s.setValue(QString("RollbackLobby/PlayersHeaderState.v3.c%1").arg(m_playersTree->columnCount()),
                    m_playersTree->header()->saveState());
@@ -849,7 +860,10 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_roomsTree->setAlternatingRowColors(true);
     m_roomsTree->setFrameShape(QFrame::NoFrame);
     m_roomsTree->setUniformRowHeights(true);
-    m_roomsTree->header()->setStretchLastSection(true);
+    // Columns are clamped to the viewport like the players list
+    // (clampBrowseColumns): no Qt Stretch section, Name is the fill column, and
+    // a horizontal scrollbar can never be needed.
+    m_roomsTree->header()->setStretchLastSection(false);
     m_roomsTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     m_roomsTree->setColumnWidth(0, 180);
     m_roomsTree->setColumnWidth(1, 110);
@@ -865,7 +879,17 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_roomsTree->header()->restoreState(headerState);
+        // restoreState can resurrect a stretch section and per-section modes
+        // (older saves have stretch-last baked in); re-pin ours AFTER it. Any
+        // overflowing restored widths are pulled back in by the first viewport
+        // Resize.
+        m_roomsTree->header()->setStretchLastSection(false);
+        m_roomsTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     }
+    m_roomsTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(m_roomsTree->header(), &QHeaderView::sectionResized, this,
+            [this](int index, int, int) { clampBrowseColumns(m_roomsTree, index); });
+    m_roomsTree->viewport()->installEventFilter(this);
     connect(m_roomsTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onRoomDoubleClicked);
     // Selecting a room measures the host on demand, so the ping column can be
@@ -901,17 +925,25 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_matchesTree->setAlternatingRowColors(true);
     m_matchesTree->setFrameShape(QFrame::NoFrame);
     m_matchesTree->setMinimumHeight(70);
-    m_matchesTree->header()->setStretchLastSection(true);
+    // Clamped to the viewport like the rooms tree above; Players is the fill.
+    m_matchesTree->header()->setStretchLastSection(false);
     m_matchesTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     m_matchesTree->setColumnWidth(0, 220);
     m_matchesTree->setColumnWidth(1, 80);
+    m_matchesTree->setColumnWidth(2, 160);
     {
         QSettings s("RMG-K", "n02");
         const QString key = QString("RollbackLobby/MatchesHeaderState.c%1").arg(m_matchesTree->columnCount());
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_matchesTree->header()->restoreState(headerState);
+        m_matchesTree->header()->setStretchLastSection(false);
+        m_matchesTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     }
+    m_matchesTree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(m_matchesTree->header(), &QHeaderView::sectionResized, this,
+            [this](int index, int, int) { clampBrowseColumns(m_matchesTree, index); });
+    m_matchesTree->viewport()->installEventFilter(this);
     connect(m_matchesTree, &QTreeWidget::itemDoubleClicked,
             this, &RollbackLobbyDialog::onMatchDoubleClicked);
     m_matchesTree->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1920,6 +1952,23 @@ bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
         return QDialog::eventFilter(watched, event);
     }
 
+    // The browse trees are clamped the same way: a viewport resize (window
+    // resize, vertical scrollbar appearing) is the one way their columns can
+    // overflow without anyone touching a divider.
+    if (event->type() == QEvent::Resize)
+    {
+        if (m_roomsTree && watched == m_roomsTree->viewport())
+        {
+            clampBrowseColumns(m_roomsTree, -1);
+            return QDialog::eventFilter(watched, event);
+        }
+        if (m_matchesTree && watched == m_matchesTree->viewport())
+        {
+            clampBrowseColumns(m_matchesTree, -1);
+            return QDialog::eventFilter(watched, event);
+        }
+    }
+
     // ── Seat reorder: start a drag from a seat's grip handle ──
     if (m_canReorderSeats)
     {
@@ -2064,6 +2113,89 @@ void RollbackLobbyDialog::clampPlayersColumns(int resizedIndex)
         m_playersTree->setColumnWidth(0, w0);
     }
     m_clampingPlayersColumns = false;
+}
+
+void RollbackLobbyDialog::clampBrowseColumns(QTreeWidget* tree, int resizedIndex)
+{
+    // clampPlayersColumns generalized to any column count. Re-entrancy: every
+    // setColumnWidth below emits sectionResized, which is the signal that
+    // called us.
+    if (tree == nullptr || m_clampingBrowseColumns)
+        return;
+
+    const int count     = tree->columnCount();
+    const int available = tree->viewport()->width();
+    // Width is 0 until the dialog is first laid out; the viewport Resize that
+    // follows re-runs this with a real number.
+    if (count < 2 || available <= 0)
+        return;
+
+    // Column 0 is the text-heavy fill in both browse trees; the others only
+    // need to keep a squeezed divider grabbable.
+    const auto minFor = [](int index) { return index == 0 ? 80 : 36; };
+
+    std::vector<int> widths(count);
+    for (int i = 0; i < count; ++i)
+        widths[i] = tree->columnWidth(i);
+
+    // Qt resizes a column via the divider on its RIGHT edge, so giving the
+    // change to the next column keeps the boundary where the user put it.
+    // Viewport resizes (index -1) — and resizes of the last column, which has
+    // no real divider of its own — are absorbed by the fill column instead.
+    const int absorber = (resizedIndex >= 0 && resizedIndex < count - 1)
+        ? resizedIndex + 1 : 0;
+
+    const auto fitToViewport = [&](int target) {
+        int others = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            if (i != target)
+                others += widths[i];
+        }
+        widths[target] = available - others;
+    };
+
+    fitToViewport(absorber);
+    if (widths[absorber] < minFor(absorber))
+    {
+        // The drag squeezed the absorber to its floor: pin it there and push
+        // the shortfall back into the dragged column, then — if that bottoms
+        // out too — into the remaining columns, right to left.
+        widths[absorber] = minFor(absorber);
+        int deficit = -available;
+        for (int i = 0; i < count; ++i)
+            deficit += widths[i];
+
+        const int dragged = (resizedIndex >= 0 && resizedIndex < count &&
+                             resizedIndex != absorber) ? resizedIndex : -1;
+        std::vector<int> order;
+        if (dragged >= 0)
+            order.push_back(dragged);
+        for (int i = count - 1; i >= 0; --i)
+        {
+            if (i != absorber && i != dragged)
+                order.push_back(i);
+        }
+        for (int i : order)
+        {
+            if (deficit <= 0)
+                break;
+            const int give = std::min(deficit, widths[i] - minFor(i));
+            if (give > 0)
+            {
+                widths[i] -= give;
+                deficit   -= give;
+            }
+        }
+    }
+
+    m_clampingBrowseColumns = true;
+    for (int i = 0; i < count; ++i)
+    {
+        if (widths[i] != tree->columnWidth(i))
+            tree->setColumnWidth(i, widths[i]);
+    }
+    m_clampingBrowseColumns = false;
 }
 
 QString RollbackLobbyDialog::localRomPathForMd5(const QString& md5) const
