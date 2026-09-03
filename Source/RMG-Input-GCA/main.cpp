@@ -44,6 +44,9 @@
 
 #define GCA_COMMAND_POLL 0x13
 
+#define GCA_IS_WAVEBIRD_MASK 1 << 5
+#define GCA_IS_WIRED_GC_CONTROLLER_MASK 1 << 4
+
 //
 // Local Structures
 //
@@ -492,7 +495,7 @@ EXPORT m64p_error CALL PluginShutdown(void)
     return M64ERR_SUCCESS;
 }
 
-EXPORT m64p_error CALL PluginGetVersion(m64p_plugin_type *pluginType, int *pluginVersion, 
+EXPORT m64p_error CALL PluginGetVersion(m64p_plugin_type *pluginType, int *pluginVersion,
     int *apiVersion, const char **pluginNamePtr, int *capabilities)
 {
     if (pluginType != nullptr)
@@ -640,7 +643,8 @@ EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
     for (int i = 0; i < NUM_CONTROLLERS; i++)
     {
         const int port = l_ControlToPort[i];
-        ControlInfo.Controls[i].Present = (port >= 0 && l_ControllerState[port].Status > 0) ? 1 : 0;
+        const bool connectedToAdapter = port >= 0 && l_ControllerState[port].Status & (GCA_IS_WAVEBIRD_MASK | GCA_IS_WIRED_GC_CONTROLLER_MASK);
+        ControlInfo.Controls[i].Present = connectedToAdapter ? 1 : 0;
     }
     l_ControllerStateMutex.unlock();
 }
