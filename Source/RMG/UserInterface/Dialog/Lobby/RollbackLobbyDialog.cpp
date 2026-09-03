@@ -96,8 +96,8 @@ extern char recording_player_names[4][32];
 
 namespace {
 // Auto input-delay buckets by ping, migrated from the P2P rollback tab.
-// Ping < 0 (unknown) falls back to the default. Never returns 0 — the dropdown
-// hides zero delay (zero-delay rollback has open bugs; see project memory).
+// Ping < 0 (unknown) falls back to the default. Automatic selection remains at
+// least one frame; zero delay is an explicit low-latency choice.
 int autoFrameDelayForPing(int ping)
 {
     if (ping < 0)    return 2;   // default when ping is unknown
@@ -1049,15 +1049,10 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         "\n"
         "Room setting — only the host may change this value.");
 
-    // Delay 0 is intentionally omitted — GekkoNet's zero-delay path still has
-    // open bugs (see project memory: 0-delay host crash with non-zero analog
-    // drift), so we hide it from users until that's resolved. Editing this
-    // list updates the UI; the server's clamp range governs what values it'll
-    // actually accept.
-    static const QList<int> DELAY_OPTIONS = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    static const QList<int> DELAY_OPTIONS = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
     static const QList<int> PREDICTION_OPTIONS = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-    // Delay keeps -1 as its Auto sentinel; prediction uses zero as its Default
-    // sentinel since both ranges begin at 1.
+    // Delay uses -1 as its Auto sentinel so numeric zero remains selectable.
+    // Prediction uses zero as its Default sentinel since its range begins at 1.
     auto fillFrameCombo = [](QComboBox* combo, const QString& autoLabel,
                              int sentinel, const QList<int>& options) {
         combo->addItem(autoLabel, sentinel);
