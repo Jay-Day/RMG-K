@@ -264,6 +264,7 @@ private:
         QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
+        QLabel*  countryLabel = nullptr;  // country flag beside player name
         QLabel*  metaLabel = nullptr;     // "host · Frame delay: 2f · 12ms"
         QLabel*  connectionTypeLabel = nullptr; // Wi-Fi/Ethernet icon after ping
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player

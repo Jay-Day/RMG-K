@@ -454,6 +454,29 @@ namespace
         label->update();
     }
 
+    void setCountryFlagLabel(QLabel* label, const QString& country, bool anonymous)
+    {
+        if (!label)
+            return;
+
+        const QString flagResource = QString(":/flags/%1.svg").arg(country.toLower());
+        if (anonymous || country.isEmpty() || !QFile::exists(flagResource))
+        {
+            label->clear();
+            label->setToolTip(QString());
+            label->setVisible(false);
+            return;
+        }
+
+        label->setPixmap(QIcon(flagResource).pixmap(18, 12));
+        const QLocale::Territory territory = QLocale::codeToTerritory(country);
+        const QString countryName = territory != QLocale::AnyTerritory
+            ? QLocale::territoryToString(territory)
+            : country;
+        label->setToolTip(QString("Country: %1").arg(countryName));
+        label->setVisible(true);
+    }
+
     // Player-list row that pins searching players to the top of the list no
     // matter which column or direction the user sorts by. Qt places items
     // that compare "less" first in ascending order and last in descending,
@@ -1378,6 +1401,12 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
     s.nameLabel = new QLabel(QStringLiteral("Waiting…"), s.row);
     lay->addWidget(s.nameLabel);
 
+    s.countryLabel = new QLabel(s.row);
+    s.countryLabel->setFixedSize(20, 14);
+    s.countryLabel->setAlignment(Qt::AlignCenter);
+    s.countryLabel->setVisible(false);
+    lay->addWidget(s.countryLabel);
+
     lay->addStretch(1);
 
     // Right-aligned meta (HOST badge · ping). Rich text lets each value carry
@@ -1455,6 +1484,7 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
         f.setBold(false);
         s.nameLabel->setFont(f);
     }
+    if (s.countryLabel) s.countryLabel->setVisible(false);
     if (s.metaLabel) s.metaLabel->setText(QString());
     if (s.connectionTypeLabel) s.connectionTypeLabel->setVisible(false);
     if (s.kickButton)
@@ -2569,6 +2599,7 @@ void RollbackLobbyDialog::onUserUpdated(quint64 userId)
         if (seat.userId == userId && seat.connectionTypeLabel)
         {
             setConnectionTypeLabel(seat.connectionTypeLabel, userIt->connection);
+            setCountryFlagLabel(seat.countryLabel, userIt->country, userIt->anonymous);
             break;
         }
     }
@@ -3306,9 +3337,15 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             ? m_currentRoomDelay
             : p.value("frameDelay").toInt(-1);
         QString connectionType;
+        QString country;
+        bool anonymous = false;
         const auto userIt = m_client->users().constFind(uid);
         if (userIt != m_client->users().constEnd())
+        {
             connectionType = userIt->connection;
+            country = userIt->country;
+            anonymous = userIt->anonymous;
+        }
         // The host can remove any seated player except themselves (the host seat).
         const bool canKick = iAmHost && !slotIsHost;
         if (m_seats[slot - 1].userId != uid)
@@ -3319,6 +3356,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         m_seats[slot - 1].userId = uid;
         renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf,
                          pingMs, frameDelay, canKick, connectionType);
+        setCountryFlagLabel(m_seats[slot - 1].countryLabel, country, anonymous);
         if (!slotIsSelf && pingMs < 0 && m_seats[slot - 1].metaLabel)
             m_seats[slot - 1].metaLabel->setText(
                 seatMetaHtml(slot, slotIsHost, pingMs, frameDelay, isDarkTheme(),
