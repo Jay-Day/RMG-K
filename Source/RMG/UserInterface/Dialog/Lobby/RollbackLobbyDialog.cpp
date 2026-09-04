@@ -42,6 +42,7 @@
 #include <QPalette>
 #include <QStyledItemDelegate>
 #include <QPainter>
+#include <QPainterPath>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
@@ -358,11 +359,123 @@ namespace
     // sort override below. Qt::UserRole itself already carries the user id.
     constexpr int kSearchingSortRole = Qt::UserRole + 1;
 
-    // Column-2 roles backing the painted Ping column (see PlayersItemDelegate).
-    constexpr int kPingMsRole       = Qt::UserRole + 2; // int; -1 = unknown
-    constexpr int kPingEstimateRole = Qt::UserRole + 3; // value is a region estimate
-    constexpr int kWirelessRole     = Qt::UserRole + 4; // peer self-reports wifi/cellular
-    constexpr int kShowPingRole     = Qt::UserRole + 5; // false for the self row
+    // Roles backing the painted Ping and Type columns (see PlayersItemDelegate).
+    constexpr int kPingMsRole         = Qt::UserRole + 2; // int; -1 = unknown
+    constexpr int kPingEstimateRole   = Qt::UserRole + 3; // value is a region estimate
+    constexpr int kConnectionTypeRole = Qt::UserRole + 4; // "wifi", "lan", ...
+    constexpr int kShowPingRole       = Qt::UserRole + 5; // false for the self row
+
+    QString connectionTypeName(const QString& connection)
+    {
+        if (connection == QLatin1String("wifi"))      return QStringLiteral("Wi-Fi");
+        if (connection == QLatin1String("lan"))       return QStringLiteral("Ethernet");
+        if (connection == QLatin1String("cellular"))  return QStringLiteral("Cellular");
+        if (connection == QLatin1String("bluetooth")) return QStringLiteral("Bluetooth");
+        return QString();
+    }
+
+    void paintConnectionTypeSymbol(QPainter* painter, const QRectF& rect,
+                                   const QString& connection, const QColor& color,
+                                   const QFont& font)
+    {
+        const QPointF center = rect.center();
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setFont(font);
+        painter->setPen(QPen(color, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->setBrush(Qt::NoBrush);
+
+        if (connection == QLatin1String("wifi"))
+        {
+            // Two arcs and a dot form a crisp Wi-Fi mark without relying on a
+            // platform font having the corresponding Unicode glyph.
+            const qreal baseY = center.y() + 5.0;
+            painter->drawArc(QRectF(center.x() - 9.0, baseY - 9.0, 18.0, 18.0),
+                             45 * 16, 90 * 16);
+            painter->drawArc(QRectF(center.x() - 5.5, baseY - 5.5, 11.0, 11.0),
+                             45 * 16, 90 * 16);
+            painter->setBrush(color);
+            painter->setPen(Qt::NoPen);
+            painter->drawEllipse(QPointF(center.x(), baseY), 1.6, 1.6);
+        }
+        else if (connection == QLatin1String("lan"))
+        {
+            // RJ45-style plug: connector body, cable stem, and four pins.
+            QPainterPath plug;
+            plug.moveTo(center.x() - 7.0, center.y() - 7.0);
+            plug.lineTo(center.x() + 7.0, center.y() - 7.0);
+            plug.lineTo(center.x() + 7.0, center.y() + 2.0);
+            plug.lineTo(center.x() + 3.0, center.y() + 2.0);
+            plug.lineTo(center.x() + 3.0, center.y() + 7.0);
+            plug.lineTo(center.x() - 3.0, center.y() + 7.0);
+            plug.lineTo(center.x() - 3.0, center.y() + 2.0);
+            plug.lineTo(center.x() - 7.0, center.y() + 2.0);
+            plug.closeSubpath();
+            painter->drawPath(plug);
+            for (int i = -3; i <= 3; i += 2)
+                painter->drawLine(QPointF(center.x() + i, center.y() - 5.0),
+                                  QPointF(center.x() + i, center.y() - 2.0));
+        }
+        else
+        {
+            const QString compactLabel = connection == QLatin1String("cellular")
+                ? QStringLiteral("Cell")
+                : connection == QLatin1String("bluetooth")
+                    ? QStringLiteral("BT")
+                    : QStringLiteral("?");
+            painter->setPen(color);
+            painter->drawText(rect, Qt::AlignCenter, compactLabel);
+        }
+        painter->restore();
+    }
+
+    class ConnectionTypeLabel final : public QLabel
+    {
+    public:
+        using QLabel::QLabel;
+
+    protected:
+        void paintEvent(QPaintEvent*) override
+        {
+            QPainter painter(this);
+            paintConnectionTypeSymbol(&painter, rect(),
+                                      property("connectionType").toString(),
+                                      palette().color(QPalette::WindowText), font());
+        }
+    };
+
+    void setConnectionTypeLabel(QLabel* label, const QString& connection)
+    {
+        if (!label)
+            return;
+        const QString name = connectionTypeName(connection);
+        label->setProperty("connectionType", connection);
+        label->setToolTip(name.isEmpty() ? QStringLiteral("Connection type unknown") : name);
+        label->update();
+    }
+
+    void setCountryFlagLabel(QLabel* label, const QString& country, bool anonymous)
+    {
+        if (!label)
+            return;
+
+        const QString flagResource = QString(":/flags/%1.svg").arg(country.toLower());
+        if (anonymous || country.isEmpty() || !QFile::exists(flagResource))
+        {
+            label->clear();
+            label->setToolTip(QString());
+            label->setVisible(false);
+            return;
+        }
+
+        label->setPixmap(QIcon(flagResource).pixmap(18, 12));
+        const QLocale::Territory territory = QLocale::codeToTerritory(country);
+        const QString countryName = territory != QLocale::AnyTerritory
+            ? QLocale::territoryToString(territory)
+            : country;
+        label->setToolTip(QString("Country: %1").arg(countryName));
+        label->setVisible(true);
+    }
 
     // Player-list row that pins searching players to the top of the list no
     // matter which column or direction the user sorts by. Qt places items
@@ -404,13 +517,10 @@ namespace
     };
 
     // Paints the players list: column 0 gets its decoration (the country
-    // flag) moved to the RIGHT edge of the name cell, and column 2 has no
-    // text at all — it's drawn as Fightcade-style signal bars. Three bars
-    // lit = good, two = fair, one = rough, matching pingHex()'s tiers so
-    // the bars and every "N ms" elsewhere always tell the same story. A
-    // value that is only a region estimate draws translucent until a real
-    // measurement replaces it, and a peer who self-reports a wireless
-    // transport gets a warning "!" over the bars.
+    // flag) moved to the RIGHT edge of the name cell, column 2 is drawn as
+    // Fightcade-style signal bars, and column 3 is a compact connection-type
+    // icon. Keeping connection type separate prevents it obscuring the ping
+    // bars while still making Wi-Fi versus Ethernet visible at a glance.
     class PlayersItemDelegate : public QStyledItemDelegate
     {
     public:
@@ -427,7 +537,7 @@ namespace
         void paint(QPainter* painter, const QStyleOptionViewItem& option,
                    const QModelIndex& index) const override
         {
-            if (index.column() != 2)
+            if (index.column() != 2 && index.column() != 3)
             {
                 QStyledItemDelegate::paint(painter, option, index);
                 return;
@@ -442,50 +552,45 @@ namespace
             QStyle* style = opt.widget ? opt.widget->style() : QApplication::style();
             style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
 
-            if (!index.data(kShowPingRole).toBool())
-                return;
-
-            const int  ping     = index.data(kPingMsRole).toInt();
-            const bool estimate = index.data(kPingEstimateRole).toBool();
-            const bool wireless = index.data(kWirelessRole).toBool();
-            const int  level    = ping < 0 ? 0 : ping <= 60 ? 3 : ping <= 120 ? 2 : 1;
-
-            QColor lit(pingHex(ping));
-            if (estimate)
-                lit.setAlpha(150);
-            QColor unlit = opt.palette.text().color();
-            unlit.setAlpha(56);
-
-            constexpr int barW = 4, gap = 2, maxH = 14;
             const QRect r = opt.rect;
-            const int baseY = r.center().y() + maxH / 2;
-            const int x0 = r.x() + 8;
-
-            painter->save();
-            painter->setRenderHint(QPainter::Antialiasing, false);
-            painter->setPen(Qt::NoPen);
-            for (int i = 0; i < 3; i++)
+            if (index.column() == 2)
             {
-                const int h = maxH * (i + 1) / 3;
-                painter->setBrush(i < level ? lit : unlit);
-                painter->drawRect(x0 + i * (barW + gap), baseY - h, barW, h);
+                if (!index.data(kShowPingRole).toBool())
+                    return;
+
+                const int  ping     = index.data(kPingMsRole).toInt();
+                const bool estimate = index.data(kPingEstimateRole).toBool();
+                const int  level    = ping < 0 ? 0 : ping <= 60 ? 3 : ping <= 120 ? 2 : 1;
+
+                QColor lit(pingHex(ping));
+                if (estimate)
+                    lit.setAlpha(150);
+                QColor unlit = opt.palette.text().color();
+                unlit.setAlpha(56);
+
+                constexpr int barW = 4, gap = 2, maxH = 14;
+                const int baseY = r.center().y() + maxH / 2;
+                const int x0 = r.x() + 8;
+
+                painter->save();
+                painter->setRenderHint(QPainter::Antialiasing, false);
+                painter->setPen(Qt::NoPen);
+                for (int i = 0; i < 3; i++)
+                {
+                    const int h = maxH * (i + 1) / 3;
+                    painter->setBrush(i < level ? lit : unlit);
+                    painter->drawRect(x0 + i * (barW + gap), baseY - h, barW, h);
+                }
+                painter->restore();
+                return;
             }
 
-            if (wireless)
-            {
-                QFont f = opt.font;
-                f.setBold(true);
-                f.setPointSizeF(f.pointSizeF() + 1.0);
-                painter->setFont(f);
-                // Overlapping the top-right of the bars, with a 1px shadow so
-                // it stays readable over a lit bar in either theme.
-                const QRect exclR(x0 + 2 * (barW + gap), r.y(), 12, r.height());
-                painter->setPen(QColor(0, 0, 0, 140));
-                painter->drawText(exclR.translated(1, 1), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("!"));
-                painter->setPen(QColor(0xf0, 0xa0, 0x30));
-                painter->drawText(exclR, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("!"));
-            }
-            painter->restore();
+            const QColor iconColor = (opt.state & QStyle::State_Selected)
+                ? opt.palette.highlightedText().color()
+                : opt.palette.text().color();
+            paintConnectionTypeSymbol(painter, r,
+                                      index.data(kConnectionTypeRole).toString(),
+                                      iconColor, opt.font);
         }
     };
 } // namespace
@@ -593,7 +698,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     QSettings s("RMG-K", "n02");
     s.setValue("RollbackLobby/WindowGeometry", saveGeometry());
     if (m_playersTree)
-        s.setValue(QString("RollbackLobby/PlayersHeaderState.v3.c%1").arg(m_playersTree->columnCount()),
+        s.setValue(QString("RollbackLobby/PlayersHeaderState.v4.c%1").arg(m_playersTree->columnCount()),
                    m_playersTree->header()->saveState());
     if (m_roomsTree)
         s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
@@ -655,7 +760,9 @@ QWidget* RollbackLobbyDialog::buildLobbyView()
     m_splitter->setStretchFactor(0, 5);
     m_splitter->setStretchFactor(1, 3);
     m_splitter->setStretchFactor(2, 2);
-    m_splitter->setSizes({600, 360, 280});
+    // Give the player pane enough first-run width for Player, State, Ping,
+    // and the compact connection Type column without squeezing names.
+    m_splitter->setSizes({560, 340, 320});
 
     lay->addWidget(m_splitter, 1);
     return container;
@@ -1294,14 +1401,26 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
     s.nameLabel = new QLabel(QStringLiteral("Waiting…"), s.row);
     lay->addWidget(s.nameLabel);
 
+    s.countryLabel = new QLabel(s.row);
+    s.countryLabel->setFixedSize(20, 14);
+    s.countryLabel->setAlignment(Qt::AlignCenter);
+    s.countryLabel->setVisible(false);
+    lay->addWidget(s.countryLabel);
+
     lay->addStretch(1);
 
-    // Right-aligned meta (HOST badge · ping). Rich text so the badge and the
-    // ping value can carry their own colors.
+    // Right-aligned meta (HOST badge · ping). Rich text lets each value carry
+    // its own color; the connection symbol immediately after it is a separate
+    // widget so it remains crisp and aligned for every status string.
     s.metaLabel = new QLabel(QString(), s.row);
     s.metaLabel->setTextFormat(Qt::RichText);
     s.metaLabel->setForegroundRole(QPalette::PlaceholderText);
     lay->addWidget(s.metaLabel);
+
+    s.connectionTypeLabel = new ConnectionTypeLabel(s.row);
+    s.connectionTypeLabel->setFixedSize(24, 20);
+    s.connectionTypeLabel->setVisible(false);
+    lay->addWidget(s.connectionTypeLabel);
 
     // Host-only kick button. Hidden by default; shown on non-host seats only
     // when the local user is the host (set in renderSeatFilled).
@@ -1365,16 +1484,37 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
         f.setBold(false);
         s.nameLabel->setFont(f);
     }
+    if (s.countryLabel) s.countryLabel->setVisible(false);
     if (s.metaLabel) s.metaLabel->setText(QString());
-    if (s.kickButton) s.kickButton->setVisible(false);
+    if (s.connectionTypeLabel) s.connectionTypeLabel->setVisible(false);
+    if (s.kickButton)
+    {
+        QSizePolicy policy = s.kickButton->sizePolicy();
+        policy.setRetainSizeWhenHidden(false);
+        s.kickButton->setSizePolicy(policy);
+        s.kickButton->setVisible(false);
+    }
 }
 
 void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, bool isHost,
-                                           bool isSelf, int pingMs, int frameDelay, bool canKick)
+                                           bool isSelf, int pingMs, int frameDelay, bool canKick,
+                                           const QString& connectionType)
 {
     s.isHost = isHost;
     s.frameDelay = frameDelay;
-    if (s.kickButton) s.kickButton->setVisible(canKick);
+    if (s.kickButton)
+    {
+        // When the local user is host, every occupied seat reserves the same
+        // fixed kick-button slot. The host's own hidden X therefore takes the
+        // same layout width as each visible X, keeping all connection icons on
+        // one vertical line. Non-hosts do not retain the unused space.
+        const bool localUserIsHost = m_client &&
+            m_currentRoomHostId == m_client->selfUserId();
+        QSizePolicy policy = s.kickButton->sizePolicy();
+        policy.setRetainSizeWhenHidden(localUserIsHost);
+        s.kickButton->setSizePolicy(policy);
+        s.kickButton->setVisible(canKick);
+    }
 
     const bool dark = isDarkTheme();
     const QString accent = playerAccentHex(s.slot, dark);
@@ -1424,6 +1564,11 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
         s.metaLabel->setText(
             seatMetaHtml(s.slot, isHost, isSelf ? 0 : pingMs, frameDelay, dark));
     }
+    if (s.connectionTypeLabel)
+    {
+        setConnectionTypeLabel(s.connectionTypeLabel, connectionType);
+        s.connectionTypeLabel->setVisible(true);
+    }
 }
 
 // ── Chat column ──────────────────────────────────────────────────────
@@ -1471,7 +1616,7 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
 
 QWidget* RollbackLobbyDialog::buildPlayersColumn()
 {
-    // The tree's column header ("Player / State / Ping") already labels the
+    // The tree's column header ("Player / State / Ping / Type") already labels the
     // content; a borderless rounded card frame gives it the polished, P2P-
     // style container without a heavy titled group box.
     auto* col = new QWidget(this);
@@ -1486,14 +1631,14 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
 
     m_playersTree = new QTreeWidget(card);
     m_playersTree->setObjectName("PlayersTree");
-    m_playersTree->setHeaderLabels({ "Player", "State", "Ping" });
+    m_playersTree->setHeaderLabels({ "Player", "State", "Ping", "Type" });
     m_playersTree->setRootIsDecorated(false);
     m_playersTree->setSortingEnabled(true);
 	m_playersTree->sortItems(0, Qt::AscendingOrder);
     m_playersTree->setAlternatingRowColors(true);
     m_playersTree->setFrameShape(QFrame::NoFrame);
     m_playersTree->setUniformRowHeights(true);
-    // Right-edge flags in the name column + painted signal bars in Ping.
+    // Right-edge flags in the name column + painted Ping and Type icons.
     m_playersTree->setItemDelegate(new PlayersItemDelegate(m_playersTree));
     // Columns are clamped to the viewport (clampTreeColumns, shared with the
     // browse trees) rather than using a Qt Stretch section: a Stretch section
@@ -1504,27 +1649,27 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersTree->header()->setStretchLastSection(false);
     m_playersTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     {
-        // Size State and Ping to their widest expected content once, up
+        // Size State, Ping, and Type to their widest expected content once, up
         // front: the tree is empty at construction, so ResizeToContents here
         // would measure the header labels alone and clip "Spectating" later.
         const QFontMetrics fm(m_playersTree->header()->font());
         const int pad = 20; // section margins
         const int stateWidth  = fm.horizontalAdvance(QStringLiteral("Spectating")) + pad;
-        // Wide enough for the painted bars + wireless "!" (≈36px) and the
-        // header label, whichever is larger; the sort indicator renders above
-        // the label in this header style, so nothing else needs the room.
+        // Wide enough for the painted bars and header label. The sort indicator
+        // renders above the label in this header style, so it needs no extra room.
         const int pingWidth = std::max(fm.horizontalAdvance(QStringLiteral("Ping")) + pad - 4, 40);
+        const int typeWidth = std::max(fm.horizontalAdvance(QStringLiteral("Type")) + pad - 4, 44);
         m_playersTree->setColumnWidth(1, stateWidth);
         m_playersTree->setColumnWidth(2, pingWidth);
+        m_playersTree->setColumnWidth(3, typeWidth);
 
         // The column count is part of the key: restoring a state saved for a
         // different column layout half-applies and breaks the header (missing
-        // section dividers, wrong stretch section). v3: column 2 changed
-        // meaning (Region flag → painted Ping bars), so v2 states carry a
-        // stale sort choice and width for a column that no longer exists —
-        // leave them orphaned rather than restoring them into the new shape.
+        // section dividers, wrong stretch section). v4 adds the compact Type
+        // column and keeps the Ping column solely for its signal bars, so old
+        // three-column states must remain orphaned.
         QSettings s("RMG-K", "n02");
-        const QString key = QString("RollbackLobby/PlayersHeaderState.v3.c%1").arg(m_playersTree->columnCount());
+        const QString key = QString("RollbackLobby/PlayersHeaderState.v4.c%1").arg(m_playersTree->columnCount());
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_playersTree->header()->restoreState(headerState);
@@ -2449,6 +2594,15 @@ void RollbackLobbyDialog::onUserUpdated(quint64 userId)
     if (userIt == users.constEnd()) return;
     const bool wasSearching = it.value()->data(0, kSearchingSortRole).toBool();
     refreshPlayerRow(it.value(), userIt.value());
+    for (auto& seat : m_seats)
+    {
+        if (seat.userId == userId && seat.connectionTypeLabel)
+        {
+            setConnectionTypeLabel(seat.connectionTypeLabel, userIt->connection);
+            setCountryFlagLabel(seat.countryLabel, userIt->country, userIt->anonymous);
+            break;
+        }
+    }
     // Qt only re-sorts when data in the current sort column changes; a state
     // flip doesn't touch the Region column, so a viewer sorted by Region
     // would never see the row move. Force the pass on the transition.
@@ -2505,9 +2659,8 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     // Ping column: roles only — PlayersItemDelegate paints the signal bars.
     // A real measurement wins; the region estimate stands in translucently
     // until one lands; -1 draws the empty skeleton. Self shows no bars. The
-    // wireless flag drives the "!" warning over the bars (wifi/cellular —
-    // where the frame spikes come from; anonymity doesn't hide it, since the
-    // whole point of surfacing it is match-quality risk).
+    // Connection type gets its own compact icon column so it cannot obscure
+    // the quality bars. Anonymity does not hide this match-quality signal.
     const bool isSelf = (u.id == m_client->selfUserId());
     const int measured = isSelf ? -1 : m_client->measuredPingMs(u.id);
     const int estimate = LobbyRegions::estimatedRttMs(m_client->selfRegion(), u.region);
@@ -2520,10 +2673,6 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     item->setData(2, kShowPingRole, !isSelf);
     item->setData(2, kPingMsRole, effective);
     item->setData(2, kPingEstimateRole, measured < 0);
-    item->setData(2, kWirelessRole,
-                  u.connection == QLatin1String("wifi") ||
-                  u.connection == QLatin1String("cellular"));
-
     // Built as lines so an absent field just doesn't contribute, rather than
     // leaving a stray separator. The region is deliberately not among them: it's
     // a coarse server-side bucket that can disagree with the geolocated country,
@@ -2533,12 +2682,9 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         tipLines << QString("Country: %1").arg(countryName);
     // Self-reported transport medium ("wifi"/"lan"/...) and build, when the
     // peer's client and the server are new enough to relay them.
-    const QString connLabel =
-          u.connection == QLatin1String("wifi")      ? QStringLiteral("Wi-Fi")
-        : u.connection == QLatin1String("lan")       ? QStringLiteral("LAN")
-        : u.connection == QLatin1String("cellular")  ? QStringLiteral("Cellular")
-        : u.connection == QLatin1String("bluetooth") ? QStringLiteral("Bluetooth")
-        : QString();
+    const QString connLabel = connectionTypeName(u.connection);
+    item->setText(3, connLabel);
+    item->setData(3, kConnectionTypeRole, u.connection);
     if (!connLabel.isEmpty())
         tipLines << QString("Connection: %1").arg(connLabel);
     if (!u.clientVersion.isEmpty())
@@ -2558,6 +2704,7 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     const QString tip = tipLines.join(QChar('\n'));
     item->setToolTip(0, tip);
     item->setToolTip(2, tip);
+    item->setToolTip(3, connLabel.isEmpty() ? QStringLiteral("Connection type unknown") : connLabel);
     item->setData(0, Qt::UserRole, QVariant::fromValue(u.id));
 }
 
@@ -3189,6 +3336,16 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const int frameDelay = slotIsSelf
             ? m_currentRoomDelay
             : p.value("frameDelay").toInt(-1);
+        QString connectionType;
+        QString country;
+        bool anonymous = false;
+        const auto userIt = m_client->users().constFind(uid);
+        if (userIt != m_client->users().constEnd())
+        {
+            connectionType = userIt->connection;
+            country = userIt->country;
+            anonymous = userIt->anonymous;
+        }
         // The host can remove any seated player except themselves (the host seat).
         const bool canKick = iAmHost && !slotIsHost;
         if (m_seats[slot - 1].userId != uid)
@@ -3198,7 +3355,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         }
         m_seats[slot - 1].userId = uid;
         renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf,
-                         pingMs, frameDelay, canKick);
+                         pingMs, frameDelay, canKick, connectionType);
+        setCountryFlagLabel(m_seats[slot - 1].countryLabel, country, anonymous);
         if (!slotIsSelf && pingMs < 0 && m_seats[slot - 1].metaLabel)
             m_seats[slot - 1].metaLabel->setText(
                 seatMetaHtml(slot, slotIsHost, pingMs, frameDelay, isDarkTheme(),
