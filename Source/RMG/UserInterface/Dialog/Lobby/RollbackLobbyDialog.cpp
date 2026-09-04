@@ -365,6 +365,95 @@ namespace
     constexpr int kConnectionTypeRole = Qt::UserRole + 4; // "wifi", "lan", ...
     constexpr int kShowPingRole       = Qt::UserRole + 5; // false for the self row
 
+    QString connectionTypeName(const QString& connection)
+    {
+        if (connection == QLatin1String("wifi"))      return QStringLiteral("Wi-Fi");
+        if (connection == QLatin1String("lan"))       return QStringLiteral("Ethernet");
+        if (connection == QLatin1String("cellular"))  return QStringLiteral("Cellular");
+        if (connection == QLatin1String("bluetooth")) return QStringLiteral("Bluetooth");
+        return QString();
+    }
+
+    void paintConnectionTypeSymbol(QPainter* painter, const QRectF& rect,
+                                   const QString& connection, const QColor& color,
+                                   const QFont& font)
+    {
+        const QPointF center = rect.center();
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setFont(font);
+        painter->setPen(QPen(color, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->setBrush(Qt::NoBrush);
+
+        if (connection == QLatin1String("wifi"))
+        {
+            // Two arcs and a dot form a crisp Wi-Fi mark without relying on a
+            // platform font having the corresponding Unicode glyph.
+            const qreal baseY = center.y() + 5.0;
+            painter->drawArc(QRectF(center.x() - 9.0, baseY - 9.0, 18.0, 18.0),
+                             45 * 16, 90 * 16);
+            painter->drawArc(QRectF(center.x() - 5.5, baseY - 5.5, 11.0, 11.0),
+                             45 * 16, 90 * 16);
+            painter->setBrush(color);
+            painter->setPen(Qt::NoPen);
+            painter->drawEllipse(QPointF(center.x(), baseY), 1.6, 1.6);
+        }
+        else if (connection == QLatin1String("lan"))
+        {
+            // RJ45-style plug: connector body, cable stem, and four pins.
+            QPainterPath plug;
+            plug.moveTo(center.x() - 7.0, center.y() - 7.0);
+            plug.lineTo(center.x() + 7.0, center.y() - 7.0);
+            plug.lineTo(center.x() + 7.0, center.y() + 2.0);
+            plug.lineTo(center.x() + 3.0, center.y() + 2.0);
+            plug.lineTo(center.x() + 3.0, center.y() + 7.0);
+            plug.lineTo(center.x() - 3.0, center.y() + 7.0);
+            plug.lineTo(center.x() - 3.0, center.y() + 2.0);
+            plug.lineTo(center.x() - 7.0, center.y() + 2.0);
+            plug.closeSubpath();
+            painter->drawPath(plug);
+            for (int i = -3; i <= 3; i += 2)
+                painter->drawLine(QPointF(center.x() + i, center.y() - 5.0),
+                                  QPointF(center.x() + i, center.y() - 2.0));
+        }
+        else
+        {
+            const QString compactLabel = connection == QLatin1String("cellular")
+                ? QStringLiteral("Cell")
+                : connection == QLatin1String("bluetooth")
+                    ? QStringLiteral("BT")
+                    : QStringLiteral("?");
+            painter->setPen(color);
+            painter->drawText(rect, Qt::AlignCenter, compactLabel);
+        }
+        painter->restore();
+    }
+
+    class ConnectionTypeLabel final : public QLabel
+    {
+    public:
+        using QLabel::QLabel;
+
+    protected:
+        void paintEvent(QPaintEvent*) override
+        {
+            QPainter painter(this);
+            paintConnectionTypeSymbol(&painter, rect(),
+                                      property("connectionType").toString(),
+                                      palette().color(QPalette::WindowText), font());
+        }
+    };
+
+    void setConnectionTypeLabel(QLabel* label, const QString& connection)
+    {
+        if (!label)
+            return;
+        const QString name = connectionTypeName(connection);
+        label->setProperty("connectionType", connection);
+        label->setToolTip(name.isEmpty() ? QStringLiteral("Connection type unknown") : name);
+        label->update();
+    }
+
     // Player-list row that pins searching players to the top of the list no
     // matter which column or direction the user sorts by. Qt places items
     // that compare "less" first in ascending order and last in descending,
@@ -473,59 +562,12 @@ namespace
                 return;
             }
 
-            const QString connection = index.data(kConnectionTypeRole).toString();
-            QColor iconColor = (opt.state & QStyle::State_Selected)
+            const QColor iconColor = (opt.state & QStyle::State_Selected)
                 ? opt.palette.highlightedText().color()
                 : opt.palette.text().color();
-            const QPointF center = r.center();
-
-            painter->save();
-            painter->setRenderHint(QPainter::Antialiasing, true);
-            QPen pen(iconColor, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-            painter->setPen(pen);
-            painter->setBrush(Qt::NoBrush);
-
-            if (connection == QLatin1String("wifi"))
-            {
-                // Two arcs and a dot form a crisp Wi-Fi mark without relying
-                // on a platform font having the corresponding Unicode glyph.
-                const qreal baseY = center.y() + 5.0;
-                painter->drawArc(QRectF(center.x() - 9.0, baseY - 9.0, 18.0, 18.0),
-                                 45 * 16, 90 * 16);
-                painter->drawArc(QRectF(center.x() - 5.5, baseY - 5.5, 11.0, 11.0),
-                                 45 * 16, 90 * 16);
-                painter->setBrush(iconColor);
-                painter->setPen(Qt::NoPen);
-                painter->drawEllipse(QPointF(center.x(), baseY), 1.6, 1.6);
-            }
-            else if (connection == QLatin1String("lan"))
-            {
-                // RJ45-style plug: connector body, cable stem, and four pins.
-                QPainterPath plug;
-                plug.moveTo(center.x() - 7.0, center.y() - 7.0);
-                plug.lineTo(center.x() + 7.0, center.y() - 7.0);
-                plug.lineTo(center.x() + 7.0, center.y() + 2.0);
-                plug.lineTo(center.x() + 3.0, center.y() + 2.0);
-                plug.lineTo(center.x() + 3.0, center.y() + 7.0);
-                plug.lineTo(center.x() - 3.0, center.y() + 7.0);
-                plug.lineTo(center.x() - 3.0, center.y() + 2.0);
-                plug.lineTo(center.x() - 7.0, center.y() + 2.0);
-                plug.closeSubpath();
-                painter->drawPath(plug);
-                for (int i = -3; i <= 3; i += 2)
-                    painter->drawLine(QPointF(center.x() + i, center.y() - 5.0),
-                                      QPointF(center.x() + i, center.y() - 2.0));
-            }
-            else
-            {
-                const QString compactLabel = connection == QLatin1String("cellular")
-                    ? QStringLiteral("Cell")
-                    : connection == QLatin1String("bluetooth")
-                        ? QStringLiteral("BT")
-                        : QStringLiteral("—");
-                painter->drawText(r, Qt::AlignCenter, compactLabel);
-            }
-            painter->restore();
+            paintConnectionTypeSymbol(painter, r,
+                                      index.data(kConnectionTypeRole).toString(),
+                                      iconColor, opt.font);
         }
     };
 } // namespace
@@ -1338,12 +1380,18 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
 
     lay->addStretch(1);
 
-    // Right-aligned meta (HOST badge · ping). Rich text so the badge and the
-    // ping value can carry their own colors.
+    // Right-aligned meta (HOST badge · ping). Rich text lets each value carry
+    // its own color; the connection symbol immediately after it is a separate
+    // widget so it remains crisp and aligned for every status string.
     s.metaLabel = new QLabel(QString(), s.row);
     s.metaLabel->setTextFormat(Qt::RichText);
     s.metaLabel->setForegroundRole(QPalette::PlaceholderText);
     lay->addWidget(s.metaLabel);
+
+    s.connectionTypeLabel = new ConnectionTypeLabel(s.row);
+    s.connectionTypeLabel->setFixedSize(24, 20);
+    s.connectionTypeLabel->setVisible(false);
+    lay->addWidget(s.connectionTypeLabel);
 
     // Host-only kick button. Hidden by default; shown on non-host seats only
     // when the local user is the host (set in renderSeatFilled).
@@ -1408,15 +1456,35 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
         s.nameLabel->setFont(f);
     }
     if (s.metaLabel) s.metaLabel->setText(QString());
-    if (s.kickButton) s.kickButton->setVisible(false);
+    if (s.connectionTypeLabel) s.connectionTypeLabel->setVisible(false);
+    if (s.kickButton)
+    {
+        QSizePolicy policy = s.kickButton->sizePolicy();
+        policy.setRetainSizeWhenHidden(false);
+        s.kickButton->setSizePolicy(policy);
+        s.kickButton->setVisible(false);
+    }
 }
 
 void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, bool isHost,
-                                           bool isSelf, int pingMs, int frameDelay, bool canKick)
+                                           bool isSelf, int pingMs, int frameDelay, bool canKick,
+                                           const QString& connectionType)
 {
     s.isHost = isHost;
     s.frameDelay = frameDelay;
-    if (s.kickButton) s.kickButton->setVisible(canKick);
+    if (s.kickButton)
+    {
+        // When the local user is host, every occupied seat reserves the same
+        // fixed kick-button slot. The host's own hidden X therefore takes the
+        // same layout width as each visible X, keeping all connection icons on
+        // one vertical line. Non-hosts do not retain the unused space.
+        const bool localUserIsHost = m_client &&
+            m_currentRoomHostId == m_client->selfUserId();
+        QSizePolicy policy = s.kickButton->sizePolicy();
+        policy.setRetainSizeWhenHidden(localUserIsHost);
+        s.kickButton->setSizePolicy(policy);
+        s.kickButton->setVisible(canKick);
+    }
 
     const bool dark = isDarkTheme();
     const QString accent = playerAccentHex(s.slot, dark);
@@ -1465,6 +1533,11 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
         // first reply; until then onRoomStateChanged supplies an ICE status.
         s.metaLabel->setText(
             seatMetaHtml(s.slot, isHost, isSelf ? 0 : pingMs, frameDelay, dark));
+    }
+    if (s.connectionTypeLabel)
+    {
+        setConnectionTypeLabel(s.connectionTypeLabel, connectionType);
+        s.connectionTypeLabel->setVisible(true);
     }
 }
 
@@ -2491,6 +2564,14 @@ void RollbackLobbyDialog::onUserUpdated(quint64 userId)
     if (userIt == users.constEnd()) return;
     const bool wasSearching = it.value()->data(0, kSearchingSortRole).toBool();
     refreshPlayerRow(it.value(), userIt.value());
+    for (auto& seat : m_seats)
+    {
+        if (seat.userId == userId && seat.connectionTypeLabel)
+        {
+            setConnectionTypeLabel(seat.connectionTypeLabel, userIt->connection);
+            break;
+        }
+    }
     // Qt only re-sorts when data in the current sort column changes; a state
     // flip doesn't touch the Region column, so a viewer sorted by Region
     // would never see the row move. Force the pass on the transition.
@@ -2570,12 +2651,7 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         tipLines << QString("Country: %1").arg(countryName);
     // Self-reported transport medium ("wifi"/"lan"/...) and build, when the
     // peer's client and the server are new enough to relay them.
-    const QString connLabel =
-          u.connection == QLatin1String("wifi")      ? QStringLiteral("Wi-Fi")
-        : u.connection == QLatin1String("lan")       ? QStringLiteral("Ethernet")
-        : u.connection == QLatin1String("cellular")  ? QStringLiteral("Cellular")
-        : u.connection == QLatin1String("bluetooth") ? QStringLiteral("Bluetooth")
-        : QString();
+    const QString connLabel = connectionTypeName(u.connection);
     item->setText(3, connLabel);
     item->setData(3, kConnectionTypeRole, u.connection);
     if (!connLabel.isEmpty())
@@ -3229,6 +3305,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const int frameDelay = slotIsSelf
             ? m_currentRoomDelay
             : p.value("frameDelay").toInt(-1);
+        QString connectionType;
+        const auto userIt = m_client->users().constFind(uid);
+        if (userIt != m_client->users().constEnd())
+            connectionType = userIt->connection;
         // The host can remove any seated player except themselves (the host seat).
         const bool canKick = iAmHost && !slotIsHost;
         if (m_seats[slot - 1].userId != uid)
@@ -3238,7 +3318,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         }
         m_seats[slot - 1].userId = uid;
         renderSeatFilled(m_seats[slot - 1], user, slotIsHost, slotIsSelf,
-                         pingMs, frameDelay, canKick);
+                         pingMs, frameDelay, canKick, connectionType);
         if (!slotIsSelf && pingMs < 0 && m_seats[slot - 1].metaLabel)
             m_seats[slot - 1].metaLabel->setText(
                 seatMetaHtml(slot, slotIsHost, pingMs, frameDelay, isDarkTheme(),
