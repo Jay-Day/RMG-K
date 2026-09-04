@@ -848,6 +848,16 @@ void SettingsDialog::load64DDSettings(void)
 
     this->kailleraRecordByDefaultCheckBox->setChecked(
         CoreSettingsGetBoolValue(SettingsID::Kaillera_RecordingEnabled));
+#ifdef RMGK_GAME_STATS
+    this->kailleraReplayByDefaultCheckBox->setChecked(
+        CoreSettingsGetBoolValue(SettingsID::GameStats_ReplayEnabled));
+#else
+    this->kailleraReplayByDefaultCheckBox->setChecked(false);
+    this->kailleraReplayByDefaultCheckBox->setEnabled(false);
+    this->kailleraReplayByDefaultCheckBox->setToolTip(
+        "This build was compiled without GAME_STATS support (-DGAME_STATS=ON), "
+        "so replay recording is unavailable.");
+#endif
     this->kailleraPortSpinBox->setValue(kailleraPort);
     this->kailleraRecordsDirectoryLineEdit->setProperty("rawPath", recordsDirectoryRaw);
     this->kailleraRecordsDirectoryLineEdit->setText(getDisplayDirectoryPath(recordsDirectoryRaw));
@@ -1114,6 +1124,10 @@ void SettingsDialog::loadDefault64DDSettings(void)
 
     this->kailleraRecordByDefaultCheckBox->setChecked(
         CoreSettingsGetDefaultBoolValue(SettingsID::Kaillera_RecordingEnabled));
+#ifdef RMGK_GAME_STATS
+    this->kailleraReplayByDefaultCheckBox->setChecked(
+        CoreSettingsGetDefaultBoolValue(SettingsID::GameStats_ReplayEnabled));
+#endif
     this->kailleraPortSpinBox->setValue(kailleraPort);
     this->kailleraRecordsDirectoryLineEdit->setProperty("rawPath", recordsDirectoryRaw);
     this->kailleraRecordsDirectoryLineEdit->setText(getDisplayDirectoryPath(recordsDirectoryRaw));
@@ -1408,6 +1422,9 @@ void SettingsDialog::save64DDSettings(void)
     std::string recordsDirectory = recordsDirectoryRaw.toStdString();
 
     CoreSettingsSetValue(SettingsID::Kaillera_RecordingEnabled, this->kailleraRecordByDefaultCheckBox->isChecked());
+#ifdef RMGK_GAME_STATS
+    CoreSettingsSetValue(SettingsID::GameStats_ReplayEnabled, this->kailleraReplayByDefaultCheckBox->isChecked());
+#endif
     CoreSettingsSetValue(SettingsID::Kaillera_Port, this->kailleraPortSpinBox->value());
     CoreSettingsSetValue(SettingsID::Kaillera_RecordsDirectory, recordsDirectory);
     CoreSettingsSetValue(SettingsID::Kaillera_RecordingCapEnabled, this->kailleraRecordingCapEnabledCheckBox->isChecked());

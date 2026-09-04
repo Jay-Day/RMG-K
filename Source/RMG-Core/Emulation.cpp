@@ -26,6 +26,9 @@
 #ifdef RMGK_HAVE_P2P_TRANSPORT
 #include "n02_client.h"
 #endif
+#ifdef RMGK_GAME_STATS
+#include "Replay.hpp"
+#endif
 
 #include "m64p/Api.hpp"
 
@@ -267,6 +270,12 @@ static void FrameCallback(unsigned int frameIndex)
     // Reset sync flag at the start of each new frame
     // This ensures we sync exactly once per frame regardless of PIF polling timing
     s_SyncedThisFrame = false;
+#endif
+#ifdef RMGK_GAME_STATS
+    // This callback is already skipped during GekkoNet rollback resimulation
+    // (see l_RollbackHiddenStepActive in mupen64plus-core's main.c), so this
+    // is exactly one call per real emulated frame - never inflated by resim.
+    Replay::OnFrame();
 #endif
 }
 
@@ -1028,6 +1037,10 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         s_CurrentFrame = 0;
         m64p::Core.DoCommand(M64CMD_SET_FRAME_CALLBACK, 0, (void*)FrameCallback);
 
+#ifdef RMGK_GAME_STATS
+        Replay::OnEmulationStart();
+#endif
+
 #ifdef NETPLAY
         // Reset Kaillera sync state to prevent stale cache from previous sessions
         s_LastSyncFrame = -1;
@@ -1150,6 +1163,12 @@ CORE_EXPORT bool CoreStopEmulation(void)
 
 #ifdef NETPLAY
     rmgk_gekko::request_stop();
+#endif
+
+#ifdef RMGK_GAME_STATS
+    // Finalizes (patches the length field, closes) any .rmgr file still
+    // open - covers the "user quit mid-match" case.
+    Replay::OnEmulationStop();
 #endif
 
     if (!m64p::Core.IsHooked())

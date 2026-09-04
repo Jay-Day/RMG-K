@@ -35,7 +35,7 @@ int g_DebuggerActive = 0;    // whether the debugger is enabled or not
 m64p_dbg_runstate g_dbg_runstate;
 
 // Holds the number of pending steps the debugger needs to perform.
-static SDL_sem *sem_pending_steps;
+static SDL_Semaphore *sem_pending_steps;
 
 uint32_t previousPC;
 
@@ -95,7 +95,7 @@ void update_debugger(uint32_t pc)
     }
     if (g_dbg_runstate == M64P_DBG_RUNSTATE_PAUSED) {
         // The emulation thread is blocked until a step call via the API.
-        SDL_SemWait(sem_pending_steps);
+        SDL_WaitSemaphore(sem_pending_steps);
     }
 
     previousPC = pc;
@@ -103,7 +103,7 @@ void update_debugger(uint32_t pc)
 
 void debugger_step()
 {
-    SDL_SemPost(sem_pending_steps);
+    SDL_SignalSemaphore(sem_pending_steps);
 }
 
 #endif
