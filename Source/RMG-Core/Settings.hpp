@@ -563,6 +563,12 @@ enum class SettingsID
     // Internal Settings (not persisted to config file)
     Internal_InputPluginSwitchRequested,
 
+    // Game Stats / Replay Settings
+    GameStats_ReplayEnabled,
+
+    // Internal Settings (not persisted to config file)
+    Internal_InputPluginSwitchRequested,
+
     Invalid
 };
 

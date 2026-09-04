@@ -800,7 +800,7 @@ static void main_speedset(int percent)
     if (netplay_is_init())
         return;
 
-    if (percent < 1 || percent > 1000)
+    if (percent < 1 || percent > 2000)
     {
         DebugMessage(M64MSG_WARNING, "Invalid speed setting %i percent", percent);
         return;

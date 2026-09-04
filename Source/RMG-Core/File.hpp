@@ -24,4 +24,11 @@ bool CoreWriteFile(std::filesystem::path file, std::vector<char>& buffer);
 // attempts to retrieve the file time
 CoreFileTime CoreGetFileTime(std::filesystem::path file);
 
+// If `desiredPath` already exists on disk, tries "<stem>-2<ext>",
+// "<stem>-3<ext>", ... until a free one is found (giving up and returning
+// `desiredPath` unchanged after 10000 attempts). Shared by every writer that
+// needs to avoid silently overwriting a same-named file from an earlier run
+// (e.g. RMG-Core's .rmgr replay recorder and its headless export tooling).
+std::filesystem::path CoreFindCollisionFreePath(std::filesystem::path desiredPath);
+
 #endif // CORE_FILE_HPP

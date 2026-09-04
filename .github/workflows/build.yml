@@ -63,12 +63,22 @@ jobs:
           mkdir -p "$sdl_dir/build"
           cmake -S "$sdl_dir" -B "$sdl_dir/build" \
                 -DCMAKE_BUILD_TYPE="Release" \
+                -DCMAKE_INSTALL_PREFIX="/usr" \
                 -DCMAKE_INSTALL_LIBDIR="lib/${{ matrix.architecture }}-linux-gnu" \
                 -DCMAKE_INSTALL_FULL_LIBDIR="/usr/lib/${{ matrix.architecture }}-linux-gnu" \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
           cmake --build "$sdl_dir/build" --parallel "$(nproc)"
+          # -DCMAKE_INSTALL_PREFIX above (not just --prefix here) matters:
+          # `cmake --install --prefix X` only overrides where files land, it
+          # doesn't retroactively fix the prefix already baked into
+          # generated files like sdl3.pc at configure time - that stayed
+          # CMake's default (/usr/local) without the -D above, so pkg-config
+          # kept reporting -I/usr/local/include/SDL3 even though the actual
+          # headers were being installed under /usr/include/SDL3, breaking
+          # anything (like the DEBUGGER=1 SDL_CFLAGS passthrough in
+          # Source/3rdParty/CMakeLists.txt) that trusts pkg-config's output.
           sudo cmake --install "$sdl_dir/build" --prefix /usr/
       - name: Build RMG (AppImage)
         run: |

@@ -20,6 +20,7 @@
 #include <QProcess>
 #include <QProgressDialog>
 #include <QElapsedTimer>
+#include <QCheckBox>
 
 class KailleraPlaybackDialog : public QDialog
 {
@@ -38,6 +39,9 @@ private slots:
     void onPlaybackRefresh();
     void onPlaybackOpenFolder();
     void onPlaybackExport();
+#ifdef RMGK_GAME_STATS
+    void onPlaybackExportReplay();
+#endif
     void onPlaybackDoubleClicked(int row, int column);
     void onPlaybackTimer();
     void onExportProcessOutput();
@@ -55,6 +59,9 @@ private:
 
     void setupUI();
     void updatePlaybackControls();
+#ifdef RMGK_GAME_STATS
+    void updateExportReplayVisibility();
+#endif
     void populatePlaybackList();
     QString getSelectedRecordingPath() const;
     QString getSelectedRecordingGameName(QString* recordingPath = nullptr, int* totalFrames = nullptr) const;
@@ -62,7 +69,7 @@ private:
     QString resolveExportFfmpegPath();
     QString promptForFfmpegPath();
     QString downloadManagedFfmpeg();
-    void showExportFinishedDialog(const QString& outputPath);
+    void showExportFinishedDialog(const QString& outputPath, const QString& logText);
     void resetExportUi();
     void startExportProcess(const QString& recordingPath,
                             const QString& romPath,
@@ -73,6 +80,13 @@ private:
                             bool includeKailleraChat,
                             bool labelPorts,
                             int totalFrames);
+#ifdef RMGK_GAME_STATS
+    void startReplayFileExportProcess(const QString& recordingPath,
+                                      const QString& romPath,
+                                      const QString& outputPath,
+                                      int totalFrames);
+#endif
+    QString exportDialogTitle() const;
     void processExportOutputText(const QString& text, bool finalizePartialLine = false);
     void processExportOutputLine(const QString& line);
     void updateExportProgressDialog();
@@ -90,11 +104,25 @@ private:
     QPushButton* m_btnPBDelete = nullptr;
     QPushButton* m_btnPBRefresh = nullptr;
     QPushButton* m_btnExport = nullptr;
+#ifdef RMGK_GAME_STATS
+    // Headless/fast .rmgr-only export, sharing m_exportProcess/
+    // m_exportProgressDialog with Export MP4 below (mutually exclusive,
+    // never both running at once) but its own button and CLI dispatch -
+    // only shown when the selected recording's stored game name is Smash
+    // Remix 2.0.1, and Windows-only like Export MP4 (see
+    // onPlaybackExportReplay()).
+    QPushButton* m_btnExportReplay = nullptr;
+#endif
     QPushButton* m_btnOpenFolder = nullptr;
     QLabel* m_frameLabel = nullptr;
     bool m_playbackWasActive = false;
     bool m_isPaused = false;
     bool m_exportCanceled = false;
+    // Which of Export MP4 / Export Replays is in flight - only meaningful
+    // while m_exportProcess is non-null. Used purely for dialog/message
+    // wording (see exportDialogTitle()); the two share every other bit of
+    // export-process state below since they're mutually exclusive.
+    bool m_exportIsReplayFile = false;
     QString m_exportOutputPath;
     QString m_exportLog;
     QString m_exportPendingOutput;
