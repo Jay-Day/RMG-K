@@ -171,6 +171,14 @@ public:
     // error describes unsupported clients or the first incomplete peer.
     bool allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QString* error = nullptr) const;
 
+    // The running GekkoNet match consumes the room's established libjuice
+    // agents directly. While active, lobby/room cleanup must not destroy those
+    // agents, and reconnect must be deferred because HELLO_OK reconfigures the
+    // process-wide ICE context. Cleanup requested during the match is applied
+    // when ownership is released after emulation stops.
+    void setMatchTransportActive(bool active);
+    bool matchTransportActive() const { return m_matchTransportActive; }
+
     // Quick match queue. The ROM (name + md5) scopes the search so the server
     // only pairs players queued for the same game; the name lets the matched
     // room resolve to a local ROM by name on both clients.
@@ -332,6 +340,7 @@ private:
     void handleIceSignal(const QJsonObject& data);
     void reconcileIcePeers(const QJsonObject& roomState);
     void resetIceMesh();
+    void resetIceTransport();
     bool restartIcePeer(quint64 userId, quint32 generation,
                         const QString& reason, bool notifyPeer);
     void flushIceEvents();
@@ -435,6 +444,9 @@ private:
     // session cannot be applied to the fresh credentials and UDP socket.
     QHash<quint64, quint32> m_iceGenerations;
     QHash<quint64, int> m_iceRestartAttempts;
+    bool m_matchTransportActive = false;
+    bool m_deferredIceMeshReset = false;
+    bool m_deferredIceTransportReset = false;
     // Host-only matrix for non-host paths. To avoid duplicate reports, only
     // the lower user id measures/reports each unordered pair.
     QHash<quint64, QHash<quint64, int>> m_roomPeerPings;
