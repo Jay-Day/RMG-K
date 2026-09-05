@@ -543,4 +543,9 @@ m64p_dynlib_handle EmulatorProxy::getAudioPluginHandle() const
     return m_PluginHandles[2];
 }
 
+m64p_dynlib_handle EmulatorProxy::getCoreHandle() const
+{
+    return m_CoreHandle;
+}
+
 } // namespace KailleraExport

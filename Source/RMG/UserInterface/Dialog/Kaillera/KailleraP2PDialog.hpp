@@ -25,6 +25,10 @@
 #include <QString>
 #include <QVector>
 
+#ifdef RMGK_GAME_STATS
+#include <RMG-Core/Replay.hpp>
+#endif
+
 class QAction;
 class QResizeEvent;
 
@@ -211,6 +215,12 @@ private:
     QPushButton* m_btnRetryConnection = nullptr;
     QPushButton* m_btnLeave = nullptr;
     QCheckBox* m_recordCheck = nullptr;
+#ifdef RMGK_GAME_STATS
+    // Independent .rmgr toggle, mirrors m_recordCheck's pattern - see
+    // RollbackLobbyDialog.hpp for the full rationale. Only shown when
+    // m_gameName is Smash Remix 2.0.1.
+    QCheckBox* m_replayRecordCheck = nullptr;
+#endif
     QCheckBox* m_enlistCheck = nullptr;
     QLabel* m_netcodeModeLabel = nullptr;
     QLabel* m_pingLabel = nullptr;

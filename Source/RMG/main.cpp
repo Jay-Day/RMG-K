@@ -10,6 +10,7 @@
 #include <UserInterface/MainWindow.hpp>
 #if defined(_WIN32) && defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
+#include <Utilities/KailleraExport/ReplayFileExport.hpp>
 #endif
 
 #include <QCommandLineParser>
@@ -232,6 +233,11 @@ int main(int argc, char **argv)
     QCommandLineOption exportNoKailleraChatOption("export-no-kaillera-chat", "Internal replay export mode: hide Kaillera chat overlay");
     QCommandLineOption exportLabelPortsOption("export-label-ports", "Internal replay export mode: label controller ports");
     QCommandLineOption exportVerboseOption("export-verbose", "Internal replay export mode: verbose export logging");
+    // Shares export-krec/export-rom with the MP4 export options above (same
+    // meaning: source recording + ROM) - this option's own presence, rather
+    // than export-krec's, is what selects the .rmgr-only export path over
+    // the MP4 one (see the dispatch below).
+    QCommandLineOption exportRmgrOutputOption("export-rmgr-output", "Internal replay export mode: output .rmgr file", "path");
     exportKrecOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportRomOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportOutputOption.setFlags(QCommandLineOption::HiddenFromHelp);
@@ -241,6 +247,7 @@ int main(int argc, char **argv)
     exportNoKailleraChatOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportLabelPortsOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportVerboseOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    exportRmgrOutputOption.setFlags(QCommandLineOption::HiddenFromHelp);
 
 #ifndef PORTABLE_INSTALL
     parser.addOption(libPathOption);
@@ -263,6 +270,7 @@ int main(int argc, char **argv)
     parser.addOption(exportNoKailleraChatOption);
     parser.addOption(exportLabelPortsOption);
     parser.addOption(exportVerboseOption);
+    parser.addOption(exportRmgrOutputOption);
     parser.addPositionalArgument("ROM", "ROM to open");
 
     // parse arguments
@@ -291,6 +299,19 @@ int main(int argc, char **argv)
         CoreSetSharedDataPathOverride(sharedDataPathOverride.toStdString());
     }
 #endif // PORTABLE_INSTALL
+
+    // Checked before exportKrecOption below - both share export-krec/
+    // export-rom, so this option's own presence is what distinguishes a
+    // .rmgr-only export request from an MP4 export request.
+    if (parser.isSet(exportRmgrOutputOption))
+    {
+#if defined(_WIN32) && defined(NETPLAY)
+        return KailleraExport::RunReplayFileExportFromCommandLine(parser);
+#else
+        std::cerr << "Replay file export is only supported on Windows" << std::endl;
+        return 1;
+#endif
+    }
 
     if (parser.isSet(exportKrecOption))
     {

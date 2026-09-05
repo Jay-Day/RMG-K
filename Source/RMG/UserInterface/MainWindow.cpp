@@ -180,6 +180,9 @@ public:
 #include <RMG-Core/Video.hpp>
 #include <RMG-Core/Core.hpp>
 #include <RMG-Core/Key.hpp>
+#ifdef RMGK_GAME_STATS
+#include <RMG-Core/Replay.hpp>
+#endif
 
 using namespace UserInterface;
 using namespace Utilities;
@@ -5457,6 +5460,17 @@ void MainWindow::on_Emulation_Started(void)
 void MainWindow::on_Emulation_Finished(bool ret, QString error)
 {
     this->ui_FocusPausedEmulation = false;
+
+#ifdef RMGK_GAME_STATS
+    // CoreStartEmulation() can return (and this signal fire) without
+    // CoreStopEmulation() ever having run on some paths (e.g. the emulation
+    // core stopping on its own rather than via one of MainWindow's
+    // CoreStopEmulation() call sites) - the same reason n02::recordingClose()
+    // is called below for the lobby netplay path. Finalize any .rmgr file
+    // still open here so it's not just defensively discarded on the next
+    // emulation start; no-op when nothing was recorded.
+    Replay::OnEmulationStop();
+#endif
 
 #ifdef _WIN32
     this->restoreDisplayMode();

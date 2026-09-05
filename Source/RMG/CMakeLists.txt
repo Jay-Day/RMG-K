@@ -34,6 +34,10 @@ if (NETPLAY)
     add_definitions(-DNETPLAY)
 endif(NETPLAY)
 
+if (GAME_STATS)
+    add_definitions(-DRMGK_GAME_STATS)
+endif(GAME_STATS)
+
 find_package(SDL3 REQUIRED)
 if (WIN32 AND NETPLAY)
     find_package(OpenGL REQUIRED)
@@ -143,6 +147,8 @@ if (NETPLAY)
             Utilities/KailleraExport/FrameCapture.cpp
             Utilities/KailleraExport/FfmpegEncoder.cpp
             Utilities/KailleraExport/VidExtProxy.cpp
+            Utilities/KailleraExport/ReplayFileExport.cpp
+            Utilities/KailleraExport/ReplayHook.cpp
         )
     endif(WIN32)
 endif(NETPLAY)

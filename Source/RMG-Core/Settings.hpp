@@ -559,6 +559,9 @@ enum class SettingsID
     GCAInput_Map_CLeft,
     GCAInput_Map_CRight,
 
+    // Game Stats / Replay Settings
+    GameStats_ReplayEnabled,
+
     // Internal Settings (not persisted to config file)
     Internal_InputPluginSwitchRequested,
 

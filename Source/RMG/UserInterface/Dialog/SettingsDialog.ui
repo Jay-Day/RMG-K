@@ -3218,6 +3218,16 @@
                </widget>
               </item>
               <item>
+               <widget class="QCheckBox" name="kailleraReplayByDefaultCheckBox">
+                <property name="text">
+                 <string>Enable replay recording (.rmgr) by default</string>
+                </property>
+                <property name="toolTip">
+                 <string>Records per-frame inputs and game state for the current match to a .rmgr file, separate from krec. Works for both online and offline matches, Smash Remix 2.0.1 only. Each netplay room/playback dialog has its own checkbox that starts from this default and can override it for that session, the same way "Enable recording by default" works for krec.</string>
+                </property>
+               </widget>
+              </item>
+              <item>
                <widget class="QLabel" name="kailleraRecordsFolderLabel">
                 <property name="text">
                  <string>Records folder</string>

@@ -74,6 +74,7 @@ static bool l_InputPluginSwitchRequested = false;
 #define SETTING_SECTION_INPUT           SETTING_SECTION_GUI  " - Input Plugin"
 #define SETTING_SECTION_GCA             SETTING_SECTION_GUI  " - GameCube Adapter Input Plugin"
 #define SETTING_SECTION_KAILLERA        SETTING_SECTION_GUI  " Kaillera"
+#define SETTING_SECTION_GAMESTATS       SETTING_SECTION_GUI  " GameStats"
 #define SETTING_SECTION_ROLLBACK        SETTING_SECTION_GUI  " Rollback"
 #define SETTING_SECTION_RAPHNET_INPUT   "Input-RaphnetRaw"
 #define SETTING_SECTION_RSP             "Rsp-HLE"
@@ -1648,6 +1649,11 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::GCAInput_Map_CRight:
         setting = {SETTING_SECTION_GCA, "Map_CRight", 2};
+        break;
+
+    // Game Stats / Replay Settings
+    case SettingsID::GameStats_ReplayEnabled:
+        setting = {SETTING_SECTION_GAMESTATS, "ReplayEnabled", false};
         break;
 
     // Internal settings (runtime-only, not persisted)

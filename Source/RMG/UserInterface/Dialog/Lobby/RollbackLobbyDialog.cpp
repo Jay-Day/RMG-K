@@ -1133,6 +1133,25 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
             m_recordCheck->setChecked(true); // broadcasting needs the krec written
     });
     toggleRow->addWidget(m_broadcastCheck);
+
+#ifdef RMGK_GAME_STATS
+    // Independent .rmgr toggle - separate file, separate checkbox, doesn't
+    // interact with m_recordCheck/m_broadcastCheck at all. Hidden until
+    // onRoomStateChanged() confirms the room's game is Smash Remix 2.0.1,
+    // since m_currentRoomGame isn't known yet at this point (no room joined).
+    m_replayRecordCheck = new QCheckBox("Record replay (.rmgr)", this);
+    m_replayRecordCheck->setToolTip(
+        "Record this match's inputs and game state to a .rmgr file, "
+        "separate from the .krec above.\nSmash Remix 2.0.1 only.");
+    m_replayRecordCheck->setVisible(false);
+    const bool replayDefault = CoreSettingsGetBoolValue(SettingsID::GameStats_ReplayEnabled);
+    m_replayRecordCheck->setChecked(replayDefault);
+    connect(m_replayRecordCheck, &QCheckBox::toggled, this, [](bool checked) {
+        Replay::SetEnabledOverride(checked);
+    });
+    toggleRow->addWidget(m_replayRecordCheck);
+#endif
+
     toggleRow->addStretch(1);
 
     lay->addLayout(toggleRow);
@@ -3066,6 +3085,13 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     const bool iAmHost = (hostId == m_client->selfUserId());
 
     m_currentRoomGame       = romName;
+#ifdef RMGK_GAME_STATS
+    // The room's game can change (host reselects before match start), so the
+    // checkbox's visibility has to track it here rather than being decided
+    // once at construction time.
+    if (m_replayRecordCheck)
+        m_replayRecordCheck->setVisible(m_currentRoomGame == "SmashRemix2.0.1");
+#endif
     m_currentRoomMd5        = romMd5;
     m_currentRoomRegion     = romRegion;
     m_currentRoomPrediction = roomPrediction;
@@ -3712,6 +3738,10 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
 
     m_currentRoomId = 0;
     m_currentRoomGame.clear();
+#ifdef RMGK_GAME_STATS
+    if (m_replayRecordCheck)
+        m_replayRecordCheck->setVisible(false);
+#endif
     m_currentRoomRegion.clear();
     m_currentRoomState.clear();
     m_currentRoomDelay = 2;
@@ -4376,6 +4406,15 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     {
         n02_kaillera_recording_enabled = m_recordCheck->isChecked();
     }
+
+#ifdef RMGK_GAME_STATS
+    // Same reassertion, for the independent .rmgr toggle - only present (and
+    // only ever checked) when the room's game is Smash Remix 2.0.1.
+    if (m_replayRecordCheck)
+    {
+        Replay::SetEnabledOverride(m_replayRecordCheck->isChecked());
+    }
+#endif
 
     // If broadcasting, arm the krec tee and announce to the server now — before
     // MainWindow calls recordingOpen, so the .krec header is captured too. Host-
