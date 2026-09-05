@@ -4754,6 +4754,11 @@ void MainWindow::ensureRollbackLobbyDialog()
                 if (this->emulationThread && this->emulationThread->isRunning())
                     CoreStopEmulation();
             });
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::matchServerConnectionLost,
+            this, [this](const QString& message) {
+                if (this->emulationThread && this->emulationThread->isRunning())
+                    OnScreenDisplaySetMessage(message.toStdString());
+            });
     // Remote room chat → in-game chat overlay (mirrors the P2P chat overlay).
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::roomChatReceived,
             this, &MainWindow::on_Lobby_RoomChatReceived);

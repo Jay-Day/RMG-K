@@ -1910,8 +1910,9 @@ void RollbackLobbyDialog::refreshSameGameFilter()
 void RollbackLobbyDialog::showEvent(QShowEvent* event)
 {
     QDialog::showEvent(event);
-    if (m_client->state() == LobbyClient::ConnectionState::Disconnected ||
-        m_client->state() == LobbyClient::ConnectionState::Failed)
+    if (!matchTransportInProgress() &&
+        (m_client->state() == LobbyClient::ConnectionState::Disconnected ||
+         m_client->state() == LobbyClient::ConnectionState::Failed))
     {
         QTimer::singleShot(0, this, [this]() {
             if (!isVisible() || m_connectPromptOpen ||
@@ -2202,7 +2203,7 @@ QString RollbackLobbyDialog::prefillUsername() const
 
 void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
 {
-    if (m_connectPromptOpen || !isVisible() ||
+    if (m_connectPromptOpen || !isVisible() || matchTransportInProgress() ||
         m_client->state() == LobbyClient::ConnectionState::Connected)
         return;
 
@@ -2224,8 +2225,42 @@ void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
     if (m_userLabel)
         m_userLabel->setText(QString("User: %1").arg(m_username));
 
+    // A new WebSocket session has no claim on a room from the previous server
+    // session. This is normally already cleared by the disconnect handler, but
+    // doing it here as well makes every reconnect start from a clean lobby.
+    clearServerRoomSnapshot();
     updateServerMeta();
     m_client->connectToServer(m_serverUrl, m_username, {}, QString());
+}
+
+bool RollbackLobbyDialog::matchTransportInProgress() const
+{
+    return m_emulationActive || m_awaitingEmulationStart ||
+           (m_client && m_client->matchTransportActive());
+}
+
+void RollbackLobbyDialog::showMatchConnectionLostNotice()
+{
+    const QString notice = QStringLiteral(
+        "Error: lost connection to server. You can continue the game but without chat.");
+    if (m_connectPromptMessage.isEmpty())
+        m_connectPromptMessage = notice;
+
+    if (!m_matchConnectionLostNoticeShown)
+    {
+        appendChatSystemLine(CHANNEL_ROOM, notice);
+        emit matchServerConnectionLost(notice);
+        m_matchConnectionLostNoticeShown = true;
+    }
+
+    if (m_roomChatInput)
+        m_roomChatInput->setEnabled(false);
+    applyRoomStateBadge(QStringLiteral("Lobby offline — game continues"),
+                        QString(statusColors().fail));
+
+    // Broadcast and spectator traffic use the WebSocket, unlike gameplay.
+    // Detach the recording tee and stop attempting uploads while offline.
+    stopBroadcast();
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2237,6 +2272,8 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     updateStatusIndicator(s);
 
     const bool connected = (s == LobbyClient::ConnectionState::Connected);
+    if (connected)
+        m_matchConnectionLostNoticeShown = false;
     // Ping probing runs for the whole connection lifetime — it feeds the
     // players-list hover tooltips in the lobby, not just seated peers.
     if (m_pingProbeTimer)
@@ -2260,18 +2297,25 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         m_matchesTree->clear();
         m_userItems.clear();
         m_roomItems.clear();
-        m_currentRoomId = 0;
-        m_currentRoomState.clear();
-        m_currentMatchId = 0;
-        m_awaitingEmulationStart = false;
-        m_emulationActive = false;
         m_quickMatchActive = false;
         if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
 
         if (m_chatViewLobby) m_chatViewLobby->clear();
-        if (m_chatViewRoom) m_chatViewRoom->clear();
-        if (m_roomChatInput) m_roomChatInput->setEnabled(false);
-        switchToRoomsView();
+        if (matchTransportInProgress())
+        {
+            // Only the active match and its established ICE agents survive a
+            // lobby outage. The room identity and roster are server-owned and
+            // are already stale, so remove them from the UI immediately.
+            showMatchConnectionLostNotice();
+            clearServerRoomSnapshot();
+        }
+        else
+        {
+            m_currentMatchId = 0;
+            m_awaitingEmulationStart = false;
+            m_emulationActive = false;
+            clearServerRoomSnapshot();
+        }
     }
     updateServerMeta();
     updateInRoomBanner();
@@ -2279,10 +2323,11 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     // A normal disconnect returns to the username prompt. Failed connections
     // are reopened by the error slots below so the server's message is retained.
     if (s == LobbyClient::ConnectionState::Disconnected && isVisible() &&
+        !matchTransportInProgress() &&
         !m_connectPromptOpen)
     {
         QTimer::singleShot(0, this, [this]() {
-            if (!isVisible() || m_connectPromptOpen ||
+            if (!isVisible() || m_connectPromptOpen || matchTransportInProgress() ||
                 m_client->state() == LobbyClient::ConnectionState::Connected)
                 return;
             const QString message = m_connectPromptMessage;
@@ -2304,8 +2349,13 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
     else if (reason == "server_full") human = "The lobby is currently full.";
 
     m_connectPromptMessage = human;
+    if (matchTransportInProgress())
+    {
+        showMatchConnectionLostNotice();
+        return;
+    }
     QTimer::singleShot(0, this, [this]() {
-        if (!isVisible() || m_connectPromptOpen)
+        if (!isVisible() || m_connectPromptOpen || matchTransportInProgress())
             return;
         const QString message = m_connectPromptMessage;
         m_connectPromptMessage.clear();
@@ -2316,8 +2366,13 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
 void RollbackLobbyDialog::onConnectError(const QString& msg)
 {
     m_connectPromptMessage = "Couldn't reach the lobby: " + msg;
+    if (matchTransportInProgress())
+    {
+        showMatchConnectionLostNotice();
+        return;
+    }
     QTimer::singleShot(0, this, [this]() {
-        if (!isVisible() || m_connectPromptOpen)
+        if (!isVisible() || m_connectPromptOpen || matchTransportInProgress())
             return;
         const QString message = m_connectPromptMessage;
         m_connectPromptMessage.clear();
@@ -2722,6 +2777,52 @@ void RollbackLobbyDialog::switchToRoomsView()
 void RollbackLobbyDialog::switchToInRoomView()
 {
     if (m_roomsStack) m_roomsStack->setCurrentIndex(1);
+}
+
+void RollbackLobbyDialog::clearServerRoomSnapshot()
+{
+    // None of this state owns gameplay transport. Once the lobby connection is
+    // gone, retaining it can only display a room/roster that may no longer exist
+    // (the server keeps rooms in memory and loses them across a restart).
+    for (auto& seat : m_seats)
+    {
+        renderSeatEmpty(seat);
+        if (seat.dragHandle)
+            seat.dragHandle->setVisible(false);
+    }
+    m_canReorderSeats = false;
+
+    m_currentRoomId = 0;
+    m_currentRoomGame.clear();
+    m_currentRoomMd5.clear();
+    m_currentRoomRegion.clear();
+    m_currentRoomState.clear();
+    m_currentRoomDelay = 2;
+    m_currentRoomPrediction = kDefaultPredictionWindow;
+    m_currentRoomPacing = 0;
+    m_currentRoomHostId = 0;
+    m_iceWaitingMatchId = 0;
+    m_iceMatchDeadlineMs = 0;
+    m_knownSeatedUsers.clear();
+    m_roomSeatsSeen = false;
+    m_localDelayPublished = false;
+    m_probeFailureAnnounced.clear();
+
+    if (m_roomTitle) m_roomTitle->setText(QStringLiteral("—"));
+    if (m_roomSubtitle) m_roomSubtitle->setText(QStringLiteral("—"));
+    if (m_roomMetaLabel) m_roomMetaLabel->setText(QStringLiteral("—"));
+    if (m_chatViewRoom) m_chatViewRoom->clear();
+    if (m_roomChatInput)
+    {
+        m_roomChatInput->clear();
+        m_roomChatInput->setEnabled(false);
+    }
+    if (m_startBtn) m_startBtn->setEnabled(false);
+    if (m_dropBtn) m_dropBtn->setEnabled(false);
+    if (m_leaveBtn) m_leaveBtn->setEnabled(true);
+
+    switchToRoomsView();
+    updateInRoomBanner();
 }
 
 void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r)
@@ -3361,10 +3462,13 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     // through the early-return below (it flushes the tail + sends BROADCAST_END).
     stopBroadcast();
 
-    if (!m_emulationActive && !m_awaitingEmulationStart) return;
+    const bool ownedMatchTransport = m_client && m_client->matchTransportActive();
+    if (!m_emulationActive && !m_awaitingEmulationStart && !ownedMatchTransport) return;
     const quint64 matchId = m_currentMatchId;
     m_emulationActive = false;
     m_awaitingEmulationStart = false;
+    if (m_client)
+        m_client->setMatchTransportActive(false);
 
     {
         char buf[128];
@@ -3376,6 +3480,23 @@ void RollbackLobbyDialog::notifyEmulationFinished()
         m_client->reportMatchFinished(matchId);
     m_currentMatchId = 0;
     if (m_dropBtn) m_dropBtn->setEnabled(false);
+
+    // A disconnect prompt suppressed during play becomes safe once the game no
+    // longer owns ICE. Offer reconnection now without ever stealing focus from
+    // active emulation.
+    if (m_client && isVisible() && !m_connectPromptOpen &&
+        (m_client->state() == LobbyClient::ConnectionState::Disconnected ||
+         m_client->state() == LobbyClient::ConnectionState::Failed))
+    {
+        QTimer::singleShot(0, this, [this]() {
+            if (!isVisible() || m_connectPromptOpen || matchTransportInProgress() ||
+                m_client->state() == LobbyClient::ConnectionState::Connected)
+                return;
+            const QString message = m_connectPromptMessage;
+            m_connectPromptMessage.clear();
+            promptForUsername(message);
+        });
+    }
 
 }
 
@@ -4250,6 +4371,8 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
     const quint64 matchId = m_currentMatchId;
     m_awaitingEmulationStart = false;
     m_currentMatchId = 0;
+    if (m_client)
+        m_client->setMatchTransportActive(false);
 
     // Cancel any launch the MainWindow may already be spinning up, and tell the
     // server the match is over so the room flips back to "waiting" for everyone
@@ -4462,6 +4585,10 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // here so the match definitively runs the host-selected model.
     CoreSettingsSetValue(SettingsID::Rollback_PacingMode, m_currentRoomPacing);
 
+    // From this point until notifyEmulationFinished, the GekkoNet adapter owns
+    // these established agents. Lobby disconnect/room cleanup is deferred so
+    // signaling loss cannot tear down the peer-to-peer data plane.
+    m_client->setMatchTransportActive(true);
     emit matchReady(m_currentRoomGame, localRomFile, remotePeers, int(localPort),
                     local.slot, m_currentRoomDelay, m_currentRoomPrediction);
 }
