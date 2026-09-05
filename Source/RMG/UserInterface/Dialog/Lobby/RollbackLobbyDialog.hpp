@@ -235,6 +235,10 @@ private:
     void    notifyPlayerJoined();
     void    switchToRoomsView();
     void    switchToInRoomView();
+    // The room roster and metadata are server-owned and become invalid as soon
+    // as the WebSocket drops. Clear them without touching an active match's
+    // ICE ownership or lifecycle bookkeeping.
+    void    clearServerRoomSnapshot();
     void    enterRoom(quint64 roomId, const QString& greetingChatLine);
     void    updateStatusIndicator(LobbyClient::ConnectionState s);
     // Render the in-room state label as a colored pill (Waiting / Connecting /

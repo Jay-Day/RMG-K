@@ -2225,6 +2225,10 @@ void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
     if (m_userLabel)
         m_userLabel->setText(QString("User: %1").arg(m_username));
 
+    // A new WebSocket session has no claim on a room from the previous server
+    // session. This is normally already cleared by the disconnect handler, but
+    // doing it here as well makes every reconnect start from a clean lobby.
+    clearServerRoomSnapshot();
     updateServerMeta();
     m_client->connectToServer(m_serverUrl, m_username, {}, QString());
 }
@@ -2299,21 +2303,18 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         if (m_chatViewLobby) m_chatViewLobby->clear();
         if (matchTransportInProgress())
         {
-            // The room UI is useful as a non-modal status surface and its ICE
-            // agents are still the running game's data plane. Preserve match
-            // bookkeeping until emulation really finishes.
+            // Only the active match and its established ICE agents survive a
+            // lobby outage. The room identity and roster are server-owned and
+            // are already stale, so remove them from the UI immediately.
             showMatchConnectionLostNotice();
+            clearServerRoomSnapshot();
         }
         else
         {
-            m_currentRoomId = 0;
-            m_currentRoomState.clear();
             m_currentMatchId = 0;
             m_awaitingEmulationStart = false;
             m_emulationActive = false;
-            if (m_chatViewRoom) m_chatViewRoom->clear();
-            if (m_roomChatInput) m_roomChatInput->setEnabled(false);
-            switchToRoomsView();
+            clearServerRoomSnapshot();
         }
     }
     updateServerMeta();
@@ -2776,6 +2777,52 @@ void RollbackLobbyDialog::switchToRoomsView()
 void RollbackLobbyDialog::switchToInRoomView()
 {
     if (m_roomsStack) m_roomsStack->setCurrentIndex(1);
+}
+
+void RollbackLobbyDialog::clearServerRoomSnapshot()
+{
+    // None of this state owns gameplay transport. Once the lobby connection is
+    // gone, retaining it can only display a room/roster that may no longer exist
+    // (the server keeps rooms in memory and loses them across a restart).
+    for (auto& seat : m_seats)
+    {
+        renderSeatEmpty(seat);
+        if (seat.dragHandle)
+            seat.dragHandle->setVisible(false);
+    }
+    m_canReorderSeats = false;
+
+    m_currentRoomId = 0;
+    m_currentRoomGame.clear();
+    m_currentRoomMd5.clear();
+    m_currentRoomRegion.clear();
+    m_currentRoomState.clear();
+    m_currentRoomDelay = 2;
+    m_currentRoomPrediction = kDefaultPredictionWindow;
+    m_currentRoomPacing = 0;
+    m_currentRoomHostId = 0;
+    m_iceWaitingMatchId = 0;
+    m_iceMatchDeadlineMs = 0;
+    m_knownSeatedUsers.clear();
+    m_roomSeatsSeen = false;
+    m_localDelayPublished = false;
+    m_probeFailureAnnounced.clear();
+
+    if (m_roomTitle) m_roomTitle->setText(QStringLiteral("—"));
+    if (m_roomSubtitle) m_roomSubtitle->setText(QStringLiteral("—"));
+    if (m_roomMetaLabel) m_roomMetaLabel->setText(QStringLiteral("—"));
+    if (m_chatViewRoom) m_chatViewRoom->clear();
+    if (m_roomChatInput)
+    {
+        m_roomChatInput->clear();
+        m_roomChatInput->setEnabled(false);
+    }
+    if (m_startBtn) m_startBtn->setEnabled(false);
+    if (m_dropBtn) m_dropBtn->setEnabled(false);
+    if (m_leaveBtn) m_leaveBtn->setEnabled(true);
+
+    switchToRoomsView();
+    updateInRoomBanner();
 }
 
 void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r)
