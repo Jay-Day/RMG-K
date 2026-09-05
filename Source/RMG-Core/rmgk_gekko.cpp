@@ -634,20 +634,19 @@ void rmgk_pacing_trace_end_frame(
 // the recording confirms that frame (flushes it to the krec, past the rollback
 // horizon) with no rollback having touched frame <= it since the snapshot. Only then
 // is it a state a spectator can restore and replay the confirmed krec from without
-// desyncing. The snapshot is taken right after the live frame's input is latched into
-// PIF RAM, so its "next" input to apply is the following frame — hence the replay
-// frame the spectator starts at is the captured frame + this offset. We snapshot via
-// GekkoNet's own per-frame save (the safe VI-boundary point), whose state is "before
-// frame F's input" — the rollback load+replay convention — so the spectator replays
-// from frame F itself (offset 0). If testing reveals a 1-frame misalignment, nudge this.
-constexpr int kKeyframeReplayFrameOffset = 0;
+// desyncing. Although GekkoNet labels the save event as frame F, RMG deliberately
+// defers that save until rollback_execute_end_frame, after frame F and its input have
+// executed. The restored state's next controller input is therefore F+1. The krec
+// record written for F has index recordingFrameCount()-1, so the tail must begin at
+// that index + 1. Keeping this explicit prevents the original one-frame input shift.
+constexpr int kKeyframeNextInputOffset = 1;
 std::atomic<bool> g_GekkoKeyframeRequested{false};
 bool g_GekkoKeyframePending = false;
 int  g_GekkoKeyframePendingLiveFrame = -1; // the live frame F we snapshotted (confirm when flushed)
 std::vector<unsigned char> g_GekkoKeyframePendingBuf;
 std::mutex g_GekkoKeyframeReadyMutex;
 bool g_GekkoKeyframeReady = false;
-int  g_GekkoKeyframeReadyFrame = -1; // krec frame the spectator replays from (F + offset)
+int  g_GekkoKeyframeReadyFrame = -1; // krec record consumed immediately after restore
 std::vector<unsigned char> g_GekkoKeyframeReadyBuf;
 
 // Spectate keyframe divergence probe (diagnostic): once a keyframe is captured, log a
@@ -655,6 +654,7 @@ std::vector<unsigned char> g_GekkoKeyframeReadyBuf;
 // kSpectateProbeWindow frames, so they can be diffed against the spectator's replayed-
 // state hashes (see Emulation.cpp) to find the first divergent frame. -1 = inactive.
 constexpr int kSpectateProbeWindow = 30;
+constexpr bool kSpectateProbeEnabled = false;
 int g_GekkoSpectateProbeStartFrame = -1;
 rmgk_gekko::InputProvider g_GekkoDebugInputProvider = nullptr;
 rmgk_gekko::FrameCallback g_GekkoDebugBeginFrame = nullptr;
@@ -1292,8 +1292,9 @@ bool save_gekko_state(const PendingGekkoSave& save)
     // capture a FULL normal-format savestate of THIS frame (not GekkoNet's stripped rollback
     // save in save.state). A cold spectator must load a complete state via the normal path;
     // the rollback variant omits the TLB LUT and isn't zeroed (fine for a warm same-machine
-    // reload, wrong for a cold join). Taken here at the same frame-aligned VI boundary GekkoNet
-    // just saved at, so it stays aligned with the krec. The full save is read-only on the
+    // reload, wrong for a cold join). This callback is deferred until end-frame, so the full
+    // state is after the event's labelled frame and stays aligned with the next krec input.
+    // The full save is read-only on the
     // device and calls no plugins (verified in savestates_save_m64p), so it cannot disturb the
     // live rollback. Core mallocs the buffer; we copy it out and free it. HOLD the snapshot —
     // it's only committed once the recording flushes this frame to the krec without an
@@ -1309,8 +1310,9 @@ bool save_gekko_state(const PendingGekkoSave& save)
             g_GekkoKeyframePendingLiveFrame = save.frame;
             g_GekkoKeyframePending = true;
             g_GekkoKeyframeRequested.store(false, std::memory_order_relaxed);
-            // Arm the divergence probe window for this keyframe's neighborhood.
-            g_GekkoSpectateProbeStartFrame = save.frame;
+            // This diagnostic is intentionally opt-in: repeatedly hashing savestates is
+            // too expensive for normal live broadcasting.
+            g_GekkoSpectateProbeStartFrame = kSpectateProbeEnabled ? save.frame : -1;
             if (g_GekkoLogEnabled)
             {
                 std::ostringstream stream;
@@ -3333,15 +3335,12 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
                     {
                         std::lock_guard<std::mutex> lock(g_GekkoKeyframeReadyMutex);
                         g_GekkoKeyframeReadyBuf = g_GekkoKeyframePendingBuf;
-                        // The spectator restores at the krec RECORD INDEX, not the GekkoNet
-                        // frame: the server (krecFrameOffset) and the spectator's frameIndex
-                        // both count 0x12 records from 0, but recording starts ~N frames into
-                        // the match (handshake/rollback-horizon warmup), so record_index =
-                        // gekko_frame - N. recordingWriteInputs just wrote THIS frame's record
-                        // (line above), so its 0-based index is recordingFrameCount() - 1.
-                        // Sending the gekko frame instead shifted the spectator's inputs by N.
+                        // Publish the krec RECORD INDEX of the NEXT input after this state,
+                        // not the GekkoNet frame. recordingWriteInputs just wrote F, whose
+                        // zero-based index is recordingFrameCount()-1; because the deferred
+                        // save ran after F, replay must begin with the following record.
                         g_GekkoKeyframeReadyFrame =
-                            n02::recordingFrameCount() - 1 + kKeyframeReplayFrameOffset;
+                            n02::recordingFrameCount() - 1 + kKeyframeNextInputOffset;
                         g_GekkoKeyframeReady = true;
                     }
                     g_GekkoKeyframePending = false;

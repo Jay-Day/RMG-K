@@ -94,8 +94,8 @@ signals:
     // broadcast match, feed it krec bytes as they arrive, and tear it down.
     void spectateLaunch(quint64 matchId, QString gameName);
     void spectateStreamData(QByteArray bytes, int liveFrame, qint64 offset);
-    // A savestate keyframe (raw bytes) the spectator should restore at frame before
-    // replaying the krec tail, so catch-up is bounded regardless of match length.
+    // A savestate keyframe (raw bytes) plus the first krec record index to consume
+    // after restoring it, so catch-up is bounded regardless of match length.
     void spectateStreamKeyframe(int frame, QByteArray savestate);
     void spectateStreamClosed(QString reason);
 

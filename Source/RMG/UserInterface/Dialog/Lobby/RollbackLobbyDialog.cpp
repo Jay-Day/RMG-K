@@ -4143,34 +4143,25 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
         m_client->sendBroadcastData(m_broadcastMatchId, chunk, n02::recordingFrameCount());
     }
 
-    // Periodic savestate keyframe: ask the engine for one at a fixed interval (it
-    // snapshots + holds it until confirmed against rollback), then poll for the
-    // result and upload it so late spectators can jump near the live edge instead
-    // of replaying from frame 0. Runs even when no krec chunk drained this tick.
-    //
-    // EXPERIMENT (2026-06-29): keyframes disabled to measure pure replay-from-frame-0.
-    // With no keyframe uploaded, the server falls back to streaming the full spool from
-    // frame 0 (broadcast.go spectateStart), so the spectator replays the whole match
-    // (deterministic — boot-replay RNG is correct) and fast-forwards. Tests whether
-    // video-on catch-up is fast enough to make keyframes unnecessary. Flip to re-enable.
-    constexpr bool kSpectateKeyframesEnabled = false;
-    if (kSpectateKeyframesEnabled)
+    // Keep a recent, rollback-confirmed keyframe on the server so late viewers
+    // start from a short tail instead of replaying from frame zero. Ten seconds
+    // also matches the viewer's input cushion: a very fresh keyframe waits for
+    // its tail to reach that cushion, while an older one only fast-forwards the
+    // small excess. Runs even when no krec chunk drained this tick.
+    constexpr qint64 kKeyframeIntervalMs = 10'000;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= kKeyframeIntervalMs)
     {
-        const qint64 kKeyframeIntervalMs = 60000; // ~once a minute (knob)
-        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        if (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= kKeyframeIntervalMs)
-        {
-            rmgk_gekko::request_keyframe();
-            m_lastKeyframeRequestMs = nowMs;
-        }
-        std::vector<unsigned char> kf;
-        int kfFrame = -1;
-        if (rmgk_gekko::take_keyframe(kf, kfFrame) && !kf.empty() && kfFrame >= 0)
-        {
-            m_client->sendBroadcastKeyframe(m_broadcastMatchId,
-                QByteArray(reinterpret_cast<const char*>(kf.data()), static_cast<int>(kf.size())),
-                kfFrame);
-        }
+        rmgk_gekko::request_keyframe();
+        m_lastKeyframeRequestMs = nowMs;
+    }
+    std::vector<unsigned char> kf;
+    int kfFrame = -1;
+    if (rmgk_gekko::take_keyframe(kf, kfFrame) && !kf.empty() && kfFrame >= 0)
+    {
+        m_client->sendBroadcastKeyframe(m_broadcastMatchId,
+            QByteArray(reinterpret_cast<const char*>(kf.data()), static_cast<int>(kf.size())),
+            kfFrame);
     }
 }
 

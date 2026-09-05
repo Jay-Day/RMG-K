@@ -185,8 +185,8 @@ public:
     // Broadcast (one player streams the live match's .krec up to the server).
     void sendBroadcastBegin(quint64 matchId);
     void sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame); // raw krec bytes (base64'd) + broadcaster's live frame
-    // Upload a savestate keyframe (already compressed) for frame F. Split into chunks
-    // so each message stays under the server's per-message read limit.
+    // Upload a savestate keyframe (already compressed) plus the first krec record
+    // index to consume after restore. Split it so each message stays under the limit.
     void sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame);
     void sendBroadcastEnd(quint64 matchId);
 

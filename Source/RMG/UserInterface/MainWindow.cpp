@@ -3493,7 +3493,8 @@ void MainWindow::timerEvent(QTimerEvent *event)
             // Fast-forward while there's buffered krec ahead of us, then settle near
             // the buffered/live edge. We measure "behind" as buffered-but-unplayed
             // frames (LOCAL to this stream) rather than the broadcaster's global live
-            // frame: in the keyframe path the krec tail starts at the keyframe frame,
+            // frame: in the keyframe path the krec tail starts at the keyframe's
+            // next input,
             // so the global stamp is far ahead of our local numbering and would never
             // let us settle. Local buffered-remaining is correct for both paths.
             const int settle   = n02::LIVE_REPLAY_BUFFER_FRAMES;       // stay ~10 s behind
@@ -4348,9 +4349,10 @@ void MainWindow::on_Lobby_SpectateKeyframe(int frame, QByteArray savestate)
     }
     // Stage the broadcaster's savestate so the spectator's emulation restores it (on
     // its emulation thread) before consuming the first krec input. This arrives ahead
-    // of the SPECTATE_DATA krec tail (which starts at this frame), so it's staged
+    // of the SPECTATE_DATA krec tail (whose first record is identified by frame),
+    // so it's staged
     // before the emulation even starts — the load wins the race against the first poll
-    // and the replay continues from frame F's state instead of boot.
+    // and the replay continues from the captured state instead of boot.
     CoreStageSpectateKeyframe(reinterpret_cast<const unsigned char*>(savestate.constData()),
                               static_cast<int>(savestate.size()), frame);
 }
