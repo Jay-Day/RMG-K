@@ -4291,6 +4291,7 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     this->ui_SpectateMatchId   = matchId;
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
     this->ui_SpectateNamesShown = false; // set once the krec header arrives
+    this->ui_SpectateExpectedOffset = 0;
     CoreClearSpectateKeyframe(); // drop any stale keyframe from a previous spectate
 
     // ~60 Hz: drive the playback state machine + fast-forward.
@@ -4300,16 +4301,31 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     OnScreenDisplaySetMessage(("Watching: " + gameName.toStdString()).c_str());
 }
 
-void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame)
+void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 offset)
 {
     if (!this->ui_SpectateActive || bytes.isEmpty())
     {
+        return;
+    }
+    // New servers stamp every data chunk with its logical byte offset. A gap or
+    // duplicate means the krec record stream is no longer trustworthy; stop
+    // before appending malformed bytes or advancing emulation with shifted input.
+    // offset < 0 preserves compatibility with older servers during rollout.
+    if (offset >= 0 && offset != this->ui_SpectateExpectedOffset)
+    {
+        const QString reason = QStringLiteral(
+            "Live replay data gap detected (expected byte %1, received %2). Playback was stopped to prevent desync.")
+            .arg(this->ui_SpectateExpectedOffset)
+            .arg(offset);
+        this->stopLobbySpectate();
+        this->showErrorMessage(QStringLiteral("Live Replay Error"), reason);
         return;
     }
     // Track the broadcaster's live edge (monotonic) — the fast-forward target.
     if (liveFrame > this->ui_SpectateLiveFrame)
         this->ui_SpectateLiveFrame = liveFrame;
     n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size()));
+    this->ui_SpectateExpectedOffset += bytes.size();
 
 #ifdef _WIN32
     // The krec header carries the slot-ordered player names; once it has been
@@ -4353,6 +4369,7 @@ void MainWindow::stopLobbySpectate()
     }
     this->ui_SpectateActive  = false; // set first so re-entry (via stop→finish) bails
     this->ui_SpectateMatchId = 0;
+    this->ui_SpectateExpectedOffset = 0;
     if (this->ui_SpectateTimerId != 0)
     {
         this->killTimer(this->ui_SpectateTimerId);

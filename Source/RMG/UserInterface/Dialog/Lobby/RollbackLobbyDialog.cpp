@@ -4203,11 +4203,11 @@ void RollbackLobbyDialog::onSpectateBegan(quint64 matchId)
     appendChatSystemLine(CHANNEL_LOBBY, "Watching — buffering the match…");
 }
 
-void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame)
+void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset)
 {
     if (matchId != m_spectatingMatchId) return;
     if (!m_spectateStreamArmed) return; // stale chunk from a previous watch — drop it
-    emit spectateStreamData(bytes, liveFrame);
+    emit spectateStreamData(bytes, liveFrame, offset);
 }
 
 void RollbackLobbyDialog::onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate)

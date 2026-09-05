@@ -1733,8 +1733,11 @@ void LobbyClient::handleSpectateData(const QJsonObject& data)
     const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
     const QByteArray raw = QByteArray::fromBase64(data.value("data").toString().toLatin1());
     const int liveFrame = data.value("frame").toInt();
+    const qint64 offset = data.contains("offset")
+        ? static_cast<qint64>(data.value("offset").toDouble())
+        : -1;
     if (!raw.isEmpty())
-        emit spectateData(matchId, raw, liveFrame);
+        emit spectateData(matchId, raw, liveFrame, offset);
 }
 
 void LobbyClient::handleSpectateKeyframe(const QJsonObject& data)

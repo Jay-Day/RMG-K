@@ -284,7 +284,9 @@ signals:
 
     // Spectate stream (server → spectator). data carries decoded krec bytes.
     void spectateBegan(quint64 matchId);
-    void spectateData(quint64 matchId, const QByteArray& data, int liveFrame);
+    // offset is the logical byte position in this spectator's krec stream, or
+    // -1 when talking to a legacy server that does not provide offsets.
+    void spectateData(quint64 matchId, const QByteArray& data, int liveFrame, qint64 offset);
     // A reassembled savestate keyframe (still compressed) the spectator should restore
     // at frame, before replaying the krec tail that follows in spectateData.
     void spectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
