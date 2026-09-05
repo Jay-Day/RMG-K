@@ -168,8 +168,9 @@ bool playbackLoad(const char* filename);
 // Live spectate: play a .krec that is still being received over the network.
 // playbackBeginStream() arms an empty growing buffer; playbackAppendBytes()
 // feeds krec bytes as they arrive (the game auto-starts once the header is in);
-// playbackStopStream() ends it. Playback waits at the live edge (returns delay
-// frames) instead of ending when it catches up to the latest received bytes.
+// playbackStopStream() ends it. Playback starts once this many input frames are
+// buffered and, if starved, stalls until the same cushion has been rebuilt.
+constexpr int LIVE_REPLAY_BUFFER_FRAMES = 600; // approximately 10 seconds at 60 Hz
 bool playbackBeginStream();
 void playbackAppendBytes(const void* data, int len);
 void playbackStopStream();
@@ -185,6 +186,10 @@ int playbackGetCurrentFrame();
 
 // Get the total number of frames in the loaded recording
 int playbackGetTotalFrames();
+
+// Live-stream buffering state and the number of complete, unplayed input frames.
+bool playbackIsBuffering();
+int playbackGetBufferedFrames();
 
 // True once a streamed recording's header has been parsed — at which point the
 // game name, player count, and player names (in the recording_player_names

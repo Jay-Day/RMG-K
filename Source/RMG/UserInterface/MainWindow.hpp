@@ -168,6 +168,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     int     ui_SpectateLiveFrame   = 0;     // broadcaster's live krec frame (fast-forward target)
     bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
+    bool    ui_SpectateBuffering = false;   // emulation thread is waiting for a safe input cushion
     bool    ui_SpectateBannerPending = false; // 1 video-on tick to bake the "buffering" banner in before going headless
     // Catch-up loading-bar estimator (reset each time fast-forward engages).
     int     ui_SpectateInitialBehind = 1;   // backlog (frames) when this catch-up started

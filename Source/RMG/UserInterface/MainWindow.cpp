@@ -3452,15 +3452,52 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 this->stopLobbySpectate();
                 return;
             }
+            const int behind = n02::playbackGetBufferedFrames();
+
+            // player_MPV blocks the emulation thread when no fresh input is
+            // available. Keep it paused until a full ten-second cushion has
+            // accumulated, and make that intentional stall visible even though
+            // no new video frames can be presented while the core is waiting.
+            if (n02::playbackIsBuffering())
+            {
+                if (!this->ui_SpectateBuffering)
+                {
+                    if (!this->ui_SpectateFastForward)
+                        this->ui_SpectateSavedTitle = this->windowTitle();
+                    this->ui_SpectateBuffering = true;
+                }
+                this->ui_SpectateFastForward = false;
+                this->ui_SpectateBannerPending = false;
+                CoreSetFrameOutput(CoreFrameOutput_All);
+                if (CoreGetSpeedFactor() != 100)
+                    CoreSetSpeedFactor(100);
+
+                constexpr int barW = 18;
+                int pct = 100 * behind / n02::LIVE_REPLAY_BUFFER_FRAMES;
+                if (pct < 0) pct = 0;
+                if (pct > 100) pct = 100;
+                const int filled = pct * barW / 100;
+                const double seconds = behind / 60.0;
+                std::string msg = "Buffering live replay  [" + std::string(filled, '#') +
+                                  std::string(barW - filled, '-') + "]  " +
+                                  std::to_string(static_cast<int>(seconds + 0.5)) + "/10s";
+                this->setWindowTitle(QString::fromStdString(msg));
+                return;
+            }
+            if (this->ui_SpectateBuffering)
+            {
+                this->ui_SpectateBuffering = false;
+                this->setWindowTitle(this->ui_SpectateSavedTitle);
+            }
+
             // Fast-forward while there's buffered krec ahead of us, then settle near
             // the buffered/live edge. We measure "behind" as buffered-but-unplayed
             // frames (LOCAL to this stream) rather than the broadcaster's global live
             // frame: in the keyframe path the krec tail starts at the keyframe frame,
             // so the global stamp is far ahead of our local numbering and would never
             // let us settle. Local buffered-remaining is correct for both paths.
-            const int settle   = 90;  // once catching up, stop ~1.5 s behind the edge
-            const int reengage = 240; // but don't RE-start catch-up until ~4 s behind
-            const int behind   = n02::playbackGetTotalFrames() - n02::playbackGetCurrentFrame();
+            const int settle   = n02::LIVE_REPLAY_BUFFER_FRAMES;       // stay ~10 s behind
+            const int reengage = n02::LIVE_REPLAY_BUFFER_FRAMES + 300; // re-catch at ~15 s
 
             // Hysteresis: engage catch-up only when we're well behind, then run
             // until we're close. Without the gap, normal live-stream jitter near
@@ -4321,9 +4358,10 @@ void MainWindow::stopLobbySpectate()
         this->killTimer(this->ui_SpectateTimerId);
         this->ui_SpectateTimerId = 0;
     }
-    if (this->ui_SpectateFastForward) // stopped mid-catch-up — put the title back
+    if (this->ui_SpectateFastForward || this->ui_SpectateBuffering)
         this->setWindowTitle(this->ui_SpectateSavedTitle);
     this->ui_SpectateFastForward = false;
+    this->ui_SpectateBuffering = false;
     this->ui_SpectateBannerPending = false;
     CoreClearSpectateKeyframe(); // drop any staged keyframe
     OnScreenDisplaySetCenterMessage(""); // clear the buffering banner if we stop mid-catch-up

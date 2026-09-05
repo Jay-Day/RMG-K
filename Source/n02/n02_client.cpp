@@ -21,6 +21,7 @@
 #include <climits>
 #include <cstdint>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <fstream>
 #include <filesystem>
@@ -473,6 +474,8 @@ public:
     size_t scanPos = 0;              // incremental frame-index scan cursor
     bool   streaming = false;        // live: wait at the live edge, don't end
     bool   headerParsed = false;
+    bool   streamBufferPrimed = false;
+    bool   streamBuffering = false;
 
     std::vector<size_t> frameIndex;  // offsets of 0x12 (input) records
     int currentFrameIdx = 0;
@@ -481,6 +484,7 @@ public:
         data.clear();
         pos = 0; headerSize = 0; scanPos = 0;
         streaming = false; headerParsed = false;
+        streamBufferPrimed = false; streamBuffering = false;
         frameIndex.clear(); currentFrameIdx = 0;
     }
 
@@ -511,9 +515,14 @@ public:
 // Guards all PlayBackBuffer access. During a live spectate stream the buffer is
 // fed by playbackAppendBytes() on the UI thread while player_MPV() consumes it
 // on the emulation thread; without this lock a vector realloc on one thread races
-// the other's read (use-after-free → corrupted inputs → desync). Recursive
-// because player_MPV() re-enters itself for chat/drop records.
+// the other's read (use-after-free → corrupted inputs → desync).
 static std::recursive_mutex playbackMutex;
+static std::condition_variable_any playbackCondition;
+
+static int streamBufferedFrames(const PlayBackBufferC& pb) {
+    const int buffered = static_cast<int>(pb.frameIndex.size()) - pb.currentFrameIdx;
+    return buffered > 0 ? buffered : 0;
+}
 
 // Streaming: is a complete next record present at pb.pos? Guards against
 // consuming a record that has only partially arrived at the live edge.
@@ -621,60 +630,86 @@ static void scanFrames() {
 static void player_EndGame();
 
 static int player_MPV(void* values, int size) {
-    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    std::unique_lock<std::recursive_mutex> lock(playbackMutex);
     if (!player_playing)
         return -1;
 
     PlayBackBufferC& pb = PlayBackBuffer;
 
-    // File playback uses the historical "more than 10 bytes left" guard; a live
-    // stream instead checks whether the full next record has actually arrived.
-    bool canRead = pb.streaming ? streamRecordComplete(pb)
-                                : (pb.pos + 10 < pb.size());
-    if (!canRead) {
-        if (pb.streaming)
-            return 0;          // at the live edge: idle this frame, don't end
-        player_EndGame();
+    // Process metadata records in a loop rather than recursively. Besides being
+    // simpler, this ensures a condition-variable wait owns the recursive mutex
+    // only once, so appending bytes can always wake it.
+    for (;;) {
+        // A streamed replay must never advance without a fresh input record. Prime
+        // ten seconds before the first frame, and rebuild the full cushion after any
+        // starvation event. The condition wait releases playbackMutex so incoming
+        // network bytes and a user-requested stop can wake the emulation thread.
+        if (pb.streaming && (!pb.streamBufferPrimed || streamBufferedFrames(pb) == 0)) {
+            pb.streamBufferPrimed = false;
+            pb.streamBuffering = true;
+            playbackCondition.wait(lock, [&pb]() {
+                return !player_playing || !pb.streaming ||
+                       streamBufferedFrames(pb) >= n02::LIVE_REPLAY_BUFFER_FRAMES;
+            });
+            if (!player_playing || !pb.streaming)
+                return -1;
+            pb.streamBufferPrimed = true;
+            pb.streamBuffering = false;
+        }
+
+        // File playback uses the historical "more than 10 bytes left" guard; a live
+        // stream instead checks whether the full next record has actually arrived.
+        bool canRead = pb.streaming ? streamRecordComplete(pb)
+                                    : (pb.pos + 10 < pb.size());
+        if (!canRead) {
+            // A complete indexed input implies that every record before it is also
+            // complete. Reaching this branch in streaming mode therefore means the
+            // stream ended or was reset while the waiter was waking.
+            if (pb.streaming)
+                return -1;
+            player_EndGame();
+            return -1;
+        }
+
+        unsigned char b = pb.load_char();
+        if (b == 0x12) {
+            int l = pb.load_short();
+            if (l < 0) {
+                player_EndGame();
+                return -1;
+            }
+            if (l > 0)
+                pb.load_bytes((char*)values, l);
+            pb.currentFrameIdx++;
+            return l;
+        }
+        if (b == 20) {
+            char playernick[100];
+            pb.load_str(playernick, 100);
+            int pn = pb.load_int();
+            if (pn >= 1 && pn <= 16)
+                player_was_dropped[pn - 1] = true;
+            if (pn == playerno) {
+                player_EndGame();
+                return -1;
+            }
+            continue;
+        }
+        if (b == 8) {
+            char nick[100];
+            char msg[500];
+            pb.load_str(nick, 100);
+            pb.load_str(msg, 500);
+            if (infos.chatReceivedCallback)
+                infos.chatReceivedCallback(nick, msg);
+            continue;
+        }
         return -1;
     }
-
-    unsigned char b = pb.load_char();
-    if (b == 0x12) {
-        int l = pb.load_short();
-        if (l < 0) {
-            player_EndGame();
-            return -1;
-        }
-        if (l > 0)
-            pb.load_bytes((char*)values, l);
-        pb.currentFrameIdx++;
-        return l;
-    }
-    if (b == 20) {
-        char playernick[100];
-        pb.load_str(playernick, 100);
-        int pn = pb.load_int();
-        if (pn >= 1 && pn <= 16)
-            player_was_dropped[pn - 1] = true;
-        if (pn == playerno) {
-            player_EndGame();
-            return -1;
-        }
-        return player_MPV(values, size);
-    }
-    if (b == 8) {
-        char nick[100];
-        char msg[500];
-        pb.load_str(nick, 100);
-        pb.load_str(msg, 500);
-        if (infos.chatReceivedCallback)
-            infos.chatReceivedCallback(nick, msg);
-        return player_MPV(values, size);
-    }
-    return -1;
 }
 
 static void player_EndGame() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     player_playing = false;
     for (int i = numplayers; i >= 1; i--) {
         if (i <= 16 && player_was_dropped[i - 1])
@@ -688,6 +723,7 @@ static void player_EndGame() {
     KSSDFA.input = KSSDFA_END_GAME;
     KSSDFA.state = 0;
     PlayBackBuffer.reset_all();
+    playbackCondition.notify_all();
 }
 
 static bool player_SSDSTEP() {
@@ -764,31 +800,37 @@ static bool player_beginStream() {
 static void player_appendStream(const void* data, int len) {
     if (data == nullptr || len <= 0)
         return;
-    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
-    PlayBackBufferC& pb = PlayBackBuffer;
-    if (!pb.streaming)
-        return;
-    const char* p = (const char*)data;
-    pb.data.insert(pb.data.end(), p, p + len);
-    if (!pb.headerParsed) {
-        if (parsePlaybackHeader()) {
-            // Header complete — start the game (state machine fires gameCallback).
-            player_playing = true;
-            KSSDFA.input = KSSDFA_START_GAME;
+    {
+        std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+        PlayBackBufferC& pb = PlayBackBuffer;
+        if (!pb.streaming)
+            return;
+        const char* p = (const char*)data;
+        pb.data.insert(pb.data.end(), p, p + len);
+        if (!pb.headerParsed) {
+            if (parsePlaybackHeader()) {
+                // Header complete — start the game (state machine fires gameCallback).
+                player_playing = true;
+                KSSDFA.input = KSSDFA_START_GAME;
+            }
         }
+        if (pb.headerParsed)
+            scanFrames();
     }
-    if (pb.headerParsed)
-        scanFrames();
+    playbackCondition.notify_all();
 }
 
 static void player_stopStream() {
-    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
-    if (PlayBackBuffer.streaming && player_playing) {
-        player_EndGame();
-    } else {
-        PlayBackBuffer.reset_all();
-        player_playing = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+        if (PlayBackBuffer.streaming && player_playing) {
+            player_EndGame();
+        } else {
+            PlayBackBuffer.reset_all();
+            player_playing = false;
+        }
     }
+    playbackCondition.notify_all();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1123,6 +1165,7 @@ void playbackStopStream() {
 }
 
 bool isPlaybackActive() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return player_playing;
 }
 
@@ -1140,12 +1183,23 @@ int playbackGetTotalFrames() {
     return (int)PlayBackBuffer.frameIndex.size();
 }
 
+bool playbackIsBuffering() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    return PlayBackBuffer.streaming && PlayBackBuffer.streamBuffering;
+}
+
+int playbackGetBufferedFrames() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    return streamBufferedFrames(PlayBackBuffer);
+}
+
 bool playbackHeaderReady() {
     std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return PlayBackBuffer.headerParsed;
 }
 
 int playbackNumPlayers() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return numplayers;
 }
 
