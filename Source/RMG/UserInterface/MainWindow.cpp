@@ -4363,6 +4363,13 @@ void MainWindow::on_Lobby_SpectateClosed(QString reason)
     this->stopLobbySpectate();
 }
 
+void MainWindow::on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isBroadcaster)
+{
+    const std::string role = isBroadcaster ? "Live Replay" : "Watching Live";
+    const std::string noun = viewerCount == 1 ? " viewer" : " viewers";
+    OnScreenDisplaySetLiveReplayStatus(role + " | " + std::to_string(viewerCount) + noun);
+}
+
 void MainWindow::stopLobbySpectate()
 {
     if (!this->ui_SpectateActive)
@@ -4384,6 +4391,7 @@ void MainWindow::stopLobbySpectate()
     this->ui_SpectateBannerPending = false;
     CoreClearSpectateKeyframe(); // drop any staged keyframe
     OnScreenDisplaySetCenterMessage(""); // clear the buffering banner if we stop mid-catch-up
+    OnScreenDisplaySetLiveReplayStatus("");
     CoreSetSpeedFactor(100);
     CoreSetFrameOutput(CoreFrameOutput_All); // undo any headless catch-up state
     n02::playbackStopStream();
@@ -4823,6 +4831,10 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_SpectateKeyframe);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamClosed,
             this, &MainWindow::on_Lobby_SpectateClosed);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountChanged,
+            this, &MainWindow::on_Lobby_LiveReplayViewerCountChanged);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountCleared,
+            this, []() { OnScreenDisplaySetLiveReplayStatus(""); });
 }
 #endif
 

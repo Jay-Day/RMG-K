@@ -336,6 +336,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 offset);
     void on_Lobby_SpectateKeyframe(int frame, QByteArray savestate);
     void on_Lobby_SpectateClosed(QString reason);
+    void on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isBroadcaster);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 

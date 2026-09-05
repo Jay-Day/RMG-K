@@ -287,11 +287,13 @@ signals:
     // offset is the logical byte position in this spectator's krec stream, or
     // -1 when talking to a legacy server that does not provide offsets.
     void spectateData(quint64 matchId, const QByteArray& data, int liveFrame, qint64 offset);
-    // A reassembled savestate keyframe (still compressed) the spectator should restore
-    // at frame, before replaying the krec tail that follows in spectateData.
+    // A reassembled savestate keyframe (still compressed) plus the first krec record
+    // index to consume after restoring it.
     void spectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
     void spectateEnded(quint64 matchId, const QString& reason);
     void spectateFailed(quint64 matchId, const QString& reason);
+    // Authoritative audience size, sent to the broadcaster and active spectators.
+    void broadcastViewerCount(quint64 matchId, int viewerCount);
 
     // Moderation (server → client).
     void adminAuthResult(bool ok, const QString& nameOrReason); // ok => moderator granted, name; else reason
@@ -367,6 +369,7 @@ private:
     void handleSpectateKeyframe(const QJsonObject& data);
     void handleSpectateEnd(const QJsonObject& data);
     void handleSpectateFail(const QJsonObject& data);
+    void handleBroadcastViewerCount(const QJsonObject& data);
     void handleAdminAuthOk(const QJsonObject& data);
     void handleAdminAuthFail(const QJsonObject& data);
     void handleModNotice(const QJsonObject& data);

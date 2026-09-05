@@ -98,6 +98,9 @@ signals:
     // after restoring it, so catch-up is bounded regardless of match length.
     void spectateStreamKeyframe(int frame, QByteArray savestate);
     void spectateStreamClosed(QString reason);
+    // Persistent OSD audience badge. isBroadcaster selects the role-specific text.
+    void liveReplayViewerCountChanged(int viewerCount, bool isBroadcaster);
+    void liveReplayViewerCountCleared();
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -146,6 +149,7 @@ private slots:
     void onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
     void onSpectateEnded(quint64 matchId, const QString& reason);
     void onSpectateFailed(quint64 matchId, const QString& reason);
+    void onBroadcastViewerCount(quint64 matchId, int viewerCount);
 
     void onChatSendClicked();
     void onRoomChatSendClicked();
