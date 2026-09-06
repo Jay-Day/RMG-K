@@ -162,6 +162,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     // Spectating a broadcast match via streaming krec playback (distinct from the
     // lobby *match* flow above — the spectator runs playback, not GekkoNet).
     bool    ui_SpectateActive  = false;
+    // Live spectating owns a temporary Kaillera playback session. Cleanup is
+    // deferred until emulation stops so callbacks cannot outlive their manager.
+    bool    ui_SpectateCleanupPending = false;
     quint64 ui_SpectateMatchId = 0;
     int     ui_SpectateTimerId = 0;
     bool    ui_SpectateNamesShown = false; // OSD port labels set from krec header
@@ -184,6 +187,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void ensureKailleraSessionManager();
     // Lobby spectate lifecycle.
     void stopLobbySpectate();
+    void cleanupLobbySpectateSession();
     struct PendingLocalChatEcho
     {
         QString message;

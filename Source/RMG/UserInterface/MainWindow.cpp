@@ -4278,6 +4278,13 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
             this->rollbackLobbyDialog->stopSpectating();
         return;
     }
+    if (this->kailleraSessionManager != nullptr)
+    {
+        this->showErrorMessage("Busy", "Close the current netplay window before watching a live replay.");
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->stopSpectating();
+        return;
+    }
     if (!CoreInitKaillera())
     {
         this->showErrorMessage("Live Replay Error", QString::fromStdString(CoreGetError()));
@@ -4286,6 +4293,7 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
         return;
     }
     this->ensureKailleraSessionManager();
+    this->ui_SpectateCleanupPending = true;
 
     n02::activateMode(2);
     n02::playbackBeginStream();
@@ -4401,11 +4409,49 @@ void MainWindow::stopLobbySpectate()
     {
         CoreStopEmulation();
     }
+    else
+    {
+        this->cleanupLobbySpectateSession();
+    }
     // Tell the lobby to drop us from the broadcast (idempotent if already done).
     if (this->rollbackLobbyDialog != nullptr)
     {
         this->rollbackLobbyDialog->stopSpectating();
     }
+}
+
+void MainWindow::cleanupLobbySpectateSession()
+{
+    if (!this->ui_SpectateCleanupPending)
+    {
+        return;
+    }
+    this->ui_SpectateCleanupPending = false;
+
+    if (this->kailleraSessionManager != nullptr)
+    {
+        // These singleton-to-window connections are not owned by the manager,
+        // so remove them explicitly before destroying the temporary session.
+        disconnect(&KailleraUIBridge::instance(), &KailleraUIBridge::kailleraGameChatReceived,
+                   this, &MainWindow::on_Kaillera_ChatReceived);
+        disconnect(&KailleraUIBridge::instance(), &KailleraUIBridge::p2pChatReceived,
+                   this, &MainWindow::on_Kaillera_ChatReceived);
+        disconnect(&KailleraUIBridge::instance(), &KailleraUIBridge::recordingFileClosed,
+                   this, &MainWindow::on_Kaillera_RecordingFileClosed);
+
+        // Avoid a gameEnded callback re-entering shutdown from the manager's
+        // destructor. endGame() is idempotent when playback already ended.
+        disconnect(this->kailleraSessionManager, nullptr, this, nullptr);
+        this->kailleraSessionManager->endGame();
+        delete this->kailleraSessionManager;
+        this->kailleraSessionManager = nullptr;
+    }
+    CoreShutdownKaillera();
+
+    // The normal emulation-finished path refreshes actions later. A stream can
+    // also end before its header launches emulation, so refresh that case here.
+    if (!this->emulationThread->isRunning())
+        this->updateUI(false, false);
 }
 #endif // NETPLAY
 
@@ -5548,6 +5594,7 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     // already stopped, so this just kills the timer, resets speed, and notifies
     // the lobby. Safe before the recording/lobby handling below.
     this->stopLobbySpectate();
+    this->cleanupLobbySpectateSession();
 
     if (this->ui_LobbyNetplaySession)
     {
