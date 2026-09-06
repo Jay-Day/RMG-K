@@ -3560,7 +3560,7 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 if (pct > 100) pct = 100;
                 constexpr int barW = 18;
                 const int filled = pct * barW / 100;
-                std::string msg = "Catching up  [" + std::string(filled, '#') +
+                std::string msg = "Buffering  [" + std::string(filled, '#') +
                                   std::string(barW - filled, '-') + "]  " + std::to_string(pct) + "%";
                 if (this->ui_SpectateCatchupRate > 1.0)
                 {
