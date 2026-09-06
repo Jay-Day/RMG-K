@@ -93,11 +93,14 @@ signals:
     // Spectating: ask MainWindow to launch a streaming-playback session for a
     // broadcast match, feed it krec bytes as they arrive, and tear it down.
     void spectateLaunch(quint64 matchId, QString gameName);
-    void spectateStreamData(QByteArray bytes, int liveFrame);
-    // A savestate keyframe (raw bytes) the spectator should restore at frame before
-    // replaying the krec tail, so catch-up is bounded regardless of match length.
+    void spectateStreamData(QByteArray bytes, int liveFrame, qint64 offset);
+    // A savestate keyframe (raw bytes) plus the first krec record index to consume
+    // after restoring it, so catch-up is bounded regardless of match length.
     void spectateStreamKeyframe(int frame, QByteArray savestate);
     void spectateStreamClosed(QString reason);
+    // Persistent OSD audience badge. isSpectator selects the role-specific text.
+    void liveReplayViewerCountChanged(int viewerCount, bool isSpectator);
+    void liveReplayViewerCountCleared();
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -142,10 +145,11 @@ private slots:
 
     // Spectator: server stream callbacks.
     void onSpectateBegan(quint64 matchId);
-    void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame);
+    void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset);
     void onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
     void onSpectateEnded(quint64 matchId, const QString& reason);
     void onSpectateFailed(quint64 matchId, const QString& reason);
+    void onBroadcastViewerCount(quint64 matchId, int viewerCount);
 
     void onChatSendClicked();
     void onRoomChatSendClicked();

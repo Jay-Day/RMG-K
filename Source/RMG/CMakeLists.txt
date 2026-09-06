@@ -30,7 +30,7 @@ if (KCA_DRAG_DROP)
 endif(KCA_DRAG_DROP)
 
 if (NETPLAY)
-    find_package(Qt6 COMPONENTS WebSockets Network REQUIRED)
+    find_package(Qt6 COMPONENTS WebSockets Network Concurrent REQUIRED)
     add_definitions(-DNETPLAY)
 endif(NETPLAY)
 
@@ -197,7 +197,7 @@ if (KCA_DRAG_DROP)
 endif(KCA_DRAG_DROP)
 
 if (NETPLAY)
-    target_link_libraries(RMG Qt6::WebSockets Qt6::Network)
+    target_link_libraries(RMG Qt6::WebSockets Qt6::Network Qt6::Concurrent)
     if (WIN32)
         # ws2_32: LobbyClient calls WSAIoctl directly on the anchor socket.
         target_link_libraries(RMG SDL3::SDL3 OpenGL::GL ws2_32)

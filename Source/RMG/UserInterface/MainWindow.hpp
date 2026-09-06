@@ -162,12 +162,17 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     // Spectating a broadcast match via streaming krec playback (distinct from the
     // lobby *match* flow above — the spectator runs playback, not GekkoNet).
     bool    ui_SpectateActive  = false;
+    // Live spectating owns a temporary Kaillera playback session. Cleanup is
+    // deferred until emulation stops so callbacks cannot outlive their manager.
+    bool    ui_SpectateCleanupPending = false;
     quint64 ui_SpectateMatchId = 0;
     int     ui_SpectateTimerId = 0;
     bool    ui_SpectateNamesShown = false; // OSD port labels set from krec header
 
     int     ui_SpectateLiveFrame   = 0;     // broadcaster's live krec frame (fast-forward target)
     bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
+    bool    ui_SpectateBuffering = false;   // emulation thread is waiting for a safe input cushion
+    qint64  ui_SpectateExpectedOffset = 0;  // next ordered krec byte expected from the server
     bool    ui_SpectateBannerPending = false; // 1 video-on tick to bake the "buffering" banner in before going headless
     // Catch-up loading-bar estimator (reset each time fast-forward engages).
     int     ui_SpectateInitialBehind = 1;   // backlog (frames) when this catch-up started
@@ -182,6 +187,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void ensureKailleraSessionManager();
     // Lobby spectate lifecycle.
     void stopLobbySpectate();
+    void cleanupLobbySpectateSession();
     struct PendingLocalChatEcho
     {
         QString message;
@@ -331,9 +337,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
     void on_Lobby_SessionRequested(QString gameName, QString romFile, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
     void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName);
-    void on_Lobby_SpectateData(QByteArray bytes, int liveFrame);
+    void on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 offset);
     void on_Lobby_SpectateKeyframe(int frame, QByteArray savestate);
     void on_Lobby_SpectateClosed(QString reason);
+    void on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isSpectator);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);
 #endif
 
