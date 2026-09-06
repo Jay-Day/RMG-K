@@ -641,7 +641,7 @@ static int player_MPV(void* values, int size) {
     // only once, so appending bytes can always wake it.
     for (;;) {
         // A streamed replay must never advance without a fresh input record. Prime
-        // ten seconds before the first frame, and rebuild the full cushion after any
+        // two seconds before the first frame, and rebuild the full cushion after any
         // starvation event. The condition wait releases playbackMutex so incoming
         // network bytes and a user-requested stop can wake the emulation thread.
         if (pb.streaming && (!pb.streamBufferPrimed || streamBufferedFrames(pb) == 0)) {

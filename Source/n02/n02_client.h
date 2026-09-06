@@ -170,7 +170,7 @@ bool playbackLoad(const char* filename);
 // feeds krec bytes as they arrive (the game auto-starts once the header is in);
 // playbackStopStream() ends it. Playback starts once this many input frames are
 // buffered and, if starved, stalls until the same cushion has been rebuilt.
-constexpr int LIVE_REPLAY_BUFFER_FRAMES = 600; // approximately 10 seconds at 60 Hz
+constexpr int LIVE_REPLAY_BUFFER_FRAMES = 120; // approximately 2 seconds at 60 Hz
 bool playbackBeginStream();
 void playbackAppendBytes(const void* data, int len);
 void playbackStopStream();

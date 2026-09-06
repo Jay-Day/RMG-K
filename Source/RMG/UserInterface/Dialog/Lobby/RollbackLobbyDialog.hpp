@@ -98,8 +98,8 @@ signals:
     // after restoring it, so catch-up is bounded regardless of match length.
     void spectateStreamKeyframe(int frame, QByteArray savestate);
     void spectateStreamClosed(QString reason);
-    // Persistent OSD audience badge. isBroadcaster selects the role-specific text.
-    void liveReplayViewerCountChanged(int viewerCount, bool isBroadcaster);
+    // Persistent OSD audience badge. isSpectator selects the role-specific text.
+    void liveReplayViewerCountChanged(int viewerCount, bool isSpectator);
     void liveReplayViewerCountCleared();
 
 protected:

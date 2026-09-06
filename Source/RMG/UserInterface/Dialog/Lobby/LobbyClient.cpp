@@ -49,6 +49,7 @@
 #include <QFile>
 #include <QDir>
 #include <QRegularExpression>
+#include <QtConcurrent/QtConcurrentRun>
 #include <cstring>
 #include <algorithm>
 #include <filesystem>
@@ -62,6 +63,50 @@ namespace
 {
     constexpr int HEARTBEAT_INTERVAL_MS  = 15'000;
     constexpr int UDP_KEEPALIVE_INTERVAL = 20'000;
+    constexpr int KEYFRAME_UPLOAD_CHUNK_BYTES = 64 * 1024;
+    constexpr int MAX_KEYFRAME_RAW_BYTES = 24 * 1024 * 1024;
+    const QByteArray KEYFRAME_ZLIB_MAGIC("RMGKZ1", 6);
+
+    QByteArray encodeSpectateKeyframe(const QByteArray& raw)
+    {
+        if (raw.isEmpty() || raw.size() > MAX_KEYFRAME_RAW_BYTES)
+            return {};
+
+        const QByteArray compressed = qCompress(raw, 6);
+        QByteArray packed;
+        packed.reserve(KEYFRAME_ZLIB_MAGIC.size() + int(sizeof(quint32)) + compressed.size());
+        packed.append(KEYFRAME_ZLIB_MAGIC);
+        const quint32 rawSizeBE = qToBigEndian(static_cast<quint32>(raw.size()));
+        packed.append(reinterpret_cast<const char*>(&rawSizeBE), sizeof(rawSizeBE));
+        packed.append(compressed);
+
+        // Preserve compatibility with the raw format if a pathological state does
+        // not compress. Normal N64 states contain large sparse regions and win easily.
+        return packed.size() < raw.size() ? packed : raw;
+    }
+
+    bool decodeSpectateKeyframe(const QByteArray& encoded, QByteArray& raw)
+    {
+        if (!encoded.startsWith(KEYFRAME_ZLIB_MAGIC))
+        {
+            if (encoded.isEmpty() || encoded.size() > MAX_KEYFRAME_RAW_BYTES)
+                return false;
+            raw = encoded; // keyframe from a pre-compression broadcaster
+            return true;
+        }
+
+        const int headerBytes = KEYFRAME_ZLIB_MAGIC.size() + int(sizeof(quint32));
+        if (encoded.size() <= headerBytes)
+            return false;
+        quint32 rawSizeBE = 0;
+        std::memcpy(&rawSizeBE, encoded.constData() + KEYFRAME_ZLIB_MAGIC.size(), sizeof(rawSizeBE));
+        const quint32 expectedSize = qFromBigEndian(rawSizeBE);
+        if (expectedSize == 0 || expectedSize > MAX_KEYFRAME_RAW_BYTES)
+            return false;
+
+        raw = qUncompress(encoded.sliced(headerBytes));
+        return raw.size() == static_cast<int>(expectedSize);
+    }
 
     // Pinned-anchor-port rebind retry (see initiateUdpAnchor): attempt cadence
     // and how long to keep trying before surrendering the port.
@@ -424,12 +469,18 @@ LobbyClient::LobbyClient(QObject* parent)
     connect(m_ws, &QWebSocket::connected,           this, &LobbyClient::onWsConnected);
     connect(m_ws, &QWebSocket::disconnected,        this, &LobbyClient::onWsDisconnected);
     connect(m_ws, &QWebSocket::textMessageReceived, this, &LobbyClient::onWsTextMessageReceived);
+    connect(m_ws, &QWebSocket::bytesWritten,        this, &LobbyClient::onWsBytesWritten,
+            Qt::QueuedConnection);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(m_ws, &QWebSocket::errorOccurred,       this, &LobbyClient::onWsErrorOccurred);
 #else
     connect(m_ws, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
             this, &LobbyClient::onWsErrorOccurred);
 #endif
+
+    m_kfCompressWatcher = new QFutureWatcher<QByteArray>(this);
+    connect(m_kfCompressWatcher, &QFutureWatcher<QByteArray>::finished,
+            this, &LobbyClient::onKeyframeCompressionFinished);
 
     m_udp = new QUdpSocket(this);
     connect(m_udp, &QUdpSocket::readyRead, this, &LobbyClient::onUdpReadyRead);
@@ -532,6 +583,7 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
 
 void LobbyClient::disconnectFromServer()
 {
+    resetBroadcastKeyframeUpload();
     stopPingDiagnosticLog(QStringLiteral("disconnect"));
     if (m_anchorRetryTimer)
         m_anchorRetryTimer->stop();
@@ -561,10 +613,10 @@ void LobbyClient::setState(ConnectionState s)
     emit stateChanged(m_state);
 }
 
-void LobbyClient::sendEnvelope(const QString& type, const QJsonObject& data, const QString& id)
+qint64 LobbyClient::sendEnvelope(const QString& type, const QJsonObject& data, const QString& id)
 {
     if (m_ws->state() != QAbstractSocket::ConnectedState)
-        return;
+        return -1;
 
     QJsonObject env;
     env["type"] = type;
@@ -574,7 +626,105 @@ void LobbyClient::sendEnvelope(const QString& type, const QJsonObject& data, con
         env["data"] = data;
 
     const QByteArray payload = QJsonDocument(env).toJson(QJsonDocument::Compact);
-    m_ws->sendTextMessage(QString::fromUtf8(payload));
+    return m_ws->sendTextMessage(QString::fromUtf8(payload));
+}
+
+void LobbyClient::onWsBytesWritten(qint64 bytes)
+{
+    (void)bytes;
+    if (m_kfUploadActive && m_ws->bytesToWrite() == 0)
+        pumpBroadcastKeyframeUpload();
+}
+
+void LobbyClient::onKeyframeCompressionFinished()
+{
+    const QByteArray encoded = m_kfCompressWatcher->result();
+    const quint64 matchId = m_kfCompressMatchId;
+    const int frame = m_kfCompressFrame;
+    const int rawBytes = m_kfCompressRawBytes;
+    m_kfCompressing = false;
+    m_kfCompressMatchId = 0;
+    m_kfCompressFrame = -1;
+    m_kfCompressRawBytes = 0;
+
+    // A stop/disconnect invalidates the target while compression finishes in
+    // the worker pool. Never let that stale result leak into a later broadcast.
+    if (matchId == 0 || encoded.isEmpty() ||
+        m_ws->state() != QAbstractSocket::ConnectedState)
+        return;
+
+    const bool compressed = encoded.startsWith(KEYFRAME_ZLIB_MAGIC);
+    const double ratio = rawBytes > 0 ? (100.0 * encoded.size() / rawBytes) : 100.0;
+    const double saved = std::max(0.0, 100.0 - ratio);
+    qInfo().nospace() << "Live replay keyframe prepared: raw=" << rawBytes
+                      << " bytes, payload=" << encoded.size() << " bytes ("
+                      << QString::number(saved, 'f', 1) << "% saved before base64, "
+                      << (compressed ? "zlib" : "raw fallback") << ")";
+
+    m_kfUploadActive = true;
+    m_kfUploadMatchId = matchId;
+    m_kfUploadFrame = frame;
+    m_kfUploadChunk = 0;
+    m_kfUploadChunkCount = (encoded.size() + KEYFRAME_UPLOAD_CHUNK_BYTES - 1) /
+                           KEYFRAME_UPLOAD_CHUNK_BYTES;
+    m_kfUploadData = encoded;
+    pumpBroadcastKeyframeUpload();
+}
+
+void LobbyClient::pumpBroadcastKeyframeUpload()
+{
+    if (!m_kfUploadActive || m_ws->bytesToWrite() != 0 ||
+        m_ws->state() != QAbstractSocket::ConnectedState)
+        return;
+
+    if (m_kfUploadChunk >= m_kfUploadChunkCount)
+    {
+        qInfo() << "Live replay keyframe upload completed for frame" << m_kfUploadFrame;
+        m_kfUploadActive = false;
+        m_kfUploadMatchId = 0;
+        m_kfUploadFrame = -1;
+        m_kfUploadChunk = 0;
+        m_kfUploadChunkCount = 0;
+        m_kfUploadData.clear();
+        return;
+    }
+
+    const int start = m_kfUploadChunk * KEYFRAME_UPLOAD_CHUNK_BYTES;
+    const int len = std::min(KEYFRAME_UPLOAD_CHUNK_BYTES,
+                             static_cast<int>(m_kfUploadData.size()) - start);
+    QJsonObject data;
+    data["matchId"] = QJsonValue(qint64(m_kfUploadMatchId));
+    data["frame"] = m_kfUploadFrame;
+    data["chunkIndex"] = m_kfUploadChunk;
+    data["chunkCount"] = m_kfUploadChunkCount;
+    data["data"] = QString::fromLatin1(m_kfUploadData.mid(start, len).toBase64());
+    if (sendEnvelope("BROADCAST_KEYFRAME", data) <= 0)
+    {
+        resetBroadcastKeyframeUpload(m_kfUploadMatchId);
+        return;
+    }
+    ++m_kfUploadChunk;
+}
+
+void LobbyClient::resetBroadcastKeyframeUpload(quint64 matchId)
+{
+    if (matchId == 0 || m_kfCompressMatchId == matchId)
+    {
+        // qCompress itself is not cancellable, so invalidate its destination and
+        // let the worker finish harmlessly. m_kfCompressing remains true until then.
+        m_kfCompressMatchId = 0;
+        m_kfCompressFrame = -1;
+        m_kfCompressRawBytes = 0;
+    }
+    if (matchId == 0 || m_kfUploadMatchId == matchId)
+    {
+        m_kfUploadActive = false;
+        m_kfUploadMatchId = 0;
+        m_kfUploadFrame = -1;
+        m_kfUploadChunk = 0;
+        m_kfUploadChunkCount = 0;
+        m_kfUploadData.clear();
+    }
 }
 
 // -------- WebSocket lifecycle --------
@@ -651,6 +801,7 @@ void LobbyClient::onWsConnected()
 
 void LobbyClient::onWsDisconnected()
 {
+    resetBroadcastKeyframeUpload();
     stopPingDiagnosticLog(QStringLiteral("connection_lost"));
     resetIceMesh();
     LobbyIce::reset();
@@ -1772,13 +1923,27 @@ void LobbyClient::handleSpectateKeyframe(const QJsonObject& data)
     if (m_kfRecvGot < m_kfRecvCount)
         return;
 
-    const QByteArray full = m_kfRecvBuf;
+    const QByteArray encoded = m_kfRecvBuf;
     const int doneFrame = m_kfRecvFrame;
     m_kfRecvFrame = -1;
     m_kfRecvCount = 0;
     m_kfRecvGot = 0;
     m_kfRecvBuf.clear();
     m_kfRecvChunkSeen = QList<bool>();
+
+    QByteArray full;
+    if (!decodeSpectateKeyframe(encoded, full))
+    {
+        qWarning() << "lobby: rejected invalid or oversized live replay keyframe";
+        stopSpectate(matchId);
+        emit spectateFailed(matchId, QStringLiteral("invalid_keyframe"));
+        return;
+    }
+    if (encoded.startsWith(KEYFRAME_ZLIB_MAGIC))
+    {
+        qInfo() << "Live replay keyframe decompressed:" << encoded.size()
+                << "bytes to" << full.size() << "bytes";
+    }
     emit spectateKeyframe(matchId, doneFrame, full);
 }
 
@@ -3014,31 +3179,32 @@ void LobbyClient::sendBroadcastData(quint64 matchId, const QByteArray& chunk, in
     sendEnvelope("BROADCAST_DATA", d);
 }
 
-void LobbyClient::sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame)
+bool LobbyClient::sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame)
 {
-    if (savestate.isEmpty())
-        return;
-    // Split into chunks so each BROADCAST_KEYFRAME message stays under the server's
-    // 1 MiB read limit (savestate is multi-MB even compressed). ~512 KiB raw per
-    // chunk → ~683 KiB base64, comfortably under the limit.
-    const int chunkBytes = 512 * 1024;
-    const int total = static_cast<int>((savestate.size() + chunkBytes - 1) / chunkBytes);
-    for (int i = 0; i < total; i++)
-    {
-        const int start = i * chunkBytes;
-        const int len = qMin(chunkBytes, static_cast<int>(savestate.size()) - start);
-        QJsonObject d;
-        d["matchId"]    = QJsonValue(qint64(matchId));
-        d["frame"]      = frame;
-        d["chunkIndex"] = i;
-        d["chunkCount"] = total;
-        d["data"]       = QString::fromLatin1(savestate.mid(start, len).toBase64());
-        sendEnvelope("BROADCAST_KEYFRAME", d);
-    }
+    if (matchId == 0 || frame < 0 || savestate.isEmpty() ||
+        savestate.size() > MAX_KEYFRAME_RAW_BYTES || broadcastKeyframeUploadBusy() ||
+        m_ws->state() != QAbstractSocket::ConnectedState)
+        return false;
+
+    m_kfCompressing = true;
+    m_kfCompressMatchId = matchId;
+    m_kfCompressFrame = frame;
+    m_kfCompressRawBytes = savestate.size();
+    const QByteArray raw = savestate; // implicitly shared; detached only inside qCompress
+    m_kfCompressWatcher->setFuture(QtConcurrent::run([raw]() {
+        return encodeSpectateKeyframe(raw);
+    }));
+    return true;
+}
+
+bool LobbyClient::broadcastKeyframeUploadBusy() const
+{
+    return m_kfCompressing || m_kfUploadActive;
 }
 
 void LobbyClient::sendBroadcastEnd(quint64 matchId)
 {
+    resetBroadcastKeyframeUpload(matchId);
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
     sendEnvelope("BROADCAST_END", d);

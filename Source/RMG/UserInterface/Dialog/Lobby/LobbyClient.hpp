@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QTimer>
 #include <QSet>
+#include <QFutureWatcher>
 
 class QWebSocket;
 class QUdpSocket;
@@ -185,9 +186,12 @@ public:
     // Broadcast (one player streams the live match's .krec up to the server).
     void sendBroadcastBegin(quint64 matchId);
     void sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame); // raw krec bytes (base64'd) + broadcaster's live frame
-    // Upload a savestate keyframe (already compressed) plus the first krec record
+    // Compress and upload a savestate keyframe plus the first krec record
     // index to consume after restore. Split it so each message stays under the limit.
-    void sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame);
+    // Starts background compression and a paced low-priority upload. Returns false
+    // if another keyframe is already compressing/uploading.
+    bool sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame);
+    bool broadcastKeyframeUploadBusy() const;
     void sendBroadcastEnd(quint64 matchId);
 
     // Spectate (pull a broadcast match's krec stream back down).
@@ -305,6 +309,8 @@ private slots:
     void onWsDisconnected();
     void onWsTextMessageReceived(const QString& msg);
     void onWsErrorOccurred();
+    void onWsBytesWritten(qint64 bytes);
+    void onKeyframeCompressionFinished();
 
     void onUdpReadyRead();
     void onUdpKeepaliveTimer();
@@ -312,7 +318,9 @@ private slots:
 
 private:
     void setState(ConnectionState s);
-    void sendEnvelope(const QString& type, const QJsonObject& data = {}, const QString& id = {});
+    qint64 sendEnvelope(const QString& type, const QJsonObject& data = {}, const QString& id = {});
+    void pumpBroadcastKeyframeUpload();
+    void resetBroadcastKeyframeUpload(quint64 matchId = 0);
     void handleEnvelope(const QJsonObject& env);
 
     // Specific message handlers
@@ -408,6 +416,21 @@ private:
     int        m_kfRecvGot = 0;
     QByteArray m_kfRecvBuf;
     QList<bool> m_kfRecvChunkSeen;
+
+    // Outbound priority/backpressure state. Ordinary control/chat/replay messages
+    // are sent immediately. A keyframe contributes at most one small WebSocket
+    // message at a time and only while the socket has no earlier bytes pending.
+    QFutureWatcher<QByteArray>* m_kfCompressWatcher = nullptr;
+    bool       m_kfCompressing = false;
+    quint64    m_kfCompressMatchId = 0;
+    int        m_kfCompressFrame = -1;
+    int        m_kfCompressRawBytes = 0;
+    bool       m_kfUploadActive = false;
+    quint64    m_kfUploadMatchId = 0;
+    int        m_kfUploadFrame = -1;
+    int        m_kfUploadChunk = 0;
+    int        m_kfUploadChunkCount = 0;
+    QByteArray m_kfUploadData;
 
     // Pending HELLO context
     QString m_pendingUsername;

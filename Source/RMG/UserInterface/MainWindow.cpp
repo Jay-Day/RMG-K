@@ -3455,7 +3455,7 @@ void MainWindow::timerEvent(QTimerEvent *event)
             const int behind = n02::playbackGetBufferedFrames();
 
             // player_MPV blocks the emulation thread when no fresh input is
-            // available. Keep it paused until a full ten-second cushion has
+            // available. Keep it paused until the full configured cushion has
             // accumulated, and make that intentional stall visible even though
             // no new video frames can be presented while the core is waiting.
             if (n02::playbackIsBuffering())
@@ -3478,9 +3478,11 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 if (pct > 100) pct = 100;
                 const int filled = pct * barW / 100;
                 const double seconds = behind / 60.0;
+                constexpr int targetSeconds = (n02::LIVE_REPLAY_BUFFER_FRAMES + 59) / 60;
                 std::string msg = "Buffering live replay  [" + std::string(filled, '#') +
                                   std::string(barW - filled, '-') + "]  " +
-                                  std::to_string(static_cast<int>(seconds + 0.5)) + "/10s";
+                                  std::to_string(static_cast<int>(seconds + 0.5)) + "/" +
+                                  std::to_string(targetSeconds) + "s";
                 this->setWindowTitle(QString::fromStdString(msg));
                 return;
             }
@@ -3497,8 +3499,8 @@ void MainWindow::timerEvent(QTimerEvent *event)
             // next input,
             // so the global stamp is far ahead of our local numbering and would never
             // let us settle. Local buffered-remaining is correct for both paths.
-            const int settle   = n02::LIVE_REPLAY_BUFFER_FRAMES;       // stay ~10 s behind
-            const int reengage = n02::LIVE_REPLAY_BUFFER_FRAMES + 300; // re-catch at ~15 s
+            const int settle   = n02::LIVE_REPLAY_BUFFER_FRAMES;     // stay ~2 s behind
+            const int reengage = n02::LIVE_REPLAY_BUFFER_FRAMES * 2; // re-catch at ~4 s
 
             // Hysteresis: engage catch-up only when we're well behind, then run
             // until we're close. Without the gap, normal live-stream jitter near
@@ -4363,9 +4365,9 @@ void MainWindow::on_Lobby_SpectateClosed(QString reason)
     this->stopLobbySpectate();
 }
 
-void MainWindow::on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isBroadcaster)
+void MainWindow::on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isSpectator)
 {
-    const std::string role = isBroadcaster ? "Live Replay" : "Watching Live";
+    const std::string role = isSpectator ? "Watching Live" : "Live Replay";
     const std::string noun = viewerCount == 1 ? " viewer" : " viewers";
     OnScreenDisplaySetLiveReplayStatus(role + " | " + std::to_string(viewerCount) + noun);
 }

@@ -3377,6 +3377,7 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     if (matchId != 0)
         m_client->reportMatchFinished(matchId);
     m_currentMatchId = 0;
+    emit liveReplayViewerCountCleared();
     if (m_dropBtn) m_dropBtn->setEnabled(false);
 
 }
@@ -3721,6 +3722,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_currentRoomPacing = 0;
     m_currentRoomHostId = 0;
     m_currentMatchId = 0;
+    emit liveReplayViewerCountCleared();
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
     m_awaitingEmulationStart = false;
@@ -4099,7 +4101,7 @@ void RollbackLobbyDialog::startBroadcast(quint64 matchId)
     });
     m_client->sendBroadcastBegin(matchId);
     m_broadcastDrainTimer->start();
-    emit liveReplayViewerCountChanged(0, true);
+    emit liveReplayViewerCountChanged(0, false);
     appendChatSystemLine(CHANNEL_ROOM, "Live Replay on — others can watch this match.");
 }
 
@@ -4148,20 +4150,22 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
     }
 
     // Keep a recent, rollback-confirmed keyframe on the server so late viewers
-    // start from a short tail instead of replaying from frame zero. Ten seconds
-    // also matches the viewer's input cushion: a very fresh keyframe waits for
-    // its tail to reach that cushion, while an older one only fast-forwards the
-    // small excess. Runs even when no krec chunk drained this tick.
-    constexpr qint64 kKeyframeIntervalMs = 10'000;
+    // start from a short tail instead of replaying from frame zero. Thirty seconds
+    // keeps recurring upload cost low while limiting a late viewer to a short
+    // headless fast-forward. Runs even when no krec chunk drained this tick.
+    constexpr qint64 kKeyframeIntervalMs = 30'000;
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    if (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= kKeyframeIntervalMs)
+    const bool keyframeUploadBusy = m_client->broadcastKeyframeUploadBusy();
+    if (!keyframeUploadBusy &&
+        (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= kKeyframeIntervalMs))
     {
         rmgk_gekko::request_keyframe();
         m_lastKeyframeRequestMs = nowMs;
     }
     std::vector<unsigned char> kf;
     int kfFrame = -1;
-    if (rmgk_gekko::take_keyframe(kf, kfFrame) && !kf.empty() && kfFrame >= 0)
+    if (!keyframeUploadBusy && rmgk_gekko::take_keyframe(kf, kfFrame) &&
+        !kf.empty() && kfFrame >= 0)
     {
         m_client->sendBroadcastKeyframe(m_broadcastMatchId,
             QByteArray(reinterpret_cast<const char*>(kf.data()), static_cast<int>(kf.size())),
@@ -4238,10 +4242,16 @@ void RollbackLobbyDialog::onBroadcastViewerCount(quint64 matchId, int viewerCoun
 {
     if (m_broadcasting && matchId == m_broadcastMatchId)
     {
-        emit liveReplayViewerCountChanged(viewerCount, true);
+        emit liveReplayViewerCountChanged(viewerCount, false);
     }
     else if (matchId == m_spectatingMatchId)
     {
+        emit liveReplayViewerCountChanged(viewerCount, true);
+    }
+    else if (matchId == m_currentMatchId)
+    {
+        // Non-host players in the broadcast match should see the same audience
+        // count as the broadcaster. They are playing, rather than spectating.
         emit liveReplayViewerCountChanged(viewerCount, false);
     }
 }
@@ -4260,6 +4270,7 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
     const quint64 matchId = m_currentMatchId;
     m_awaitingEmulationStart = false;
     m_currentMatchId = 0;
+    emit liveReplayViewerCountCleared();
 
     // Cancel any launch the MainWindow may already be spinning up, and tell the
     // server the match is over so the room flips back to "waiting" for everyone
