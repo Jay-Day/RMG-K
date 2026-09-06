@@ -1,3 +1,4 @@
+#include <QDateTime>
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
  *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
@@ -1792,6 +1793,12 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     // to ensure the main window is visible before opening Kaillera dialog
 #endif // NETPLAY
 
+    this->raphnetWarningPolicy.warningShown = QString::fromStdString(
+        CoreSettingsGetStringValue(SettingsID::RaphnetInput_LastUsbWarning)).toLongLong() > 0;
+    auto* inputHealthTimer = new QTimer(this);
+    connect(inputHealthTimer, &QTimer::timeout, this, &MainWindow::checkRaphnetConnection);
+    inputHealthTimer->start(1000);
+
     // Check for raphnet plugin mismatch after window is visible
     this->ui_ShowFirstLaunchSetupPending = showUI && !launchROM && this->shouldShowFirstLaunchSetup();
     this->ui_CheckRaphnetPluginMismatchPending = showUI && !launchROM && !this->ui_ShowFirstLaunchSetupPending;
@@ -2046,6 +2053,8 @@ void MainWindow::initializeUI(bool launchROM)
 
     this->ui_Widgets = new QStackedWidget(this);
     this->ui_Widget_RomBrowser = new Widget::RomBrowserWidget(this);
+    connect(this->ui_Widget_RomBrowser, &Widget::RomBrowserWidget::InputSettingsRequested,
+        this, &MainWindow::on_Action_Settings_Input);
     this->ui_Widget_Dummy = new Widget::DummyWidget(this);
 
     this->ui_EventFilter = new EventFilter(this);
@@ -2460,6 +2469,9 @@ void MainWindow::applyAutomaticInputSelection(void)
 
     const InputPluginType currentPlugin = plugin_type_from_filename(
         CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin));
+    // Keep a selected raphnet adapter backend available when its USB cable is
+    // absent at startup, so its idle monitor can discover the adapter on hotplug.
+    if (currentPlugin == InputPluginType::Raphnet) return;
     const std::string currentAutoKey = auto_select_key_from_plugin(currentPlugin);
 
     if (lastAutoSelection.empty() && currentPlugin != InputPluginType::USB)
@@ -2515,6 +2527,7 @@ bool MainWindow::applyInputPluginSelection(InputPluginType plugin, bool manualSe
 {
     const std::string pluginFile = plugin_filename_from_type(plugin);
     const std::string currentFile = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    const std::string previousAutoSelection = CoreSettingsGetStringValue(SettingsID::GUI_AutoInputPlugin);
     if (pluginFile.empty())
     {
         return false;
@@ -2540,7 +2553,12 @@ bool MainWindow::applyInputPluginSelection(InputPluginType plugin, bool manualSe
 
     if (!CoreApplyPluginSettings())
     {
-        this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
+        const QString error = QString::fromStdString(CoreGetError());
+        CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, currentFile);
+        CoreSettingsSetValue(SettingsID::GUI_AutoInputPlugin, previousAutoSelection);
+        CoreSettingsSave();
+        CoreApplyPluginSettings();
+        this->showErrorMessage("CoreApplyPluginSettings() Failed", error);
         return false;
     }
 
@@ -2634,44 +2652,21 @@ void MainWindow::showFirstLaunchSetupDialog(bool force, bool autoSelectRecommend
         dialog.SetRomDirectory(QDir::toNativeSeparators(romDirectory));
     }
 
-    connect(&dialog, &Dialog::FirstLaunchDialog::InputPluginSelected, this,
-        [this](InputPluginType plugin)
-    {
-        this->applyInputPluginSelection(plugin, true);
-    });
-
-    connect(&dialog, &Dialog::FirstLaunchDialog::RomDirectorySelected, this,
-        [this](const QString& directory)
-    {
-        if (directory.isEmpty())
-        {
-            return;
-        }
-
-        CoreSettingsSetValue(SettingsID::RomBrowser_Directory, directory.toStdString());
-        CoreSettingsSave();
-
-        if (this->ui_Widget_RomBrowser != nullptr)
-        {
-            this->ui_Widget_RomBrowser->RefreshRomList();
-        }
-    });
-
     const int result = dialog.exec();
     if (result != QDialog::Accepted)
     {
         return;
     }
 
-    InputPluginType selectedPlugin = dialog.GetSelectedPlugin();
-    this->applyInputPluginSelection(selectedPlugin, true);
-    if (selectedPlugin == InputPluginType::Gamecube || selectedPlugin == InputPluginType::USB)
+    const QString selectedDirectory = dialog.GetRomDirectory();
+    if (!selectedDirectory.isEmpty() && selectedDirectory != QDir::fromNativeSeparators(romDirectory))
     {
-        if (CorePluginsHasConfig(CorePluginType::Input))
-        {
-            CorePluginsOpenConfig(CorePluginType::Input, this);
-        }
+        CoreSettingsSetValue(SettingsID::RomBrowser_Directory, selectedDirectory.toStdString());
+        CoreSettingsSave();
+        if (this->ui_Widget_RomBrowser != nullptr) this->ui_Widget_RomBrowser->RefreshRomList();
     }
+    if (this->applyInputPluginSelection(dialog.GetSelectedPlugin(), true))
+        this->on_Action_Settings_Input();
 }
 
 void MainWindow::updateUI(bool inEmulation, bool isPaused)
@@ -4518,26 +4513,57 @@ void MainWindow::on_Action_Settings_Rsp(void)
 }
 
 
+void MainWindow::checkRaphnetConnection(void)
+{
+    const int health = CoreGetRaphnetHealth();
+    this->ui_Widget_RomBrowser->SetControllerConnectionSlow(health == 2);
+    if (this->emulationThread->isRunning() && this->raphnetWarningBox) this->raphnetWarningBox->close();
+    const bool canShow = this->isVisible() &&
+        QApplication::applicationState() == Qt::ApplicationActive &&
+        !this->emulationThread->isRunning() && !QApplication::activeModalWidget() && !this->raphnetWarningBox;
+    if (!this->raphnetWarningPolicy.observe(health, canShow)) return;
+
+    CoreSettingsSetValue(SettingsID::RaphnetInput_LastUsbWarning,
+        std::to_string(QDateTime::currentSecsSinceEpoch()));
+    CoreSettingsSave();
+    auto* box = new QMessageBox(QMessageBox::Warning, tr("Controller connection is slow"),
+        tr("Your controller's USB connection is responding slowly, which can increase input latency. "
+           "The USB port or a hub may be the cause.\n\n"
+           "Try connecting the adapter to a different USB port, preferably directly on your computer. "
+           "RMG-K is automatically adjusting input handling while it checks the connection.\n\n"
+           "For more information, open Input Settings from the controller button."),
+        QMessageBox::Ok, this);
+    this->raphnetWarningBox = box;
+    auto* settings = box->addButton(tr("Input Settings"), QMessageBox::ActionRole);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setWindowModality(Qt::NonModal);
+    connect(box, &QMessageBox::finished, this, [this, box, settings](int) {
+        if (box->clickedButton() == settings) this->on_Action_Settings_Input();
+    });
+    box->show();
+}
+
 void MainWindow::on_Action_Settings_Input(void)
 {
-    if (CoreIsEmulationRunning())
+    if (this->emulationThread->isRunning() || CoreIsEmulationRunning())
     {
         return;
     }
 
-    InputPluginType currentPlugin = plugin_type_from_filename(
-        CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin));
+    const std::string currentFile = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    const InputPluginType currentPlugin = plugin_type_from_filename(currentFile);
+    if (QFileInfo(QString::fromStdString(currentFile)).fileName().compare(
+        QString::fromStdString(plugin_filename_from_type(currentPlugin)), Qt::CaseInsensitive) != 0)
+    {
+        CorePluginsOpenConfig(CorePluginType::Input, this);
+        return;
+    }
     Dialog::UnifiedInputDialog dialog(this, currentPlugin);
 
     const int result = dialog.exec();
     if (result == QDialog::Accepted)
     {
         const InputPluginType selectedPlugin = dialog.GetSelectedPlugin();
-        if (selectedPlugin == InputPluginType::Raphnet && dialog.GetSelectedDeviceIndex() >= 0)
-        {
-            CoreSettingsSetValue(SettingsID::RaphnetRaw_Player1AdapterPort, dialog.GetSelectedDeviceIndex() + 1);
-        }
-
         this->applyInputPluginSelection(selectedPlugin, true);
     }
 }

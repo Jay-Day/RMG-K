@@ -35,6 +35,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <stdint.h>
+#include <time.h>
+#include "polling_health.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -91,11 +95,6 @@ struct rawChannel {
 	int chn;
 };
 
-struct cachedKeys {
-	unsigned int keys;
-	int valid;
-};
-
 /* Multiple adapters are supported, some are single player, others
  * two-player. As they are discovered during scan, their
  * channels (corresponding to physical controller ports) are added
@@ -105,8 +104,18 @@ struct cachedKeys {
  */
 static struct rawChannel g_channels[MAX_CHANNELS] = { };
 static int g_n_channels = 0;
-static volatile struct cachedKeys g_cached_keys[MAX_CHANNELS] = { };
-static volatile int g_getKeys_polling = 0;
+static atomic_uint g_cached_keys[MAX_CHANNELS];
+static atomic_int g_cached_mode[MAX_CHANNELS];
+static atomic_llong g_sample_time[MAX_CHANNELS];
+static raphnet_polling_health g_health[MAX_CHANNELS]; /* protected by g_io_mutex */
+static atomic_int g_rom_active;
+static int g_monitor_paused;
+static int64_t g_last_probe[MAX_CHANNELS];
+static int64_t g_last_reopen[MAX_ADAPTERS];
+static atomic_int g_transport_failed[MAX_ADAPTERS];
+static atomic_int g_health_status; /* 0: no response, 1: checking/normal, 2: slow */
+static void (*g_health_callback)(int) = NULL; /* set only with worker stopped */
+static atomic_int g_getKeys_polling = 0;
 static int g_getKeys_thread_running = 0;
 static int g_threading_initialized = 0;
 
@@ -118,20 +127,31 @@ static void pb_startGetKeysPolling(void);
 static void pb_stopGetKeysPolling(void);
 static void pb_mutexLockIo(void);
 static void pb_mutexUnlockIo(void);
+static int pb_scanControllersInternal(void);
+static void pb_checkBeforeGame(void);
+static int64_t pb_nowUs(void);
+static void pb_publishHealth(void);
+static void pb_recordSample(int control, int valid, unsigned int keys, int64_t elapsed, int64_t now);
 
 int pb_init(pb_debugFunc debugFn)
 {
 	DebugMessage = debugFn;
+    g_n_channels = g_n_adapters = 0;
+    g_monitor_paused = 0;
+    atomic_store(&g_rom_active, 0);
+    atomic_store(&g_health_status, 0);
+    memset(g_channels, 0, sizeof(g_channels));
+    memset(g_adapters, 0, sizeof(g_adapters));
+    memset(g_health, 0, sizeof(g_health));
 	pb_threadingInit();
 	gcn64_init(1);
+	pb_startGetKeysPolling();
 	return 0;
 }
 
-static void pb_freeAllAdapters(void)
+static void pb_closeAdapters(void)
 {
 	int i;
-
-	pb_stopGetKeysPolling();
 
 	for (i=0; i<g_n_adapters; i++) {
 		if (g_adapters[i].handle) {
@@ -139,19 +159,18 @@ static void pb_freeAllAdapters(void)
 			   in case it is not always called, do this again here. */
 			gcn64lib_suspendPolling(g_adapters[i].handle, 0);
 			gcn64_closeDevice(g_adapters[i].handle);
+			g_adapters[i].handle = NULL;
 		}
 	}
 
-	g_n_channels = 0;
-	g_n_adapters = 0;
-	memset(g_adapters, 0, sizeof(g_adapters));
-	memset(g_channels, 0, sizeof(g_channels));
 }
 
 int pb_shutdown(void)
 {
-	pb_freeAllAdapters();
+	pb_stopGetKeysPolling();
+	pb_closeAdapters();
 	pb_threadingShutdown();
+	g_health_callback = NULL;
 	gcn64_shutdown();
 
 	return 0;
@@ -162,9 +181,33 @@ int pb_shutdown(void)
  */
 int pb_scanControllers(void)
 {
+    pb_stopGetKeysPolling();
+    // Run before controller initialization and rollback setup, with no worker
+    // competing for USB. Reuse recent idle results where possible.
+    atomic_store(&g_rom_active, 0);
+    const int count = pb_scanControllersInternal();
+    pb_checkBeforeGame();
+    // Both channel assignments and input mode stay fixed until RomClosed.
+    atomic_store(&g_rom_active, 1);
+    return count;
+}
+
+static int pb_scanControllersInternal(void)
+{
 	struct gcn64_list_ctx * lctx;
 	int i, j;
 	struct adapter *adap;
+    struct {
+        char path[PATH_MAXCHARS];
+        int channel;
+        raphnet_polling_health health;
+    } previous[MAX_CHANNELS];
+    int previous_count = g_n_channels;
+    for (i = 0; i < previous_count; ++i) {
+        memcpy(previous[i].path, g_channels[i].adapter->inf.str_path, PATH_MAXCHARS);
+        previous[i].channel = g_channels[i].chn;
+        previous[i].health = g_health[i];
+    }
 
 	lctx = gcn64_allocListCtx();
 	if (!lctx) {
@@ -176,7 +219,20 @@ int pb_scanControllers(void)
 	 * time a new game is selected from the PJ64 menu. Freeing previously found
 	 * adapters here and creating a new list makes it possible to disconnect/replace
 	 * USB adapters without having to restart PJ64. */
-	pb_freeAllAdapters();
+	pb_closeAdapters();
+    g_n_channels = 0;
+    g_n_adapters = 0;
+    memset(g_adapters, 0, sizeof(g_adapters));
+    memset(g_channels, 0, sizeof(g_channels));
+    memset(g_health, 0, sizeof(g_health));
+    memset(g_last_probe, 0, sizeof(g_last_probe));
+    memset(g_last_reopen, 0, sizeof(g_last_reopen));
+    for (i = 0; i < MAX_ADAPTERS; ++i) atomic_store(&g_transport_failed[i], 0);
+    for (i = 0; i < MAX_CHANNELS; ++i) {
+        atomic_store(&g_cached_keys[i], 0);
+        atomic_store(&g_cached_mode[i], 0);
+        atomic_store(&g_sample_time[i], 0);
+    }
 
 	/* Pass 1: Fill g_adapters[] with the adapters present on the system. */
 	g_n_adapters = 0;
@@ -193,6 +249,11 @@ int pb_scanControllers(void)
 						adap->inf.usb_vid, adap->inf.usb_pid, adap->inf.str_serial, adap->inf.str_prodname);
 		DebugMessage(PB_MSG_INFO, "Adapter supports %d raw channel(s)", adap->inf.caps.n_raw_channels);
 
+        if (gcn64lib_suspendPolling(adap->handle, 1) != 0) {
+            gcn64_closeDevice(adap->handle);
+            adap->handle = NULL;
+            continue;
+        }
 		g_n_adapters++;
 		if (g_n_adapters >= MAX_ADAPTERS)
 			break;
@@ -224,6 +285,13 @@ int pb_scanControllers(void)
 			g_channels[g_n_channels].adapter = adap;
 			g_channels[g_n_channels].chn = j;
 			DebugMessage(PB_MSG_INFO, "Channel %d: Adapter '%ls' raw channel %d", g_n_channels, adap->inf.str_serial, j);
+            for (int k = 0; k < previous_count; ++k) {
+                if (previous[k].channel == j && strcmp(previous[k].path, adap->inf.str_path) == 0) {
+                    g_health[g_n_channels] = previous[k].health;
+                    atomic_store(&g_cached_mode[g_n_channels], previous[k].health.cached);
+                    break;
+                }
+            }
 			g_n_channels++;
 		}
 	}
@@ -231,70 +299,42 @@ int pb_scanControllers(void)
 	return g_n_channels;
 }
 
-static int g_input_mode = PB_INPUT_MODE_RAW_PIF;
-
-void pb_setInputMode(int mode)
-{
-    if (mode != PB_INPUT_MODE_CACHED_GETKEYS)
-    {
-        mode = PB_INPUT_MODE_RAW_PIF;
-    }
-	
-	
-	if (g_input_mode == mode) {
-        return;
-    }
-
-    if (mode == PB_INPUT_MODE_RAW_PIF) {
-        pb_stopGetKeysPolling();
-    }
-
-    g_input_mode = mode;
-}
-
-int pb_getInputMode(void)
-{
-    return g_input_mode;
-}
-
 int pb_usesRawData(void)
 {
-    return g_input_mode == PB_INPUT_MODE_RAW_PIF;
+    /* Keep raw controller/pak capabilities stable even when button reads are cached. */
+    return 1;
 }
 
 int pb_romOpen(void)
 {
-	int i;
-	
-	for (i=0; i<MAX_ADAPTERS; i++) {
-		if (g_adapters[i].handle) {
-			gcn64lib_suspendPolling(g_adapters[i].handle, 1);
-		}
-	}
-	
-	pb_stopGetKeysPolling(); // safety
-
-    if (g_input_mode == PB_INPUT_MODE_CACHED_GETKEYS)
-    {
-        pb_startGetKeysPolling();
-    }
-
-	return 0;
+    atomic_store(&g_rom_active, 1);
+    pb_startGetKeysPolling();
+    return g_getKeys_thread_running ? 0 : -1;
 }
 
 int pb_romClosed(void)
 {
-	int i;
+    pb_stopGetKeysPolling();
+    atomic_store(&g_rom_active, 0);
+    pb_startGetKeysPolling();
+    return 0;
+}
 
-	pb_stopGetKeysPolling();
+void pb_pauseMonitoring(int pause)
+{
+    if (atomic_load(&g_rom_active)) return;
+    pb_stopGetKeysPolling();
+    g_monitor_paused = pause;
+    if (pause) pb_closeAdapters();
+    else pb_startGetKeysPolling();
+}
 
-	for (i=0; i<MAX_ADAPTERS; i++) {
-		if (g_adapters[i].handle) {
-			gcn64lib_suspendPolling(g_adapters[i].handle, 0);
-		}
-	}
-
-	return 0;
+void pb_setHealthCallback(void (*callback)(int))
+{
+    pb_stopGetKeysPolling();
+    g_health_callback = callback;
+    if (callback) callback(atomic_load(&g_health_status));
+    if (!g_monitor_paused) pb_startGetKeysPolling();
 }
 
 #if defined(_WIN32)
@@ -357,76 +397,191 @@ static void pb_mutexUnlockIo(void)
 #endif
 }
 
-static int pb_pollGetKeysOnce(int Control, unsigned int *Keys)
+static int64_t pb_nowUs(void)
 {
-	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
-	unsigned char *rx = command + 3;
-	struct rawChannel *channel;
-	struct adapter *adap;
-	struct blockio_op bio;
-	int res;
+#if defined(_WIN32)
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
+    return (now.QuadPart / frequency.QuadPart) * 1000000 +
+        (now.QuadPart % frequency.QuadPart) * 1000000 / frequency.QuadPart;
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+#endif
+}
 
-	if (!Keys) {
-		return 0;
-	}
+static void pb_sleepMs(int ms)
+{
+#if defined(_WIN32)
+    Sleep((DWORD)ms);
+#else
+    usleep((unsigned int)ms * 1000);
+#endif
+}
 
-	*Keys = 0;
+static void pb_publishHealth(void)
+{
+    int status = 0;
+    const int64_t now = pb_nowUs();
+    for (int i = 0; i < g_n_channels; ++i) {
+        const int64_t sample_time = atomic_load(&g_sample_time[i]);
+        if (sample_time && now - sample_time < 1000000) {
+            // Report measured trouble, not a precautionary choice when a
+            // bounded pre-game check did not produce enough evidence.
+            int channel_status = g_health[i].cached ? 2 : 1;
+            if (channel_status > status) status = channel_status;
+        }
+    }
+    if (atomic_exchange(&g_health_status, status) != status && g_health_callback)
+        g_health_callback(status);
+}
 
-	if (!pb_commandIsValid(Control, command)) {
-		return 0;
-	}
+static void pb_recordSample(int control, int valid, unsigned int keys, int64_t elapsed, int64_t now)
+{
+    if (!atomic_load(&g_rom_active)) {
+        raphnet_health_observe(&g_health[control], valid, elapsed, now);
+        atomic_store(&g_cached_mode[control], g_health[control].cached);
+    }
+    atomic_store(&g_cached_keys[control], valid ? keys : 0);
+    atomic_store(&g_sample_time[control], valid ? now : 0);
+}
 
-	channel = &g_channels[Control];
-	adap = channel->adapter;
-	if (!adap || !adap->handle) {
-		return 0;
-	}
+static int pb_pollGetKeysOnce(int control, unsigned int *keys)
+{
+    unsigned char command[7] = {1, 4, 1, 0, 0, 0, 0};
+    struct blockio_op bio = {0};
+    int valid = 0;
+    if (!keys || !pb_commandIsValid(control, command)) return 0;
+    *keys = 0;
+    struct rawChannel *channel = &g_channels[control];
+    bio.chn = channel->chn;
+    bio.tx_len = 1;
+    bio.rx_len = 4;
+    bio.tx_data = command + 2;
+    bio.rx_data = command + 3;
 
-	memset(&bio, 0, sizeof(bio));
-	bio.chn = channel->chn;
-	bio.tx_len = command[0] & BIO_RXTX_MASK;
-	bio.rx_len = command[1] & BIO_RXTX_MASK;
-	bio.tx_data = command + 2;
-	bio.rx_data = rx;
+    pb_mutexLockIo();
+    const int64_t start = pb_nowUs();
+    if (channel->adapter->handle) {
+        const int res = gcn64lib_blockIO(channel->adapter->handle, &bio, 1);
+        atomic_store(&g_transport_failed[channel->adapter - g_adapters], res != 0);
+        valid = res == 0 && bio.rx_len == 4;
+    }
+    const int64_t end = pb_nowUs();
+    if (valid) {
+        *keys = (unsigned int)command[3] | ((unsigned int)command[4] << 8) |
+            ((unsigned int)command[5] << 16) | ((unsigned int)command[6] << 24);
+    }
+    pb_recordSample(control, valid, *keys, end - start, end);
+    pb_mutexUnlockIo();
+    return valid;
+}
 
-	pb_mutexLockIo();
-	res = gcn64lib_blockIO(adap->handle, &bio, 1);
-	pb_mutexUnlockIo();
+static void pb_checkBeforeGame(void)
+{
+    const int64_t started = pb_nowUs();
+    int pending[MAX_CHANNELS] = {0};
+    int any_pending;
+    // A successful response is required before treating a port as a controller
+    // to test. Empty adapter ports must not delay startup or imply slow USB.
+    for (int i = 0; i < g_n_channels; ++i) {
+        unsigned int keys;
+        pending[i] = pb_pollGetKeysOnce(i, &keys);
+    }
+    do {
+        any_pending = 0;
+        const int64_t now = pb_nowUs();
+        for (int i = 0; i < g_n_channels; ++i) {
+            if (!pending[i]) continue;
+            const raphnet_polling_health *health = &g_health[i];
+            if (health->cached || (health->assessed_us > 0 && now - health->assessed_us <= 2000000)) {
+                pending[i] = 0;
+                continue;
+            }
+            any_pending = 1;
+            unsigned int keys;
+            pb_pollGetKeysOnce(i, &keys);
+        }
+        if (any_pending) pb_sleepMs(2);
+        // Bound a faulty/intermittent adapter's startup delay. If a responding
+        // controller remains unclassified, use caching for this game only; do
+        // not label its port slow or persist an unsupported latency conclusion.
+    } while (any_pending && pb_nowUs() - started < 5000000);
+    for (int i = 0; i < g_n_channels; ++i) {
+        if (pending[i] && atomic_load(&g_sample_time[i]) != 0)
+            atomic_store(&g_cached_mode[i], 1);
+    }
+    pb_publishHealth();
+}
 
-	if (res != 0) {
-		return 0;
-	}
+/* Reopen failed adapters while idle. USB topology and mode stay fixed in-game. */
+static void pb_reopenDisconnectedAdapters(int64_t now)
+{
+    for (int j = 0; j < g_n_adapters; ++j) {
+        if (!atomic_load(&g_transport_failed[j]) || now - g_last_reopen[j] < 2000000) continue;
+        g_last_reopen[j] = now;
+        pb_mutexLockIo();
+        struct adapter *adap = &g_adapters[j];
+        if (adap->handle) gcn64_closeDevice(adap->handle);
+        adap->handle = gcn64_openBy(&adap->inf,
+            adap->inf.str_serial[0] ? GCN64_FLG_OPEN_BY_SERIAL : GCN64_FLG_OPEN_BY_PATH);
+        if (adap->handle && gcn64lib_suspendPolling(adap->handle, 1) != 0) {
+            gcn64_closeDevice(adap->handle);
+            adap->handle = NULL;
+        }
+        pb_mutexUnlockIo();
+    }
+}
 
-	if ((bio.rx_len & (BIO_RX_LEN_TIMEDOUT | BIO_RX_LEN_PARTIAL)) || ((bio.rx_len & BIO_RXTX_MASK) < 4)) {
-		return 0;
-	}
-
-	*Keys = ((unsigned int)rx[0])
-		| ((unsigned int)rx[1] << 8)
-		| ((unsigned int)rx[2] << 16)
-		| ((unsigned int)rx[3] << 24);
-	return 1;
+static int pb_idleNeedsRescan(void)
+{
+    struct gcn64_list_ctx *ctx = gcn64_allocListCtx();
+    struct gcn64_info info;
+    int count = 0, changed = 0;
+    if (!ctx) return 0;
+    while (gcn64_listDevices(&info, ctx) && count < MAX_ADAPTERS) {
+        if (count >= g_n_adapters || !g_adapters[count].handle ||
+            strcmp(info.str_path, g_adapters[count].inf.str_path) != 0) changed = 1;
+        ++count;
+    }
+    gcn64_freeListCtx(ctx);
+    return changed || count != g_n_adapters;
 }
 
 static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
 {
-	int i;
-	(void)unused;
-
-	while (g_getKeys_polling) {
-		for (i=0; i<g_n_channels && i<MAX_CHANNELS && g_getKeys_polling; i++) {
-			unsigned int keys;
-			if (pb_pollGetKeysOnce(i, &keys)) {
-				g_cached_keys[i].keys = keys;
-				g_cached_keys[i].valid = 1;
-			}
-		}
-	}
-
+    int64_t last_scan = 0;
+    (void)unused;
+    while (atomic_load(&g_getKeys_polling)) {
+        int polled = 0;
+        const int active = atomic_load(&g_rom_active);
+        const int64_t now = pb_nowUs();
+        if (!active && now - last_scan >= 2000000) {
+            if (pb_idleNeedsRescan()) pb_scanControllersInternal();
+            last_scan = now;
+        }
+        for (int i = 0; i < g_n_channels && atomic_load(&g_getKeys_polling); ++i) {
+            /* During a game, only the selected cached channels need a worker.
+             * Detection and recovery decisions are reserved for idle time. */
+            const int valid = atomic_load(&g_sample_time[i]) != 0;
+            if (active && !atomic_load(&g_cached_mode[i])) continue;
+            const int64_t interval = !valid ? 250000 : (active ? 0 : 8000);
+            if (now - g_last_probe[i] < interval) continue;
+            g_last_probe[i] = now;
+            unsigned int keys;
+            pb_pollGetKeysOnce(i, &keys);
+            polled = 1;
+        }
+        if (!active) pb_reopenDisconnectedAdapters(now);
+        pb_publishHealth();
+        pb_sleepMs(polled && active ? 0 : 2);
+    }
 #if defined(_WIN32)
-	return 0;
+    return 0;
 #else
-	return NULL;
+    return NULL;
 #endif
 }
 
@@ -438,7 +593,6 @@ static void pb_startGetKeysPolling(void)
 		return;
 	}
 
-	memset(g_cached_keys, 0, sizeof(g_cached_keys));
 
 	g_getKeys_polling = 1;
 
@@ -550,34 +704,13 @@ int pb_controllerCommand(int Control, unsigned char *Command)
 	return 0;
 }
 
-int pb_getKeys(int Control, unsigned int *Keys)
+int pb_getKeys(int control, unsigned int *keys)
 {
-	unsigned char command[7] = { 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00 };
-	int valid;
-	
-	// Normal path
-    if (g_input_mode != PB_INPUT_MODE_CACHED_GETKEYS)
-    {
-        return pb_pollGetKeysOnce(Control, Keys);
-    }
-
-	if (!Keys) {
-		return 0;
-	}
-
-	*Keys = 0;
-
-	if (!pb_commandIsValid(Control, command)) {
-		return 0;
-	}
-
-	// Cached path
-	valid = g_cached_keys[Control].valid;
-	if (valid) {
-		*Keys = g_cached_keys[Control].keys;
-	}
-
-	return valid;
+    if (!keys || control < 0 || control >= g_n_channels) return 0;
+    if (!atomic_load(&g_cached_mode[control])) return pb_pollGetKeysOnce(control, keys);
+    const int64_t sample_time = atomic_load(&g_sample_time[control]);
+    *keys = sample_time && pb_nowUs() - sample_time < 250000 ? atomic_load(&g_cached_keys[control]) : 0;
+    return 1;
 }
 
 static int pb_performIo(void)
@@ -613,8 +746,25 @@ static int pb_performIo(void)
 		timing(1, NULL);
 #endif
 		pb_mutexLockIo();
-		res = gcn64lib_blockIO(adap->handle, biops, adap->n_ops);
-		pb_mutexUnlockIo();
+        const int64_t start = pb_nowUs();
+        res = adap->handle ? gcn64lib_blockIO(adap->handle, biops, adap->n_ops) : -1;
+        const int64_t end = pb_nowUs();
+        atomic_store(&g_transport_failed[adap - g_adapters], res != 0);
+        for (i = 0; i < adap->n_ops; ++i) {
+            if (biops[i].tx_len != 1 || biops[i].tx_data[0] != 1) continue;
+            for (int c = 0; c < g_n_channels; ++c) {
+                if (g_channels[c].adapter != adap || g_channels[c].chn != biops[i].chn) continue;
+                const int valid = res == 0 && biops[i].rx_len == 4;
+                unsigned int keys = 0;
+                if (valid) {
+                    const unsigned char *rx = biops[i].rx_data;
+                    keys = (unsigned int)rx[0] | ((unsigned int)rx[1] << 8) |
+                        ((unsigned int)rx[2] << 16) | ((unsigned int)rx[3] << 24);
+                }
+                pb_recordSample(c, valid, keys, end - start, end);
+            }
+        }
+        pb_mutexUnlockIo();
 #ifdef TIME_RAW_IO
 		timing(0, "blockIO");
 #endif
@@ -643,10 +793,9 @@ static int pb_performIo(void)
 				}
 #endif
 			}
-		} else {
-			// For debugging
-			//exit(1);
-		}
+        } else {
+            for (i = 0; i < adap->n_ops; ++i) biops[i].tx_data[-1] |= BIO_RX_LEN_TIMEDOUT;
+        }
 
 		adap->n_ops = 0;
 	}
@@ -742,6 +891,16 @@ int pb_readController(int Control, unsigned char *Command)
 	if (!pb_commandIsValid(Control, Command)) {
 		return 0;
 	}
+
+    if (raphnet_is_input_read(Command) && atomic_load(&g_cached_mode[Control])) {
+        const int64_t sample_time = atomic_load(&g_sample_time[Control]);
+        const unsigned int keys = sample_time && pb_nowUs() - sample_time < 250000 ?
+            atomic_load(&g_cached_keys[Control]) : 0;
+        Command[1] = 4;
+        for (int i = 0; i < 4; ++i) Command[3 + i] = (unsigned char)(keys >> (8 * i));
+        if (!sample_time || pb_nowUs() - sample_time >= 250000) Command[1] |= BIO_RX_LEN_TIMEDOUT;
+        return 0;
+    }
 
 	/* Add the IO operation to the block io list of
 	 * the adapter serving this channel. */

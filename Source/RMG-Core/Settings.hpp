@@ -531,6 +531,7 @@ enum class SettingsID
 	
     // Raphnet Input Plugin Settings
     RaphnetInput_InputMode,
+    RaphnetInput_LastUsbWarning,
 
     // GCA Input Plugin Settings
     GCAInput_Deadzone,
@@ -544,6 +545,7 @@ enum class SettingsID
     GCAInput_Port2Enabled,
     GCAInput_Port3Enabled,
     GCAInput_Port4Enabled,
+    GCAInput_ControllerPorts,
 
     // GCA Button Mapping Settings
     GCAInput_Map_A,

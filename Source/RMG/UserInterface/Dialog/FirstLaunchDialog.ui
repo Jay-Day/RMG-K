@@ -8,7 +8,7 @@
   <property name="minimumSize">
    <size>
     <width>780</width>
-    <height>680</height>
+    <height>520</height>
    </size>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -53,7 +53,7 @@
    <item>
     <widget class="QGroupBox" name="controllerGroupBox">
      <property name="title">
-      <string>Pick Your Controller Plugin</string>
+      <string>Choose Your Controller</string>
      </property>
      <layout class="QVBoxLayout" name="controllerGroupLayout">
       <property name="spacing">
@@ -62,7 +62,7 @@
       <item>
        <widget class="QLabel" name="controllerDescriptionLabel">
         <property name="text">
-         <string>Select the input plugin that matches the controller adapter you plan to use.</string>
+         <string>Choose your controller type. You can test inputs and adjust mappings in the next step.</string>
         </property>
         <property name="wordWrap">
          <bool>true</bool>
@@ -82,7 +82,7 @@
           <item>
            <widget class="QToolButton" name="gamecubeButton">
             <property name="text">
-             <string>Gamecube Controller (Native)</string>
+             <string>GameCube Controller (Native)</string>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonStyle::ToolButtonTextUnderIcon</enum>
@@ -260,75 +260,9 @@
     </spacer>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="debugRecommendationLayout">
-     <property name="spacing">
-      <number>8</number>
-     </property>
-     <item>
-      <widget class="QLabel" name="debugRecommendationLabel">
-       <property name="text">
-        <string>Debug recommendation:</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="debugRecommendationComboBox">
-       <item>
-        <property name="text">
-         <string>Auto</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>None</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>N64 Controller (Raphnet)</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Gamecube Controller (Native)</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Other USB</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Mayflash USB mode</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Native access failed</string>
-        </property>
-       </item>
-      </widget>
-     </item>
-     <item>
-      <spacer name="debugRecommendationSpacer">
-       <property name="orientation">
-        <enum>Qt::Orientation::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>40</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </item>
-   <item>
     <widget class="QDialogButtonBox" name="buttonBox">
      <property name="standardButtons">
-      <set>QDialogButtonBox::Ok</set>
+      <set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set>
      </property>
     </widget>
    </item>

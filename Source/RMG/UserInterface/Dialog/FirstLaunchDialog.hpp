@@ -39,10 +39,7 @@ class FirstLaunchDialog : public QDialog, private Ui::FirstLaunchDialog
     InputPluginType GetSelectedPlugin(void) const;
 
     void SetRomDirectory(const QString& directory);
-
-  signals:
-    void InputPluginSelected(InputPluginType plugin);
-    void RomDirectorySelected(const QString& directory);
+    QString GetRomDirectory(void) const;
 
   private slots:
     void on_romDirectoryBrowseButton_clicked(void);
@@ -65,18 +62,15 @@ class FirstLaunchDialog : public QDialog, private Ui::FirstLaunchDialog
         QStringList lines;
     };
 
-    void setRecommendedPlugin(InputPluginType plugin, const QString& reason, bool hasRecommendation,
-        RecommendationStyle style = RecommendationStyle::Recommended);
     void clearRecommendationLabels(void);
     void setRecommendationLabel(InputPluginType plugin, const QString& reason, RecommendationStyle style);
     void updateDetectedRecommendationLabels(const InputDetectionReport& report);
     bool isPluginAvailable(InputPluginType plugin) const;
     InputPluginType availablePluginOrFallback(InputPluginType plugin) const;
     void updateAvailableControllerOptions(void);
-    void setSelectedPluginInternal(InputPluginType plugin, bool emitSignal);
+    void setSelectedPluginInternal(InputPluginType plugin);
     void updateButtonStyles(void);
     void updateDetectedDevices(const InputDetectionReport& report);
-    void applyDebugRecommendationOverride(int index);
 
     InputDetectionReport scanInputDevices(void) const;
     InputPluginType detectRecommendedPlugin(const InputDetectionReport& report, QString& reason, bool& hasRecommendation) const;

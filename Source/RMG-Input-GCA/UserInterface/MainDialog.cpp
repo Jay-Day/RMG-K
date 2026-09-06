@@ -286,6 +286,8 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
         CoreSettingsSetValue(SettingsID::GCAInput_Port2Enabled, this->port2CheckBox->isChecked());
         CoreSettingsSetValue(SettingsID::GCAInput_Port3Enabled, this->port3CheckBox->isChecked());
         CoreSettingsSetValue(SettingsID::GCAInput_Port4Enabled, this->port4CheckBox->isChecked());
+        // This legacy dialog assigns enabled physical ports in ascending order.
+        CoreSettingsSetValue(SettingsID::GCAInput_ControllerPorts, std::string(""));
         saveMappings();
         CoreSettingsSave();
     }

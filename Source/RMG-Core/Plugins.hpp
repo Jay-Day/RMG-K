@@ -71,4 +71,8 @@ bool CoreDetachPlugins(void);
 // shuts down all currently used plugins
 bool CorePluginsShutdown(void);
 
+// -1: unavailable, 0: no valid response, 1: normal/checking, 2: slow USB.
+int CoreGetRaphnetHealth(void);
+void CorePauseRaphnetMonitoring(bool pause);
+
 #endif // CORE_PLUGINS_HPP

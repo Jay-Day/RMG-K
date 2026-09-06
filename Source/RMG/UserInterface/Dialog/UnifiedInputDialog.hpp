@@ -11,10 +11,12 @@
 #define UNIFIEDINPUTDIALOG_HPP
 
 #include "FirstLaunchDialog.hpp"
+#include "RaphnetPollingHealth.hpp"
 
 #include <common.hpp>
 
 #include <QVector>
+#include <QElapsedTimer>
 #include <QDialog>
 #include <QStringList>
 #include <cstdint>
@@ -88,7 +90,6 @@ class UnifiedInputDialog : public QDialog
     ~UnifiedInputDialog(void) override;
 
     InputPluginType GetSelectedPlugin(void) const;
-    int GetSelectedDeviceIndex(void) const;
 
     static InputDetectionReport ScanInputDevices(void);
     static Recommendation DetectRecommendedPlugin(const InputDetectionReport& report);
@@ -105,11 +106,10 @@ class UnifiedInputDialog : public QDialog
     void setupUi(void);
     QWidget* createControllerPage(int playerIndex);
     void refreshDetection(void);
+    QStringList deviceTopology(void);
     void updateWarningLabel(void);
     void refreshUsbDevices(void);
     void updateAllPages(void);
-    bool isPluginAvailable(InputPluginType plugin) const;
-    InputPluginType availablePluginOrFallback(InputPluginType plugin) const;
     void updateBackendChoices(void);
     void updatePageMode(int pageIndex);
     void updatePageDeviceChoices(int pageIndex);
@@ -119,6 +119,7 @@ class UnifiedInputDialog : public QDialog
     int currentPageIndex(void) const;
     void saveAllSettings(void);
     void saveUsbSettings(int pageIndex);
+    void syncSharedUsbProfile(int pageIndex);
     void saveGamecubeSettings(void);
     void saveRaphnetSettings(void);
     void loadPageSettings(int pageIndex);
@@ -130,6 +131,8 @@ class UnifiedInputDialog : public QDialog
     void setGamecubeTriggerAnalog(bool leftTrigger, bool analog);
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
+    void done(int result) override;
+    bool eventFilter(QObject* object, QEvent* event) override;
 
     void openPreviewSource(void);
     void closePreviewSource(void);
@@ -138,6 +141,7 @@ class UnifiedInputDialog : public QDialog
 
     bool openRaphnetPreview(void);
     bool pollRaphnetPreview(void);
+    void updateRaphnetDiagnostics(void);
     bool setRaphnetPollingSuspended(bool suspended);
     bool exchangeRaphnetCommand(const unsigned char* command, int commandLength, unsigned char* response, int& responseLength);
 
@@ -166,6 +170,7 @@ class UnifiedInputDialog : public QDialog
         QString serial;
         uint16_t vendorId = 0;
         uint16_t productId = 0;
+        bool connected = true;
     };
 
     struct ControllerPage
@@ -202,6 +207,12 @@ class UnifiedInputDialog : public QDialog
         QLabel* axisXLabel = nullptr;
         QLabel* axisYLabel = nullptr;
         Widget::ControllerImageWidget* controllerImageWidget = nullptr;
+        UsbDeviceChoice usbDevice;
+        bool usbEnabled = false;
+        bool usbDirty = false;
+        bool gamecubeEnabled = false;
+        int gamecubePort = 0;
+        std::string usbSection;
     };
 
   private:
@@ -216,9 +227,21 @@ class UnifiedInputDialog : public QDialog
     QCheckBox* debugDevicesCheckBox = nullptr;
     QGroupBox* detectedDevicesGroupBox = nullptr;
     QPlainTextEdit* detectedDevicesPlainTextEdit = nullptr;
-    QPushButton* refreshButton = nullptr;
+    QLabel* deviceAdviceLabel = nullptr;
+    QTimer* deviceTimer = nullptr;
+    QStringList lastDeviceTopology;
     QDialogButtonBox* buttonBox = nullptr;
     QTimer* pollTimer = nullptr;
+    QLabel* raphnetTimingLabel = nullptr;
+    QElapsedTimer listeningTimer;
+    int raphnetPlayer1Port = 0;
+    RaphnetPollingHealth raphnetPollingHealth;
+    QElapsedTimer raphnetMeasurementTimer;
+    bool raphnetConnectionSlow = false;
+    bool settingsLoaded = false;
+    int previousPageIndex = 0;
+    uint8_t gamecubeEndpointIn = 0x81;
+    uint8_t gamecubeEndpointOut = 0x02;
 
     hid_device* hidDevice = nullptr;
     int raphnetReportSize = 63;
@@ -234,7 +257,7 @@ class UnifiedInputDialog : public QDialog
 
     int listeningPageIndex = -1;
     int listeningBindingIndex = -1;
-    int listeningTicks = 0;
+    bool listeningArmed = false;
     std::unordered_map<int, bool> keyboardState;
 };
 } // namespace Dialog

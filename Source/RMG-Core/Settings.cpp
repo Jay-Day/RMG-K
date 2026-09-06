@@ -412,9 +412,12 @@ static l_Setting get_setting(SettingsID settingId)
                   };
         break;
 
+    case SettingsID::RaphnetInput_LastUsbWarning:
+        setting = {SETTING_SECTION_RAPHNET_INPUT, "LastUsbWarning", std::string("0"), "USB latency warning time; nonzero means the one-time popup has been shown"};
+        break;
     case SettingsID::RaphnetInput_InputMode:
         setting = {SETTING_SECTION_RAPHNET_INPUT, "InputMode", 0,
-            "0 = Default; 1 = Multithreaded/Cached/Adaptive/Nopak (recommended for USB latency > 2ms)"};
+            "Legacy value; raphnet input handling is now selected automatically"};
         break;
 
 
@@ -1611,6 +1614,10 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::GCAInput_Port4Enabled:
         setting = {SETTING_SECTION_GCA, "Port4Enabled", false};
+        break;
+    case SettingsID::GCAInput_ControllerPorts:
+        setting = {SETTING_SECTION_GCA, "ControllerPorts", "",
+            "Physical adapter port for each emulated player (0-3, -1 disabled); empty uses legacy enabled-port order"};
         break;
 
     case SettingsID::GCAInput_Map_A:

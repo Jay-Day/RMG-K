@@ -13,12 +13,15 @@
 #include <Utilities/QtKeyToSdl3Key.hpp>
 
 #include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Plugins.hpp>
+#include <RMG-Input-GCA/ControllerPorts.hpp>
 
 #include <SDL3/SDL.h>
 #include <hidapi.h>
 #include <libusb.h>
 
 #include <QCheckBox>
+#include <QApplication>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -27,9 +30,12 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QScrollArea>
+#include <QScreen>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -61,11 +67,11 @@ class ControllerPreviewPanel : public QWidget
     explicit ControllerPreviewPanel(QWidget* parent)
         : QWidget(parent)
     {
-        this->setMinimumSize(360, 220);
+        this->setMinimumSize(240, 180);
         this->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
         this->controllerImageWidget = new UserInterface::Widget::ControllerImageWidget(this);
-        this->controllerImageWidget->setMinimumSize(360, 220);
+        this->controllerImageWidget->setMinimumSize(240, 180);
         this->controllerImageWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
@@ -141,14 +147,11 @@ class ControllerPreviewPanel : public QWidget
 
 constexpr uint16_t kGameCubeAdapterVendorId = 0x057e;
 constexpr uint16_t kGameCubeAdapterProductId = 0x0337;
-constexpr uint8_t kGameCubeEndpointIn = 0x81;
-constexpr uint8_t kGameCubeEndpointOut = 0x02;
 constexpr uint8_t kGameCubeCommandPoll = 0x13;
 constexpr double kGameCubeN64AxisPeak = 85.0;
 constexpr double kGameCubeSensitivityOffset = 0.90;
 constexpr double kGameCubeSensitivityPerPercent = 0.0045;
 constexpr int kAxisMotionThreshold = SDL_AXIS_PEAK / 2;
-constexpr int kListenTimeoutTicks = 300;
 
 constexpr uint16_t kRaphnetVendorId = 0x289b;
 constexpr uint8_t kRaphnetRawSiCommand = 0x80;
@@ -317,6 +320,20 @@ std::string usb_profile_section(int pageIndex)
     return "Rosalie's Mupen GUI - Input Plugin Profile " + std::to_string(pageIndex);
 }
 
+std::string usb_effective_section(int pageIndex)
+{
+    const std::string section = usb_profile_section(pageIndex);
+    if (!CoreSettingsSectionExists(section))
+        return section;
+    const std::string profile = CoreSettingsGetStringValue(SettingsID::Input_UseProfile, section);
+    const auto profiles = CoreSettingsGetStringListValue(SettingsID::Input_Profiles);
+    const std::string userSection = "Rosalie's Mupen GUI - Input Plugin User Profile \"" + profile + "\"";
+    if (!profile.empty() && std::find(profiles.begin(), profiles.end(), profile) != profiles.end() &&
+        CoreSettingsSectionExists(userSection))
+        return userSection;
+    return section;
+}
+
 bool usb_device_is_raphnet(const UsbDeviceChoice& device)
 {
     return device.vendorId == kRaphnetVendorId || device.name.toLower().contains(QStringLiteral("raphnet"));
@@ -481,6 +498,11 @@ BindingValue load_usb_binding(const BindingTarget& target, const std::string& se
 
     const int type = CoreSettingsGetIntValue(target.usbInputType, section);
     const std::string name = CoreSettingsGetStringValue(target.usbName, section);
+    if (name.empty())
+    {
+        clear_binding(binding);
+        return binding;
+    }
     const int data = CoreSettingsGetIntValue(target.usbData, section);
     const int extraData = CoreSettingsGetIntValue(target.usbExtraData, section);
     set_single_binding(binding, static_cast<InputType>(type), data, extraData, QString::fromStdString(name));
@@ -676,9 +698,14 @@ QPushButton* add_mapping_row(QGridLayout* layout, ControllerPage* page, int row,
     auto* button = new QPushButton(parent);
     auto* clearButton = new QPushButton(parent);
 
-    button->setMinimumWidth(128);
+    button->setMinimumWidth(96);
+    button->setObjectName(QStringLiteral("binding%1").arg(bindingIndex));
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    clearButton->setText(QStringLiteral("Clear"));
+    clearButton->setText(QStringLiteral("×"));
+    clearButton->setFixedWidth(24);
+    clearButton->setToolTip(QCoreApplication::translate("UnifiedInputDialog", "Clear binding"));
+    clearButton->setAccessibleName(QCoreApplication::translate("UnifiedInputDialog", "Clear %1 binding")
+        .arg(QString::fromLatin1(target.label)));
     clearButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
     layout->addWidget(label, row, 0);
@@ -713,14 +740,22 @@ UnifiedInputDialog::UnifiedInputDialog(QWidget* parent, InputPluginType currentP
     : QDialog(parent),
       selectedPlugin(currentPlugin)
 {
+    this->raphnetConnectionSlow = CoreGetRaphnetHealth() == 2;
+    CorePauseRaphnetMonitoring(true);
+    this->raphnetPlayer1Port = std::clamp(CoreSettingsGetIntValue(SettingsID::RaphnetRaw_Player1AdapterPort), 1, 4) - 1;
     this->setupUi();
+    this->settingsLoaded = true;
     this->refreshDetection();
-    this->setSelectedPlugin(currentPlugin);
+    this->lastDeviceTopology = this->deviceTopology();
+    this->deviceTimer->start();
+    qApp->installEventFilter(this);
 }
 
 UnifiedInputDialog::~UnifiedInputDialog(void)
 {
+    qApp->removeEventFilter(this);
     this->closePreviewSource();
+    CorePauseRaphnetMonitoring(false);
     for (ControllerPage* page : this->controllerPages)
     {
         delete page;
@@ -732,71 +767,108 @@ UnifiedInputDialog::InputPluginType UnifiedInputDialog::GetSelectedPlugin(void) 
     return this->selectedPlugin;
 }
 
-int UnifiedInputDialog::GetSelectedDeviceIndex(void) const
-{
-    if (this->controllerPages.isEmpty() || this->controllerPages[0]->deviceComboBox == nullptr)
-    {
-        return -1;
-    }
-
-    return this->controllerPages[0]->deviceComboBox->currentData().toInt();
-}
-
 void UnifiedInputDialog::setupUi(void)
 {
     this->setWindowTitle(tr("Input Settings"));
-    this->setMinimumSize(1120, 760);
-    this->resize(1180, 860);
+    this->setMinimumSize(720, 480);
+    this->resize(QSize(1100, 760).boundedTo(this->screen()->availableGeometry().size() - QSize(40, 60)));
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(12, 12, 12, 12);
 
     this->tabWidget = new QTabWidget(this);
+    this->tabWidget->setObjectName("players");
     for (int i = 0; i < 4; i++)
     {
         QWidget* pageWidget = this->createControllerPage(i);
-        this->tabWidget->addTab(pageWidget, tr("Player %1").arg(i + 1));
+        auto* scroll = new QScrollArea(this->tabWidget);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidget(pageWidget);
+        this->tabWidget->addTab(scroll, tr("Player %1").arg(i + 1));
     }
     mainLayout->addWidget(this->tabWidget, 1);
 
-    this->debugDevicesCheckBox = new QCheckBox(tr("Show input detection debug"), this);
+    this->warningLabel = new QLabel(this);
+    this->warningLabel->setObjectName("slowPollingNotice");
+    this->warningLabel->setWordWrap(true);
+    this->warningLabel->setProperty("warningBox", true);
+    this->warningLabel->hide();
+    mainLayout->addWidget(this->warningLabel);
+
+    this->debugDevicesCheckBox = new QCheckBox(tr("Device details and troubleshooting"), this);
     mainLayout->addWidget(this->debugDevicesCheckBox);
 
-    this->detectedDevicesGroupBox = new QGroupBox(tr("Detected devices used for recommendations"), this);
+    this->detectedDevicesGroupBox = new QGroupBox(tr("Device details"), this);
     auto* detectedLayout = new QVBoxLayout(this->detectedDevicesGroupBox);
     this->detectedDevicesPlainTextEdit = new QPlainTextEdit(this->detectedDevicesGroupBox);
     this->detectedDevicesPlainTextEdit->setReadOnly(true);
     this->detectedDevicesPlainTextEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
     this->detectedDevicesPlainTextEdit->setMaximumHeight(88);
     detectedLayout->addWidget(this->detectedDevicesPlainTextEdit);
+    this->deviceAdviceLabel = new QLabel(this->detectedDevicesGroupBox);
+    this->deviceAdviceLabel->setWordWrap(true);
+    detectedLayout->addWidget(this->deviceAdviceLabel);
+    this->raphnetTimingLabel = new QLabel(this->detectedDevicesGroupBox);
+    this->raphnetTimingLabel->setWordWrap(true);
+    detectedLayout->addWidget(this->raphnetTimingLabel);
     this->detectedDevicesGroupBox->setVisible(false);
     mainLayout->addWidget(this->detectedDevicesGroupBox);
-
-    auto* actionsLayout = new QHBoxLayout();
-    this->refreshButton = new QPushButton(tr("Refresh Devices"), this);
-    actionsLayout->addWidget(this->refreshButton);
-    actionsLayout->addStretch();
-    mainLayout->addLayout(actionsLayout);
 
     this->buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults, this);
     if (QPushButton* okButton = this->buttonBox->button(QDialogButtonBox::Ok))
     {
-        okButton->setText(tr("Apply"));
+        okButton->setText(tr("Save and Close"));
     }
     mainLayout->addWidget(this->buttonBox);
 
     this->pollTimer = new QTimer(this);
     this->pollTimer->setInterval(16);
+    this->deviceTimer = new QTimer(this);
+    this->deviceTimer->setObjectName("deviceDetectionTimer");
+    this->deviceTimer->setInterval(2000);
+    connect(this->deviceTimer, &QTimer::timeout, this, [this]()
+    {
+        const QStringList topology = this->deviceTopology();
+        if (topology != this->lastDeviceTopology)
+        {
+            this->lastDeviceTopology = topology;
+            this->raphnetConnectionSlow = false;
+            this->refreshDetection();
+        }
+        else if (this->previewBackend == PreviewBackend::None && this->listeningPageIndex < 0)
+        {
+            this->openPreviewSource();
+        }
+    });
 
     connect(this->debugDevicesCheckBox, &QCheckBox::toggled, this->detectedDevicesGroupBox, &QGroupBox::setVisible);
-    connect(this->refreshButton, &QPushButton::clicked, this, &UnifiedInputDialog::refreshDetection);
     connect(this->pollTimer, &QTimer::timeout, this, &UnifiedInputDialog::pollPreview);
-    connect(this->tabWidget, &QTabWidget::currentChanged, this, [this](int)
+    connect(this->tabWidget, &QTabWidget::currentChanged, this, [this](int pageIndex)
     {
+        this->stopListeningForBinding(true);
+        this->syncSharedUsbProfile(this->previousPageIndex);
+        this->previousPageIndex = pageIndex;
+        this->updatePageBindingButtons(pageIndex);
         this->openPreviewSource();
     });
     connect(this->buttonBox, &QDialogButtonBox::accepted, this, [this]()
     {
+        if (this->selectedPlugin == InputPluginType::Gamecube)
+        {
+            std::array<bool, 4> usedPorts{};
+            for (ControllerPage* page : this->controllerPages)
+            {
+                if (!page->gamecubeEnabled) continue;
+                if (usedPorts[static_cast<size_t>(page->gamecubePort)])
+                {
+                    QMessageBox::warning(this, tr("Adapter ports"),
+                        tr("Choose a different adapter port for each enabled player."));
+                    return;
+                }
+                usedPorts[static_cast<size_t>(page->gamecubePort)] = true;
+            }
+        }
         this->saveAllSettings();
         this->accept();
     });
@@ -806,8 +878,8 @@ void UnifiedInputDialog::setupUi(void)
 
     this->setStyleSheet(
         "QLabel[warningBox=\"true\"] {"
-        "  background: #fdeaea;"
-        "  color: #7a1f1f;"
+        "  background: #fff3cd;"
+        "  color: #664d03;"
         "  border: 0;"
         "  border-radius: 4px;"
         "  padding: 8px 10px;"
@@ -847,8 +919,10 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     if (playerIndex == 0)
     {
         page->backendComboBox = new QComboBox(page->portGroupBox);
+        page->backendComboBox->setObjectName("controllerType");
         page->backendComboBox->setMaximumWidth(420);
-        portLayout->addRow(tr("Controller:"), page->backendComboBox);
+        portLayout->addRow(tr("Controller type:"), page->backendComboBox);
+        page->backendComboBox->setToolTip(tr("The controller type applies to all four players."));
         connect(page->backendComboBox, &QComboBox::currentIndexChanged, this, [this, page](int)
         {
             if (page->backendComboBox->currentIndex() >= 0)
@@ -859,6 +933,7 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     }
 
     page->deviceComboBox = new QComboBox(page->portGroupBox);
+    page->deviceComboBox->setObjectName(QStringLiteral("device%1").arg(playerIndex));
     page->deviceComboBox->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     page->deviceComboBox->setMinimumContentsLength(24);
     page->deviceComboBox->setMaximumWidth(420);
@@ -872,6 +947,20 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     portLayout->addRow(playerIndex == 0 ? tr("Device / port:") : tr("Device:"), deviceRowWidget);
     connect(page->deviceComboBox, &QComboBox::currentIndexChanged, this, [this, playerIndex](int)
     {
+        ControllerPage* page = this->controllerPages[playerIndex];
+        if (this->settingsLoaded && this->selectedPlugin == InputPluginType::USB) page->usbDirty = true;
+        const int value = page->deviceComboBox->currentData().toInt();
+        if (this->selectedPlugin == InputPluginType::USB && value >= 0 && value < this->usbDevices.size())
+            page->usbDevice = this->usbDevices[value];
+        else if (this->selectedPlugin == InputPluginType::Gamecube)
+            page->gamecubePort = std::clamp(value, 0, 3);
+        else if (this->selectedPlugin == InputPluginType::Raphnet && playerIndex == 0)
+        {
+            this->raphnetPlayer1Port = std::clamp(value, 0, 3);
+            for (int i = 1; i < this->controllerPages.size(); ++i)
+                this->updatePageDeviceChoices(i);
+        }
+        this->stopListeningForBinding(true);
         if (playerIndex == this->currentPageIndex())
         {
             this->openPreviewSource();
@@ -881,32 +970,21 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
             this->updateWarningLabel();
         }
     });
+    connect(page->pluggedInCheckBox, &QCheckBox::toggled, this, [this, page](bool checked)
+    {
+        if (this->selectedPlugin == InputPluginType::USB)
+        {
+            page->usbEnabled = checked;
+            if (this->settingsLoaded) page->usbDirty = true;
+        }
+        if (this->selectedPlugin == InputPluginType::Gamecube) page->gamecubeEnabled = checked;
+        this->stopListeningForBinding(true);
+        this->openPreviewSource();
+    });
 
     page->portGroupBox->setMaximumWidth(560);
     topLayout->addWidget(page->portGroupBox, 0);
-    if (playerIndex == 0)
-    {
-        this->warningLabel = new QLabel(root);
-        this->warningLabel->setWordWrap(true);
-        this->warningLabel->setProperty("warningBox", true);
-        this->warningLabel->setMinimumWidth(420);
-        this->warningLabel->setMaximumWidth(520);
-        this->warningLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        this->warningLabel->setVisible(false);
-        topLayout->addWidget(this->warningLabel, 0, Qt::AlignTop);
-        QTimer::singleShot(0, this, [this, page]()
-        {
-            if (this->warningLabel != nullptr && page->portGroupBox != nullptr)
-            {
-                this->warningLabel->setFixedHeight(page->portGroupBox->height());
-            }
-        });
-        topLayout->addStretch(1);
-    }
-    else
-    {
-        topLayout->addStretch(1);
-    }
+    topLayout->addStretch(1);
     rootLayout->addLayout(topLayout);
 
     page->mappingsGroupBox = new QGroupBox(tr("Controller bindings"), root);
@@ -984,10 +1062,12 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     page->usbDeadzoneSlider->setTickInterval(10);
     page->usbDeadzoneSlider->setTickPosition(QSlider::TicksBelow);
     page->usbRangeSlider = new QSlider(Qt::Horizontal, page->usbStickGroupBox);
+    page->usbRangeSlider->setObjectName(QStringLiteral("range%1").arg(playerIndex));
     page->usbRangeSlider->setRange(0, 200);
     page->usbRangeSlider->setTickInterval(10);
     page->usbRangeSlider->setTickPosition(QSlider::TicksBelow);
     page->realN64RangeCheckBox = new QCheckBox(tr("Use real N64 stick range"), page->usbStickGroupBox);
+    page->realN64RangeCheckBox->setObjectName(QStringLiteral("n64Range%1").arg(playerIndex));
     page->usbDeadzoneValueLabel = new QLabel(page->usbStickGroupBox);
     page->usbRangeValueLabel = new QLabel(page->usbStickGroupBox);
     usbStickLayout->addRow(tr("Deadzone:"), create_slider_value_row(page->usbStickGroupBox,
@@ -1063,6 +1143,8 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
 
     auto updateSliders = [this, playerIndex](int)
     {
+        if (this->settingsLoaded && this->selectedPlugin == InputPluginType::USB)
+            this->controllerPages[playerIndex]->usbDirty = true;
         this->updateSliderLabels(playerIndex);
     };
     connect(page->usbDeadzoneSlider, &QSlider::valueChanged, this, updateSliders);
@@ -1071,6 +1153,8 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     {
         ControllerPage* page = this->controllerPages[playerIndex];
         page->usbRangeSlider->setEnabled(!checked);
+        if (this->settingsLoaded) page->usbDirty = true;
+        if (checked) page->usbRangeSlider->setValue(66);
         this->updateSliderLabels(playerIndex);
     });
     connect(page->gamecubeDeadzoneSlider, &QSlider::valueChanged, this, updateSliders);
@@ -1097,6 +1181,7 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
 
 void UnifiedInputDialog::refreshDetection(void)
 {
+    this->stopListeningForBinding(true);
     this->closePreviewSource();
     this->keyboardState.clear();
     this->detectionReport = UnifiedInputDialog::ScanInputDevices();
@@ -1109,6 +1194,48 @@ void UnifiedInputDialog::refreshDetection(void)
 
     this->updateAllPages();
     this->openPreviewSource();
+}
+
+QStringList UnifiedInputDialog::deviceTopology(void)
+{
+    // Enumerate identities without reopening the active preview or interrupting
+    // its measurements. Only an actual device change requires a full refresh.
+    QStringList devices;
+    SDL_UpdateJoysticks();
+    int count = 0;
+    SDL_JoystickID* joysticks = SDL_GetJoysticks(&count);
+    for (int i = 0; i < count; ++i)
+        devices.append(QStringLiteral("sdl:%1").arg(joysticks[i]));
+    SDL_free(joysticks);
+
+    if (hid_init() == 0)
+    {
+        hid_device_info* adapters = hid_enumerate(kRaphnetVendorId, 0);
+        for (auto* adapter = adapters; adapter != nullptr; adapter = adapter->next)
+            if (find_raphnet_adapter(adapter->product_id, adapter->interface_number))
+                devices.append(QStringLiteral("hid:%1").arg(QString::fromUtf8(adapter->path)));
+        hid_free_enumeration(adapters);
+        if (this->hidDevice == nullptr) hid_exit();
+    }
+
+    libusb_context* context = nullptr;
+    if (libusb_init(&context) == LIBUSB_SUCCESS)
+    {
+        libusb_device** adapters = nullptr;
+        const ssize_t adapterCount = libusb_get_device_list(context, &adapters);
+        for (ssize_t i = 0; i < adapterCount; ++i)
+        {
+            libusb_device_descriptor descriptor = {};
+            if (libusb_get_device_descriptor(adapters[i], &descriptor) == LIBUSB_SUCCESS &&
+                descriptor.idVendor == kGameCubeAdapterVendorId && descriptor.idProduct == kGameCubeAdapterProductId)
+                devices.append(QStringLiteral("gca:%1:%2")
+                    .arg(libusb_get_bus_number(adapters[i])).arg(libusb_get_device_address(adapters[i])));
+        }
+        if (adapters != nullptr) libusb_free_device_list(adapters, 1);
+        libusb_exit(context);
+    }
+    devices.sort();
+    return devices;
 }
 
 void UnifiedInputDialog::updateWarningLabel(void)
@@ -1129,7 +1256,7 @@ void UnifiedInputDialog::updateWarningLabel(void)
 
     if (this->detectionReport.foundBlockedNativeGamecube)
     {
-        addWarning(tr("Native GameCube adapter detected, but driver is missing."));
+        addWarning(tr("Native GameCube adapter detected, but access failed. Check the driver and close other apps using the adapter."));
     }
 
     if (this->detectionReport.foundUsbModeMayflash)
@@ -1162,13 +1289,16 @@ void UnifiedInputDialog::updateWarningLabel(void)
                      this->detectionReport.foundNativeGamecube &&
                      usb_device_is_gamecube_like(device))
             {
-                addWarning(tr("GameCube adapter is selected as Other USB. Use Gamecube Controller (Native) for better support."));
+                addWarning(tr("GameCube adapter is selected as Other USB. Use GameCube Controller (Native) for better support."));
             }
         }
     }
 
-    this->warningLabel->setText(warnings.join(QStringLiteral("\n")));
-    this->warningLabel->setVisible(!warnings.isEmpty());
+    this->deviceAdviceLabel->setText(warnings.join(QStringLiteral("\n")));
+    this->deviceAdviceLabel->setVisible(!warnings.isEmpty());
+    this->warningLabel->setText(tr("Slow controller polling detected. This may increase input latency. "
+        "Try another USB port directly on your computer, without a hub."));
+    this->warningLabel->setVisible(this->selectedPlugin == InputPluginType::Raphnet && this->raphnetConnectionSlow);
 }
 
 void UnifiedInputDialog::refreshUsbDevices(void)
@@ -1211,6 +1341,31 @@ void UnifiedInputDialog::refreshUsbDevices(void)
     {
         SDL_free(joysticks);
     }
+
+    // Keep disconnected selections visible instead of assigning a different controller.
+    for (ControllerPage* page : this->controllerPages)
+    {
+        const UsbDeviceChoice& saved = page->usbDevice;
+        if (saved.type == InputDeviceType::Automatic)
+        {
+            if (std::none_of(this->usbDevices.begin(), this->usbDevices.end(), [](const UsbDeviceChoice& device)
+                { return device.type == InputDeviceType::Automatic; })) this->usbDevices.append(saved);
+            continue;
+        }
+        if (saved.type != InputDeviceType::Joystick) continue;
+        const auto matches = [&saved](const UsbDeviceChoice& device)
+        {
+            return device.type == saved.type && device.name == saved.name &&
+                (saved.path.isEmpty() || saved.path == device.path);
+        };
+        if (std::none_of(this->usbDevices.begin(), this->usbDevices.end(), matches))
+        {
+            UsbDeviceChoice missing = saved;
+            missing.connected = false;
+            missing.id = 0;
+            this->usbDevices.append(missing);
+        }
+    }
 }
 
 void UnifiedInputDialog::updateAllPages(void)
@@ -1220,46 +1375,10 @@ void UnifiedInputDialog::updateAllPages(void)
         this->updatePageMode(i);
     }
     this->updateWarningLabel();
+    this->updateRaphnetDiagnostics();
 }
 
-bool UnifiedInputDialog::isPluginAvailable(InputPluginType plugin) const
-{
-    switch (plugin)
-    {
-    case InputPluginType::Raphnet:
-        return this->detectionReport.foundRaphnet;
-    case InputPluginType::Gamecube:
-        return this->detectionReport.foundNativeGamecube;
-    case InputPluginType::USB:
-    default:
-        return true;
-    }
-}
 
-UnifiedInputDialog::InputPluginType UnifiedInputDialog::availablePluginOrFallback(InputPluginType plugin) const
-{
-    if (this->isPluginAvailable(plugin))
-    {
-        return plugin;
-    }
-
-    const Recommendation recommendation = UnifiedInputDialog::DetectRecommendedPlugin(this->detectionReport);
-    if (recommendation.hasRecommendation && this->isPluginAvailable(recommendation.plugin))
-    {
-        return recommendation.plugin;
-    }
-
-    if (this->detectionReport.foundRaphnet)
-    {
-        return InputPluginType::Raphnet;
-    }
-    if (this->detectionReport.foundNativeGamecube)
-    {
-        return InputPluginType::Gamecube;
-    }
-
-    return InputPluginType::USB;
-}
 
 void UnifiedInputDialog::updateBackendChoices(void)
 {
@@ -1272,17 +1391,16 @@ void UnifiedInputDialog::updateBackendChoices(void)
     QSignalBlocker blocker(comboBox);
     comboBox->clear();
 
-    if (this->detectionReport.foundRaphnet)
+    if (this->detectionReport.foundRaphnet || this->selectedPlugin == InputPluginType::Raphnet)
     {
         comboBox->addItem(tr("N64 Controller (Raphnet)"), static_cast<int>(InputPluginType::Raphnet));
     }
-    if (this->detectionReport.foundNativeGamecube)
+    if (this->detectionReport.foundNativeGamecube || this->selectedPlugin == InputPluginType::Gamecube)
     {
-        comboBox->addItem(tr("Gamecube Controller (Native)"), static_cast<int>(InputPluginType::Gamecube));
+        comboBox->addItem(tr("GameCube Controller (Native)"), static_cast<int>(InputPluginType::Gamecube));
     }
-    comboBox->addItem(tr("Other USB controller"), static_cast<int>(InputPluginType::USB));
+    comboBox->addItem(tr("USB controller / keyboard"), static_cast<int>(InputPluginType::USB));
 
-    this->selectedPlugin = this->availablePluginOrFallback(this->selectedPlugin);
     const int targetIndex = comboBox->findData(static_cast<int>(this->selectedPlugin));
     comboBox->setCurrentIndex(targetIndex >= 0 ? targetIndex : 0);
 }
@@ -1306,10 +1424,8 @@ void UnifiedInputDialog::updatePageMode(int pageIndex)
     page->gamecubeStickGroupBox->setVisible(gamecubeMode && pageIndex == 0);
     page->gamecubeTriggerGroupBox->setVisible(gamecubeMode && pageIndex == 0);
     page->pluggedInCheckBox->setVisible(pageIndex > 0 && (usbMode || gamecubeMode));
-    if (pageIndex == 0)
-    {
-        page->pluggedInCheckBox->setChecked(true);
-    }
+    QSignalBlocker enabledBlocker(page->pluggedInCheckBox);
+    page->pluggedInCheckBox->setChecked(usbMode ? page->usbEnabled : page->gamecubeEnabled);
 
     if (usbMode)
     {
@@ -1340,98 +1456,59 @@ void UnifiedInputDialog::updatePageMode(int pageIndex)
 void UnifiedInputDialog::updatePageDeviceChoices(int pageIndex)
 {
     ControllerPage* page = this->controllerPages[pageIndex];
-    const QVariant oldData = page->deviceComboBox->currentData();
     QSignalBlocker blocker(page->deviceComboBox);
     page->deviceComboBox->clear();
+    page->deviceComboBox->setEnabled(true);
 
     if (this->selectedPlugin == InputPluginType::USB)
     {
-        for (int i = 0; i < static_cast<int>(this->usbDevices.size()); i++)
+        int selectedIndex = -1;
+        for (int i = 0; i < this->usbDevices.size(); ++i)
         {
             const UsbDeviceChoice& device = this->usbDevices[i];
-            if (pageIndex == 0 && device.type == InputDeviceType::None)
-            {
-                continue;
-            }
-
-            page->deviceComboBox->addItem(device.name.isEmpty() ? tr("Unnamed SDL device") : device.name, i);
+            if (pageIndex == 0 && device.type == InputDeviceType::None) continue;
+            const QString name = device.name.isEmpty() ? tr("Unnamed controller") : device.name;
+            page->deviceComboBox->addItem(device.connected ? name : tr("%1 (disconnected)").arg(name), i);
+            const UsbDeviceChoice& saved = page->usbDevice;
+            if (device.type == saved.type && device.name == saved.name &&
+                (saved.path.isEmpty() || device.path == saved.path))
+                selectedIndex = page->deviceComboBox->count() - 1;
         }
-
-        if (oldData.isValid())
+        if (selectedIndex < 0) selectedIndex = 0;
+        page->deviceComboBox->setCurrentIndex(selectedIndex);
+        const int index = page->deviceComboBox->currentData().toInt();
+        if (index >= 0 && index < this->usbDevices.size())
         {
-            const int targetIndex = page->deviceComboBox->findData(oldData);
-            if (targetIndex >= 0)
-            {
-                page->deviceComboBox->setCurrentIndex(targetIndex);
-                return;
-            }
+            const QString serial = page->usbDevice.serial;
+            page->usbDevice = this->usbDevices[index];
+            if (page->usbDevice.serial.isEmpty()) page->usbDevice.serial = serial;
         }
-
-        const std::string section = usb_profile_section(pageIndex);
-        if (CoreSettingsSectionExists(section))
-        {
-            const QString savedName = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Input_DeviceName, section));
-            const QString savedPath = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Input_DevicePath, section));
-            const InputDeviceType savedType = static_cast<InputDeviceType>(CoreSettingsGetIntValue(SettingsID::Input_DeviceType, section));
-            for (int i = 0; i < static_cast<int>(this->usbDevices.size()); i++)
-            {
-                const UsbDeviceChoice& device = this->usbDevices[i];
-                if (device.type == savedType && device.name == savedName &&
-                    (savedPath.isEmpty() || device.path == savedPath))
-                {
-                    const int targetIndex = page->deviceComboBox->findData(i);
-                    if (targetIndex >= 0)
-                    {
-                        page->deviceComboBox->setCurrentIndex(targetIndex);
-                        return;
-                    }
-                }
-            }
-        }
-
-        if (pageIndex == 0)
-        {
-            for (int i = 0; i < page->deviceComboBox->count(); i++)
-            {
-                const int deviceIndex = page->deviceComboBox->itemData(i).toInt();
-                if (deviceIndex >= 0 &&
-                    deviceIndex < static_cast<int>(this->usbDevices.size()) &&
-                    this->usbDevices[deviceIndex].type == InputDeviceType::Joystick)
-                {
-                    page->deviceComboBox->setCurrentIndex(i);
-                    return;
-                }
-            }
-        }
-
-        page->deviceComboBox->setCurrentIndex(0);
         return;
     }
 
-    const int portCount = this->selectedPlugin == InputPluginType::Raphnet ? std::max(1, this->raphnetChannelCount) : 4;
-    for (int i = 0; i < portCount; i++)
+    if (this->selectedPlugin == InputPluginType::Gamecube)
     {
-        page->deviceComboBox->addItem(tr("Adapter port %1").arg(i + 1), i);
-    }
-
-    if (oldData.isValid())
-    {
-        const int targetIndex = page->deviceComboBox->findData(oldData);
-        if (targetIndex >= 0)
-        {
-            page->deviceComboBox->setCurrentIndex(targetIndex);
-            return;
-        }
-    }
-
-    if (this->selectedPlugin == InputPluginType::Raphnet && pageIndex == 0)
-    {
-        const int configuredPort = std::clamp(CoreSettingsGetIntValue(SettingsID::RaphnetRaw_Player1AdapterPort), 1, portCount);
-        page->deviceComboBox->setCurrentIndex(configuredPort - 1);
+        for (int port = 0; port < 4; ++port)
+            page->deviceComboBox->addItem(tr("Adapter port %1").arg(port + 1), port);
+        page->deviceComboBox->setCurrentIndex(page->gamecubePort);
         return;
     }
 
-    page->deviceComboBox->setCurrentIndex(std::min(pageIndex, portCount - 1));
+    // raphnet swaps Player 1 with the selected channel; other slots follow that same map.
+    const int portCount = std::max(this->raphnetChannelCount, this->raphnetPlayer1Port + 1);
+    if (pageIndex == 0)
+    {
+        for (int port = 0; port < portCount; ++port)
+            page->deviceComboBox->addItem(tr("Adapter port %1").arg(port + 1), port);
+        page->deviceComboBox->setCurrentIndex(this->raphnetPlayer1Port);
+    }
+    else
+    {
+        const int port = pageIndex == this->raphnetPlayer1Port ? 0 : pageIndex;
+        page->deviceComboBox->addItem(port < this->raphnetChannelCount ?
+            tr("Adapter port %1").arg(port + 1) : tr("No adapter port"), port);
+        page->deviceComboBox->setEnabled(false);
+    }
 }
 
 void UnifiedInputDialog::updatePageBindingButtons(int pageIndex)
@@ -1454,7 +1531,7 @@ void UnifiedInputDialog::updatePageBindingButtons(int pageIndex)
         }
         else if (gamecubeMode && kBindingTargets[static_cast<size_t>(i)].hasGamecubeMapping)
         {
-            page->bindingButtons[i]->setText(gc_input_to_string(static_cast<GCInput>(page->gamecubeBindings[i])));
+            page->bindingButtons[i]->setText(gc_input_to_string(static_cast<GCInput>(this->controllerPages[0]->gamecubeBindings[i])));
         }
         else
         {
@@ -1470,7 +1547,7 @@ void UnifiedInputDialog::updateSliderLabels(int pageIndex)
     {
         page->usbDeadzoneValueLabel->setText(tr("%1%").arg(page->usbDeadzoneSlider->value()));
         page->usbRangeValueLabel->setText(tr("%1%")
-            .arg(page->realN64RangeCheckBox->isChecked() ? 100 : page->usbRangeSlider->value()));
+            .arg(page->realN64RangeCheckBox->isChecked() ? 66 : page->usbRangeSlider->value()));
     }
 
     if (page->gamecubeDeadzoneValueLabel != nullptr &&
@@ -1485,12 +1562,9 @@ void UnifiedInputDialog::updateSliderLabels(int pageIndex)
 
 void UnifiedInputDialog::setSelectedPlugin(InputPluginType plugin)
 {
-    this->selectedPlugin = this->availablePluginOrFallback(plugin);
     this->stopListeningForBinding(true);
-    for (int i = 0; i < static_cast<int>(this->controllerPages.size()); i++)
-    {
-        this->loadPageSettings(i);
-    }
+    this->syncSharedUsbProfile(this->currentPageIndex());
+    this->selectedPlugin = plugin;
     this->updateAllPages();
     this->openPreviewSource();
 }
@@ -1508,7 +1582,9 @@ int UnifiedInputDialog::currentPageIndex(void) const
 void UnifiedInputDialog::loadPageSettings(int pageIndex)
 {
     ControllerPage* page = this->controllerPages[pageIndex];
-    const std::string section = usb_profile_section(pageIndex);
+    page->usbSection = usb_effective_section(pageIndex);
+    const std::string& section = page->usbSection;
+    QSignalBlocker enabledBlocker(page->pluggedInCheckBox);
     const bool usbSectionExists = CoreSettingsSectionExists(section);
 
     if (usbSectionExists)
@@ -1521,6 +1597,7 @@ void UnifiedInputDialog::loadPageSettings(int pageIndex)
     }
     else
     {
+        page->usbDirty = true;
         page->pluggedInCheckBox->setChecked(pageIndex == 0);
         page->usbDeadzoneSlider->setValue(9);
         page->usbRangeSlider->setValue(66);
@@ -1566,17 +1643,31 @@ void UnifiedInputDialog::loadPageSettings(int pageIndex)
     apply_gamecube_trigger_mode(page->gamecubeBindings, true, leftTriggerAnalog);
     apply_gamecube_trigger_mode(page->gamecubeBindings, false, rightTriggerAnalog);
 
-    if (this->selectedPlugin == InputPluginType::Gamecube)
+    page->usbEnabled = page->pluggedInCheckBox->isChecked();
+    if (usbSectionExists)
     {
-        const std::array<SettingsID, 4> portSettings = {{
-            SettingsID::GCAInput_Port1Enabled,
-            SettingsID::GCAInput_Port2Enabled,
-            SettingsID::GCAInput_Port3Enabled,
-            SettingsID::GCAInput_Port4Enabled
-        }};
-        page->pluggedInCheckBox->setChecked(pageIndex == 0 ||
-            CoreSettingsGetBoolValue(portSettings[static_cast<size_t>(pageIndex)]));
+        page->usbDevice.type = static_cast<InputDeviceType>(CoreSettingsGetIntValue(SettingsID::Input_DeviceType, section));
+        page->usbDevice.name = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Input_DeviceName, section));
+        page->usbDevice.path = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Input_DevicePath, section));
+        page->usbDevice.serial = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Input_DeviceSerial, section));
     }
+    else
+    {
+        page->usbDevice.type = pageIndex == 0 ? InputDeviceType::Keyboard : InputDeviceType::None;
+        page->usbDevice.name = pageIndex == 0 ? QStringLiteral("Keyboard") : QStringLiteral("None");
+    }
+    const std::array<SettingsID, 4> portSettings = {{
+        SettingsID::GCAInput_Port1Enabled, SettingsID::GCAInput_Port2Enabled,
+        SettingsID::GCAInput_Port3Enabled, SettingsID::GCAInput_Port4Enabled
+    }};
+    std::array<bool, 4> enabledPorts{};
+    for (size_t port = 0; port < enabledPorts.size(); ++port)
+        enabledPorts[port] = CoreSettingsGetBoolValue(portSettings[port]);
+    const auto ports = ResolveGameCubeControllerPorts(
+        CoreSettingsGetIntListValue(SettingsID::GCAInput_ControllerPorts), enabledPorts);
+    page->gamecubeEnabled = ports[static_cast<size_t>(pageIndex)] >= 0;
+    page->gamecubePort = page->gamecubeEnabled ? std::clamp(ports[static_cast<size_t>(pageIndex)], 0, 3) : pageIndex;
+    if (pageIndex == 0) page->gamecubeEnabled = true;
 
     this->updatePageBindingButtons(pageIndex);
     this->updateSliderLabels(pageIndex);
@@ -1584,6 +1675,7 @@ void UnifiedInputDialog::loadPageSettings(int pageIndex)
 
 void UnifiedInputDialog::saveAllSettings(void)
 {
+    this->syncSharedUsbProfile(this->currentPageIndex());
     if (this->selectedPlugin == InputPluginType::USB)
     {
         for (int i = 0; i < static_cast<int>(this->controllerPages.size()); i++)
@@ -1603,10 +1695,39 @@ void UnifiedInputDialog::saveAllSettings(void)
     CoreSettingsSave();
 }
 
+void UnifiedInputDialog::syncSharedUsbProfile(int pageIndex)
+{
+    if (this->selectedPlugin != InputPluginType::USB) return;
+    const ControllerPage* source = this->controllerPages[pageIndex];
+    if (!source->usbDirty) return;
+    for (int i = 0; i < this->controllerPages.size(); ++i)
+    {
+        ControllerPage* page = this->controllerPages[i];
+        if (page == source || page->usbSection != source->usbSection) continue;
+        QSignalBlocker enabled(page->pluggedInCheckBox);
+        QSignalBlocker deadzone(page->usbDeadzoneSlider);
+        QSignalBlocker range(page->usbRangeSlider);
+        QSignalBlocker n64Range(page->realN64RangeCheckBox);
+        page->usbDirty = true;
+        page->usbEnabled = source->usbEnabled;
+        page->usbDevice = source->usbDevice;
+        page->usbBindings = source->usbBindings;
+        page->pluggedInCheckBox->setChecked(page->usbEnabled);
+        page->usbDeadzoneSlider->setValue(source->usbDeadzoneSlider->value());
+        page->usbRangeSlider->setValue(source->usbRangeSlider->value());
+        page->realN64RangeCheckBox->setChecked(source->realN64RangeCheckBox->isChecked());
+        page->usbRangeSlider->setEnabled(!page->realN64RangeCheckBox->isChecked());
+        this->updatePageDeviceChoices(i);
+        this->updatePageBindingButtons(i);
+        this->updateSliderLabels(i);
+    }
+}
+
 void UnifiedInputDialog::saveUsbSettings(int pageIndex)
 {
     ControllerPage* page = this->controllerPages[pageIndex];
-    const std::string section = usb_profile_section(pageIndex);
+    const std::string& section = page->usbSection;
+    if (!page->usbDirty && CoreSettingsSectionExists(section)) return;
     const int deviceIndex = page->deviceComboBox->currentData().toInt();
     UsbDeviceChoice device;
     if (deviceIndex >= 0 && deviceIndex < static_cast<int>(this->usbDevices.size()))
@@ -1614,7 +1735,6 @@ void UnifiedInputDialog::saveUsbSettings(int pageIndex)
         device = this->usbDevices[deviceIndex];
     }
 
-    CoreSettingsSetValue(SettingsID::Input_UseProfile, section, std::string(""));
     if (pageIndex == 0 && device.type == InputDeviceType::None)
     {
         for (const UsbDeviceChoice& fallbackDevice : this->usbDevices)
@@ -1644,14 +1764,12 @@ void UnifiedInputDialog::saveUsbSettings(int pageIndex)
     CoreSettingsSetValue(SettingsID::Input_DeviceName, section, device.name.toStdString());
     CoreSettingsSetValue(SettingsID::Input_DeviceType, section, static_cast<int>(device.type));
     CoreSettingsSetValue(SettingsID::Input_DevicePath, section, device.path.toStdString());
-    CoreSettingsSetValue(SettingsID::Input_DeviceSerial, section, device.serial.toStdString());
+    CoreSettingsSetValue(SettingsID::Input_DeviceSerial, section, (device.serial.isEmpty() ? page->usbDevice.serial : device.serial).toStdString());
     CoreSettingsSetValue(SettingsID::Input_Deadzone, section, page->usbDeadzoneSlider->value());
-    CoreSettingsSetValue(SettingsID::Input_Range, section, page->usbRangeSlider->value());
+    CoreSettingsSetValue(SettingsID::Input_Range, section, page->realN64RangeCheckBox->isChecked() ? 66 : page->usbRangeSlider->value());
     CoreSettingsSetValue(SettingsID::Input_RealN64Range, section, page->realN64RangeCheckBox->isChecked());
-    CoreSettingsSetValue(SettingsID::Input_Pak, section, static_cast<int>(N64ControllerPak::MemoryPak));
-    CoreSettingsSetValue(SettingsID::Input_RemoveDuplicateMappings, section, true);
-    CoreSettingsSetValue(SettingsID::Input_FilterEventsForButtons, section, true);
-    CoreSettingsSetValue(SettingsID::Input_FilterEventsForAxis, section, true);
+    if (!CoreSettingsKeyExists(section, "Pak"))
+        CoreSettingsSetValue(SettingsID::Input_Pak, section, static_cast<int>(N64ControllerPak::MemoryPak));
 
     for (int i = 0; i < static_cast<int>(kBindingTargets.size()); i++)
     {
@@ -1680,6 +1798,7 @@ void UnifiedInputDialog::saveGamecubeSettings(void)
         SettingsID::GCAInput_Port4Enabled
     }};
     std::array<bool, 4> enabledPorts = {{ false, false, false, false }};
+    std::vector<int> controllerPorts(4, -1);
     for (int i = 0; i < static_cast<int>(this->controllerPages.size()); i++)
     {
         ControllerPage* playerPage = this->controllerPages[i];
@@ -1690,8 +1809,10 @@ void UnifiedInputDialog::saveGamecubeSettings(void)
 
         const int port = std::clamp(playerPage->deviceComboBox->currentData().toInt(), 0, 3);
         enabledPorts[static_cast<size_t>(port)] = true;
+        controllerPorts[static_cast<size_t>(i)] = port;
     }
 
+    CoreSettingsSetValue(SettingsID::GCAInput_ControllerPorts, controllerPorts);
     for (int i = 0; i < 4; i++)
     {
         CoreSettingsSetValue(portSettings[static_cast<size_t>(i)], enabledPorts[static_cast<size_t>(i)]);
@@ -1729,6 +1850,7 @@ void UnifiedInputDialog::restoreCurrentPageDefaults(void)
 
     if (this->selectedPlugin == InputPluginType::USB)
     {
+        page->usbDirty = true;
         page->pluggedInCheckBox->setChecked(pageIndex == 0);
         page->usbDeadzoneSlider->setValue(9);
         page->usbRangeSlider->setValue(66);
@@ -1786,9 +1908,10 @@ void UnifiedInputDialog::startListeningForBinding(int pageIndex, int bindingInde
     this->stopListeningForBinding(true);
     this->listeningPageIndex = pageIndex;
     this->listeningBindingIndex = bindingIndex;
-    this->listeningTicks = 0;
+    this->listeningArmed = false;
+    this->listeningTimer.start();
     this->updatePageBindingButtons(pageIndex);
-    this->openPreviewSource();
+    this->pollTimer->start();
 }
 
 void UnifiedInputDialog::stopListeningForBinding(bool restoreText)
@@ -1796,7 +1919,6 @@ void UnifiedInputDialog::stopListeningForBinding(bool restoreText)
     const int oldPageIndex = this->listeningPageIndex;
     this->listeningPageIndex = -1;
     this->listeningBindingIndex = -1;
-    this->listeningTicks = 0;
 
     if (restoreText && oldPageIndex >= 0 && oldPageIndex < static_cast<int>(this->controllerPages.size()))
     {
@@ -1807,8 +1929,10 @@ void UnifiedInputDialog::stopListeningForBinding(bool restoreText)
 void UnifiedInputDialog::clearBinding(int pageIndex, int bindingIndex)
 {
     ControllerPage* page = this->controllerPages[pageIndex];
+    this->stopListeningForBinding(true);
     if (this->selectedPlugin == InputPluginType::USB)
     {
+        page->usbDirty = true;
         clear_binding(page->usbBindings[bindingIndex]);
     }
     else if (this->selectedPlugin == InputPluginType::Gamecube &&
@@ -1834,7 +1958,7 @@ void UnifiedInputDialog::setGamecubeTriggerAnalog(bool leftTrigger, bool analog)
 
 void UnifiedInputDialog::keyPressEvent(QKeyEvent* event)
 {
-    if (event == nullptr || event->isAutoRepeat())
+    if (event->isAutoRepeat())
     {
         QDialog::keyPressEvent(event);
         return;
@@ -1842,12 +1966,19 @@ void UnifiedInputDialog::keyPressEvent(QKeyEvent* event)
 
     const int key = Utilities::QtKeyToSdl3Key(event->key());
     this->keyboardState[key] = true;
+    if (event->key() == Qt::Key_Escape && this->listeningPageIndex >= 0)
+    {
+        this->stopListeningForBinding(true);
+        return;
+    }
 
     if (this->selectedPlugin == InputPluginType::USB &&
         this->listeningPageIndex >= 0 &&
         this->listeningBindingIndex >= 0)
     {
+        if (key == SDL_SCANCODE_UNKNOWN) return;
         ControllerPage* page = this->controllerPages[this->listeningPageIndex];
+        page->usbDirty = true;
         set_single_binding(page->usbBindings[this->listeningBindingIndex], InputType::Keyboard, key, 0,
             QString::fromUtf8(SDL_GetScancodeName(static_cast<SDL_Scancode>(key))));
         const int pageIndex = this->listeningPageIndex;
@@ -1861,7 +1992,7 @@ void UnifiedInputDialog::keyPressEvent(QKeyEvent* event)
 
 void UnifiedInputDialog::keyReleaseEvent(QKeyEvent* event)
 {
-    if (event == nullptr || event->isAutoRepeat())
+    if (event->isAutoRepeat())
     {
         QDialog::keyReleaseEvent(event);
         return;
@@ -1870,6 +2001,40 @@ void UnifiedInputDialog::keyReleaseEvent(QKeyEvent* event)
     const int key = Utilities::QtKeyToSdl3Key(event->key());
     this->keyboardState[key] = false;
     QDialog::keyReleaseEvent(event);
+}
+
+void UnifiedInputDialog::done(int result)
+{
+    this->deviceTimer->stop();
+    this->stopListeningForBinding(true);
+    this->closePreviewSource();
+    QDialog::done(result);
+}
+
+bool UnifiedInputDialog::eventFilter(QObject* object, QEvent* event)
+{
+    auto* widget = qobject_cast<QWidget*>(object);
+    if (widget == nullptr || widget->window() != this) return false;
+    if (event->type() == QEvent::WindowDeactivate)
+    {
+        this->keyboardState.clear();
+        this->stopListeningForBinding(true);
+    }
+    if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)
+    {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        if (!keyEvent->isAutoRepeat())
+        {
+            const int key = Utilities::QtKeyToSdl3Key(keyEvent->key());
+            this->keyboardState[key] = event->type() == QEvent::KeyPress;
+        }
+        if (event->type() == QEvent::KeyPress && this->listeningPageIndex >= 0)
+        {
+            this->keyPressEvent(keyEvent);
+            return true;
+        }
+    }
+    return QDialog::eventFilter(object, event);
 }
 
 void UnifiedInputDialog::clearPreview(void)
@@ -1898,7 +2063,19 @@ void UnifiedInputDialog::openPreviewSource(void)
     this->closePreviewSource();
     this->clearPreview();
     this->gamecubeSelectedPortMissingController = false;
+    this->keyboardState.clear();
+    this->raphnetPollingHealth.reset();
+    this->raphnetPollingHealth.connection.cached = this->raphnetConnectionSlow;
+    this->raphnetMeasurementTimer.start();
+    this->updateRaphnetDiagnostics();
     this->updateWarningLabel();
+    ControllerPage* page = this->controllerPages[this->currentPageIndex()];
+    if ((this->selectedPlugin == InputPluginType::USB && !page->usbEnabled) ||
+        (this->selectedPlugin == InputPluginType::Gamecube && !page->gamecubeEnabled))
+    {
+        show_status(page->statusLabel, tr("This player is disabled."));
+        return;
+    }
 
     bool opened = false;
     switch (this->selectedPlugin)
@@ -1918,6 +2095,12 @@ void UnifiedInputDialog::openPreviewSource(void)
     if (opened)
     {
         this->pollTimer->start();
+    }
+    else
+    {
+        this->raphnetConnectionSlow = false;
+        this->updateWarningLabel();
+        this->closePreviewSource();
     }
 }
 
@@ -1983,7 +2166,7 @@ void UnifiedInputDialog::pollPreview(void)
         break;
     case PreviewBackend::None:
     default:
-        return;
+        break;
     }
 
     if (!ok)
@@ -1993,8 +2176,7 @@ void UnifiedInputDialog::pollPreview(void)
 
     if (this->listeningPageIndex >= 0)
     {
-        this->listeningTicks++;
-        if (this->listeningTicks >= kListenTimeoutTicks)
+        if (this->listeningTimer.elapsed() >= 5000)
         {
             this->stopListeningForBinding(true);
         }
@@ -2039,16 +2221,12 @@ bool UnifiedInputDialog::openRaphnetPreview(void)
         return false;
     }
 
-    this->updatePageDeviceChoices(pageIndex);
-    if (pageIndex == 0)
+    for (int i = 0; i < this->controllerPages.size(); ++i) this->updatePageDeviceChoices(i);
+    if (!this->setRaphnetPollingSuspended(true))
     {
-        const int configuredPort = std::clamp(
-            CoreSettingsGetIntValue(SettingsID::RaphnetRaw_Player1AdapterPort),
-            1, std::max(1, this->raphnetChannelCount));
-        QSignalBlocker blocker(page->deviceComboBox);
-        page->deviceComboBox->setCurrentIndex(configuredPort - 1);
+        show_status(page->statusLabel, tr("Could not start the raphnet input test. Close other apps using the adapter; RMG-K will retry automatically."));
+        return false;
     }
-    this->setRaphnetPollingSuspended(true);
     this->previewBackend = PreviewBackend::Raphnet;
     clear_status(page->statusLabel);
     return true;
@@ -2120,11 +2298,27 @@ bool UnifiedInputDialog::pollRaphnetPreview(void)
     unsigned char response[64] = {};
     int responseLength = 0;
 
-    if (!this->exchangeRaphnetCommand(command, sizeof(command), response, responseLength) ||
-        responseLength < 7 || response[2] < 4)
+    QElapsedTimer timer;
+    timer.start();
+    const bool success = this->exchangeRaphnetCommand(command, sizeof(command), response, responseLength);
+    const qint64 elapsedUs = timer.nsecsElapsed() / 1000;
+    if (!success || responseLength < 7 || response[1] != channel || response[2] != 4)
     {
+        this->raphnetPollingHealth.reset();
+        this->raphnetConnectionSlow = false;
+        this->updateWarningLabel();
+        this->updateRaphnetDiagnostics();
+        show_status(page->statusLabel, tr("No valid controller response. Check the selected adapter port and connection."));
         return false;
     }
+    this->raphnetPollingHealth.observe(elapsedUs, this->raphnetMeasurementTimer.nsecsElapsed() / 1000);
+    const bool slow = this->raphnetPollingHealth.connection.cached != 0;
+    if (slow != this->raphnetConnectionSlow)
+    {
+        this->raphnetConnectionSlow = slow;
+        this->updateWarningLabel();
+    }
+    this->updateRaphnetDiagnostics();
 
     const uint16_t buttons = (static_cast<uint16_t>(response[3]) << 8) | response[4];
     const int8_t xAxis = static_cast<int8_t>(response[5]);
@@ -2138,6 +2332,19 @@ bool UnifiedInputDialog::pollRaphnetPreview(void)
     page->axisYLabel->setText(QString::number(yAxis));
     clear_status(page->statusLabel);
     return true;
+}
+
+void UnifiedInputDialog::updateRaphnetDiagnostics(void)
+{
+    if (this->raphnetTimingLabel == nullptr) return;
+    const bool raphnet = this->selectedPlugin == InputPluginType::Raphnet;
+    this->raphnetTimingLabel->setVisible(raphnet);
+    const auto& health = this->raphnetPollingHealth;
+    this->raphnetTimingLabel->setText(health.samples == 0 ?
+        tr("Waiting for a controller response. Plug a controller into the adapter and select its port. A missing response is not a latency measurement.") :
+        tr("Controller response: %1 samples · average %2 ms · peak %3 ms.")
+            .arg(health.samples).arg(health.totalUs / (1000.0 * health.samples), 0, 'f', 2)
+            .arg(health.maximumUs / 1000.0, 0, 'f', 2));
 }
 
 bool UnifiedInputDialog::openGamecubePreview(void)
@@ -2169,7 +2376,7 @@ bool UnifiedInputDialog::openGamecubePreview(void)
         result = libusb_detach_kernel_driver(this->gamecubeHandle, 0);
         if (result != LIBUSB_SUCCESS)
         {
-            show_status(page->statusLabel, tr("GameCube adapter detected, but driver is missing."));
+            show_status(page->statusLabel, tr("GameCube adapter access failed. Check the driver and close other apps using the adapter."));
             return false;
         }
     }
@@ -2177,13 +2384,40 @@ bool UnifiedInputDialog::openGamecubePreview(void)
     result = libusb_claim_interface(this->gamecubeHandle, 0);
     if (result != LIBUSB_SUCCESS)
     {
-        show_status(page->statusLabel, tr("GameCube adapter detected, but driver is missing."));
+        show_status(page->statusLabel, tr("GameCube adapter access failed. Check the driver and close other apps using the adapter."));
         return false;
     }
     this->gamecubeInterfaceClaimed = true;
 
+    // Match the native plugin's endpoint discovery, including GC Pocket/RP2040 adapters.
+    this->gamecubeEndpointIn = 0x81;
+    this->gamecubeEndpointOut = 0x02;
+    libusb_config_descriptor* config = nullptr;
+    if (libusb_get_active_config_descriptor(libusb_get_device(this->gamecubeHandle), &config) == LIBUSB_SUCCESS)
+    {
+        for (int i = 0; i < config->bNumInterfaces; ++i)
+        {
+            const auto& usbInterface = config->interface[i];
+            for (int alt = 0; alt < usbInterface.num_altsetting; ++alt)
+            {
+                const auto& descriptor = usbInterface.altsetting[alt];
+                if (descriptor.bInterfaceNumber != 0 || descriptor.bAlternateSetting != 0) continue;
+                for (int ep = 0; ep < descriptor.bNumEndpoints; ++ep)
+                {
+                    const auto& endpoint = descriptor.endpoint[ep];
+                    if ((endpoint.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) != LIBUSB_TRANSFER_TYPE_INTERRUPT) continue;
+                    if (endpoint.bEndpointAddress & LIBUSB_ENDPOINT_IN)
+                        this->gamecubeEndpointIn = endpoint.bEndpointAddress;
+                    else
+                        this->gamecubeEndpointOut = endpoint.bEndpointAddress;
+                }
+            }
+        }
+        libusb_free_config_descriptor(config);
+    }
+
     uint8_t command = kGameCubeCommandPoll;
-    result = libusb_interrupt_transfer(this->gamecubeHandle, kGameCubeEndpointOut, &command, sizeof(command), nullptr, 16);
+    result = libusb_interrupt_transfer(this->gamecubeHandle, this->gamecubeEndpointOut, &command, sizeof(command), nullptr, 16);
     if (result != LIBUSB_SUCCESS)
     {
         show_status(page->statusLabel,
@@ -2209,7 +2443,7 @@ bool UnifiedInputDialog::pollGamecubePreview(void)
     uint8_t readBuffer[37] = {};
     int transferred = 0;
     const int result = libusb_interrupt_transfer(
-        this->gamecubeHandle, kGameCubeEndpointIn, readBuffer, sizeof(readBuffer), &transferred, 16);
+        this->gamecubeHandle, this->gamecubeEndpointIn, readBuffer, sizeof(readBuffer), &transferred, 16);
     if (result != LIBUSB_SUCCESS || transferred != static_cast<int>(sizeof(readBuffer)))
     {
         return false;
@@ -2245,18 +2479,20 @@ bool UnifiedInputDialog::pollGamecubePreview(void)
         this->updateWarningLabel();
     }
 
-    const double triggerThreshold = static_cast<double>(page->gamecubeTriggerThresholdSlider->value()) / 100.0;
+    ControllerPage* settingsPage = this->controllerPages[0];
+    const double triggerThreshold = static_cast<double>(settingsPage->gamecubeTriggerThresholdSlider->value()) / 100.0;
     const double cStickThreshold = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_CButtonTreshold)) / 100.0;
-    const bool leftTriggerAnalog = page->gamecubeLeftTriggerAnalogRadioButton->isChecked();
-    const bool rightTriggerAnalog = page->gamecubeRightTriggerAnalogRadioButton->isChecked();
+    const bool leftTriggerAnalog = settingsPage->gamecubeLeftTriggerAnalogRadioButton->isChecked();
+    const bool rightTriggerAnalog = settingsPage->gamecubeRightTriggerAnalogRadioButton->isChecked();
 
     if (this->listeningPageIndex == pageIndex && this->listeningBindingIndex >= 0)
     {
         const GCInput detected = detect_gamecube_input(state, triggerThreshold, cStickThreshold,
             leftTriggerAnalog, rightTriggerAnalog);
-        if (detected != GCInput::None)
+        if (detected == GCInput::None) this->listeningArmed = true;
+        if (detected != GCInput::None && this->listeningArmed)
         {
-            page->gamecubeBindings[this->listeningBindingIndex] = static_cast<int>(detected);
+            settingsPage->gamecubeBindings[this->listeningBindingIndex] = static_cast<int>(detected);
             const int oldPageIndex = this->listeningPageIndex;
             this->stopListeningForBinding(false);
             this->updatePageBindingButtons(oldPageIndex);
@@ -2272,7 +2508,7 @@ bool UnifiedInputDialog::pollGamecubePreview(void)
         }
 
         set_button(page->controllerImageWidget, target.imageButton,
-            gc_input_active(state, static_cast<GCInput>(page->gamecubeBindings[i]), triggerThreshold, cStickThreshold,
+            gc_input_active(state, static_cast<GCInput>(settingsPage->gamecubeBindings[i]), triggerThreshold, cStickThreshold,
                 leftTriggerAnalog, rightTriggerAnalog));
     }
 
@@ -2280,9 +2516,9 @@ bool UnifiedInputDialog::pollGamecubePreview(void)
     const int8_t y = static_cast<int8_t>(state.leftStickY + 128);
     const double inputX = static_cast<double>(x) / static_cast<double>(INT8_MAX);
     const double inputY = static_cast<double>(y) / static_cast<double>(INT8_MAX);
-    const double deadzone = static_cast<double>(page->gamecubeDeadzoneSlider->value()) / 100.0;
+    const double deadzone = static_cast<double>(settingsPage->gamecubeDeadzoneSlider->value()) / 100.0;
     const double n64Max = kGameCubeN64AxisPeak *
-        gamecube_sensitivity_percent_to_scale(page->gamecubeSensitivitySlider->value());
+        gamecube_sensitivity_percent_to_scale(settingsPage->gamecubeSensitivitySlider->value());
     const int xValue = std::clamp(scale_axis(inputX, deadzone, n64Max), -INT8_MAX, INT8_MAX);
     const int yValue = std::clamp(scale_axis(inputY, deadzone, n64Max), -INT8_MAX, INT8_MAX);
 
@@ -2306,7 +2542,19 @@ bool UnifiedInputDialog::openUsbPreview(void)
         return false;
     }
 
-    const UsbDeviceChoice& device = this->usbDevices[deviceIndex];
+    UsbDeviceChoice device = this->usbDevices[deviceIndex];
+    if (device.type == InputDeviceType::Automatic)
+    {
+        const auto found = std::find_if(this->usbDevices.begin(), this->usbDevices.end(), [](const UsbDeviceChoice& candidate)
+            { return candidate.connected && candidate.type == InputDeviceType::Joystick; });
+        if (found != this->usbDevices.end()) device = *found;
+        else device.type = InputDeviceType::Keyboard;
+    }
+    if (!device.connected)
+    {
+        show_status(page->statusLabel, tr("Selected controller is disconnected. Reconnect it or select another controller."));
+        return false;
+    }
     if (device.type == InputDeviceType::None)
     {
         show_status(page->statusLabel, tr("This player is disabled."));
@@ -2573,8 +2821,10 @@ bool UnifiedInputDialog::pollUsbPreview(void)
             }
         }
 
-        if (captured)
+        if (!captured) this->listeningArmed = true;
+        if (captured && this->listeningArmed)
         {
+            page->usbDirty = true;
             page->usbBindings[this->listeningBindingIndex] = capturedBinding;
             const int oldPageIndex = this->listeningPageIndex;
             this->stopListeningForBinding(false);
@@ -2614,7 +2864,7 @@ bool UnifiedInputDialog::pollUsbPreview(void)
     }
 
     const double deadzone = static_cast<double>(page->usbDeadzoneSlider->value()) / 100.0;
-    const double range = page->realN64RangeCheckBox->isChecked() ? 100.0 : static_cast<double>(page->usbRangeSlider->value());
+    const double range = page->realN64RangeCheckBox->isChecked() ? 66.0 : static_cast<double>(page->usbRangeSlider->value());
     const double n64Max = 127.0 * (range / 100.0);
     const int xValue = scale_axis(inputX, deadzone, n64Max);
     const int yValue = scale_axis(inputY, deadzone, n64Max);
@@ -2629,6 +2879,10 @@ bool UnifiedInputDialog::pollUsbPreview(void)
 
 UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(void)
 {
+    struct MonitorPause {
+        MonitorPause() { CorePauseRaphnetMonitoring(true); }
+        ~MonitorPause() { CorePauseRaphnetMonitoring(false); }
+    } monitorPause;
     InputDetectionReport report;
 
     if (hid_init() == 0)
@@ -2766,8 +3020,8 @@ UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(vo
         QString classification;
         if (lowered.contains("raphnet"))
         {
-            report.foundRaphnet = true;
-            classification = tr("Raphnet");
+            report.foundOtherUsb = true;
+            classification = report.foundRaphnet ? tr("Raphnet raw interface confirmed") : tr("Raphnet USB device; compatible raw interface not detected");
         }
         else if (lowered.contains("mayflash") &&
                  (lowered.contains("gamecube") || lowered.contains("gcn")))

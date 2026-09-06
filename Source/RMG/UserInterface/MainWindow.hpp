@@ -12,6 +12,7 @@
 
 #include "Thread/EmulationThread.hpp"
 #include "EventFilter.hpp"
+#include "RaphnetWarningPolicy.hpp"
 #include "Callbacks.hpp"
 
 #include <RMG-Core/RollbackNetcode.hpp>
@@ -41,6 +42,7 @@
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QAction>
+#include <QPointer>
 #include <chrono>
 #include <deque>
 
@@ -67,6 +69,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void startVerifyDebugReplay(bool withGraphics, bool stress = false);
 
     Thread::EmulationThread *emulationThread = nullptr;
+    RaphnetWarningPolicy raphnetWarningPolicy;
+    QPointer<QMessageBox> raphnetWarningBox;
+    void checkRaphnetConnection(void);
 
     CoreCallbacks* coreCallBacks = nullptr;
 

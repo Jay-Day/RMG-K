@@ -20,6 +20,7 @@
 
 #include "Adapter.hpp"
 #include "GCInput.hpp"
+#include "ControllerPorts.hpp"
 #include "UserInterface/MainDialog.hpp"
 
 #include <algorithm>
@@ -636,16 +637,9 @@ EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
     // This keeps Control 0 stable for rollback even if the adapter reports
     // controller presence slightly after InitiateControllers().
     l_ControllerStateMutex.lock();
-    l_ControlToPort = {-1, -1, -1, -1};
-    int controlSlot = 0;
-    for (int i = 0; i < NUM_CONTROLLERS; i++)
-    {
-        if (l_Settings.PortEnabled[i])
-        {
-            l_ControlToPort[controlSlot] = i;
-            controlSlot++;
-        }
-    }
+    l_ControlToPort = ResolveGameCubeControllerPorts(
+        CoreSettingsGetIntListValue(SettingsID::GCAInput_ControllerPorts),
+        {l_Settings.PortEnabled[0], l_Settings.PortEnabled[1], l_Settings.PortEnabled[2], l_Settings.PortEnabled[3]});
 
     for (int i = 0; i < NUM_CONTROLLERS; i++)
     {
