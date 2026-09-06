@@ -142,6 +142,7 @@ public:
     void joinRoom(quint64 roomId, const QString& password = QString());
     void leaveRoom();
     void startRoom();
+    void updateRoomLiveReplay(bool enabled);
     void kickFromRoom(quint64 userId);
 
     // Host-only: swap two seats (P1-P4) to re-order players before the match.

@@ -1130,8 +1130,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         "Implies Record game (the live replay is the .krec). Only one player\n"
         "per match streams it — whoever enables it first.");
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_suppressSettingsSignal) return;
         if (checked && m_recordCheck)
             m_recordCheck->setChecked(true); // broadcasting needs the krec written
+        if (m_currentRoomId != 0 && m_client)
+            m_client->updateRoomLiveReplay(checked);
     });
     toggleRow->addWidget(m_broadcastCheck);
     toggleRow->addStretch(1);
@@ -3067,6 +3070,13 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     const quint64 hostId = static_cast<quint64>(roomState.value("hostId").toDouble());
     const bool iAmHost = (hostId == m_client->selfUserId());
 
+    // New servers publish the host's choice. With an older server, preserve the
+    // host's local checkbox so an unrelated ROOM_STATE cannot silently disarm it;
+    // non-hosts have no authoritative value to display and therefore show off.
+    const bool liveReplayEnabled = roomState.contains("liveReplayEnabled")
+        ? roomState.value("liveReplayEnabled").toBool()
+        : (iAmHost && m_broadcastCheck && m_broadcastCheck->isChecked());
+
     m_currentRoomGame       = romName;
     m_currentRoomMd5        = romMd5;
     m_currentRoomRegion     = romRegion;
@@ -3165,15 +3175,33 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         m_predictionCombo->setToolTip(predictionTip);
     }
 
-    // Broadcasting is host-only — one authoritative stream per match. Hide the
-    // option for non-hosts (and clear any stale check) so only the host can arm
-    // it; the server enforces the same rule on BROADCAST_BEGIN. "Record game"
-    // stays available to everyone (each player saves their own local .krec).
+    // The host owns the room-wide live-replay choice, but every seated player
+    // sees its authoritative value. Non-hosts get a disabled checkbox instead
+    // of a hidden option. "Record game" remains each player's local choice.
     if (m_broadcastCheck)
     {
-        m_broadcastCheck->setVisible(iAmHost);
-        if (!iAmHost && m_broadcastCheck->isChecked())
-            m_broadcastCheck->setChecked(false);
+        m_suppressSettingsSignal = true;
+        m_broadcastCheck->setChecked(liveReplayEnabled);
+        m_suppressSettingsSignal = false;
+        m_broadcastCheck->setVisible(true);
+        m_broadcastCheck->setEnabled(iAmHost && state == "waiting");
+        if (!iAmHost)
+        {
+            m_broadcastCheck->setToolTip(liveReplayEnabled
+                ? QStringLiteral("The room host will stream this match as a live replay.")
+                : QStringLiteral("The room host has live replay streaming turned off."));
+        }
+        else if (state != "waiting")
+        {
+            m_broadcastCheck->setToolTip(
+                QStringLiteral("The live replay choice is locked while a match is running."));
+        }
+        else
+        {
+            m_broadcastCheck->setToolTip(
+                QStringLiteral("Let others in the lobby watch this match live.\n"
+                               "Implies Record game (the live replay is the .krec)."));
+        }
     }
 
     // ── Seats ──
