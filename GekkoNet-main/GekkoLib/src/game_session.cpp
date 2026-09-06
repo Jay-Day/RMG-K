@@ -2,6 +2,27 @@
 
 #include <cassert>
 
+namespace {
+
+// Input frames already include the sender's delay. Adding the receiver's local
+// delay converts the raw simulation-frame gap into an error from the desired
+// delay-balanced timeline:
+//
+//     local_frame + local_delay == remote_frame + remote_delay
+//
+// Therefore a lower-delay peer runs numerically ahead by the delay difference.
+// If both peers are still on the same simulation frame, the lower-delay peer is
+// reported behind and the existing time-sync pacing advances it toward that
+// target. This makes each player's own delay determine how late remote input may
+// arrive at that player, rather than imposing their choice on their opponent.
+constexpr Frame DelayBalancedAdvantage(Frame current_frame, Frame remote_input_frame,
+                                       Frame local_delay)
+{
+    return current_frame - remote_input_frame + local_delay;
+}
+
+} // namespace
+
 Gekko::GameSession::GameSession()
 {
 	_host = nullptr;
@@ -483,7 +504,8 @@ void Gekko::GameSession::HandleReceivedInputs()
                     int current_idx = i - min_frame;
                     u8* input = input_q[current_idx].get();
                     _sync.AddRemoteInput(handle, input, i);
-                    const i8 local_adv = (i8)(current_frame - i - local_delay);
+                    const i8 local_adv =
+                        (i8)DelayBalancedAdvantage(current_frame, i, local_delay);
                     _msg.SendInputAck(handle, i, local_adv);
                 }
             }
@@ -510,7 +532,8 @@ void Gekko::GameSession::SendLocalInputs()
                 const Frame current_frame = _sync.GetCurrentFrame();
                 for (auto& remote : _msg.remotes) {
                     if (remote->GetStatus() == Connected) {
-                        const i8 local_adv = (i8)(current_frame - _sync.GetLastReceivedFrom(remote->handle) - (Frame)delay);
+                        const i8 local_adv = (i8)DelayBalancedAdvantage(
+                            current_frame, _sync.GetLastReceivedFrom(remote->handle), (Frame)delay);
                         remote->adv_history.SetLocalAdvantage(local_adv);
                         remote->adv_history.Update(frame);
                     }

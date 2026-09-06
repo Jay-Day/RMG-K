@@ -932,7 +932,10 @@ f32 Gekko::AdvantageHistory::GetAverageAdvantage()
 	f32 avg_local = sum_local / HISTORY_SIZE;
 	f32 avg_remote = sum_remote / HISTORY_SIZE;
 
-	// return the frames ahead (halved: each peer corrects its share of the gap)
+	// Return the signed error from the delay-balanced frame target (halved:
+	// each peer corrects its share). GameSession folds each side's local input
+	// delay into these samples, so zero may intentionally mean the peers are on
+	// different numeric simulation frames.
 	return (avg_local - avg_remote) / 2.f;
 }
 

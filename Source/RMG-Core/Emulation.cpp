@@ -205,13 +205,21 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
         {
             peer.slot = std::stoi(tok.substr(0, firstComma));
             peer.ip = tok.substr(firstComma + 1, secondComma - firstComma - 1);
-            const int parsedPort = std::stoi(tok.substr(secondComma + 1));
-            if (parsedPort <= 0 || parsedPort > 65535 || peer.ip.empty() ||
-                peer.slot < 1 || peer.slot > 4)
+            if (peer.ip == "ice")
             {
-                return false;
+                peer.userId = std::stoull(tok.substr(secondComma + 1));
+                if (peer.userId == 0)
+                    return false;
             }
-            peer.port = static_cast<unsigned short>(parsedPort);
+            else
+            {
+                const int parsedPort = std::stoi(tok.substr(secondComma + 1));
+                if (parsedPort <= 0 || parsedPort > 65535 || peer.ip.empty())
+                    return false;
+                peer.port = static_cast<unsigned short>(parsedPort);
+            }
+            if (peer.slot < 1 || peer.slot > 4)
+                return false;
         }
         catch (...)
         {
@@ -944,9 +952,19 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             else
             {
                 CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
-                const int totalPlayers = static_cast<int>(remotes.size()) + 1;
+                // Size the session by the highest occupied SEAT, not the player
+                // count. Seats are N64 controller ports and the lobby lets them
+                // be sparse — two players in P1 and P3 is a 3-port session with
+                // one empty port, not a 2-port one. Using the count here made
+                // the slot-3 player fail its own `slot > players` check.
+                int totalSeats = player;
+                for (const auto& remote : remotes)
+                {
+                    if (remote.slot > totalSeats)
+                        totalSeats = remote.slot;
+                }
                 netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
-                    totalPlayers, static_cast<int>(sizeof(uint32_t)),
+                    totalSeats, static_cast<int>(sizeof(uint32_t)),
                     player, static_cast<unsigned short>(port),
                     remotes.data(), static_cast<int>(remotes.size()),
                     frameDelay, predictionWindow);

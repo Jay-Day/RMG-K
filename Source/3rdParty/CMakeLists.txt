@@ -5,6 +5,12 @@ include(ExternalProject)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if (NETPLAY AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libjuice/CMakeLists.txt")
+    set(NO_SERVER ON CACHE BOOL "Disable the unused libjuice STUN/TURN server" FORCE)
+    set(NO_TESTS ON CACHE BOOL "Disable libjuice tests in the RMG build" FORCE)
+    add_subdirectory(libjuice EXCLUDE_FROM_ALL)
+endif()
+
 set(M64P_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core)
 if(WIN32)
     set(SO_EXT "dll")

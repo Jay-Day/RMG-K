@@ -19,27 +19,29 @@
 #include <QDialogButtonBox>
 #include <QSettings>
 #include <QFileInfo>
+#include <QIcon>
 
 using namespace UserInterface::Dialog;
 
-CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername,
+CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername, const QString& defaultRoomName,
                                    const QString& gameName, const QString& gameMd5,
                                    QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle("Create Room");
+    setWindowIcon(QIcon(":Resource/RMG.png"));
     setModal(true);
     // The game comes from the lobby's shared picker, not a picker of our own.
     m_romName = gameName;
     m_romMd5  = gameMd5;
-    buildUi(defaultUsername);
+    buildUi(defaultUsername, defaultRoomName);
     if (m_gameLabel)
         m_gameLabel->setText(gameName.isEmpty() ? QStringLiteral("—") : gameName);
     loadDefaults();
     validateInput();
 }
 
-void CreateRoomDialog::buildUi(const QString& defaultUsername)
+void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& defaultRoomName)
 {
     auto* root = new QVBoxLayout(this);
 
@@ -47,7 +49,9 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
 
     m_nameEdit = new QLineEdit(this);
     m_nameEdit->setMaxLength(48);
-    if (!defaultUsername.isEmpty())
+    if (!defaultRoomName.isEmpty())
+        m_nameEdit->setText(defaultRoomName);
+    else if (!defaultUsername.isEmpty())
         m_nameEdit->setText(QString("%1's Room").arg(defaultUsername));
     else
         m_nameEdit->setPlaceholderText("My Room");
@@ -65,10 +69,8 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername)
 
     root->addLayout(form);
 
-    // Rollback settings (delay / prediction) are no longer surfaced here —
-    // the host configures them from the in-room view via the settings row.
-    // We still send sensible defaults to the server at creation time; the
-    // host can adjust before clicking Start Game.
+    // Rollback settings are not surfaced here. Each player configures local
+    // delay and prediction in the room.
 
     // Optional password (collapsed by default)
     auto* pwRow = new QHBoxLayout;
@@ -150,8 +152,7 @@ void CreateRoomDialog::validateInput()
 
 void CreateRoomDialog::onCreateClicked()
 {
-    // Capture form values. Delay/prediction stay at their loadDefaults()
-    // values (or the struct defaults 2/7) — host adjusts in-room.
+    // The legacy room seeds stay at their loadDefaults() values.
     m_name = m_nameEdit->text().trimmed();
     // m_romName / m_romMd5 were set from the lobby picker in the constructor.
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
@@ -187,10 +188,10 @@ void CreateRoomDialog::loadDefaults()
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
-    // Seed the initial delay/prediction from the last in-room values the
-    // host configured. The in-room view writes to the same keys.
-    if (s.contains("Delay"))      m_delay = s.value("Delay").toInt();
-    if (s.contains("Prediction")) m_prediction = s.value("Prediction").toInt();
+    // Seed legacy room fields for older clients. Current clients publish their
+    // own rollback settings after entering the room.
+    if (s.contains("Delay")) m_delay = s.value("Delay").toInt();
+    m_prediction = 7;
     s.endGroup();
 }
 
@@ -200,8 +201,7 @@ void CreateRoomDialog::saveDefaults()
     s.beginGroup("Lobby/CreateRoom");
     // The game selection is persisted by the lobby's shared picker, not here.
     s.setValue("MaxPlayers", m_maxPlayers);
-    // Delay/prediction persistence moves to the in-room view; CreateRoom
-    // only consumes those defaults, doesn't write them.
+    // Rollback-setting persistence lives in the room view.
     s.endGroup();
 }
 
