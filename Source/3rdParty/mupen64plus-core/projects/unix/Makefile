@@ -748,6 +748,14 @@ ifeq ($(DEBUGGER), 1)
     $(SRCDIR)/debugger/dbg_memory.c \
     $(SRCDIR)/debugger/dbg_breakpoints.c
   LDLIBS += -lopcodes -lbfd
+  ifeq ($(OS), MINGW)
+    # newer libbfd.a/libopcodes.a need these as explicit transitive deps for
+    # static linking: sframe (stack trace metadata), zstd + zlib (compressed
+    # debug sections), libiberty (xstrerror), libintl (translated messages).
+    # Verified locally against the real MSYS2 UCRT64 binutils/zstd/gettext-
+    # runtime/zlib packages with a minimal link test before adding this.
+    LDLIBS += -lsframe -lzstd -liberty -lintl -lz
+  endif
 
   # UGLY libopcodes/libbfd version check (we check for >= 2.28 and >= 2.39)
   LIBOPCODES_VERSION := $(shell $(STRINGS) --version | head -n1 | rev | cut -d ' ' -f1 | rev)

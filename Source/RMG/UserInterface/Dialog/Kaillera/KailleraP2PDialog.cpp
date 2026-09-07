@@ -1485,6 +1485,23 @@ void KailleraP2PDialog::setupUI()
     });
     hostLayout->addWidget(m_recordCheck);
 
+#ifdef RMGK_GAME_STATS
+    // Independent .rmgr toggle - separate file, separate checkbox. Hidden
+    // until m_gameName is known to be Smash Remix 2.0.1 (this dialog can be
+    // opened before a game is picked, same as RollbackLobbyDialog).
+    m_replayRecordCheck = new QCheckBox("Record replay (.rmgr)", m_hostGroup);
+    m_replayRecordCheck->setToolTip(
+        "Record this match's inputs and game state to a .rmgr file, "
+        "separate from the .krec above.\nSmash Remix 2.0.1 only.");
+    m_replayRecordCheck->setVisible(m_gameName == "SmashRemix2.0.1");
+    const bool replayDefault = CoreSettingsGetBoolValue(SettingsID::GameStats_ReplayEnabled);
+    m_replayRecordCheck->setChecked(replayDefault);
+    connect(m_replayRecordCheck, &QCheckBox::toggled, this, [](bool checked) {
+        Replay::SetEnabledOverride(checked);
+    });
+    hostLayout->addWidget(m_replayRecordCheck);
+#endif
+
     const int formLabelWidth = std::max(
         m_frameDelayLabel->sizeHint().width(),
         predictionWindowLabel->sizeHint().width());
@@ -3261,6 +3278,16 @@ void KailleraP2PDialog::onChatReceived(QString nick, QString message)
 
 void KailleraP2PDialog::onGameStarted(QString game, int player, int maxPlayers)
 {
+#ifdef RMGK_GAME_STATS
+    // Make this checkbox authoritative for the match, in case something else
+    // touched the shared override since it was last set (same reassertion
+    // RollbackLobbyDialog does right before its own launch).
+    if (m_replayRecordCheck)
+    {
+        Replay::SetEnabledOverride(m_replayRecordCheck->isChecked());
+    }
+#endif
+
     if (isRollbackMode())
     {
         if (m_rollbackGameActive)
@@ -3429,6 +3456,11 @@ void KailleraP2PDialog::onHostedGame(QString game)
     {
         m_gameLabel->setText(m_gameName);
     }
+
+#ifdef RMGK_GAME_STATS
+    if (m_replayRecordCheck)
+        m_replayRecordCheck->setVisible(m_gameName == "SmashRemix2.0.1");
+#endif
 
     if (localGameListContains(m_gameName))
     {

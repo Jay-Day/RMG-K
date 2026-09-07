@@ -1,7 +1,9 @@
 #include "KrecParser.hpp"
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 
 namespace KailleraExport
 {
@@ -15,6 +17,46 @@ static std::string readCStringField(const uint8_t* source, size_t length)
     }
 
     return std::string(reinterpret_cast<const char*>(source), end);
+}
+
+// Fallback for the rare case a .krec's own header.timestamp is missing/zero
+// (a real recording always has one - see Source/n02/n02_client.cpp - so this
+// only matters for a hand-edited or corrupted file). Parses the leading
+// "YYMMDDHHMMSS" (12 digits, 2-digit year, local time) that n02_client.cpp
+// derives every .krec's filename from - the same convention
+// KailleraPlaybackDialog.cpp's recordings list already parses for display.
+// Returns 0 if the filename doesn't start with 12 digits.
+static uint32_t TryParseTimestampFromFilename(const std::filesystem::path& path)
+{
+    const std::string name = path.filename().string();
+    if (name.size() < 12)
+    {
+        return 0;
+    }
+    for (int i = 0; i < 12; i++)
+    {
+        if (!std::isdigit(static_cast<unsigned char>(name[static_cast<size_t>(i)])))
+        {
+            return 0;
+        }
+    }
+
+    auto twoDigits = [&name](int offset) -> int {
+        return (name[static_cast<size_t>(offset)] - '0') * 10 + (name[static_cast<size_t>(offset) + 1] - '0');
+    };
+
+    tm parsed{};
+    const int year = twoDigits(0); // 2-digit year, e.g. "26" - krec predates any Y2.1K concern
+    parsed.tm_year = year + 100;   // tm_year is years since 1900; futureproof-ish for "20xx"
+    parsed.tm_mon = twoDigits(2) - 1;
+    parsed.tm_mday = twoDigits(4);
+    parsed.tm_hour = twoDigits(6);
+    parsed.tm_min = twoDigits(8);
+    parsed.tm_sec = twoDigits(10);
+    parsed.tm_isdst = -1; // let mktime figure out DST for that local date
+
+    const time_t result = mktime(&parsed);
+    return result > 0 ? static_cast<uint32_t>(result) : 0;
 }
 
 static bool fail(std::string* errorMessage, const std::string& message)
@@ -79,6 +121,10 @@ bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::st
     memcpy(&outData.header.timestamp, buffer.data() + 260, sizeof(uint32_t));
     memcpy(&outData.header.playerNumber, buffer.data() + 264, sizeof(int32_t));
     memcpy(&outData.header.numPlayers, buffer.data() + 268, sizeof(int32_t));
+    if (outData.header.timestamp == 0)
+    {
+        outData.header.timestamp = TryParseTimestampFromFilename(path);
+    }
 
     if (isKrc1)
     {

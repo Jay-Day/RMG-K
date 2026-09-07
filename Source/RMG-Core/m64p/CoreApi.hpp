@@ -12,6 +12,7 @@
 
 #include "api/m64p_common.h"
 #include "api/m64p_frontend.h"
+#include "api/m64p_debugger.h"
 
 #include <string>
 
@@ -43,6 +44,13 @@ class CoreApi
     ptr_CoreGetRomSettings GetRomSettings;
     ptr_CoreGetAPIVersions GetAPIVersions;
     ptr_CoreErrorMessage ErrorMessage;
+
+    // debugger memory access (used by GameStats; requires the core to be
+    // built with DEBUGGER=1, otherwise these are no-ops that return 0/NULL)
+    ptr_DebugMemGetPointer DebugMemGetPointer;
+    ptr_DebugMemRead8 DebugMemRead8;
+    ptr_DebugMemRead16 DebugMemRead16;
+    ptr_DebugMemRead32 DebugMemRead32;
 
   private:
     bool hooked = false;
