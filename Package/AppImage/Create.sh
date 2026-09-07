@@ -50,6 +50,25 @@ fi
 
 cp "$bin_dir/usr/share/applications/com.github.Rosalie241.RMG.desktop" "$bin_dir"
 cp "$bin_dir/usr/share/icons/hicolor/scalable/apps/com.github.Rosalie241.RMG.svg" "$bin_dir"
+qtpaths="$(command -v qtpaths6 || true)"
+if [[ -z "$qtpaths" && -x /usr/lib/qt6/bin/qtpaths6 ]]
+then
+	qtpaths=/usr/lib/qt6/bin/qtpaths6
+fi
+if [[ -z "$qtpaths" ]]
+then
+	echo "qtpaths6 is required to locate qtbase_ja.qm" >&2
+	exit 1
+fi
+
+qtbase_translation="$($qtpaths --query QT_INSTALL_TRANSLATIONS)/qtbase_ja.qm"
+if [[ ! -f "$qtbase_translation" ]]
+then
+	echo "qtbase_ja.qm is required to build a Japanese-localized AppImage" >&2
+	exit 1
+fi
+mkdir -p "$bin_dir/usr/share/RMG/Translations"
+cp "$qtbase_translation" "$bin_dir/usr/share/RMG/Translations/"
 ln -s com.github.Rosalie241.RMG.svg "$bin_dir"/.DirIcon
 mv "$bin_dir/usr/share" "$bin_dir/share"
 mv "$bin_dir/usr" "$bin_dir/shared"

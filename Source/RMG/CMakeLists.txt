@@ -5,7 +5,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 COMPONENTS Gui Widgets Core Svg REQUIRED)
+find_package(Qt6 6.2 COMPONENTS Gui Widgets Core Svg LinguistTools REQUIRED)
 
 if (NOT WIN32)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
@@ -87,6 +87,7 @@ set(RMG_SOURCES
     Thread/EmulationThread.cpp
     Utilities/QtKeyToSdl3Key.cpp
     Utilities/QtMessageBox.cpp
+    Utilities/Translation.cpp
     OnScreenDisplay.cpp
     Callbacks.cpp
     VidExt.cpp
@@ -183,6 +184,26 @@ target_include_directories(RMG PRIVATE
 )
 
 target_link_libraries(RMG Qt6::Gui Qt6::Widgets Qt6::Svg ${HIDAPI_LIBRARIES} ${LIBUSB1_LIBRARIES} SDL3::SDL3)
+
+set(RMG_TRANSLATION_TS
+    ${CMAKE_CURRENT_SOURCE_DIR}/Translations/rmg_ja_JP.ts
+)
+qt_add_lupdate(RMG
+    TS_FILES ${RMG_TRANSLATION_TS}
+    SOURCES ${RMG_SOURCES} Utilities/Translation.hpp
+)
+qt_add_lrelease(RMG
+    TS_FILES ${RMG_TRANSLATION_TS}
+    QM_FILES_OUTPUT_VARIABLE RMG_TRANSLATION_QM_FILES
+)
+add_custom_command(TARGET RMG POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:RMG>/Data/Translations"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RMG_TRANSLATION_QM_FILES}
+        "$<TARGET_FILE_DIR:RMG>/Data/Translations"
+)
+install(FILES ${RMG_TRANSLATION_QM_FILES}
+    DESTINATION ${DATA_INSTALL_PATH}/Translations
+)
 
 if (WIN32)
     target_link_libraries(RMG opengl32 gdi32 user32)

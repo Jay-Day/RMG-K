@@ -85,6 +85,10 @@ signals:
     // Fired when the user clicks "Close Game" mid-match or when a peer drops.
     void closeMatchRequested();
 
+    // Non-modal in-game warning: lobby-backed services (including chat) are
+    // offline, but the established peer-to-peer match transport is intact.
+    void matchServerConnectionLost(QString message);
+
     // Fired for every *remote* room-channel chat message (own messages are
     // filtered out — the overlay echoes those locally). MainWindow routes this
     // to the in-game chat overlay.
@@ -206,6 +210,8 @@ private:
     // No server connection is attempted until the prompt is accepted.
     void     promptForUsername(const QString& statusMessage = QString());
     QString  prefillUsername() const;
+    bool     matchTransportInProgress() const;
+    void     showMatchConnectionLostNotice();
 
     void refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
     void refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r);
@@ -229,6 +235,10 @@ private:
     void    notifyPlayerJoined();
     void    switchToRoomsView();
     void    switchToInRoomView();
+    // The room roster and metadata are server-owned and become invalid as soon
+    // as the WebSocket drops. Clear them without touching an active match's
+    // ICE ownership or lifecycle bookkeeping.
+    void    clearServerRoomSnapshot();
     void    enterRoom(quint64 roomId, const QString& greetingChatLine);
     void    updateStatusIndicator(LobbyClient::ConnectionState s);
     // Render the in-room state label as a colored pill (Waiting / Connecting /
@@ -264,7 +274,9 @@ private:
         QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
+        QLabel*  countryLabel = nullptr;  // country flag beside player name
         QLabel*  metaLabel = nullptr;     // "host · Frame delay: 2f · 12ms"
+        QLabel*  connectionTypeLabel = nullptr; // Wi-Fi/Ethernet icon after ping
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
@@ -276,7 +288,8 @@ private:
     void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
     void renderSeatEmpty(SeatRow& row);
     void renderSeatFilled(SeatRow& row, const QString& username, bool isHost,
-                          bool isSelf, int pingMs, int frameDelay, bool canKick);
+                          bool isSelf, int pingMs, int frameDelay, bool canKick,
+                          const QString& connectionType);
 
     // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
     // its slot; the seats container handles the drop and asks the server to swap.
@@ -318,6 +331,7 @@ private:
 
     bool    m_connectPromptOpen = false;
     QString m_connectPromptMessage;
+    bool    m_matchConnectionLostNoticeShown = false;
 
     // ── Marquee bar ──
     QFrame*  m_marquee     = nullptr;

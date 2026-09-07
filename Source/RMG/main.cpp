@@ -8,6 +8,7 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include <UserInterface/MainWindow.hpp>
+#include <Utilities/Translation.hpp>
 #if defined(_WIN32) && defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
 #endif
@@ -16,6 +17,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QDir>
+#include <QTranslator>
 
 #include <iostream>
 #include <cstdlib>
@@ -30,6 +32,9 @@
 #endif
 
 #include <RMG-Core/Directories.hpp>
+#include <RMG-Core/Core.hpp>
+#include <RMG-Core/Error.hpp>
+#include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
 //
@@ -302,38 +307,59 @@ int main(int argc, char **argv)
 #endif
     }
 
-    UserInterface::MainWindow window;
-
-    // print debug callbacks to stdout if needed
-    CoreSetPrintDebugCallback(parser.isSet(debugMessagesOption));
-
-    // specified ROM path to launch
-    QStringList args = parser.positionalArguments();
-
-    CoreAddCallbackMessage(CoreDebugMessageType::Info, 
-            "Initializing on " + QGuiApplication::platformName().toStdString());
-
-    // initialize window
-    if (!window.Init(&app, !parser.isSet(noGuiOption), !args.empty()))
+    if (!CoreInit())
     {
+        std::cerr << "CoreInit() Failed: " << CoreGetError() << std::endl;
         return 1;
     }
 
-    if (!args.empty())
-    {
-        bool parsedNumber = false;
-        int saveStateSlot = parser.value(loadStateSlot).toInt(&parsedNumber);
-        if (parser.value(loadStateSlot).isEmpty() || !parsedNumber ||
-            saveStateSlot < 0 || saveStateSlot > 9)
-        {
-            saveStateSlot = -1;
-        }
+    QTranslator qtTranslator;
+    QTranslator applicationTranslator;
+    Translation::Install(app, qtTranslator, applicationTranslator);
 
-        window.OpenROM(args.at(0), parser.value(diskOption), parser.isSet(fullscreenOption), parser.isSet(quitAfterEmulationOption), saveStateSlot);
+    int exitCode = 1;
+    bool windowInitialized = false;
+    {
+        UserInterface::MainWindow window;
+
+        // print debug callbacks to stdout if needed
+        CoreSetPrintDebugCallback(parser.isSet(debugMessagesOption));
+
+        // specified ROM path to launch
+        QStringList args = parser.positionalArguments();
+
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+                "Initializing on " + QGuiApplication::platformName().toStdString());
+
+        // initialize window
+        if (window.Init(&app, !parser.isSet(noGuiOption), !args.empty()))
+        {
+            windowInitialized = true;
+
+            if (!args.empty())
+            {
+                bool parsedNumber = false;
+                int saveStateSlot = parser.value(loadStateSlot).toInt(&parsedNumber);
+                if (parser.value(loadStateSlot).isEmpty() || !parsedNumber ||
+                    saveStateSlot < 0 || saveStateSlot > 9)
+                {
+                    saveStateSlot = -1;
+                }
+
+                window.OpenROM(args.at(0), parser.value(diskOption), parser.isSet(fullscreenOption), parser.isSet(quitAfterEmulationOption), saveStateSlot);
+            }
+
+            // show window
+            window.show();
+
+            exitCode = app.exec();
+        }
     }
 
-    // show window
-    window.show();
-
-    return app.exec();
+    if (windowInitialized)
+    {
+        CoreSettingsSave();
+    }
+    CoreShutdown();
+    return exitCode;
 }

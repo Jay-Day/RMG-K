@@ -485,6 +485,15 @@ LobbyClient::~LobbyClient()
 void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
                                    const QStringList& romHashes, const QString& udpAddr)
 {
+    // HELLO_OK calls LobbyIce::configure(), which resets the process-wide ICE
+    // mesh. A running GekkoNet lobby match owns that mesh, so reconnecting now
+    // would sever otherwise healthy peer-to-peer gameplay. The lobby dialog
+    // offers the connection prompt again after emulation finishes.
+    if (m_matchTransportActive)
+    {
+        qWarning() << "lobby: reconnect deferred while match ICE transport is active";
+        return;
+    }
     if (m_state != ConnectionState::Disconnected && m_state != ConnectionState::Failed)
     {
         return;
@@ -538,8 +547,7 @@ void LobbyClient::disconnectFromServer()
     m_anchorRetryDeadlineMs = 0;
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
-    resetIceMesh();
-    LobbyIce::reset();
+    resetIceTransport();
     if (m_ws && m_ws->state() != QAbstractSocket::UnconnectedState)
     {
         m_ws->close();
@@ -652,8 +660,11 @@ void LobbyClient::onWsConnected()
 void LobbyClient::onWsDisconnected()
 {
     stopPingDiagnosticLog(QStringLiteral("connection_lost"));
-    resetIceMesh();
-    LobbyIce::reset();
+    // The WebSocket is only ICE's signaling/control plane. Once a match has
+    // started, its established agents carry GekkoNet traffic peer-to-peer and
+    // must outlive a lobby restart or network interruption. Defer teardown
+    // until the emulation owner releases the transport.
+    resetIceTransport();
     // Passive drops (server restart, network cut, server-side kick) never go
     // through disconnectFromServer, so the anchor socket used to stay bound —
     // and the next connect's pinned-port bind then failed against our own
@@ -939,6 +950,12 @@ void LobbyClient::handleRoomJoinFail(const QJsonObject& data)
 
 void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
 {
+    // Room state is control-plane data. Once GekkoNet owns the established
+    // mesh, no server-side room transition may add, replace, or remove its
+    // transport agents; actual actor teardown is driven by emulation finish.
+    if (m_matchTransportActive)
+        return;
+
     const quint64 roomId = static_cast<quint64>(roomState.value("id").toDouble());
     if (roomId == 0)
         return;
@@ -1007,6 +1024,12 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
 
 void LobbyClient::resetIceMesh()
 {
+    if (m_matchTransportActive)
+    {
+        m_deferredIceMeshReset = true;
+        return;
+    }
+
     for (quint64 userId : std::as_const(m_icePeerIds))
         LobbyIce::remove_peer(userId);
     m_icePeerIds.clear();
@@ -1017,6 +1040,46 @@ void LobbyClient::resetIceMesh()
     m_currentIceHostUserId = 0;
     m_roomPeerPings.clear();
     m_pendingProbes.clear();
+}
+
+void LobbyClient::resetIceTransport()
+{
+    if (m_matchTransportActive)
+    {
+        // A full reset was requested (normally because the lobby WebSocket
+        // went away). Keep both the peer map and queued Gekko packets intact
+        // until the running match has actually stopped.
+        m_deferredIceTransportReset = true;
+        return;
+    }
+
+    resetIceMesh();
+    LobbyIce::reset();
+    m_deferredIceMeshReset = false;
+    m_deferredIceTransportReset = false;
+}
+
+void LobbyClient::setMatchTransportActive(bool active)
+{
+    if (m_matchTransportActive == active)
+        return;
+
+    m_matchTransportActive = active;
+    if (active)
+        return;
+
+    // A lobby disconnect requires a full reset, while an ordinary ROOM_LEFT
+    // only requires removal of the old room mesh. Full reset subsumes mesh
+    // reset and intentionally clears the obsolete lobby identity/config.
+    if (m_deferredIceTransportReset)
+    {
+        resetIceTransport();
+    }
+    else if (m_deferredIceMeshReset)
+    {
+        m_deferredIceMeshReset = false;
+        resetIceMesh();
+    }
 }
 
 void LobbyClient::handleIceSignal(const QJsonObject& data)
@@ -1041,6 +1104,18 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
                             QStringLiteral("peer=%1 room=%2 kind=%3 generation=%4 current_generation=%5 reason=stale_generation")
                                 .arg(pingUserLabel(fromUserId)).arg(roomId).arg(kind)
                                 .arg(generation).arg(currentGeneration));
+        return;
+    }
+
+    // Replacing an agent underneath GekkoNet interrupts the active data plane.
+    // Same-generation trickle candidates remain safe to apply, but ICE restart
+    // signaling is deferred until the match has released the mesh.
+    if (m_matchTransportActive &&
+        (kind == QStringLiteral("restart") || generation > currentGeneration))
+    {
+        writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN_DROPPED"),
+                            QStringLiteral("peer=%1 room=%2 kind=%3 generation=%4 reason=match_transport_active")
+                                .arg(pingUserLabel(fromUserId)).arg(roomId).arg(kind).arg(generation));
         return;
     }
 
@@ -1101,7 +1176,7 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
 bool LobbyClient::restartIcePeer(quint64 userId, quint32 generation,
                                  const QString& reason, bool notifyPeer)
 {
-    if (m_currentIceRoomId == 0 || !m_icePeerIds.contains(userId) ||
+    if (m_matchTransportActive || m_currentIceRoomId == 0 || !m_icePeerIds.contains(userId) ||
         generation == 0 || generation <= m_iceGenerations.value(userId, 0) ||
         m_iceRestartAttempts.value(userId, 0) >= MAX_ICE_AUTO_RESTARTS)
     {
