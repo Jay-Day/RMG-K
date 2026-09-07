@@ -264,7 +264,9 @@ private:
         QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
+        QLabel*  countryLabel = nullptr;  // country flag beside player name
         QLabel*  metaLabel = nullptr;     // "host · Frame delay: 2f · 12ms"
+        QLabel*  connectionTypeLabel = nullptr; // Wi-Fi/Ethernet icon after ping
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
@@ -276,7 +278,8 @@ private:
     void buildSeatRow(SeatRow& row, int slotIdx, QWidget* parent);
     void renderSeatEmpty(SeatRow& row);
     void renderSeatFilled(SeatRow& row, const QString& username, bool isHost,
-                          bool isSelf, int pingMs, int frameDelay, bool canKick);
+                          bool isSelf, int pingMs, int frameDelay, bool canKick,
+                          const QString& connectionType);
 
     // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
     // its slot; the seats container handles the drop and asks the server to swap.
