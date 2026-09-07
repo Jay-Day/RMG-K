@@ -1598,12 +1598,6 @@ MainWindow::~MainWindow()
 
 bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
 {
-    if (!CoreInit())
-    {
-        this->showErrorMessage("CoreInit() Failed", QString::fromStdString(CoreGetError()));
-        return false;
-    }
-
     if (!CoreApplyPluginSettings())
     {
         this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
@@ -1876,9 +1870,6 @@ void MainWindow::closeEvent(QCloseEvent *event)
 #ifdef _WIN32
     this->restoreDisplayMode();
 #endif
-    CoreSettingsSave();
-    CoreShutdown();
-
     QMainWindow::closeEvent(event);
 }
 
@@ -4866,6 +4857,11 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, [this]() {
                 if (this->emulationThread && this->emulationThread->isRunning())
                     CoreStopEmulation();
+            });
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::matchServerConnectionLost,
+            this, [this](const QString& message) {
+                if (this->emulationThread && this->emulationThread->isRunning())
+                    OnScreenDisplaySetMessage(message.toStdString());
             });
     // Remote room chat → in-game chat overlay (mirrors the P2P chat overlay).
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::roomChatReceived,

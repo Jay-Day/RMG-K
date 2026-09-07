@@ -872,12 +872,7 @@ CORE_EXPORT bool CoreEnableCheat(std::filesystem::path file, CoreCheat cheat, bo
     settingSection = romSettings.MD5 + " Cheats";
     settingKey = "Cheat \"" + cheat.Name + "\" Enabled";
 
-    // if the cheat is disabled and the settings key doesn't exist, do nothing
-    if (!enabled && !CoreSettingsKeyExists(settingSection, settingKey))
-    {
-        return true;
-    }
-
+    // Always save explicit choices, including disabling a default-enabled cheat.
     return CoreSettingsSetValue(settingSection, settingKey, enabled);
 }
 
@@ -896,7 +891,19 @@ CORE_EXPORT bool CoreIsCheatEnabled(std::filesystem::path file, CoreCheat cheat)
     settingSection = romSettings.MD5 + " Cheats";
     settingKey = "Cheat \"" + cheat.Name + "\" Enabled";
 
-    return CoreSettingsGetBoolValue(settingSection, settingKey, false);
+    // Default to the two unlock cheats bundled for Super Smash Bros. (U) and (J).
+    // Saved choices take precedence over these defaults.
+    const bool isSmashUS = romHeader.CRC1 == 0x916B8B5B &&
+                          romHeader.CRC2 == 0x780B85A4 &&
+                          romHeader.CountryCode == 0x45;
+    const bool isSmashJP = romHeader.CRC1 == 0x67D20729 &&
+                          romHeader.CRC2 == 0xF696774C &&
+                          romHeader.CountryCode == 0x4A;
+    const bool defaultEnabled = (isSmashUS || isSmashJP) &&
+                                (cheat.Name == "Have All Characters" ||
+                                 cheat.Name == "VS. Mode\\Have Mushroom Kindom");
+
+    return CoreSettingsGetBoolValue(settingSection, settingKey, defaultEnabled);
 }
 
 CORE_EXPORT bool CoreHasCheatOptionSet(std::filesystem::path file, CoreCheat cheat)
