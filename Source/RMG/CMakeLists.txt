@@ -71,8 +71,6 @@ set(RMG_SOURCES
     UserInterface/Dialog/Cheats/AddCheatDialog.ui
     UserInterface/Dialog/Cheats/ChooseCheatOptionDialog.cpp
     UserInterface/Dialog/Cheats/ChooseCheatOptionDialog.ui
-    UserInterface/Dialog/FirstLaunchDialog.cpp
-    UserInterface/Dialog/FirstLaunchDialog.ui
     UserInterface/Dialog/UnifiedInputDialog.cpp
     UserInterface/Dialog/RomInfoDialog.cpp
     UserInterface/Dialog/RomInfoDialog.ui

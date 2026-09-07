@@ -13,7 +13,6 @@
 #include <cstdio>
 
 #include "UserInterface/Dialog/AboutDialog.hpp"
-#include "UserInterface/Dialog/FirstLaunchDialog.hpp"
 #include "UserInterface/Dialog/UnifiedInputDialog.hpp"
 #include "Dialog/Cheats/CheatsDialog.hpp"
 #include "Dialog/SettingsDialog.hpp"
@@ -187,33 +186,7 @@ public:
 
 namespace
 {
-using InputPluginType = UserInterface::Dialog::FirstLaunchDialog::InputPluginType;
-
-bool has_non_whitespace(const std::string& value)
-{
-    for (char ch : value)
-    {
-        if (!std::isspace(static_cast<unsigned char>(ch)))
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-bool has_non_empty_entries(const std::vector<std::string>& values)
-{
-    for (const auto& value : values)
-    {
-        if (has_non_whitespace(value))
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
+using InputPluginType = UserInterface::Dialog::UnifiedInputDialog::InputPluginType;
 
 std::string to_lower_copy(const std::string& value)
 {
@@ -221,16 +194,6 @@ std::string to_lower_copy(const std::string& value)
     std::transform(lowered.begin(), lowered.end(), lowered.begin(),
         [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return lowered;
-}
-
-bool is_none_device_name(const std::string& value)
-{
-    if (!has_non_whitespace(value))
-    {
-        return true;
-    }
-
-    return to_lower_copy(value) == "none";
 }
 
 InputPluginType plugin_type_from_filename(const std::string& value)
@@ -1775,8 +1738,7 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     inputHealthTimer->start(1000);
 
     // Check for raphnet plugin mismatch after window is visible
-    this->ui_ShowFirstLaunchSetupPending = showUI && !launchROM && this->shouldShowFirstLaunchSetup();
-    this->ui_CheckRaphnetPluginMismatchPending = showUI && !launchROM && !this->ui_ShowFirstLaunchSetupPending;
+    this->ui_CheckRaphnetPluginMismatchPending = showUI && !launchROM;
 
     return true;
 }
@@ -2003,14 +1965,6 @@ void MainWindow::showEvent(QShowEvent *event)
         });
     }
 #endif // NETPLAY
-
-    if (this->ui_ShowFirstLaunchSetupPending)
-    {
-        this->ui_ShowFirstLaunchSetupPending = false;
-        QTimer::singleShot(0, this, [this]() {
-            this->showFirstLaunchSetupDialog(false, true);
-        });
-    }
 
     // Check for raphnet plugin mismatch after the window is visible
     if (this->ui_CheckRaphnetPluginMismatchPending)
@@ -2487,109 +2441,6 @@ void MainWindow::rememberInputPluginPreference(void)
         QString::fromStdString(plugin_filename_from_type(plugin)), Qt::CaseInsensitive) == 0;
     CoreSettingsSetValue(SettingsID::GUI_PreferredInputPlugin, builtIn ? static_cast<int>(plugin) : -1);
     CoreSettingsSave();
-}
-
-bool MainWindow::isDefaultInputPlugin(void) const
-{
-    std::string inputPlugin = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
-
-    if (inputPlugin.find("RMG-Input") == std::string::npos)
-    {
-        return false;
-    }
-
-    if (inputPlugin.find("raphnetraw") != std::string::npos ||
-        inputPlugin.find("GCA") != std::string::npos)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool MainWindow::hasConfiguredInputProfiles(void) const
-{
-    const std::string profileBase = "Rosalie's Mupen GUI - Input Plugin Profile ";
-
-    for (int i = 0; i < 4; i++)
-    {
-        std::string section = profileBase + std::to_string(i);
-        if (!CoreSettingsSectionExists(section))
-        {
-            continue;
-        }
-
-        if (CoreSettingsGetBoolValue(SettingsID::Input_PluggedIn, section))
-        {
-            return true;
-        }
-
-        std::string deviceName = CoreSettingsGetStringValue(SettingsID::Input_DeviceName, section);
-        if (!is_none_device_name(deviceName))
-        {
-            return true;
-        }
-
-        if (has_non_empty_entries(CoreSettingsGetStringListValue(SettingsID::Input_A_Name, section)) ||
-            has_non_empty_entries(CoreSettingsGetStringListValue(SettingsID::Input_Start_Name, section)) ||
-            has_non_empty_entries(CoreSettingsGetStringListValue(SettingsID::Input_AnalogStickUp_Name, section)))
-        {
-            return true;
-        }
-    }
-
-    if (has_non_empty_entries(CoreSettingsGetStringListValue(SettingsID::Input_Profiles)))
-    {
-        return true;
-    }
-
-    return false;
-}
-
-bool MainWindow::shouldShowFirstLaunchSetup(void) const
-{
-    std::string romDirectory = CoreSettingsGetStringValue(SettingsID::RomBrowser_Directory);
-    if (romDirectory.empty())
-    {
-        return true;
-    }
-
-    return this->isDefaultInputPlugin() && !this->hasConfiguredInputProfiles();
-}
-
-void MainWindow::showFirstLaunchSetupDialog(bool force, bool autoSelectRecommended)
-{
-    if (!force && !this->shouldShowFirstLaunchSetup())
-    {
-        return;
-    }
-
-    InputPluginType currentPlugin = plugin_type_from_filename(
-        CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin));
-
-    Dialog::FirstLaunchDialog dialog(this, currentPlugin, autoSelectRecommended);
-
-    QString romDirectory = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::RomBrowser_Directory));
-    if (!romDirectory.isEmpty())
-    {
-        dialog.SetRomDirectory(QDir::toNativeSeparators(romDirectory));
-    }
-
-    const int result = dialog.exec();
-    if (result != QDialog::Accepted)
-    {
-        return;
-    }
-
-    const QString selectedDirectory = dialog.GetRomDirectory();
-    if (!selectedDirectory.isEmpty() && selectedDirectory != QDir::fromNativeSeparators(romDirectory))
-    {
-        CoreSettingsSetValue(SettingsID::RomBrowser_Directory, selectedDirectory.toStdString());
-        CoreSettingsSave();
-        if (this->ui_Widget_RomBrowser != nullptr) this->ui_Widget_RomBrowser->RefreshRomList();
-    }
-    if (this->applyInputPluginSelection(dialog.GetSelectedPlugin(), dialog.ShouldRememberInputChoice()))
-        this->on_Action_Settings_Input();
 }
 
 void MainWindow::updateUI(bool inEmulation, bool isPaused)
@@ -3287,7 +3138,7 @@ void MainWindow::configureActions(void)
         this->action_View_Fullscreen, this->action_View_RefreshRoms,
         this->action_View_Log,
         // Help actions
-        this->action_Help_Github, this->action_Help_FirstLaunchSetup,
+        this->action_Help_Github,
         this->action_Help_About,
     });
 
@@ -3446,7 +3297,6 @@ void MainWindow::connectActionSignals(void)
 #endif
 
     connect(this->action_Help_Github, &QAction::triggered, this, &MainWindow::on_Action_Help_Github);
-    connect(this->action_Help_FirstLaunchSetup, &QAction::triggered, this, &MainWindow::on_Action_Help_FirstLaunchSetup);
     connect(this->action_Help_About, &QAction::triggered, this, &MainWindow::on_Action_Help_About);
     connect(this->action_Help_Update, &QAction::triggered, this, &MainWindow::on_Action_Help_Update);
 
@@ -5709,11 +5559,6 @@ QString MainWindow::findRomByName(QString gameName)
 void MainWindow::on_Action_Help_Github(void)
 {
     QDesktopServices::openUrl(QUrl("https://github.com/Jay-Day/RMG-K"));
-}
-
-void MainWindow::on_Action_Help_FirstLaunchSetup(void)
-{
-    this->showFirstLaunchSetupDialog(true, false);
 }
 
 void MainWindow::on_Action_Help_About(void)

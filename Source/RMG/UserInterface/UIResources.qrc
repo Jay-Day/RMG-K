@@ -2,9 +2,6 @@
 <qresource>
   <file>Resource/RMG.png</file>
   <file>Resource/CoverFallback.png</file>
-  <file alias="onboarding/gamecube.png">Resource/onboarding/gamecube.png</file>
-  <file alias="onboarding/raphnet.png">Resource/onboarding/raphnet.png</file>
-  <file alias="onboarding/usb.png">Resource/onboarding/usb.png</file>
   <file alias="Resource/Controller_NoAnalogStick.svg">../../RMG-Input/UserInterface/Resource/Controller_NoAnalogStick.svg</file>
   <file alias="Resource/Controller_AnalogStick.svg">../../RMG-Input/UserInterface/Resource/Controller_AnalogStick.svg</file>
   <file alias="Resource/Controller_Pressed_A.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_A.svg</file>

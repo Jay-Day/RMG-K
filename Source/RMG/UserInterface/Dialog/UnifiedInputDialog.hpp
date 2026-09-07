@@ -1,7 +1,6 @@
 #ifndef UNIFIEDINPUTDIALOG_HPP
 #define UNIFIEDINPUTDIALOG_HPP
 
-#include "FirstLaunchDialog.hpp"
 #include "RaphnetPollingHealth.hpp"
 
 #include <common.hpp>
@@ -51,7 +50,13 @@ class UnifiedInputDialog : public QDialog
     Q_OBJECT
 
   public:
-    using InputPluginType = FirstLaunchDialog::InputPluginType;
+    enum class InputPluginType
+    {
+        USB = 0,
+        Raphnet = 1,
+        Gamecube = 2
+    };
+    Q_ENUM(InputPluginType)
 
     enum class RecommendationStyle
     {

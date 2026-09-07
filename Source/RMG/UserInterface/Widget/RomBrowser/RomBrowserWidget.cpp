@@ -15,6 +15,7 @@
 #include <QBoxLayout>
 #include <QScrollBar>
 #include <QPixmap>
+#include <QLabel>
 #include <vector>
 #include <QList>
 #include <QDir>

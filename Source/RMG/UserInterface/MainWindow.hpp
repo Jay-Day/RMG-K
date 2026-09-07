@@ -23,7 +23,7 @@
 #include "Widget/Render/OGLWidget.hpp"
 #include "Widget/Render/VKWidget.hpp"
 
-#include "Dialog/FirstLaunchDialog.hpp"
+#include "Dialog/UnifiedInputDialog.hpp"
 #ifdef NETPLAY
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #include "Dialog/Lobby/RollbackLobbyDialog.hpp"
@@ -206,7 +206,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 #endif // NETPLAY
 
     bool ui_CheckRaphnetPluginMismatchPending = false;
-    bool ui_ShowFirstLaunchSetupPending = false;
 
     // Opens the Kaillera launcher; initialTab >= 0 jumps to that tab
     // (0=Server delay, 1=Peer to Peer), -1 uses the persisted last tab.
@@ -227,12 +226,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void checkRaphnetPluginMismatch(void);
     void applyAutomaticInputSelection(void);
-    bool applyInputPluginSelection(Dialog::FirstLaunchDialog::InputPluginType plugin, bool rememberPreference = false);
+    bool applyInputPluginSelection(Dialog::UnifiedInputDialog::InputPluginType plugin, bool rememberPreference = false);
     void rememberInputPluginPreference(void);
-    bool shouldShowFirstLaunchSetup(void) const;
-    bool hasConfiguredInputProfiles(void) const;
-    bool isDefaultInputPlugin(void) const;
-    void showFirstLaunchSetupDialog(bool force, bool autoSelectRecommended);
 
     void updateUI(bool inEmulation, bool isPaused);
 
@@ -363,7 +358,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Action_Playback(void);
 
     void on_Action_Help_Github(void);
-    void on_Action_Help_FirstLaunchSetup(void);
     void on_Action_Help_About(void);
     void on_Action_Help_Update(void);
 
