@@ -173,7 +173,6 @@ public:
 #include <RMG-Core/SaveState.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Plugins.hpp>
-#include <RMG-Core/Raphnet.hpp>
 #include <RMG-Core/Netplay.hpp>
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Version.hpp>
@@ -243,12 +242,6 @@ std::string plugin_filename_from_type(InputPluginType type)
 
 using namespace UserInterface;
 using namespace Utilities;
-
-static bool isRaphnetRawPlugin()
-{
-    std::string pluginName = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
-    return pluginName.find("raphnetraw") != std::string::npos;
-}
 
 namespace
 {
@@ -1737,9 +1730,6 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     connect(inputHealthTimer, &QTimer::timeout, this, &MainWindow::checkRaphnetConnection);
     inputHealthTimer->start(1000);
 
-    // Check for raphnet plugin mismatch after window is visible
-    this->ui_CheckRaphnetPluginMismatchPending = showUI && !launchROM;
-
     return true;
 }
 
@@ -1965,15 +1955,6 @@ void MainWindow::showEvent(QShowEvent *event)
         });
     }
 #endif // NETPLAY
-
-    // Check for raphnet plugin mismatch after the window is visible
-    if (this->ui_CheckRaphnetPluginMismatchPending)
-    {
-        this->ui_CheckRaphnetPluginMismatchPending = false;
-        QTimer::singleShot(0, this, [this]() {
-            this->checkRaphnetPluginMismatch();
-        });
-    }
 }
 
 void MainWindow::initializeUI(bool launchROM)
@@ -2311,68 +2292,6 @@ void MainWindow::showErrorMessage(QString text, QString details, bool force)
     msgBox->show();
 
     this->ui_MessageBoxList.append(msgBox);
-}
-
-void MainWindow::checkRaphnetPluginMismatch(void)
-{
-    // An explicit USB/keyboard preference should not prompt for an adapter switch.
-    if (CoreSettingsGetIntValue(SettingsID::GUI_PreferredInputPlugin) == static_cast<int>(InputPluginType::USB)) return;
-    // Check if user has previously declined this prompt
-    if (CoreSettingsGetBoolValue(SettingsID::GUI_DontAskRaphnetPluginSwitch))
-    {
-        return;
-    }
-
-    // Check if the current input plugin is the generic RMG-Input
-    std::string inputPlugin = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
-
-    // Only check if using RMG-Input (not raphnetraw or GCA)
-    if (inputPlugin.find("RMG-Input") == std::string::npos ||
-        inputPlugin.find("raphnetraw") != std::string::npos ||
-        inputPlugin.find("GCA") != std::string::npos)
-    {
-        return;
-    }
-
-    // Check each player's configured device name for raphnet 3.0+ adapters
-    bool foundRaphnet = false;
-    for (int i = 0; i < 4; i++)
-    {
-        std::string section = "Rosalie's Mupen GUI - Input Plugin Profile " + std::to_string(i);
-        std::string deviceName = CoreSettingsGetStringValue(SettingsID::Input_DeviceName, section);
-
-        if (isRaphnet3Plus(deviceName))
-        {
-            foundRaphnet = true;
-            break;
-        }
-    }
-
-    if (!foundRaphnet)
-    {
-        return;
-    }
-
-    // Show dialog asking user if they want to switch to raphnetraw
-    QMessageBox::StandardButton result = QMessageBox::question(
-        this,
-        tr("raphnet Adapter Detected"),
-        tr("A raphnet adapter is configured but you're using the generic input plugin. "
-           "Would you like to switch to the raphnetraw plugin? (recommended)"),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::Yes
-    );
-
-    if (result == QMessageBox::Yes)
-    {
-        this->applyInputPluginSelection(InputPluginType::Raphnet, true);
-    }
-    else
-    {
-        // User declined, don't ask again
-        CoreSettingsSetValue(SettingsID::GUI_DontAskRaphnetPluginSwitch, true);
-        CoreSettingsSave();
-    }
 }
 
 void MainWindow::applyAutomaticInputSelection(void)
@@ -3138,8 +3057,7 @@ void MainWindow::configureActions(void)
         this->action_View_Fullscreen, this->action_View_RefreshRoms,
         this->action_View_Log,
         // Help actions
-        this->action_Help_Github,
-        this->action_Help_About,
+        this->action_Help_Github, this->action_Help_About,
     });
 
     // configure save slot actions

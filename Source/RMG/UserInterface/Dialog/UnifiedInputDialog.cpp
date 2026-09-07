@@ -47,7 +47,6 @@
 namespace
 {
 using InputPluginType = UserInterface::Dialog::UnifiedInputDialog::InputPluginType;
-using RecommendationStyle = UserInterface::Dialog::UnifiedInputDialog::RecommendationStyle;
 using BindingValue = UserInterface::Dialog::UnifiedInputDialog::BindingValue;
 using ControllerPage = UserInterface::Dialog::UnifiedInputDialog::ControllerPage;
 using UsbDeviceChoice = UserInterface::Dialog::UnifiedInputDialog::UsbDeviceChoice;
@@ -969,7 +968,6 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     this->controllerPages.append(page);
 
     auto* root = new QWidget(this);
-    page->widget = root;
     auto* rootLayout = new QVBoxLayout(root);
     rootLayout->setContentsMargins(8, 8, 8, 8);
     rootLayout->setSpacing(8);
@@ -1483,7 +1481,7 @@ void UnifiedInputDialog::updateBackendChoices(void)
     {
         comboBox->addItem(tr("GameCube Controller (Native)"), static_cast<int>(InputPluginType::Gamecube));
     }
-    comboBox->addItem(tr("USB controller / keyboard"), static_cast<int>(InputPluginType::USB));
+    comboBox->addItem(tr("USB Controller / Keyboard"), static_cast<int>(InputPluginType::USB));
 
     const int targetIndex = comboBox->findData(static_cast<int>(this->selectedPlugin));
     comboBox->setCurrentIndex(targetIndex >= 0 ? targetIndex : 0);
@@ -3121,7 +3119,6 @@ UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(vo
         QString classification;
         if (lowered.contains("raphnet"))
         {
-            report.foundOtherUsb = true;
             classification = report.foundRaphnet ? tr("Raphnet raw interface confirmed") : tr("Raphnet USB device; compatible raw interface not detected");
         }
         else if (usbModeGamecube)
@@ -3131,12 +3128,10 @@ UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(vo
         }
         else if (lowered.contains("gamecube") || lowered.contains("gcn") || lowered.contains("mayflash"))
         {
-            report.foundOtherUsb = true;
             classification = tr("GameCube-like SDL name; native mode not confirmed");
         }
         else
         {
-            report.foundOtherUsb = true;
             classification = tr("Other USB");
         }
 
@@ -3179,46 +3174,4 @@ UnifiedInputDialog::InputPluginType UnifiedInputDialog::DetectStartupPlugin(
 
     // A missing preferred adapter falls back to keyboard without forgetting it.
     return InputPluginType::USB;
-}
-
-UnifiedInputDialog::Recommendation UnifiedInputDialog::DetectRecommendedPlugin(const InputDetectionReport& report)
-{
-    Recommendation recommendation;
-
-    if (report.foundRaphnet)
-    {
-        recommendation.hasRecommendation = true;
-        recommendation.plugin = InputPluginType::Raphnet;
-        recommendation.reason = tr("Recommended: raphnet adapter detected");
-        recommendation.style = RecommendationStyle::Recommended;
-        return recommendation;
-    }
-
-    if (report.foundNativeGamecube)
-    {
-        recommendation.hasRecommendation = true;
-        recommendation.plugin = InputPluginType::Gamecube;
-        recommendation.reason = tr("Recommended: GameCube adapter detected in Wii U/NS (native) mode");
-        recommendation.style = RecommendationStyle::Recommended;
-        return recommendation;
-    }
-
-    if (report.foundUsbModeMayflash)
-    {
-        recommendation.hasRecommendation = true;
-        recommendation.plugin = InputPluginType::USB;
-        recommendation.reason = tr("Mayflash USB mode detected; switch to Wii U/NS (native) mode for better support");
-        recommendation.style = RecommendationStyle::Advisory;
-        return recommendation;
-    }
-
-    if (report.foundAnySdlDevice)
-    {
-        recommendation.hasRecommendation = true;
-        recommendation.plugin = InputPluginType::USB;
-        recommendation.reason = tr("Recommended: USB controller detected");
-        recommendation.style = RecommendationStyle::Recommended;
-    }
-
-    return recommendation;
 }

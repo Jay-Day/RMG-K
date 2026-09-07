@@ -71,7 +71,6 @@ static const int default_emu2adap_portmap[MAX_CONTROLLERS] = { 0, 1, 2, 3 };
 #define EMU_2_ADAP_PORT(a)	((a) == -1 ? -1 : emu2adap_portmap[a])
 
 #define RAPHNETRAW_CONFIG_SECTION "Input-RaphnetRaw"
-#define RAPHNETRAW_CONFIG_INPUT_MODE "InputMode"
 #define RAPHNETRAW_CONFIG_PLAYER1_ADAPTER_PORT "Player1AdapterPort"
 
 static ptr_ConfigOpenSection l_ConfigOpenSection = NULL;

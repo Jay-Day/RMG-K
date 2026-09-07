@@ -58,13 +58,6 @@ class UnifiedInputDialog : public QDialog
     };
     Q_ENUM(InputPluginType)
 
-    enum class RecommendationStyle
-    {
-        None,
-        Recommended,
-        Advisory
-    };
-
     struct InputDetectionReport
     {
         bool foundAnySdlDevice = false;
@@ -72,16 +65,7 @@ class UnifiedInputDialog : public QDialog
         bool foundNativeGamecube = false;
         bool foundBlockedNativeGamecube = false;
         bool foundUsbModeMayflash = false;
-        bool foundOtherUsb = false;
         QStringList lines;
-    };
-
-    struct Recommendation
-    {
-        InputPluginType plugin = InputPluginType::USB;
-        QString reason;
-        bool hasRecommendation = false;
-        RecommendationStyle style = RecommendationStyle::None;
     };
 
     UnifiedInputDialog(QWidget* parent, InputPluginType currentPlugin);
@@ -92,7 +76,6 @@ class UnifiedInputDialog : public QDialog
 
     static InputDetectionReport ScanInputDevices(void);
     static bool IsUsbModeGamecubeAdapter(uint16_t vendorId, uint16_t productId, const QString& name);
-    static Recommendation DetectRecommendedPlugin(const InputDetectionReport& report);
     static InputPluginType DetectStartupPlugin(InputPluginType currentPlugin, const InputDetectionReport& report,
         std::optional<InputPluginType> preferredPlugin = std::nullopt);
 
@@ -178,7 +161,6 @@ class UnifiedInputDialog : public QDialog
 
     struct ControllerPage
     {
-        QWidget* widget = nullptr;
         QComboBox* backendComboBox = nullptr;
         QComboBox* deviceComboBox = nullptr;
         QLabel* statusLabel = nullptr;

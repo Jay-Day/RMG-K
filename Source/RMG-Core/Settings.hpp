@@ -50,8 +50,6 @@ enum class SettingsID
     GUI_CheckForUpdates,
     GUI_LastUpdateCheck,
     GUI_ConfirmExitWhileInGame,
-    GUI_DontAskRaphnetPluginSwitch,
-    GUI_AutoInputPlugin,
     GUI_PreferredInputPlugin,
     GUI_Version,
 
@@ -531,7 +529,6 @@ enum class SettingsID
     Input_Hotkey_Fullscreen_ExtraData,
 	
     // Raphnet Input Plugin Settings
-    RaphnetInput_InputMode,
     RaphnetInput_LastUsbWarning,
 
     // GCA Input Plugin Settings
@@ -567,9 +564,6 @@ enum class SettingsID
 
     // raphnetraw Input Plugin Settings
     RaphnetRaw_Player1AdapterPort,
-
-    // Internal Settings (not persisted to config file)
-    Internal_InputPluginSwitchRequested,
 
     Invalid
 };

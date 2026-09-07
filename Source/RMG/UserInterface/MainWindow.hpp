@@ -205,8 +205,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     std::deque<PendingLocalChatEcho> ui_PendingLocalChatEchoes;
 #endif // NETPLAY
 
-    bool ui_CheckRaphnetPluginMismatchPending = false;
-
     // Opens the Kaillera launcher; initialTab >= 0 jumps to that tab
     // (0=Server delay, 1=Peer to Peer), -1 uses the persisted last tab.
     // No-op when built without NETPLAY.
@@ -224,7 +222,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void showErrorMessage(QString text, QString details = "", bool force = true);
 
-    void checkRaphnetPluginMismatch(void);
     void applyAutomaticInputSelection(void);
     bool applyInputPluginSelection(Dialog::UnifiedInputDialog::InputPluginType plugin, bool rememberPreference = false);
     void rememberInputPluginPreference(void);

@@ -866,7 +866,6 @@ void ControllerWidget::on_inputDeviceComboBox_currentIndexChanged(int value)
 #else
                 CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, std::string("mupen64plus-input-raphnetraw.so"));
 #endif
-                CoreSettingsSetValue(SettingsID::Internal_InputPluginSwitchRequested, true);
                 CoreSettingsSave();
                 emit this->RaphnetPluginSwitchRequested();
                 return;
