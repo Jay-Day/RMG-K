@@ -4,9 +4,9 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Temporary 1 ms threshold for testing the slow-connection UI (normally 4 ms).
- * Keep recovery below the entry threshold to avoid overlapping decisions. */
-#define RAPHNET_SLOW_POLL_US 1000
+/* Sustained 4 ms polls trigger caching and the slow-connection warning.
+ * Recover below the entry threshold to avoid overlapping decisions. */
+#define RAPHNET_SLOW_POLL_US 4000
 #define RAPHNET_FAST_POLL_US (RAPHNET_SLOW_POLL_US / 2)
 
 /* Shared by the worker and raw input path under the USB lock. Times are monotonic.

@@ -61,6 +61,99 @@ using BindingValue = UserInterface::Dialog::UnifiedInputDialog::BindingValue;
 using ControllerPage = UserInterface::Dialog::UnifiedInputDialog::ControllerPage;
 using UsbDeviceChoice = UserInterface::Dialog::UnifiedInputDialog::UsbDeviceChoice;
 
+class ControllerMessageArea : public QWidget
+{
+  public:
+    ControllerMessageArea(QWidget* parent, int playerIndex) : QWidget(parent)
+    {
+        this->setObjectName(QStringLiteral("controllerMessageArea%1").arg(playerIndex));
+        QSizePolicy policy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+        policy.setHeightForWidth(true);
+        this->setSizePolicy(policy);
+        this->box = new QFrame(this);
+        this->box->setObjectName(QStringLiteral("controllerMessageBox%1").arg(playerIndex));
+        this->box->setProperty("controllerWarningBox", true);
+        auto* layout = new QHBoxLayout(this->box);
+        layout->setContentsMargins(10, 4, 10, 4);
+        layout->setSpacing(8);
+        auto* icon = new QLabel(this->box);
+        icon->setObjectName(QStringLiteral("controllerWarningIcon%1").arg(playerIndex));
+        icon->setAccessibleName(tr("Warning"));
+        icon->setPixmap(this->style()->standardIcon(QStyle::SP_MessageBoxWarning).pixmap(20, 20));
+        icon->setFixedSize(20, 20);
+        layout->addWidget(icon, 0, Qt::AlignVCenter);
+        this->messages = new QLabel(this->box);
+        this->messages->setObjectName(QStringLiteral("controllerMessages%1").arg(playerIndex));
+        this->messages->setAccessibleName(tr("Controller messages"));
+        this->messages->setTextFormat(Qt::PlainText);
+        this->messages->setWordWrap(true);
+        this->messages->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        this->messages->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        this->messages->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        layout->addWidget(this->messages, 1);
+        this->box->hide();
+    }
+
+    QLabel* Messages() const { return this->messages; }
+
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int width) const override
+    {
+        if (this->messages == nullptr || this->messages->text().isEmpty()) return 0;
+        const int textWidth = std::max(1, std::min(width, this->naturalWidth()) - 48);
+        return std::max(20, this->messages->heightForWidth(textWidth)) + 8;
+    }
+    QSize sizeHint() const override { return {this->naturalWidth(), this->heightForWidth(this->naturalWidth())}; }
+    QSize minimumSizeHint() const override { return {0, 0}; }
+
+    void SetMessages(const QString& message)
+    {
+        if (this->messages->text() == message) return;
+        this->messages->setText(message);
+        this->box->setVisible(!message.isEmpty());
+        this->updateGeometry();
+        this->positionBox();
+    }
+
+  protected:
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QWidget::resizeEvent(event);
+        this->positionBox();
+    }
+
+    void changeEvent(QEvent* event) override
+    {
+        QWidget::changeEvent(event);
+        if (event->type() == QEvent::FontChange)
+        {
+            this->updateGeometry();
+            this->positionBox();
+        }
+    }
+
+  private:
+    int naturalWidth() const
+    {
+        if (this->messages == nullptr) return 0;
+        int textWidth = 0;
+        const QFontMetrics metrics(this->messages->font());
+        for (const auto& line : this->messages->text().split('\n'))
+            textWidth = std::max(textWidth, metrics.boundingRect(line).width());
+        // Include icon, spacing and comfortable padding around the actual text.
+        return textWidth + 20 + 8 + 20 + 12;
+    }
+
+    void positionBox()
+    {
+        if (this->box == nullptr) return;
+        this->box->setGeometry(0, 0, std::min(this->width(), this->naturalWidth()), this->height());
+    }
+
+    QFrame* box = nullptr;
+    QLabel* messages = nullptr;
+};
+
 class ControllerPreviewPanel : public QWidget
 {
   public:
@@ -334,25 +427,11 @@ std::string usb_effective_section(int pageIndex)
     return section;
 }
 
-bool usb_device_is_raphnet(const UsbDeviceChoice& device)
+bool usb_device_supports_raphnet_raw(const UsbDeviceChoice& device)
 {
-    return device.vendorId == kRaphnetVendorId || device.name.toLower().contains(QStringLiteral("raphnet"));
-}
-
-bool usb_device_is_mayflash_gamecube(const UsbDeviceChoice& device)
-{
-    const QString lowered = device.name.toLower();
-    return lowered.contains(QStringLiteral("mayflash")) &&
-        (lowered.contains(QStringLiteral("gamecube")) || lowered.contains(QStringLiteral("gcn")));
-}
-
-bool usb_device_is_gamecube_like(const UsbDeviceChoice& device)
-{
-    const QString lowered = device.name.toLower();
-    return device.vendorId == kGameCubeAdapterVendorId ||
-        lowered.contains(QStringLiteral("gamecube")) ||
-        lowered.contains(QStringLiteral("gcn")) ||
-        lowered.contains(QStringLiteral("mayflash"));
+    return device.vendorId == kRaphnetVendorId &&
+        std::any_of(std::begin(kRaphnetAdapters), std::end(kRaphnetAdapters),
+            [&device](const RaphnetAdapterDef& adapter) { return adapter.productId == device.productId; });
 }
 
 void show_status(QLabel* label, const QString& text)
@@ -789,13 +868,6 @@ void UnifiedInputDialog::setupUi(void)
     }
     mainLayout->addWidget(this->tabWidget, 1);
 
-    this->warningLabel = new QLabel(this);
-    this->warningLabel->setObjectName("slowPollingNotice");
-    this->warningLabel->setWordWrap(true);
-    this->warningLabel->setProperty("warningBox", true);
-    this->warningLabel->hide();
-    mainLayout->addWidget(this->warningLabel);
-
     this->debugDevicesCheckBox = new QCheckBox(tr("Device details and troubleshooting"), this);
     mainLayout->addWidget(this->debugDevicesCheckBox);
 
@@ -806,9 +878,6 @@ void UnifiedInputDialog::setupUi(void)
     this->detectedDevicesPlainTextEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
     this->detectedDevicesPlainTextEdit->setMaximumHeight(88);
     detectedLayout->addWidget(this->detectedDevicesPlainTextEdit);
-    this->deviceAdviceLabel = new QLabel(this->detectedDevicesGroupBox);
-    this->deviceAdviceLabel->setWordWrap(true);
-    detectedLayout->addWidget(this->deviceAdviceLabel);
     this->raphnetTimingLabel = new QLabel(this->detectedDevicesGroupBox);
     this->raphnetTimingLabel->setWordWrap(true);
     detectedLayout->addWidget(this->raphnetTimingLabel);
@@ -877,12 +946,16 @@ void UnifiedInputDialog::setupUi(void)
         &UnifiedInputDialog::restoreCurrentPageDefaults);
 
     this->setStyleSheet(
-        "QLabel[warningBox=\"true\"] {"
+        "QFrame[controllerWarningBox=\"true\"] {"
         "  background: #fff3cd;"
-        "  color: #664d03;"
         "  border: 0;"
         "  border-radius: 4px;"
-        "  padding: 8px 10px;"
+        "}"
+        "QFrame[controllerWarningBox=\"true\"] QLabel {"
+        "  background: transparent;"
+        "  color: #664d03;"
+        "  border: 0;"
+        "  padding: 0;"
         "}"
         "QGroupBox[plainSurface=\"true\"] {"
         "  border: 0;"
@@ -912,6 +985,7 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
 
     auto* topLayout = new QHBoxLayout();
     page->portGroupBox = new QGroupBox(playerIndex == 0 ? tr("Controller") : tr("Player Port"), root);
+    page->portGroupBox->setObjectName(QStringLiteral("controllerControls%1").arg(playerIndex));
     page->portGroupBox->setProperty("plainSurface", true);
     auto* portLayout = new QFormLayout(page->portGroupBox);
     portLayout->setContentsMargins(0, 0, 0, 0);
@@ -923,6 +997,10 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
         page->backendComboBox->setMaximumWidth(420);
         portLayout->addRow(tr("Controller type:"), page->backendComboBox);
         page->backendComboBox->setToolTip(tr("The controller type applies to all four players."));
+        connect(page->backendComboBox, &QComboBox::activated, this, [this](int)
+        {
+            this->manualInputChoice = true;
+        });
         connect(page->backendComboBox, &QComboBox::currentIndexChanged, this, [this, page](int)
         {
             if (page->backendComboBox->currentIndex() >= 0)
@@ -945,6 +1023,11 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     deviceRowLayout->addWidget(page->deviceComboBox, 1);
     deviceRowLayout->addWidget(page->pluggedInCheckBox, 0);
     portLayout->addRow(playerIndex == 0 ? tr("Device / port:") : tr("Device:"), deviceRowWidget);
+    connect(page->deviceComboBox, &QComboBox::activated, this, [this, playerIndex](int)
+    {
+        this->manualInputChoice = true;
+        this->offerRaphnetInputType(playerIndex);
+    });
     connect(page->deviceComboBox, &QComboBox::currentIndexChanged, this, [this, playerIndex](int)
     {
         ControllerPage* page = this->controllerPages[playerIndex];
@@ -965,10 +1048,7 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
         {
             this->openPreviewSource();
         }
-        if (playerIndex == 0)
-        {
-            this->updateWarningLabel();
-        }
+        this->updateWarningLabel();
     });
     connect(page->pluggedInCheckBox, &QCheckBox::toggled, this, [this, page](bool checked)
     {
@@ -983,8 +1063,13 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     });
 
     page->portGroupBox->setMaximumWidth(560);
+    page->portGroupBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     topLayout->addWidget(page->portGroupBox, 0);
-    topLayout->addStretch(1);
+    // Match the controls when possible; allow wrapped/multiple warnings to fit.
+    auto* messageArea = new ControllerMessageArea(root, playerIndex);
+    page->messageArea = messageArea;
+    page->messages = messageArea->Messages();
+    topLayout->addWidget(messageArea, 1);
     rootLayout->addLayout(topLayout);
 
     page->mappingsGroupBox = new QGroupBox(tr("Controller bindings"), root);
@@ -1101,6 +1186,8 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     leftTriggerModeLayout->setSpacing(12);
     page->gamecubeLeftTriggerDigitalRadioButton = new QRadioButton(tr("Digital"), leftTriggerModeWidget);
     page->gamecubeLeftTriggerAnalogRadioButton = new QRadioButton(tr("Analog"), leftTriggerModeWidget);
+    page->gamecubeLeftTriggerDigitalRadioButton->setObjectName(QStringLiteral("leftTriggerDigital%1").arg(playerIndex));
+    page->gamecubeLeftTriggerAnalogRadioButton->setObjectName(QStringLiteral("leftTriggerAnalog%1").arg(playerIndex));
     leftTriggerModeLayout->addWidget(page->gamecubeLeftTriggerDigitalRadioButton);
     leftTriggerModeLayout->addWidget(page->gamecubeLeftTriggerAnalogRadioButton);
     leftTriggerModeLayout->addStretch(1);
@@ -1111,6 +1198,8 @@ QWidget* UnifiedInputDialog::createControllerPage(int playerIndex)
     rightTriggerModeLayout->setSpacing(12);
     page->gamecubeRightTriggerDigitalRadioButton = new QRadioButton(tr("Digital"), rightTriggerModeWidget);
     page->gamecubeRightTriggerAnalogRadioButton = new QRadioButton(tr("Analog"), rightTriggerModeWidget);
+    page->gamecubeRightTriggerDigitalRadioButton->setObjectName(QStringLiteral("rightTriggerDigital%1").arg(playerIndex));
+    page->gamecubeRightTriggerAnalogRadioButton->setObjectName(QStringLiteral("rightTriggerAnalog%1").arg(playerIndex));
     rightTriggerModeLayout->addWidget(page->gamecubeRightTriggerDigitalRadioButton);
     rightTriggerModeLayout->addWidget(page->gamecubeRightTriggerAnalogRadioButton);
     rightTriggerModeLayout->addStretch(1);
@@ -1240,65 +1329,69 @@ QStringList UnifiedInputDialog::deviceTopology(void)
 
 void UnifiedInputDialog::updateWarningLabel(void)
 {
-    if (this->warningLabel == nullptr)
+    for (int pageIndex = 0; pageIndex < this->controllerPages.size(); ++pageIndex)
     {
-        return;
-    }
+        auto* page = this->controllerPages[pageIndex];
+        if (page->messages == nullptr) continue;
+        QStringList warnings;
 
-    QStringList warnings;
-    auto addWarning = [&warnings](const QString& warning)
-    {
-        if (!warning.isEmpty() && !warnings.contains(warning))
+        if (this->selectedPlugin == InputPluginType::Raphnet && this->raphnetConnectionSlow)
+            warnings.append(tr("Slow controller USB polling detected.\nTry another USB port directly on your computer, without a hub."));
+
+        // This warning describes the adapter's physical mode, not the input type.
+        if (this->detectionReport.foundUsbModeMayflash)
+            warnings.append(tr("GameCube adapter is in USB mode.\nSet its switch to Wii U/NS (native) mode."));
+
+        if (this->selectedPlugin == InputPluginType::Gamecube)
         {
-            warnings.append(warning);
+            if (this->detectionReport.foundBlockedNativeGamecube)
+                warnings.append(tr("Cannot access the native GameCube adapter.\nCheck its driver and close other apps using it."));
+            if (pageIndex == this->currentPageIndex() && this->gamecubeSelectedPortMissingController)
+                warnings.append(tr("No GameCube controller answered on the selected adapter port."));
         }
-    };
 
-    if (this->detectionReport.foundBlockedNativeGamecube)
-    {
-        addWarning(tr("Native GameCube adapter detected, but access failed. Check the driver and close other apps using the adapter."));
-    }
-
-    if (this->detectionReport.foundUsbModeMayflash)
-    {
-        addWarning(tr("Mayflash GameCube adapter detected in USB mode. Switch it to Wii U/NS (native) mode for better support."));
-    }
-
-    if (this->selectedPlugin == InputPluginType::Gamecube && this->gamecubeSelectedPortMissingController)
-    {
-        addWarning(tr("GameCube controller selected, but no controller answered on the selected adapter port."));
-    }
-
-    if (this->selectedPlugin == InputPluginType::USB &&
-        !this->controllerPages.isEmpty() &&
-        this->controllerPages[0]->deviceComboBox != nullptr)
-    {
-        const int deviceIndex = this->controllerPages[0]->deviceComboBox->currentData().toInt();
-        if (deviceIndex >= 0 && deviceIndex < static_cast<int>(this->usbDevices.size()))
+        if (this->selectedPlugin == InputPluginType::USB && page->deviceComboBox != nullptr)
         {
-            const UsbDeviceChoice& device = this->usbDevices[deviceIndex];
-            if (device.type == InputDeviceType::Joystick && usb_device_is_raphnet(device))
+            const int deviceIndex = page->deviceComboBox->currentData().toInt();
+            if (deviceIndex >= 0 && deviceIndex < this->usbDevices.size())
             {
-                addWarning(tr("Raphnet adapter is selected as Other USB. Use N64 Controller (Raphnet) for better support."));
-            }
-            else if (device.type == InputDeviceType::Joystick && usb_device_is_mayflash_gamecube(device))
-            {
-                addWarning(tr("Mayflash GameCube adapter detected in USB mode. Switch it to Wii U/NS (native) mode for better support."));
-            }
-            else if (device.type == InputDeviceType::Joystick &&
-                     this->detectionReport.foundNativeGamecube &&
-                     usb_device_is_gamecube_like(device))
-            {
-                addWarning(tr("GameCube adapter is selected as Other USB. Use GameCube Controller (Native) for better support."));
+                const auto& device = this->usbDevices[deviceIndex];
+                if (device.connected && device.type == InputDeviceType::Joystick)
+                {
+                    if (usb_device_supports_raphnet_raw(device))
+                        warnings.prepend(tr("Raphnet adapter selected as USB input.\nChoose N64 Controller (Raphnet) for better support."));
+                }
             }
         }
-    }
 
-    this->deviceAdviceLabel->setText(warnings.join(QStringLiteral("\n")));
-    this->deviceAdviceLabel->setVisible(!warnings.isEmpty());
-    this->warningLabel->setText(tr("Slow controller polling detected. This may increase input latency. "
-        "Try another USB port directly on your computer, without a hub."));
-    this->warningLabel->setVisible(this->selectedPlugin == InputPluginType::Raphnet && this->raphnetConnectionSlow);
+        const QString message = warnings.join(QStringLiteral("\n\n"));
+        static_cast<ControllerMessageArea*>(page->messageArea)->SetMessages(message);
+    }
+}
+
+void UnifiedInputDialog::offerRaphnetInputType(int pageIndex)
+{
+    if (this->selectedPlugin != InputPluginType::USB) return;
+    const auto* page = this->controllerPages[pageIndex];
+    const int index = page->deviceComboBox->currentData().toInt();
+    if (index < 0 || index >= this->usbDevices.size()) return;
+    const UsbDeviceChoice device = this->usbDevices[index];
+    const bool supported = usb_device_supports_raphnet_raw(device);
+    if (!device.connected || device.type != InputDeviceType::Joystick || !supported) return;
+
+    const QString key = device.path.isEmpty() ?
+        QStringLiteral("%1:%2:%3").arg(device.vendorId).arg(device.productId).arg(device.name) : device.path;
+    if (this->raphnetUsbPrompts.contains(key)) return;
+    this->raphnetUsbPrompts.insert(key);
+
+    QMessageBox prompt(QMessageBox::Information, tr("Raphnet adapter detected"),
+        tr("For this adapter, N64 Controller (Raphnet) is the recommended controller type. Switch to it now?"),
+        QMessageBox::Yes | QMessageBox::No, this);
+    prompt.setObjectName("raphnetUsbRecommendation");
+    prompt.button(QMessageBox::Yes)->setText(tr("Use Raphnet"));
+    prompt.button(QMessageBox::No)->setText(tr("Keep USB"));
+    prompt.setDefaultButton(QMessageBox::Yes);
+    if (prompt.exec() == QMessageBox::Yes) this->setSelectedPlugin(InputPluginType::Raphnet);
 }
 
 void UnifiedInputDialog::refreshUsbDevices(void)
@@ -1934,11 +2027,13 @@ void UnifiedInputDialog::clearBinding(int pageIndex, int bindingIndex)
     {
         page->usbDirty = true;
         clear_binding(page->usbBindings[bindingIndex]);
+        this->manualInputChoice = true;
     }
     else if (this->selectedPlugin == InputPluginType::Gamecube &&
              kBindingTargets[static_cast<size_t>(bindingIndex)].hasGamecubeMapping)
     {
         page->gamecubeBindings[bindingIndex] = static_cast<int>(GCInput::None);
+        this->manualInputChoice = true;
     }
 
     this->updatePageBindingButtons(pageIndex);
@@ -1952,6 +2047,7 @@ void UnifiedInputDialog::setGamecubeTriggerAnalog(bool leftTrigger, bool analog)
         return;
     }
 
+    if (this->settingsLoaded) this->manualInputChoice = true;
     apply_gamecube_trigger_mode(this->controllerPages[0]->gamecubeBindings, leftTrigger, analog);
     this->updatePageBindingButtons(0);
 }
@@ -1981,6 +2077,7 @@ void UnifiedInputDialog::keyPressEvent(QKeyEvent* event)
         page->usbDirty = true;
         set_single_binding(page->usbBindings[this->listeningBindingIndex], InputType::Keyboard, key, 0,
             QString::fromUtf8(SDL_GetScancodeName(static_cast<SDL_Scancode>(key))));
+        this->manualInputChoice = true;
         const int pageIndex = this->listeningPageIndex;
         this->stopListeningForBinding(false);
         this->updatePageBindingButtons(pageIndex);
@@ -2493,6 +2590,7 @@ bool UnifiedInputDialog::pollGamecubePreview(void)
         if (detected != GCInput::None && this->listeningArmed)
         {
             settingsPage->gamecubeBindings[this->listeningBindingIndex] = static_cast<int>(detected);
+            this->manualInputChoice = true;
             const int oldPageIndex = this->listeningPageIndex;
             this->stopListeningForBinding(false);
             this->updatePageBindingButtons(oldPageIndex);
@@ -2826,6 +2924,7 @@ bool UnifiedInputDialog::pollUsbPreview(void)
         {
             page->usbDirty = true;
             page->usbBindings[this->listeningBindingIndex] = capturedBinding;
+            this->manualInputChoice = true;
             const int oldPageIndex = this->listeningPageIndex;
             this->stopListeningForBinding(false);
             this->updatePageBindingButtons(oldPageIndex);
@@ -2875,6 +2974,16 @@ bool UnifiedInputDialog::pollUsbPreview(void)
     page->axisXLabel->setText(QString::number(xValue));
     page->axisYLabel->setText(QString::number(yValue));
     return true;
+}
+
+bool UnifiedInputDialog::IsUsbModeGamecubeAdapter(uint16_t vendorId, uint16_t productId, const QString& name)
+{
+    // The Mayflash PC/USB identities in the bundled gamecontrollerdb can report
+    // "Nintendo GameCube Controller", without "Mayflash" in either SDL name.
+    if (vendorId == 0x0079 && (productId == 0x1843 || productId == 0x1844)) return true;
+    if (vendorId == kGameCubeAdapterVendorId && productId == kGameCubeAdapterProductId) return false;
+    const QString lowered = name.toLower();
+    return lowered.contains("mayflash") && (lowered.contains("gamecube") || lowered.contains("gcn"));
 }
 
 UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(void)
@@ -2953,7 +3062,7 @@ UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(vo
         else if (sawNativeGamecube)
         {
             report.foundBlockedNativeGamecube = true;
-            report.lines.append(tr("Native GameCube adapter: USB %1 detected, but driver is missing")
+            report.lines.append(tr("Native GameCube adapter: USB %1 detected, but access failed (check the driver and other apps)")
                 .arg(format_usb_id(kGameCubeAdapterVendorId, kGameCubeAdapterProductId)));
         }
         else if (deviceCount >= 0)
@@ -3005,7 +3114,8 @@ UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(vo
             tr("VID:PID unknown") :
             tr("VID:PID %1").arg(format_usb_id(vendorId, productId));
 
-        if (deviceName.isEmpty())
+        const bool usbModeGamecube = IsUsbModeGamecubeAdapter(vendorId, productId, deviceName);
+        if (deviceName.isEmpty() && !usbModeGamecube)
         {
             report.lines.append(tr("%1 id %2: name unavailable [%3] -> ignored")
                 .arg(deviceKind)
@@ -3023,8 +3133,7 @@ UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(vo
             report.foundOtherUsb = true;
             classification = report.foundRaphnet ? tr("Raphnet raw interface confirmed") : tr("Raphnet USB device; compatible raw interface not detected");
         }
-        else if (lowered.contains("mayflash") &&
-                 (lowered.contains("gamecube") || lowered.contains("gcn")))
+        else if (usbModeGamecube)
         {
             report.foundUsbModeMayflash = true;
             classification = tr("Mayflash GameCube adapter in USB mode; switch to Wii U/NS (native) mode for better support");
@@ -3057,6 +3166,28 @@ UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(vo
     }
 
     return report;
+}
+
+UnifiedInputDialog::InputPluginType UnifiedInputDialog::DetectStartupPlugin(
+    InputPluginType currentPlugin, const InputDetectionReport& report, std::optional<InputPluginType> preferredPlugin)
+{
+    // USB/keyboard is always available, including when no controller is plugged
+    // in. Native adapter preferences require the corresponding usable hardware.
+    if (preferredPlugin && (*preferredPlugin == InputPluginType::USB ||
+        (*preferredPlugin == InputPluginType::Raphnet && report.foundRaphnet) ||
+        (*preferredPlugin == InputPluginType::Gamecube && report.foundNativeGamecube)))
+        return *preferredPlugin;
+
+    // Prefer the last selected native adapter when it is still present, so
+    // connecting both adapter types does not undo the user's choice.
+    if (currentPlugin == InputPluginType::Raphnet && report.foundRaphnet) return currentPlugin;
+    if (currentPlugin == InputPluginType::Gamecube && report.foundNativeGamecube) return currentPlugin;
+    if (report.foundRaphnet) return InputPluginType::Raphnet;
+    if (report.foundNativeGamecube) return InputPluginType::Gamecube;
+    if (report.foundAnySdlDevice) return InputPluginType::USB;
+
+    // A missing preferred adapter falls back to keyboard without forgetting it.
+    return InputPluginType::USB;
 }
 
 UnifiedInputDialog::Recommendation UnifiedInputDialog::DetectRecommendedPlugin(const InputDetectionReport& report)

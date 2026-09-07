@@ -201,7 +201,10 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GUI, "DontAskRaphnetPluginSwitch", false};
         break;
     case SettingsID::GUI_AutoInputPlugin:
-        setting = {SETTING_SECTION_GUI, "AutoInputPlugin", std::string("")};
+        setting = {SETTING_SECTION_GUI, "AutoInputPlugin", std::string(""), "Legacy selection tracking; connected controllers are now detected at each launch"};
+        break;
+    case SettingsID::GUI_PreferredInputPlugin:
+        setting = {SETTING_SECTION_GUI, "PreferredInputPlugin", -1, "Last manual controller choice: -1 unset, 0 USB/keyboard, 1 raphnet, 2 GameCube"};
         break;
     case SettingsID::GUI_Version:
         setting = {SETTING_SECTION_GUI, "Version", CoreGetVersion()};

@@ -56,6 +56,7 @@ FirstLaunchDialog::FirstLaunchDialog(QWidget* parent, InputPluginType currentPlu
 
     connect(this->pluginGroup, &QButtonGroup::idClicked, this, [this](int id)
     {
+        this->manualInputChoice = true;
         this->setSelectedPluginInternal(static_cast<InputPluginType>(id));
     });
 

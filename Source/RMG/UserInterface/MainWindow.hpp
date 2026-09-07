@@ -227,7 +227,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void checkRaphnetPluginMismatch(void);
     void applyAutomaticInputSelection(void);
-    bool applyInputPluginSelection(Dialog::FirstLaunchDialog::InputPluginType plugin, bool manualSelection);
+    bool applyInputPluginSelection(Dialog::FirstLaunchDialog::InputPluginType plugin, bool rememberPreference = false);
+    void rememberInputPluginPreference(void);
     bool shouldShowFirstLaunchSetup(void) const;
     bool hasConfiguredInputProfiles(void) const;
     bool isDefaultInputPlugin(void) const;

@@ -276,28 +276,6 @@ std::string plugin_filename_from_type(InputPluginType type)
 #endif
 }
 
-constexpr const char* kInputAutoSelectManual = "manual";
-constexpr const char* kInputAutoSelectRaphnet = "raphnet";
-constexpr const char* kInputAutoSelectGamecube = "gamecube";
-
-std::string auto_select_key_from_plugin(InputPluginType plugin)
-{
-    switch (plugin)
-    {
-    case InputPluginType::Raphnet:
-        return kInputAutoSelectRaphnet;
-    case InputPluginType::Gamecube:
-        return kInputAutoSelectGamecube;
-    case InputPluginType::USB:
-    default:
-        return "";
-    }
-}
-
-bool is_auto_select_plugin(InputPluginType plugin)
-{
-    return plugin == InputPluginType::Raphnet || plugin == InputPluginType::Gamecube;
-}
 } // namespace
 
 using namespace UserInterface;
@@ -1723,10 +1701,7 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
         return false;
     }
 
-    if (showUI && !launchROM)
-    {
-        this->applyAutomaticInputSelection();
-    }
+    this->applyAutomaticInputSelection();
 
     if (!CoreApplyPluginSettings())
     {
@@ -2386,6 +2361,8 @@ void MainWindow::showErrorMessage(QString text, QString details, bool force)
 
 void MainWindow::checkRaphnetPluginMismatch(void)
 {
+    // An explicit USB/keyboard preference should not prompt for an adapter switch.
+    if (CoreSettingsGetIntValue(SettingsID::GUI_PreferredInputPlugin) == static_cast<int>(InputPluginType::USB)) return;
     // Check if user has previously declined this prompt
     if (CoreSettingsGetBoolValue(SettingsID::GUI_DontAskRaphnetPluginSwitch))
     {
@@ -2434,19 +2411,7 @@ void MainWindow::checkRaphnetPluginMismatch(void)
 
     if (result == QMessageBox::Yes)
     {
-#ifdef _WIN32
-        CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, std::string("mupen64plus-input-raphnetraw.dll"));
-#else
-        CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, std::string("mupen64plus-input-raphnetraw.so"));
-#endif
-        CoreSettingsSave();
-
-        if (!CoreApplyPluginSettings())
-        {
-            this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
-        }
-
-        this->updateActions(CoreIsEmulationRunning(), CoreIsEmulationPaused());
+        this->applyInputPluginSelection(InputPluginType::Raphnet, true);
     }
     else
     {
@@ -2458,94 +2423,40 @@ void MainWindow::checkRaphnetPluginMismatch(void)
 
 void MainWindow::applyAutomaticInputSelection(void)
 {
-    const std::string lastAutoSelection = CoreSettingsGetStringValue(SettingsID::GUI_AutoInputPlugin);
-    if (lastAutoSelection == kInputAutoSelectManual)
+    const std::string currentFile = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    const InputPluginType currentPlugin = plugin_type_from_filename(currentFile);
+    // Automatic selection covers the built-in controller backends. Preserve
+    // an explicitly configured third-party input plugin.
+    if (!currentFile.empty() && QFileInfo(QString::fromStdString(currentFile)).fileName().compare(
+        QString::fromStdString(plugin_filename_from_type(currentPlugin)), Qt::CaseInsensitive) != 0)
     {
         return;
     }
 
-    if (this->hasConfiguredInputProfiles())
-    {
-        return;
-    }
+    const auto report = Dialog::UnifiedInputDialog::ScanInputDevices();
+    const int preferredValue = CoreSettingsGetIntValue(SettingsID::GUI_PreferredInputPlugin);
+    const std::optional<InputPluginType> preferredPlugin = preferredValue >= 0 && preferredValue <= 2 ?
+        std::optional<InputPluginType>(static_cast<InputPluginType>(preferredValue)) : std::nullopt;
+    const InputPluginType selectedPlugin = Dialog::UnifiedInputDialog::DetectStartupPlugin(currentPlugin, report, preferredPlugin);
+    if (selectedPlugin == currentPlugin && !currentFile.empty()) return;
 
-    const InputPluginType currentPlugin = plugin_type_from_filename(
-        CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin));
-    // Keep a selected raphnet adapter backend available when its USB cable is
-    // absent at startup, so its idle monitor can discover the adapter on hotplug.
-    if (currentPlugin == InputPluginType::Raphnet) return;
-    const std::string currentAutoKey = auto_select_key_from_plugin(currentPlugin);
-
-    if (lastAutoSelection.empty() && currentPlugin != InputPluginType::USB)
-    {
-        return;
-    }
-
-    if (!lastAutoSelection.empty() && lastAutoSelection != currentAutoKey && currentPlugin != InputPluginType::USB)
-    {
-        return;
-    }
-
-    const Dialog::UnifiedInputDialog::InputDetectionReport report =
-        Dialog::UnifiedInputDialog::ScanInputDevices();
-
-    if (lastAutoSelection == kInputAutoSelectGamecube && report.foundNativeGamecube)
-    {
-        return;
-    }
-
-    if (lastAutoSelection == kInputAutoSelectRaphnet && report.foundRaphnet)
-    {
-        return;
-    }
-
-    InputPluginType recommendedPlugin = InputPluginType::USB;
-    if (report.foundRaphnet)
-    {
-        recommendedPlugin = InputPluginType::Raphnet;
-    }
-    else if (report.foundNativeGamecube)
-    {
-        recommendedPlugin = InputPluginType::Gamecube;
-    }
-
-    if (!is_auto_select_plugin(recommendedPlugin))
-    {
-        return;
-    }
-
-    const std::string recommendedFile = plugin_filename_from_type(recommendedPlugin);
-    if (recommendedFile.empty())
-    {
-        return;
-    }
-
-    CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, recommendedFile);
-    CoreSettingsSetValue(SettingsID::GUI_AutoInputPlugin, auto_select_key_from_plugin(recommendedPlugin));
+    // Backend selection does not modify any saved bindings, ports, or profiles.
+    CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, plugin_filename_from_type(selectedPlugin));
     CoreSettingsSave();
 }
 
-bool MainWindow::applyInputPluginSelection(InputPluginType plugin, bool manualSelection)
+bool MainWindow::applyInputPluginSelection(InputPluginType plugin, bool rememberPreference)
 {
     const std::string pluginFile = plugin_filename_from_type(plugin);
     const std::string currentFile = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
-    const std::string previousAutoSelection = CoreSettingsGetStringValue(SettingsID::GUI_AutoInputPlugin);
     if (pluginFile.empty())
     {
         return false;
     }
 
-    if (manualSelection)
-    {
-        CoreSettingsSetValue(SettingsID::GUI_AutoInputPlugin, std::string(kInputAutoSelectManual));
-    }
-    else if (is_auto_select_plugin(plugin))
-    {
-        CoreSettingsSetValue(SettingsID::GUI_AutoInputPlugin, auto_select_key_from_plugin(plugin));
-    }
-
     if (currentFile == pluginFile)
     {
+        if (rememberPreference) this->rememberInputPluginPreference();
         CoreSettingsSave();
         return true;
     }
@@ -2557,15 +2468,25 @@ bool MainWindow::applyInputPluginSelection(InputPluginType plugin, bool manualSe
     {
         const QString error = QString::fromStdString(CoreGetError());
         CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, currentFile);
-        CoreSettingsSetValue(SettingsID::GUI_AutoInputPlugin, previousAutoSelection);
         CoreSettingsSave();
         CoreApplyPluginSettings();
         this->showErrorMessage("CoreApplyPluginSettings() Failed", error);
         return false;
     }
 
+    if (rememberPreference) this->rememberInputPluginPreference();
     this->updateActions(CoreIsEmulationRunning(), CoreIsEmulationPaused());
     return true;
+}
+
+void MainWindow::rememberInputPluginPreference(void)
+{
+    const std::string file = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    const InputPluginType plugin = plugin_type_from_filename(file);
+    const bool builtIn = QFileInfo(QString::fromStdString(file)).fileName().compare(
+        QString::fromStdString(plugin_filename_from_type(plugin)), Qt::CaseInsensitive) == 0;
+    CoreSettingsSetValue(SettingsID::GUI_PreferredInputPlugin, builtIn ? static_cast<int>(plugin) : -1);
+    CoreSettingsSave();
 }
 
 bool MainWindow::isDefaultInputPlugin(void) const
@@ -2667,7 +2588,7 @@ void MainWindow::showFirstLaunchSetupDialog(bool force, bool autoSelectRecommend
         CoreSettingsSave();
         if (this->ui_Widget_RomBrowser != nullptr) this->ui_Widget_RomBrowser->RefreshRomList();
     }
-    if (this->applyInputPluginSelection(dialog.GetSelectedPlugin(), true))
+    if (this->applyInputPluginSelection(dialog.GetSelectedPlugin(), dialog.ShouldRememberInputChoice()))
         this->on_Action_Settings_Input();
 }
 
@@ -4581,7 +4502,7 @@ void MainWindow::on_Action_Settings_Input(void)
     if (result == QDialog::Accepted)
     {
         const InputPluginType selectedPlugin = dialog.GetSelectedPlugin();
-        this->applyInputPluginSelection(selectedPlugin, true);
+        this->applyInputPluginSelection(selectedPlugin, dialog.ShouldRememberInputChoice());
     }
 }
 
@@ -4795,6 +4716,7 @@ void MainWindow::on_Action_Settings_Settings(void)
 
     if (result == QDialog::Accepted)
     {
+        if (dialog.ShouldRememberInputChoice()) this->rememberInputPluginPreference();
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         const QString currentTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
         const QString currentIconTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme));
@@ -4836,6 +4758,7 @@ void MainWindow::on_Action_Settings_Plugins(void)
 
     if (result == QDialog::Accepted)
     {
+        if (dialog.ShouldRememberInputChoice()) this->rememberInputPluginPreference();
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         const QString currentTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
         const QString currentIconTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme));

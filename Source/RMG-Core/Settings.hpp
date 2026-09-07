@@ -52,6 +52,7 @@ enum class SettingsID
     GUI_ConfirmExitWhileInGame,
     GUI_DontAskRaphnetPluginSwitch,
     GUI_AutoInputPlugin,
+    GUI_PreferredInputPlugin,
     GUI_Version,
 
     // Netplay Settings

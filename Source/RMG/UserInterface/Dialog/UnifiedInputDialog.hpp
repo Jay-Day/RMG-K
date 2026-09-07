@@ -19,7 +19,9 @@
 #include <QElapsedTimer>
 #include <QDialog>
 #include <QStringList>
+#include <QSet>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 
 class QCheckBox;
@@ -90,9 +92,13 @@ class UnifiedInputDialog : public QDialog
     ~UnifiedInputDialog(void) override;
 
     InputPluginType GetSelectedPlugin(void) const;
+    bool ShouldRememberInputChoice(void) const { return this->result() == QDialog::Accepted && this->manualInputChoice; }
 
     static InputDetectionReport ScanInputDevices(void);
+    static bool IsUsbModeGamecubeAdapter(uint16_t vendorId, uint16_t productId, const QString& name);
     static Recommendation DetectRecommendedPlugin(const InputDetectionReport& report);
+    static InputPluginType DetectStartupPlugin(InputPluginType currentPlugin, const InputDetectionReport& report,
+        std::optional<InputPluginType> preferredPlugin = std::nullopt);
 
   private:
     enum class PreviewBackend
@@ -108,6 +114,7 @@ class UnifiedInputDialog : public QDialog
     void refreshDetection(void);
     QStringList deviceTopology(void);
     void updateWarningLabel(void);
+    void offerRaphnetInputType(int pageIndex);
     void refreshUsbDevices(void);
     void updateAllPages(void);
     void updateBackendChoices(void);
@@ -185,6 +192,8 @@ class UnifiedInputDialog : public QDialog
         QGroupBox* gamecubeStickGroupBox = nullptr;
         QGroupBox* gamecubeTriggerGroupBox = nullptr;
         QGroupBox* portGroupBox = nullptr;
+        QWidget* messageArea = nullptr;
+        QLabel* messages = nullptr;
         QVector<QPushButton*> bindingButtons;
         QVector<QPushButton*> clearButtons;
         QVector<BindingValue> usbBindings;
@@ -223,11 +232,9 @@ class UnifiedInputDialog : public QDialog
     QVector<ControllerPage*> controllerPages;
     QVector<UsbDeviceChoice> usbDevices;
     QTabWidget* tabWidget = nullptr;
-    QLabel* warningLabel = nullptr;
     QCheckBox* debugDevicesCheckBox = nullptr;
     QGroupBox* detectedDevicesGroupBox = nullptr;
     QPlainTextEdit* detectedDevicesPlainTextEdit = nullptr;
-    QLabel* deviceAdviceLabel = nullptr;
     QTimer* deviceTimer = nullptr;
     QStringList lastDeviceTopology;
     QDialogButtonBox* buttonBox = nullptr;
@@ -239,6 +246,8 @@ class UnifiedInputDialog : public QDialog
     QElapsedTimer raphnetMeasurementTimer;
     bool raphnetConnectionSlow = false;
     bool settingsLoaded = false;
+    bool manualInputChoice = false;
+    QSet<QString> raphnetUsbPrompts;
     int previousPageIndex = 0;
     uint8_t gamecubeEndpointIn = 0x81;
     uint8_t gamecubeEndpointOut = 0x02;

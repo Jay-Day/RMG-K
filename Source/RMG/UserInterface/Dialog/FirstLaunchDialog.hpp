@@ -37,6 +37,7 @@ class FirstLaunchDialog : public QDialog, private Ui::FirstLaunchDialog
 
     void SetSelectedPlugin(InputPluginType plugin);
     InputPluginType GetSelectedPlugin(void) const;
+    bool ShouldRememberInputChoice(void) const { return this->result() == QDialog::Accepted && this->manualInputChoice; }
 
     void SetRomDirectory(const QString& directory);
     QString GetRomDirectory(void) const;
@@ -81,6 +82,7 @@ class FirstLaunchDialog : public QDialog, private Ui::FirstLaunchDialog
     QString recommendedReason;
     InputDetectionReport detectionReport;
     bool hasRecommendation = false;
+    bool manualInputChoice = false;
 };
 } // namespace Dialog
 } // namespace UserInterface
