@@ -27,7 +27,6 @@
 #include <QHeaderView>
 #include <QTableView>
 #include <QLineEdit>
-#include <QLabel>
 #include <QAction>
 #include <QString>
 #include <QList>
@@ -59,13 +58,11 @@ class RomBrowserWidget : public QWidget
 
     void SetGridViewUniformSizes(bool value);
     void SetToggleSearch(void);
-    void SetControllerConnectionSlow(bool slow);
 
     QMap<QString, CoreRomSettings> GetModelData(void);
 
   private:
     QStackedWidget* stackedWidget = nullptr;
-    QLabel* controllerConnectionNotice = nullptr;
     Widget::RomBrowserEmptyWidget*    emptyWidget    = nullptr;
     Widget::RomBrowserLoadingWidget*  loadingWidget  = nullptr;
 
@@ -161,7 +158,6 @@ class RomBrowserWidget : public QWidget
     void on_Action_RemoveCoverImage(void);
 
   signals:
-    void InputSettingsRequested(void);
     void PlayGame(QString file);
     void PlayGameWith(CoreRomType type, QString file);
     void PlayGameWithDisk(QString cartridge, QString disk);

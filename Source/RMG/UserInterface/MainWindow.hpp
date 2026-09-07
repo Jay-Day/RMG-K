@@ -13,6 +13,7 @@
 #include "Thread/EmulationThread.hpp"
 #include "EventFilter.hpp"
 #include "RaphnetWarningPolicy.hpp"
+#include "ControllerStartupNotice.hpp"
 #include "Callbacks.hpp"
 
 #include <RMG-Core/RollbackNetcode.hpp>
@@ -43,10 +44,13 @@
 #include <QMessageBox>
 #include <QAction>
 #include <QPointer>
+#include <QElapsedTimer>
 #include <chrono>
 #include <deque>
 
 #include "ui_MainWindow.h"
+
+class QTimer;
 
 namespace UserInterface
 {
@@ -72,6 +76,12 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     RaphnetWarningPolicy raphnetWarningPolicy;
     QPointer<QMessageBox> raphnetWarningBox;
     void checkRaphnetConnection(void);
+    void updateControllerConnectionNotice(void);
+    bool controllerConnectionNoticeVisible = false;
+    ControllerStartupNotice controllerStartupNotice;
+    QElapsedTimer controllerNoticeClock;
+    QTimer* controllerNoticeTimer = nullptr;
+    void setStatusBarMessage(const QString& message);
 
     CoreCallbacks* coreCallBacks = nullptr;
 
@@ -82,7 +92,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     Widget::RomBrowserWidget *ui_Widget_RomBrowser = nullptr;
     EventFilter *ui_EventFilter                    = nullptr;
     QLabel *ui_StatusBar_Label                     = nullptr;
-    QLabel *ui_StatusBar_RenderModeLabel           = nullptr;
 
     QByteArray ui_Geometry;
     bool ui_Geometry_Maximized = false;

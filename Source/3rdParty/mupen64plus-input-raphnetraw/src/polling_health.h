@@ -4,6 +4,11 @@
 #include <stdint.h>
 #include <string.h>
 
+/* Temporary 1 ms threshold for testing the slow-connection UI (normally 4 ms).
+ * Keep recovery below the entry threshold to avoid overlapping decisions. */
+#define RAPHNET_SLOW_POLL_US 1000
+#define RAPHNET_FAST_POLL_US (RAPHNET_SLOW_POLL_US / 2)
+
 /* Shared by the worker and raw input path under the USB lock. Times are monotonic.
  * A missing controller supplies no evidence about USB latency. Separate entry and
  * recovery thresholds, and a longer recovery period, prevent mode oscillation. */
@@ -35,8 +40,8 @@ static inline void raphnet_health_observe(raphnet_polling_health *health,
     health->last_valid_us = now_us;
     if (health->samples == 0) health->started_us = now_us;
     ++health->samples;
-    if (elapsed_us >= 4000) ++health->slow_samples;
-    if (elapsed_us <= 2000) ++health->fast_samples;
+    if (elapsed_us >= RAPHNET_SLOW_POLL_US) ++health->slow_samples;
+    if (elapsed_us <= RAPHNET_FAST_POLL_US) ++health->fast_samples;
 
     if (!health->cached && health->samples >= 120 && now_us - health->started_us >= 2000000) {
         health->assessed_us = now_us;

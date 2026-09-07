@@ -15,7 +15,6 @@
 #include <QBoxLayout>
 #include <QScrollBar>
 #include <QPixmap>
-#include <QLabel>
 #include <vector>
 #include <QList>
 #include <QDir>
@@ -69,24 +68,10 @@ RomBrowserWidget::RomBrowserWidget(QWidget *parent) : QWidget(parent)
     this->searchWidget->setVisible(false);
     connect(this->searchWidget, &RomBrowserSearchWidget::SearchTextChanged, this, &RomBrowserWidget::on_searchWidget_SearchTextChanged);
 
-    this->controllerConnectionNotice = new QLabel(this);
-    this->controllerConnectionNotice->setObjectName("controllerConnectionNotice");
-    this->controllerConnectionNotice->setWordWrap(true);
-    this->controllerConnectionNotice->setMargin(8);
-    this->controllerConnectionNotice->setTextFormat(Qt::RichText);
-    this->controllerConnectionNotice->setText(
-        tr("Controller USB connection is slow and may increase input latency. "
-           "Try another USB port or connect without a hub. <a href=\"input\">Input Settings</a>"));
-    this->controllerConnectionNotice->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
-    this->controllerConnectionNotice->setVisible(false);
-    connect(this->controllerConnectionNotice, &QLabel::linkActivated, this,
-        [this](const QString&) { emit this->InputSettingsRequested(); });
-
     // configure layout
     QVBoxLayout* layout = new QVBoxLayout(this);
     layout->addWidget(this->stackedWidget);
     layout->addWidget(this->searchWidget);
-    layout->addWidget(this->controllerConnectionNotice);
     layout->setContentsMargins(0, 0, 0, 0);
     this->setLayout(layout);
 
@@ -1310,9 +1295,4 @@ void RomBrowserWidget::on_Action_RemoveCoverImage(void)
     item->setIcon(this->getCurrentCover(data.file, data.header, data.settings, coverFile));
     data.coverFile = coverFile;
     item->setData(QVariant::fromValue<RomBrowserModelData>(data));
-}
-
-void RomBrowserWidget::SetControllerConnectionSlow(bool slow)
-{
-    this->controllerConnectionNotice->setVisible(slow);
 }

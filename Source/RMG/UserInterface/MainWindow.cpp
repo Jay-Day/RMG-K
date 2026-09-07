@@ -2053,13 +2053,14 @@ void MainWindow::initializeUI(bool launchROM)
 
     this->ui_Widgets = new QStackedWidget(this);
     this->ui_Widget_RomBrowser = new Widget::RomBrowserWidget(this);
-    connect(this->ui_Widget_RomBrowser, &Widget::RomBrowserWidget::InputSettingsRequested,
-        this, &MainWindow::on_Action_Settings_Input);
     this->ui_Widget_Dummy = new Widget::DummyWidget(this);
 
     this->ui_EventFilter = new EventFilter(this);
     this->ui_StatusBar_Label = new QLabel(this);
-    this->ui_StatusBar_RenderModeLabel = new QLabel(this);
+    this->controllerNoticeClock.start();
+    this->controllerNoticeTimer = new QTimer(this);
+    this->controllerNoticeTimer->setSingleShot(true);
+    connect(this->controllerNoticeTimer, &QTimer::timeout, this, &MainWindow::updateControllerConnectionNotice);
 
     // only start refreshing the ROM browser
     // when RMG isn't launched with a ROM
@@ -2136,8 +2137,9 @@ void MainWindow::configureUI(QApplication* app, bool showUI)
     this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->toolBar->setVisible(this->ui_ShowToolbar);
     this->statusBar()->setVisible(this->ui_ShowStatusbar);
-    this->statusBar()->addPermanentWidget(this->ui_StatusBar_Label, 99);
-    this->statusBar()->addPermanentWidget(this->ui_StatusBar_RenderModeLabel, 1);
+    this->statusBar()->addWidget(this->ui_StatusBar_Label, 99);
+    connect(this->ui_Widgets, &QStackedWidget::currentChanged,
+        this, &MainWindow::updateControllerConnectionNotice);
 
     // set toolbar position according to setting
     int toolbarAreaSetting = CoreSettingsGetIntValue(SettingsID::GUI_ToolbarArea);
@@ -2699,19 +2701,10 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
 
         if (this->ui_VidExtRenderMode == VidExtRenderMode::OpenGL)
         {
-            if (QSurfaceFormat::defaultFormat().renderableType() == QSurfaceFormat::OpenGLES)
-            {
-                this->ui_StatusBar_RenderModeLabel->setText("OpenGL ES");
-            }
-            else
-            {
-                this->ui_StatusBar_RenderModeLabel->setText("OpenGL");
-            }
             this->ui_Widgets->setCurrentWidget(this->ui_Widget_OpenGL->GetWidget());
         }
         else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
         {
-            this->ui_StatusBar_RenderModeLabel->setText("Vulkan");
             this->ui_Widgets->setCurrentWidget(this->ui_Widget_Vulkan->GetWidget());
         }
         else
@@ -2730,7 +2723,6 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
     {
         this->setWindowTitle(this->ui_WindowTitle);
         this->ui_Widgets->setCurrentWidget(this->ui_Widget_RomBrowser);
-        this->ui_StatusBar_RenderModeLabel->clear();
         this->loadGeometry();
     }
     else
@@ -2752,13 +2744,18 @@ void MainWindow::setDebugReplayStatusMessage(const std::string& message)
         return;
     }
 
-    this->ui_StatusBar_Label->setText(QString::fromStdString(message));
+    this->setStatusBarMessage(QString::fromStdString(message));
+}
 
+void MainWindow::setStatusBarMessage(const QString& message)
+{
+    this->ui_StatusBar_Label->setText(message);
     if (this->ui_ResetStatusBarTimerId != 0)
     {
         this->killTimer(this->ui_ResetStatusBarTimerId);
     }
     this->ui_ResetStatusBarTimerId = this->startTimer(this->ui_StatusBarTimerTimeout * 1000);
+    this->updateControllerConnectionNotice();
 }
 
 void MainWindow::storeGeometry(void)
@@ -3677,7 +3674,10 @@ void MainWindow::timerEvent(QTimerEvent *event)
 
     if (timerId == this->ui_ResetStatusBarTimerId)
     {
+        this->killTimer(this->ui_ResetStatusBarTimerId);
+        this->ui_ResetStatusBarTimerId = 0;
         this->ui_StatusBar_Label->clear();
+        this->updateControllerConnectionNotice();
     }
     else if (timerId == this->ui_FullscreenTimerId)
     {
@@ -4513,10 +4513,33 @@ void MainWindow::on_Action_Settings_Rsp(void)
 }
 
 
+void MainWindow::updateControllerConnectionNotice(void)
+{
+    const auto nowMs = this->controllerNoticeClock.elapsed();
+    const bool inGame = this->emulationThread != nullptr && this->emulationThread->isRunning();
+    const bool romListVisible = !inGame && this->isVisible() && this->statusBar()->isVisible() &&
+        this->ui_Widgets->currentWidget() == this->ui_Widget_RomBrowser;
+    const bool show = this->controllerStartupNotice.observe(CoreGetRaphnetHealth() == 2, romListVisible, nowMs);
+    if (show)
+    {
+        // Use the existing single-line status area; never add a browser row or
+        // change the window's minimum size for a connection notice.
+        this->statusBar()->showMessage(tr("Slow controller USB polling detected. Try another USB port without a hub."));
+    }
+    else if (this->controllerConnectionNoticeVisible)
+    {
+        this->statusBar()->clearMessage();
+    }
+    this->controllerConnectionNoticeVisible = show;
+    const auto nextChange = this->controllerStartupNotice.nextChangeMs(nowMs);
+    if (nextChange > 0) this->controllerNoticeTimer->start(static_cast<int>(nextChange));
+    else this->controllerNoticeTimer->stop();
+}
+
 void MainWindow::checkRaphnetConnection(void)
 {
     const int health = CoreGetRaphnetHealth();
-    this->ui_Widget_RomBrowser->SetControllerConnectionSlow(health == 2);
+    this->updateControllerConnectionNotice();
     if (this->emulationThread->isRunning() && this->raphnetWarningBox) this->raphnetWarningBox->close();
     const bool canShow = this->isVisible() &&
         QApplication::applicationState() == Qt::ApplicationActive &&
@@ -4529,17 +4552,11 @@ void MainWindow::checkRaphnetConnection(void)
     auto* box = new QMessageBox(QMessageBox::Warning, tr("Controller connection is slow"),
         tr("Your controller's USB connection is responding slowly, which can increase input latency. "
            "The USB port or a hub may be the cause.\n\n"
-           "Try connecting the adapter to a different USB port, preferably directly on your computer. "
-           "RMG-K is automatically adjusting input handling while it checks the connection.\n\n"
-           "For more information, open Input Settings from the controller button."),
+           "Try connecting the adapter to a different USB port, preferably directly on your computer."),
         QMessageBox::Ok, this);
     this->raphnetWarningBox = box;
-    auto* settings = box->addButton(tr("Input Settings"), QMessageBox::ActionRole);
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->setWindowModality(Qt::NonModal);
-    connect(box, &QMessageBox::finished, this, [this, box, settings](int) {
-        if (box->clickedButton() == settings) this->on_Action_Settings_Input();
-    });
     box->show();
 }
 
@@ -5809,6 +5826,8 @@ void MainWindow::on_Action_Audio_ToggleVolumeMute(void)
 
 void MainWindow::on_Emulation_Started(void)
 {
+    this->controllerStartupNotice.dismiss();
+    this->updateControllerConnectionNotice();
     this->ui_FocusPausedEmulation = false;
 
     // only clear log dialog when we've gone over the limit
@@ -5832,6 +5851,7 @@ void MainWindow::on_Emulation_Started(void)
 
 void MainWindow::on_Emulation_Finished(bool ret, QString error)
 {
+    this->updateControllerConnectionNotice();
     this->ui_FocusPausedEmulation = false;
 
 #ifdef _WIN32
@@ -6466,14 +6486,7 @@ void MainWindow::on_Core_DebugCallback(QList<CoreCallbackMessage> messages)
         return;
     }
 
-    this->ui_StatusBar_Label->setText(statusbarMessage.Message);
-
-    // reset label deletion timer
-    if (this->ui_ResetStatusBarTimerId != 0)
-    {
-        this->killTimer(this->ui_ResetStatusBarTimerId);
-    }
-    this->ui_ResetStatusBarTimerId = this->startTimer(this->ui_StatusBarTimerTimeout * 1000);
+    this->setStatusBarMessage(statusbarMessage.Message);
 }
 
 void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
