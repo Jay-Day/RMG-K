@@ -188,6 +188,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::GUI_IconTheme:
         setting = {SETTING_SECTION_GUI, "IconTheme", std::string("Automatic")};
         break;
+    case SettingsID::GUI_Language:
+        setting = {SETTING_SECTION_GUI, "Language", std::string("system")};
+        break;
     case SettingsID::GUI_CheckForUpdates:
         setting = {SETTING_SECTION_GUI, "CheckForUpdates", true};
         break;
