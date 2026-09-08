@@ -88,8 +88,9 @@ class rmgk_gekko
     // will replay from. A no-op if there's no active session.
     static void request_keyframe();
     // Thread-safe (call from the UI thread): if a confirmed keyframe is ready, move
-    // its raw savestate bytes into out, set frame to its krec frame index, and return
-    // true (clearing the ready slot). Returns false if none is ready.
+    // its raw savestate bytes into out, set frame to the first krec record index to
+    // consume after restore, and return true (clearing the ready slot).
+    // Returns false if none is ready.
     static bool take_keyframe(std::vector<unsigned char>& out, int& frame);
 
     // --- Spectate keyframe divergence probe (diagnostic) ---
