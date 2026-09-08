@@ -60,23 +60,24 @@
 
 #ifdef PORTS_1_AND_4
 static int emu2adap_portmap[MAX_CONTROLLERS] = { 0, 2, 3, 1 };
+static const int default_emu2adap_portmap[MAX_CONTROLLERS] = { 0, 2, 3, 1 };
 #undef PLUGIN_NAME
 #define PLUGIN_NAME "raphnetraw ports 1 and 4"
 #else
 static int emu2adap_portmap[MAX_CONTROLLERS] = { 0, 1, 2, 3 };
+static const int default_emu2adap_portmap[MAX_CONTROLLERS] = { 0, 1, 2, 3 };
 #endif
 
 #define EMU_2_ADAP_PORT(a)	((a) == -1 ? -1 : emu2adap_portmap[a])
 
 #define RAPHNETRAW_CONFIG_SECTION "Input-RaphnetRaw"
-#define RAPHNETRAW_CONFIG_INPUT_MODE "InputMode"
+#define RAPHNETRAW_CONFIG_PLAYER1_ADAPTER_PORT "Player1AdapterPort"
 
 static ptr_ConfigOpenSection l_ConfigOpenSection = NULL;
-static ptr_ConfigSaveSection l_ConfigSaveSection = NULL;
 static ptr_ConfigSetDefaultInt l_ConfigSetDefaultInt = NULL;
+static m64p_handle l_RaphnetConfigSection = NULL;
 static ptr_ConfigGetParamInt l_ConfigGetParamInt = NULL;
 
-static m64p_handle l_RaphnetConfigSection = NULL;
 
 #if 0
 /* definitions of pointers to Core config functions */
@@ -127,57 +128,63 @@ static void DebugMessage(int level, const char *message, ...)
 	va_end(args);
 }
 
-static void UpdateRaphnetInputModeConfig()
+static void load_port_map_config(void)
 {
-    int mode = PB_INPUT_MODE_RAW_PIF;
+	int player1AdapterPort;
+	int player1AdapterChannel;
+	int swapIndex = -1;
+	int i;
 
-    if (l_RaphnetConfigSection != NULL && l_ConfigGetParamInt != NULL)
-    {
-        mode = (*l_ConfigGetParamInt)(
-            l_RaphnetConfigSection,
-            RAPHNETRAW_CONFIG_INPUT_MODE);
-    }
+	memcpy(emu2adap_portmap, default_emu2adap_portmap, sizeof(emu2adap_portmap));
 
-    pb_setInputMode(mode);
+	if (l_RaphnetConfigSection == NULL ||
+		l_ConfigSetDefaultInt == NULL ||
+		l_ConfigGetParamInt == NULL) {
+		return;
+	}
+
+	(*l_ConfigSetDefaultInt)(l_RaphnetConfigSection, RAPHNETRAW_CONFIG_PLAYER1_ADAPTER_PORT, 1,
+		"Adapter channel used for emulator controller 1 (1-4)");
+
+	player1AdapterPort = (*l_ConfigGetParamInt)(l_RaphnetConfigSection, RAPHNETRAW_CONFIG_PLAYER1_ADAPTER_PORT);
+	if (player1AdapterPort < 1 || player1AdapterPort > MAX_CONTROLLERS) {
+		player1AdapterPort = 1;
+	}
+
+	player1AdapterChannel = player1AdapterPort - 1;
+	if (emu2adap_portmap[0] == player1AdapterChannel) {
+		return;
+	}
+
+	for (i = 1; i < MAX_CONTROLLERS; i++) {
+		if (emu2adap_portmap[i] == player1AdapterChannel) {
+			swapIndex = i;
+			break;
+		}
+	}
+
+	if (swapIndex >= 0) {
+		emu2adap_portmap[swapIndex] = emu2adap_portmap[0];
+		emu2adap_portmap[0] = player1AdapterChannel;
+		DebugMessage(M64MSG_INFO, "Mapping emulator controller 1 to raphnet adapter channel %d", player1AdapterPort);
+	}
 }
 
-static void LoadRaphnetInputModeConfig(m64p_dynlib_handle CoreLibHandle)
+/* Optional RMG extensions. The callback only publishes state; UI work is queued
+ * by the frontend. Pausing is for exclusive adapter access in controller setup. */
+EXPORT void CALL RaphnetSetHealthCallback(void (*callback)(int))
 {
-    pb_setInputMode(PB_INPUT_MODE_RAW_PIF);
+    pb_setHealthCallback(callback);
+}
 
-    l_ConfigOpenSection = (ptr_ConfigOpenSection) osal_dynlib_getproc(CoreLibHandle, "ConfigOpenSection");
-    l_ConfigSaveSection = (ptr_ConfigSaveSection) osal_dynlib_getproc(CoreLibHandle, "ConfigSaveSection");
-    l_ConfigSetDefaultInt = (ptr_ConfigSetDefaultInt) osal_dynlib_getproc(CoreLibHandle, "ConfigSetDefaultInt");
-    l_ConfigGetParamInt = (ptr_ConfigGetParamInt) osal_dynlib_getproc(CoreLibHandle, "ConfigGetParamInt");
+EXPORT void CALL RaphnetEndSession(void)
+{
+    pb_romClosed();
+}
 
-    if (l_ConfigOpenSection == NULL ||
-        l_ConfigSetDefaultInt == NULL ||
-        l_ConfigGetParamInt == NULL)
-    {
-        DebugMessage(M64MSG_WARNING,
-            "Core config API incomplete; using default raphnetraw input mode: Raw PIF.");
-        return;
-    }
-
-    if ((*l_ConfigOpenSection)(RAPHNETRAW_CONFIG_SECTION, &l_RaphnetConfigSection) != M64ERR_SUCCESS)
-    {
-        DebugMessage(M64MSG_WARNING,
-            "Failed to open raphnetraw config section; using default input mode: Raw PIF.");
-		l_RaphnetConfigSection = NULL;
-        return;
-    }
-
-    (*l_ConfigSetDefaultInt)(l_RaphnetConfigSection,
-        RAPHNETRAW_CONFIG_INPUT_MODE,
-        PB_INPUT_MODE_RAW_PIF,
-        "0 = Raw PIF/pak support; 1 = cached GetKeys/no pak with background polling");
-
-    UpdateRaphnetInputModeConfig();
-
-    if (l_ConfigSaveSection != NULL)
-    {
-        (*l_ConfigSaveSection)(RAPHNETRAW_CONFIG_SECTION);
-    }
+EXPORT void CALL RaphnetPauseMonitoring(int pause)
+{
+    pb_pauseMonitoring(pause);
 }
 
 /* Mupen64Plus plugin functions */
@@ -202,7 +209,7 @@ EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle CoreLibHandle, void *Con
         DebugMessage(M64MSG_ERROR, "Core emulator broken; no CoreAPIVersionFunc() function found.");
         return M64ERR_INCOMPATIBLE;
     }
-    
+
     (*CoreAPIVersionFunc)(&ConfigAPIVersion, &DebugAPIVersion, &VidextAPIVersion, NULL);
     if ((ConfigAPIVersion & 0xffff0000) != (CONFIG_API_VERSION & 0xffff0000) || ConfigAPIVersion < CONFIG_API_VERSION)
     {
@@ -243,8 +250,11 @@ EXPORT m64p_error CALL PluginStartup(m64p_dynlib_handle CoreLibHandle, void *Con
     }
 #endif
 
-    LoadRaphnetInputModeConfig(CoreLibHandle);
 
+    l_ConfigOpenSection = (ptr_ConfigOpenSection) osal_dynlib_getproc(CoreLibHandle, "ConfigOpenSection");
+    l_ConfigGetParamInt = (ptr_ConfigGetParamInt) osal_dynlib_getproc(CoreLibHandle, "ConfigGetParamInt");
+    l_ConfigSetDefaultInt = (ptr_ConfigSetDefaultInt) osal_dynlib_getproc(CoreLibHandle, "ConfigSetDefaultInt");
+    if (l_ConfigOpenSection) l_ConfigOpenSection(RAPHNETRAW_CONFIG_SECTION, &l_RaphnetConfigSection);
 	pb_init(DebugMessage);
 
     l_PluginInit = 1;
@@ -257,11 +267,11 @@ EXPORT m64p_error CALL PluginShutdown(void)
 		return M64ERR_NOT_INIT;
 	}
 
+	pb_shutdown();
+
 	/* reset some local variables */
 	l_DebugCallback = NULL;
 	l_DebugCallContext = NULL;
-
-	pb_shutdown();
 
     l_PluginInit = 0;
 
@@ -303,8 +313,9 @@ EXPORT m64p_error CALL PluginGetVersion(m64p_plugin_type *PluginType, int *Plugi
 EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
 {
     int i, n_controllers, adap_port;
-	
-	UpdateRaphnetInputModeConfig();
+
+
+	load_port_map_config();
 
 	n_controllers = pb_scanControllers();
 
@@ -381,9 +392,7 @@ EXPORT void CALL RomClosed(void)
 
 EXPORT int CALL RomOpen(void)
 {
-	UpdateRaphnetInputModeConfig();
-	pb_romOpen();
-	return 1;
+	return pb_romOpen() == 0 ? 1 : 0;
 }
 
 /******************************************************************

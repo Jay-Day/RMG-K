@@ -214,6 +214,10 @@ enum class SettingsDialogTab
 SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 {
     this->setupUi(this);
+    connect(this->inputPluginsComboBox, &QComboBox::activated, this, [this](int)
+    {
+        this->manualInputChoice = true;
+    });
 
     this->languageComboBox->setItemData(0, "system");
     this->languageComboBox->setItemData(1, "en");

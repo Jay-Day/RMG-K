@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <array>
+#include <atomic>
 
 //
 // Local Variables
@@ -35,6 +36,9 @@
 static m64p::PluginApi l_Plugins[4];
 static std::string     l_PluginFiles[4];
 static char l_PluginContext[4][20];
+static std::atomic<int> l_RaphnetHealth{-1};
+static std::atomic<int> l_RaphnetMonitorPauseDepth{0};
+static void raphnet_health_changed(int state) { l_RaphnetHealth.store(state); }
 
 //
 // Local Functions
@@ -208,6 +212,7 @@ static bool apply_plugin_settings(const std::array<std::string, 4>& pluginSettin
 
         if (settingValue != l_PluginFiles[i])
         {
+            if (pluginType == CorePluginType::Input) l_RaphnetHealth.store(-1);
             m64p::PluginApi& plugin = l_Plugins[i];
 
             // shutdown plugin when hooked
@@ -226,6 +231,7 @@ static bool apply_plugin_settings(const std::array<std::string, 4>& pluginSettin
 
                 // reset plugin
                 plugin.Unhook();
+                if (pluginType == CorePluginType::Input) l_RaphnetHealth.store(-1);
             }
 
             // ensure library file exists
@@ -292,6 +298,17 @@ static bool apply_plugin_settings(const std::array<std::string, 4>& pluginSettin
                 return false;
             }
 
+            if (pluginType == CorePluginType::Input) {
+                using SetHealthCallback = void (*)(void (*)(int));
+                auto setCallback = reinterpret_cast<SetHealthCallback>(
+                    CoreGetLibrarySymbol(handle, "RaphnetSetHealthCallback"));
+                if (l_RaphnetMonitorPauseDepth.load() > 0) {
+                    using Pause = void (*)(int);
+                    auto pause = reinterpret_cast<Pause>(CoreGetLibrarySymbol(handle, "RaphnetPauseMonitoring"));
+                    if (pause) pause(1);
+                }
+                if (setCallback) setCallback(raphnet_health_changed);
+            }
             l_PluginFiles[i] = settingValue;
 
             CoreAddCallbackMessage(CoreDebugMessageType::Info, 
@@ -558,6 +575,12 @@ CORE_EXPORT bool CoreDetachPlugins(void)
     for (int i = 0; i < static_cast<int>(CorePluginType::Count); i++)
     {
         ret = m64p::Core.DetachPlugin(static_cast<m64p_plugin_type>(i + 1));
+        if (ret == M64ERR_SUCCESS && static_cast<CorePluginType>(i + 1) == CorePluginType::Input) {
+            using EndSession = void (*)();
+            auto fn = reinterpret_cast<EndSession>(CoreGetLibrarySymbol(
+                get_plugin(CorePluginType::Input).GetHandle(), "RaphnetEndSession"));
+            if (fn) fn();
+        }
         if (ret != M64ERR_SUCCESS)
         {
             error = "CoreDetachPlugins m64p::Core.DetachPlugin(";
@@ -598,8 +621,34 @@ CORE_EXPORT bool CorePluginsShutdown(void)
 
             // reset plugin
             plugin->Unhook();
+            if (static_cast<CorePluginType>(i + 1) == CorePluginType::Input) l_RaphnetHealth.store(-1);
         }
     }
 
     return ret == M64ERR_SUCCESS;
+}
+
+// The UI reads a core-owned atomic, never a possibly unloading plugin handle.
+CORE_EXPORT int CoreGetRaphnetHealth(void)
+{
+    return l_RaphnetHealth.load();
+}
+
+// Only called on the UI thread while emulation is stopped, before opening input
+// configuration. Join the worker before handing exclusive USB access to preview.
+CORE_EXPORT void CorePauseRaphnetMonitoring(bool pause)
+{
+    // Nested scans inside input setup must not resume the worker prematurely.
+    if (pause) {
+        if (l_RaphnetMonitorPauseDepth.fetch_add(1) != 0) return;
+    } else {
+        if (l_RaphnetMonitorPauseDepth.load() == 0) return;
+        if (l_RaphnetMonitorPauseDepth.fetch_sub(1) != 1) return;
+    }
+    auto& plugin = get_plugin(CorePluginType::Input);
+    if (!plugin.IsHooked()) return;
+    using PauseMonitoring = void (*)(int);
+    auto fn = reinterpret_cast<PauseMonitoring>(
+        CoreGetLibrarySymbol(plugin.GetHandle(), "RaphnetPauseMonitoring"));
+    if (fn) fn(pause ? 1 : 0);
 }

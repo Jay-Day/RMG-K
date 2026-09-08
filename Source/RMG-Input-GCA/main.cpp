@@ -20,6 +20,7 @@
 
 #include "Adapter.hpp"
 #include "GCInput.hpp"
+#include "ControllerPorts.hpp"
 #include "UserInterface/MainDialog.hpp"
 
 #include <algorithm>
@@ -55,6 +56,8 @@ struct SettingsProfile
 
     double TriggerTreshold = 0.5;
     double CButtonTreshold = 0.4;
+    bool LeftTriggerAnalog = true;
+    bool RightTriggerAnalog = true;
 
     bool PortEnabled[NUM_CONTROLLERS] = {true, true, true, true};
 
@@ -363,6 +366,8 @@ static void load_settings(void)
     l_Settings.SensitivityValue = GCASensitivityPercentToScale(CoreSettingsGetIntValue(SettingsID::GCAInput_Sensitivity));
     l_Settings.CButtonTreshold = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_CButtonTreshold)) / 100.0;
     l_Settings.TriggerTreshold = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_TriggerTreshold)) / 100.0;
+    l_Settings.LeftTriggerAnalog = CoreSettingsGetBoolValue(SettingsID::GCAInput_LeftTriggerAnalog);
+    l_Settings.RightTriggerAnalog = CoreSettingsGetBoolValue(SettingsID::GCAInput_RightTriggerAnalog);
     l_Settings.PortEnabled[0] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port1Enabled);
     l_Settings.PortEnabled[1] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port2Enabled);
     l_Settings.PortEnabled[2] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port3Enabled);
@@ -383,6 +388,8 @@ static void load_settings(void)
     l_Settings.Mapping.CDown   = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_CDown));
     l_Settings.Mapping.CLeft   = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_CLeft));
     l_Settings.Mapping.CRight  = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_CRight));
+
+    ApplyGCTriggerModes(l_Settings.Mapping, l_Settings.LeftTriggerAnalog, l_Settings.RightTriggerAnalog);
 }
 
 static int scale_axis(const double input, const double deadzone, const double n64Max)
@@ -575,22 +582,26 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
     const GCButtonMapping& map = l_Settings.Mapping;
     const double trigT = l_Settings.TriggerTreshold;
     const double cT = l_Settings.CButtonTreshold;
+    const auto inputActive = [&](GCInput input)
+    {
+        return isGCInputActive(state, input, trigT, cT,
+            l_Settings.LeftTriggerAnalog, l_Settings.RightTriggerAnalog);
+    };
 
-    Keys->A_BUTTON     = isGCInputActive(state, map.A, trigT, cT);
-    Keys->B_BUTTON     = isGCInputActive(state, map.B, trigT, cT);
-    Keys->START_BUTTON = isGCInputActive(state, map.Start, trigT, cT);
-    Keys->Z_TRIG       = isGCInputActive(state, map.Z, trigT, cT) ||
-                         (map.Z2 != GCInput::None && isGCInputActive(state, map.Z2, trigT, cT));
-    Keys->L_TRIG       = isGCInputActive(state, map.L, trigT, cT);
-    Keys->R_TRIG       = isGCInputActive(state, map.R, trigT, cT);
-    Keys->U_DPAD       = isGCInputActive(state, map.DpadUp, trigT, cT);
-    Keys->D_DPAD       = isGCInputActive(state, map.DpadDown, trigT, cT);
-    Keys->L_DPAD       = isGCInputActive(state, map.DpadLeft, trigT, cT);
-    Keys->R_DPAD       = isGCInputActive(state, map.DpadRight, trigT, cT);
-    Keys->U_CBUTTON    = isGCInputActive(state, map.CUp, trigT, cT);
-    Keys->D_CBUTTON    = isGCInputActive(state, map.CDown, trigT, cT);
-    Keys->L_CBUTTON    = isGCInputActive(state, map.CLeft, trigT, cT);
-    Keys->R_CBUTTON    = isGCInputActive(state, map.CRight, trigT, cT);
+    Keys->A_BUTTON     = inputActive(map.A);
+    Keys->B_BUTTON     = inputActive(map.B);
+    Keys->START_BUTTON = inputActive(map.Start);
+    Keys->Z_TRIG       = inputActive(map.Z) || (map.Z2 != GCInput::None && inputActive(map.Z2));
+    Keys->L_TRIG       = inputActive(map.L);
+    Keys->R_TRIG       = inputActive(map.R);
+    Keys->U_DPAD       = inputActive(map.DpadUp);
+    Keys->D_DPAD       = inputActive(map.DpadDown);
+    Keys->L_DPAD       = inputActive(map.DpadLeft);
+    Keys->R_DPAD       = inputActive(map.DpadRight);
+    Keys->U_CBUTTON    = inputActive(map.CUp);
+    Keys->D_CBUTTON    = inputActive(map.CDown);
+    Keys->L_CBUTTON    = inputActive(map.CLeft);
+    Keys->R_CBUTTON    = inputActive(map.CRight);
 
     // Analog stick (not remappable)
     const int8_t x = static_cast<int8_t>(state.LeftStickX + 128);
@@ -626,16 +637,9 @@ EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
     // This keeps Control 0 stable for rollback even if the adapter reports
     // controller presence slightly after InitiateControllers().
     l_ControllerStateMutex.lock();
-    l_ControlToPort = {-1, -1, -1, -1};
-    int controlSlot = 0;
-    for (int i = 0; i < NUM_CONTROLLERS; i++)
-    {
-        if (l_Settings.PortEnabled[i])
-        {
-            l_ControlToPort[controlSlot] = i;
-            controlSlot++;
-        }
-    }
+    l_ControlToPort = ResolveGameCubeControllerPorts(
+        CoreSettingsGetIntListValue(SettingsID::GCAInput_ControllerPorts),
+        {l_Settings.PortEnabled[0], l_Settings.PortEnabled[1], l_Settings.PortEnabled[2], l_Settings.PortEnabled[3]});
 
     for (int i = 0; i < NUM_CONTROLLERS; i++)
     {

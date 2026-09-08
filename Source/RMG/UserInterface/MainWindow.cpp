@@ -1,3 +1,4 @@
+#include <QDateTime>
 /*
  * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
  *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
@@ -12,6 +13,7 @@
 #include <cstdio>
 
 #include "UserInterface/Dialog/AboutDialog.hpp"
+#include "UserInterface/Dialog/UnifiedInputDialog.hpp"
 #include "Dialog/Cheats/CheatsDialog.hpp"
 #include "Dialog/SettingsDialog.hpp"
 #include "Dialog/RomInfoDialog.hpp"
@@ -29,7 +31,6 @@
 #include "n02_client.h"
 #include "kailleraclient.h"
 #endif // NETPLAY
-#include "Dialog/RaphnetInputDialog.hpp"
 #include "UserInterface/EventFilter.hpp"
 #include "Utilities/QtKeyToSdl3Key.hpp"
 #include "Utilities/QtMessageBox.hpp"
@@ -63,6 +64,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QShowEvent>
+#include <QDialog>
 #include <QDir>
 #include <QUrl>
 #include <QRegularExpression>
@@ -79,6 +81,7 @@
 #include <QPainter>
 #include <QProxyStyle>
 
+#include <cctype>
 #include <cstdlib>
 #include <string>
 
@@ -170,7 +173,6 @@ public:
 #include <RMG-Core/SaveState.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Plugins.hpp>
-#include <RMG-Core/Raphnet.hpp>
 #include <RMG-Core/Netplay.hpp>
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Version.hpp>
@@ -181,14 +183,65 @@ public:
 #include <RMG-Core/Core.hpp>
 #include <RMG-Core/Key.hpp>
 
+namespace
+{
+using InputPluginType = UserInterface::Dialog::UnifiedInputDialog::InputPluginType;
+
+std::string to_lower_copy(const std::string& value)
+{
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return lowered;
+}
+
+InputPluginType plugin_type_from_filename(const std::string& value)
+{
+    std::string lowered = to_lower_copy(value);
+    if (lowered.find("raphnetraw") != std::string::npos)
+    {
+        return InputPluginType::Raphnet;
+    }
+
+    if (lowered.find("rmg-input-gca") != std::string::npos || lowered.find("gca") != std::string::npos)
+    {
+        return InputPluginType::Gamecube;
+    }
+
+    return InputPluginType::USB;
+}
+
+std::string plugin_filename_from_type(InputPluginType type)
+{
+#ifdef _WIN32
+    switch (type)
+    {
+    case InputPluginType::Gamecube:
+        return "RMG-Input-GCA.dll";
+    case InputPluginType::Raphnet:
+        return "mupen64plus-input-raphnetraw.dll";
+    case InputPluginType::USB:
+    default:
+        return "RMG-Input.dll";
+    }
+#else
+    switch (type)
+    {
+    case InputPluginType::Gamecube:
+        return "RMG-Input-GCA.so";
+    case InputPluginType::Raphnet:
+        return "mupen64plus-input-raphnetraw.so";
+    case InputPluginType::USB:
+    default:
+        return "RMG-Input.so";
+    }
+#endif
+}
+
+} // namespace
+
 using namespace UserInterface;
 using namespace Utilities;
-
-static bool isRaphnetRawPlugin()
-{
-    std::string pluginName = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
-    return pluginName.find("raphnetraw") != std::string::npos;
-}
 
 namespace
 {
@@ -1598,6 +1651,8 @@ MainWindow::~MainWindow()
 
 bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
 {
+    this->applyAutomaticInputSelection();
+
     if (!CoreApplyPluginSettings())
     {
         this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
@@ -1663,8 +1718,11 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     // to ensure the main window is visible before opening Kaillera dialog
 #endif // NETPLAY
 
-    // Check for raphnet plugin mismatch after window is visible
-    this->ui_CheckRaphnetPluginMismatchPending = showUI && !launchROM;
+    this->raphnetWarningPolicy.warningShown = QString::fromStdString(
+        CoreSettingsGetStringValue(SettingsID::RaphnetInput_LastUsbWarning)).toLongLong() > 0;
+    auto* inputHealthTimer = new QTimer(this);
+    connect(inputHealthTimer, &QTimer::timeout, this, &MainWindow::checkRaphnetConnection);
+    inputHealthTimer->start(1000);
 
     return true;
 }
@@ -1888,15 +1946,6 @@ void MainWindow::showEvent(QShowEvent *event)
         });
     }
 #endif // NETPLAY
-
-    // Check for raphnet plugin mismatch after the window is visible
-    if (this->ui_CheckRaphnetPluginMismatchPending)
-    {
-        this->ui_CheckRaphnetPluginMismatchPending = false;
-        QTimer::singleShot(0, this, [this]() {
-            this->checkRaphnetPluginMismatch();
-        });
-    }
 }
 
 void MainWindow::initializeUI(bool launchROM)
@@ -1909,7 +1958,10 @@ void MainWindow::initializeUI(bool launchROM)
 
     this->ui_EventFilter = new EventFilter(this);
     this->ui_StatusBar_Label = new QLabel(this);
-    this->ui_StatusBar_RenderModeLabel = new QLabel(this);
+    this->controllerNoticeClock.start();
+    this->controllerNoticeTimer = new QTimer(this);
+    this->controllerNoticeTimer->setSingleShot(true);
+    connect(this->controllerNoticeTimer, &QTimer::timeout, this, &MainWindow::updateControllerConnectionNotice);
 
     // only start refreshing the ROM browser
     // when RMG isn't launched with a ROM
@@ -1986,8 +2038,9 @@ void MainWindow::configureUI(QApplication* app, bool showUI)
     this->menuRollback->menuAction()->setVisible(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->toolBar->setVisible(this->ui_ShowToolbar);
     this->statusBar()->setVisible(this->ui_ShowStatusbar);
-    this->statusBar()->addPermanentWidget(this->ui_StatusBar_Label, 99);
-    this->statusBar()->addPermanentWidget(this->ui_StatusBar_RenderModeLabel, 1);
+    this->statusBar()->addWidget(this->ui_StatusBar_Label, 99);
+    connect(this->ui_Widgets, &QStackedWidget::currentChanged,
+        this, &MainWindow::updateControllerConnectionNotice);
 
     // set toolbar position according to setting
     int toolbarAreaSetting = CoreSettingsGetIntValue(SettingsID::GUI_ToolbarArea);
@@ -2232,80 +2285,72 @@ void MainWindow::showErrorMessage(QString text, QString details, bool force)
     this->ui_MessageBoxList.append(msgBox);
 }
 
-void MainWindow::checkRaphnetPluginMismatch(void)
+void MainWindow::applyAutomaticInputSelection(void)
 {
-    // Check if user has previously declined this prompt
-    if (CoreSettingsGetBoolValue(SettingsID::GUI_DontAskRaphnetPluginSwitch))
+    const std::string currentFile = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    const InputPluginType currentPlugin = plugin_type_from_filename(currentFile);
+    // Automatic selection covers the built-in controller backends. Preserve
+    // an explicitly configured third-party input plugin.
+    if (!currentFile.empty() && QFileInfo(QString::fromStdString(currentFile)).fileName().compare(
+        QString::fromStdString(plugin_filename_from_type(currentPlugin)), Qt::CaseInsensitive) != 0)
     {
         return;
     }
 
-    // Check if the current input plugin is the generic RMG-Input
-    std::string inputPlugin = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    const auto report = Dialog::UnifiedInputDialog::ScanInputDevices();
+    const int preferredValue = CoreSettingsGetIntValue(SettingsID::GUI_PreferredInputPlugin);
+    const std::optional<InputPluginType> preferredPlugin = preferredValue >= 0 && preferredValue <= 2 ?
+        std::optional<InputPluginType>(static_cast<InputPluginType>(preferredValue)) : std::nullopt;
+    const InputPluginType selectedPlugin = Dialog::UnifiedInputDialog::DetectStartupPlugin(currentPlugin, report, preferredPlugin);
+    if (selectedPlugin == currentPlugin && !currentFile.empty()) return;
 
-    // Only check if using RMG-Input (not raphnetraw or GCA)
-    if (inputPlugin.find("RMG-Input") == std::string::npos ||
-        inputPlugin.find("raphnetraw") != std::string::npos ||
-        inputPlugin.find("GCA") != std::string::npos)
+    // Backend selection does not modify any saved bindings, ports, or profiles.
+    CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, plugin_filename_from_type(selectedPlugin));
+    CoreSettingsSave();
+}
+
+bool MainWindow::applyInputPluginSelection(InputPluginType plugin, bool rememberPreference)
+{
+    const std::string pluginFile = plugin_filename_from_type(plugin);
+    const std::string currentFile = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    if (pluginFile.empty())
     {
-        return;
+        return false;
     }
 
-    // Check each player's configured device name for raphnet 3.0+ adapters
-    bool foundRaphnet = false;
-    for (int i = 0; i < 4; i++)
+    if (currentFile == pluginFile)
     {
-        std::string section = "Rosalie's Mupen GUI - Input Plugin Profile " + std::to_string(i);
-        std::string deviceName = CoreSettingsGetStringValue(SettingsID::Input_DeviceName, section);
-
-        if (isRaphnet3Plus(deviceName))
-        {
-            foundRaphnet = true;
-            break;
-        }
-    }
-
-    if (!foundRaphnet)
-    {
-        return;
-    }
-
-    // Show dialog asking user if they want to switch to raphnetraw
-    QMessageBox::StandardButton result = QMessageBox::question(
-        this,
-        tr("raphnet Adapter Detected"),
-        tr("A raphnet adapter is configured but you're using the generic input plugin. "
-           "Would you like to switch to the raphnetraw plugin? (recommended)"),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::Yes
-    );
-
-    if (result == QMessageBox::Yes)
-    {
-#ifdef _WIN32
-        CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, std::string("mupen64plus-input-raphnetraw.dll"));
-#else
-        CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, std::string("mupen64plus-input-raphnetraw.so"));
-#endif
+        if (rememberPreference) this->rememberInputPluginPreference();
         CoreSettingsSave();
-
-        if (!CoreApplyPluginSettings())
-        {
-            this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
-        }
-
-        // Update input settings button enabled state
-        bool hasInputConfig = CorePluginsHasConfig(CorePluginType::Input) ||
-            (isRaphnetRawPlugin() && !CoreIsEmulationRunning());
-        this->action_Settings_Input->setEnabled(hasInputConfig);
-        this->action_Toolbar_Input->setEnabled(hasInputConfig);
+        return true;
     }
-    else
+
+    CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, pluginFile);
+    CoreSettingsSave();
+
+    if (!CoreApplyPluginSettings())
     {
-        // User declined, don't ask again
-        CoreSettingsSetValue(SettingsID::GUI_DontAskRaphnetPluginSwitch, true);
+        const QString error = QString::fromStdString(CoreGetError());
+        CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, currentFile);
         CoreSettingsSave();
+        CoreApplyPluginSettings();
+        this->showErrorMessage("CoreApplyPluginSettings() Failed", error);
+        return false;
     }
+
+    if (rememberPreference) this->rememberInputPluginPreference();
+    this->updateActions(CoreIsEmulationRunning(), CoreIsEmulationPaused());
+    return true;
+}
+
+void MainWindow::rememberInputPluginPreference(void)
+{
+    const std::string file = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    const InputPluginType plugin = plugin_type_from_filename(file);
+    const bool builtIn = QFileInfo(QString::fromStdString(file)).fileName().compare(
+        QString::fromStdString(plugin_filename_from_type(plugin)), Qt::CaseInsensitive) == 0;
+    CoreSettingsSetValue(SettingsID::GUI_PreferredInputPlugin, builtIn ? static_cast<int>(plugin) : -1);
+    CoreSettingsSave();
 }
 
 void MainWindow::updateUI(bool inEmulation, bool isPaused)
@@ -2338,19 +2383,10 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
 
         if (this->ui_VidExtRenderMode == VidExtRenderMode::OpenGL)
         {
-            if (QSurfaceFormat::defaultFormat().renderableType() == QSurfaceFormat::OpenGLES)
-            {
-                this->ui_StatusBar_RenderModeLabel->setText("OpenGL ES");
-            }
-            else
-            {
-                this->ui_StatusBar_RenderModeLabel->setText("OpenGL");
-            }
             this->ui_Widgets->setCurrentWidget(this->ui_Widget_OpenGL->GetWidget());
         }
         else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
         {
-            this->ui_StatusBar_RenderModeLabel->setText("Vulkan");
             this->ui_Widgets->setCurrentWidget(this->ui_Widget_Vulkan->GetWidget());
         }
         else
@@ -2369,7 +2405,6 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
     {
         this->setWindowTitle(this->ui_WindowTitle);
         this->ui_Widgets->setCurrentWidget(this->ui_Widget_RomBrowser);
-        this->ui_StatusBar_RenderModeLabel->clear();
         this->loadGeometry();
     }
     else
@@ -2391,13 +2426,18 @@ void MainWindow::setDebugReplayStatusMessage(const std::string& message)
         return;
     }
 
-    this->ui_StatusBar_Label->setText(QString::fromStdString(message));
+    this->setStatusBarMessage(QString::fromStdString(message));
+}
 
+void MainWindow::setStatusBarMessage(const QString& message)
+{
+    this->ui_StatusBar_Label->setText(message);
     if (this->ui_ResetStatusBarTimerId != 0)
     {
         this->killTimer(this->ui_ResetStatusBarTimerId);
     }
     this->ui_ResetStatusBarTimerId = this->startTimer(this->ui_StatusBarTimerTimeout * 1000);
+    this->updateControllerConnectionNotice();
 }
 
 void MainWindow::storeGeometry(void)
@@ -2789,11 +2829,9 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_Settings_Rsp->setEnabled(CorePluginsHasConfig(CorePluginType::Rsp));
     this->action_Settings_Rsp->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_InputSettings));
-    bool hasInputConfig = CorePluginsHasConfig(CorePluginType::Input);
-    bool hasRaphnetRawInputTest = isRaphnetRawPlugin() && !inEmulation;
-    this->action_Settings_Input->setEnabled(hasInputConfig || hasRaphnetRawInputTest);
+    this->action_Settings_Input->setEnabled(!inEmulation);
     this->action_Settings_Input->setShortcut(QKeySequence(keyBinding));
-    this->action_Toolbar_Input->setEnabled(hasInputConfig || hasRaphnetRawInputTest);
+    this->action_Toolbar_Input->setEnabled(!inEmulation);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Settings));
     this->action_Settings_Settings->setShortcut(QKeySequence(keyBinding));
 
@@ -3316,7 +3354,10 @@ void MainWindow::timerEvent(QTimerEvent *event)
 
     if (timerId == this->ui_ResetStatusBarTimerId)
     {
+        this->killTimer(this->ui_ResetStatusBarTimerId);
+        this->ui_ResetStatusBarTimerId = 0;
         this->ui_StatusBar_Label->clear();
+        this->updateControllerConnectionNotice();
     }
     else if (timerId == this->ui_FullscreenTimerId)
     {
@@ -4192,39 +4233,75 @@ void MainWindow::on_Action_Settings_Rsp(void)
 }
 
 
+void MainWindow::updateControllerConnectionNotice(void)
+{
+    const auto nowMs = this->controllerNoticeClock.elapsed();
+    const bool inGame = this->emulationThread != nullptr && this->emulationThread->isRunning();
+    const bool romListVisible = !inGame && this->isVisible() && this->statusBar()->isVisible() &&
+        this->ui_Widgets->currentWidget() == this->ui_Widget_RomBrowser;
+    const bool show = this->controllerStartupNotice.observe(CoreGetRaphnetHealth() == 2, romListVisible, nowMs);
+    if (show)
+    {
+        // Use the existing single-line status area; never add a browser row or
+        // change the window's minimum size for a connection notice.
+        this->statusBar()->showMessage(tr("Slow controller USB polling detected. Try another USB port without a hub."));
+    }
+    else if (this->controllerConnectionNoticeVisible)
+    {
+        this->statusBar()->clearMessage();
+    }
+    this->controllerConnectionNoticeVisible = show;
+    const auto nextChange = this->controllerStartupNotice.nextChangeMs(nowMs);
+    if (nextChange > 0) this->controllerNoticeTimer->start(static_cast<int>(nextChange));
+    else this->controllerNoticeTimer->stop();
+}
+
+void MainWindow::checkRaphnetConnection(void)
+{
+    const int health = CoreGetRaphnetHealth();
+    this->updateControllerConnectionNotice();
+    if (this->emulationThread->isRunning() && this->raphnetWarningBox) this->raphnetWarningBox->close();
+    const bool canShow = this->isVisible() &&
+        QApplication::applicationState() == Qt::ApplicationActive &&
+        !this->emulationThread->isRunning() && !QApplication::activeModalWidget() && !this->raphnetWarningBox;
+    if (!this->raphnetWarningPolicy.observe(health, canShow)) return;
+
+    CoreSettingsSetValue(SettingsID::RaphnetInput_LastUsbWarning,
+        std::to_string(QDateTime::currentSecsSinceEpoch()));
+    CoreSettingsSave();
+    auto* box = new QMessageBox(QMessageBox::Warning, tr("Controller connection is slow"),
+        tr("Your controller's USB connection is responding slowly, which can increase input latency. "
+           "The USB port or a hub may be the cause.\n\n"
+           "Try connecting the adapter to a different USB port, preferably directly on your computer."),
+        QMessageBox::Ok, this);
+    this->raphnetWarningBox = box;
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setWindowModality(Qt::NonModal);
+    box->show();
+}
+
 void MainWindow::on_Action_Settings_Input(void)
 {
-    // If raphnetraw is the active input plugin, open the input test dialog
-    // (only when no ROM is running to avoid interfering with game input)
-    if (isRaphnetRawPlugin())
+    if (this->emulationThread->isRunning() || CoreIsEmulationRunning())
     {
-        if (!CoreIsEmulationRunning())
-        {
-            UserInterface::RaphnetInputDialog dialog(this);
-            dialog.exec();
-        }
         return;
     }
 
-    // Clear the plugin switch flag before opening config
-    CoreSettingsSetValue(SettingsID::Internal_InputPluginSwitchRequested, false);
-
-    CorePluginsOpenConfig(CorePluginType::Input, this);
-
-    // Check if a plugin switch was requested (e.g., raphnet to raphnetraw)
-    if (CoreSettingsGetBoolValue(SettingsID::Internal_InputPluginSwitchRequested))
+    const std::string currentFile = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+    const InputPluginType currentPlugin = plugin_type_from_filename(currentFile);
+    if (QFileInfo(QString::fromStdString(currentFile)).fileName().compare(
+        QString::fromStdString(plugin_filename_from_type(currentPlugin)), Qt::CaseInsensitive) != 0)
     {
-        CoreSettingsSetValue(SettingsID::Internal_InputPluginSwitchRequested, false);
-        if (!CoreApplyPluginSettings())
-        {
-            this->showErrorMessage("CoreApplyPluginSettings() Failed", QString::fromStdString(CoreGetError()));
-        }
+        CorePluginsOpenConfig(CorePluginType::Input, this);
+        return;
+    }
+    Dialog::UnifiedInputDialog dialog(this, currentPlugin);
 
-        // Update input settings button enabled state
-        bool hasInputConfig = CorePluginsHasConfig(CorePluginType::Input) ||
-            (isRaphnetRawPlugin() && !CoreIsEmulationRunning());
-        this->action_Settings_Input->setEnabled(hasInputConfig);
-        this->action_Toolbar_Input->setEnabled(hasInputConfig);
+    const int result = dialog.exec();
+    if (result == QDialog::Accepted)
+    {
+        const InputPluginType selectedPlugin = dialog.GetSelectedPlugin();
+        this->applyInputPluginSelection(selectedPlugin, dialog.ShouldRememberInputChoice());
     }
 }
 
@@ -4511,6 +4588,7 @@ void MainWindow::on_Action_Settings_Settings(void)
 
     if (result == QDialog::Accepted)
     {
+        if (dialog.ShouldRememberInputChoice()) this->rememberInputPluginPreference();
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         const QString currentTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
         const QString currentIconTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme));
@@ -4552,6 +4630,7 @@ void MainWindow::on_Action_Settings_Plugins(void)
 
     if (result == QDialog::Accepted)
     {
+        if (dialog.ShouldRememberInputChoice()) this->rememberInputPluginPreference();
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         const QString currentTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Theme));
         const QString currentIconTheme = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme));
@@ -5546,6 +5625,8 @@ void MainWindow::on_Action_Audio_ToggleVolumeMute(void)
 
 void MainWindow::on_Emulation_Started(void)
 {
+    this->controllerStartupNotice.dismiss();
+    this->updateControllerConnectionNotice();
     this->ui_FocusPausedEmulation = false;
 
     // only clear log dialog when we've gone over the limit
@@ -5569,6 +5650,7 @@ void MainWindow::on_Emulation_Started(void)
 
 void MainWindow::on_Emulation_Finished(bool ret, QString error)
 {
+    this->updateControllerConnectionNotice();
     this->ui_FocusPausedEmulation = false;
 
 #ifdef _WIN32
@@ -6204,14 +6286,7 @@ void MainWindow::on_Core_DebugCallback(QList<CoreCallbackMessage> messages)
         return;
     }
 
-    this->ui_StatusBar_Label->setText(statusbarMessage.Message);
-
-    // reset label deletion timer
-    if (this->ui_ResetStatusBarTimerId != 0)
-    {
-        this->killTimer(this->ui_ResetStatusBarTimerId);
-    }
-    this->ui_ResetStatusBarTimerId = this->startTimer(this->ui_StatusBarTimerTimeout * 1000);
+    this->setStatusBarMessage(statusbarMessage.Message);
 }
 
 void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)

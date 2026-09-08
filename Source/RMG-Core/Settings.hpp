@@ -51,7 +51,7 @@ enum class SettingsID
     GUI_CheckForUpdates,
     GUI_LastUpdateCheck,
     GUI_ConfirmExitWhileInGame,
-    GUI_DontAskRaphnetPluginSwitch,
+    GUI_PreferredInputPlugin,
     GUI_Version,
 
     // Netplay Settings
@@ -530,18 +530,21 @@ enum class SettingsID
     Input_Hotkey_Fullscreen_ExtraData,
 	
     // Raphnet Input Plugin Settings
-    RaphnetInput_InputMode,
+    RaphnetInput_LastUsbWarning,
 
     // GCA Input Plugin Settings
     GCAInput_Deadzone,
     GCAInput_Sensitivity,
     GCAInput_CButtonTreshold,
     GCAInput_TriggerTreshold,
+    GCAInput_LeftTriggerAnalog,
+    GCAInput_RightTriggerAnalog,
     GCAInput_SwapZL,
     GCAInput_Port1Enabled,
     GCAInput_Port2Enabled,
     GCAInput_Port3Enabled,
     GCAInput_Port4Enabled,
+    GCAInput_ControllerPorts,
 
     // GCA Button Mapping Settings
     GCAInput_Map_A,
@@ -560,8 +563,8 @@ enum class SettingsID
     GCAInput_Map_CLeft,
     GCAInput_Map_CRight,
 
-    // Internal Settings (not persisted to config file)
-    Internal_InputPluginSwitchRequested,
+    // raphnetraw Input Plugin Settings
+    RaphnetRaw_Player1AdapterPort,
 
     Invalid
 };
