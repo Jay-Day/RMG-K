@@ -192,14 +192,38 @@ qt_add_lupdate(RMG
     TS_FILES ${RMG_TRANSLATION_TS}
     SOURCES ${RMG_SOURCES} Utilities/Translation.hpp
 )
-qt_add_lrelease(RMG
-    TS_FILES ${RMG_TRANSLATION_TS}
-    QM_FILES_OUTPUT_VARIABLE RMG_TRANSLATION_QM_FILES
-)
+if (WIN32 AND CMAKE_GENERATOR STREQUAL "MSYS Makefiles")
+    # Qt's Windows tool wrapper is a batch file in the build directory.  The
+    # MSYS Makefiles generator does not quote that wrapper when the build path
+    # contains spaces, so invoke lrelease directly instead.
+    set(RMG_TRANSLATION_QM_FILES)
+    foreach(RMG_TRANSLATION_TS_FILE IN LISTS RMG_TRANSLATION_TS)
+        get_filename_component(RMG_TRANSLATION_NAME
+            "${RMG_TRANSLATION_TS_FILE}" NAME_WE)
+        set(RMG_TRANSLATION_QM_FILE
+            "${CMAKE_CURRENT_BINARY_DIR}/${RMG_TRANSLATION_NAME}.qm")
+        add_custom_command(
+            OUTPUT "${RMG_TRANSLATION_QM_FILE}"
+            COMMAND Qt6::lrelease "${RMG_TRANSLATION_TS_FILE}"
+                -qm "${RMG_TRANSLATION_QM_FILE}"
+            DEPENDS Qt6::lrelease "${RMG_TRANSLATION_TS_FILE}"
+            VERBATIM
+        )
+        list(APPEND RMG_TRANSLATION_QM_FILES "${RMG_TRANSLATION_QM_FILE}")
+    endforeach()
+    add_custom_target(RMG_lrelease DEPENDS ${RMG_TRANSLATION_QM_FILES})
+    add_dependencies(RMG RMG_lrelease)
+else()
+    qt_add_lrelease(RMG
+        TS_FILES ${RMG_TRANSLATION_TS}
+        QM_FILES_OUTPUT_VARIABLE RMG_TRANSLATION_QM_FILES
+    )
+endif()
 add_custom_command(TARGET RMG POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:RMG>/Data/Translations"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RMG_TRANSLATION_QM_FILES}
         "$<TARGET_FILE_DIR:RMG>/Data/Translations"
+    VERBATIM
 )
 install(FILES ${RMG_TRANSLATION_QM_FILES}
     DESTINATION ${DATA_INSTALL_PATH}/Translations
