@@ -1,6 +1,239 @@
 [67D20729-F696774C-C:4A]
 Name=Nintendo All-Star! Dairantou Smash Brothers (J)
 
+$!設定 [Netplay Required: Unlock All]
+Note=いにしえの王国とキャラが全部出ます。さらに4ストック、アイテムなしになります。 [Unlocks the "Mushroom Kingdom" stage and all characters. Also sets the match to 4 stocks with no items.]
+810A28F8 0FF0
+800A28F7 00FF
+800A2CCB 0002
+800A2CCF 0003
+800A2CE4 0000
+
+$開始位置変更\段位戦用チート [Neutral spawn JP ranked match]
+Note=開始位置変更(2P→2P 3P→4P） [Change start positions (2P→2P, 3P→4P)]
+812162F2 058D
+812162F4 038D
+
+$タイマン用開始位置変更チート [Neutral spawn 1v1]
+Note=開始位置変更（1P→2P 2P→4P） [Change start positions (1P→2P, 2P→4P)]
+812162E6 FA8B
+812162E8 038A
+812162EC 058D
+812162EE 038D
+
+$開始位置変更\チーム用チート12_34 [Neutral spawn 2v2]
+Note=開始位置変更（1P→2P 3P→4P） [Change start positions (1P→2P, 3P→4P). 1&2 vs 3&4]
+812162E6 FA8B
+812162E8 038A
+812162F2 058D
+812162F4 038D
+
+$判定可視化 [Hitbox display]
+Note=判定が可視化されます。 [Makes hitboxes visible.]
+800D603D 0049
+
+$判定可視化2 [Hitbox display 2]
+810F0BF0 2400
+Note=判定が可視化されます。
+
+$トレモ\2P\操作 [Training mode 2P control]
+8018E28E 00??
+00 人間
+01 CPU
+02 参加せず
+03 消える
+04 動かない
+
+$トレモ\2P位置\地上\中央台下 [Training mode 2P position]
+8122D52C 0000
+8122D52E 0000
+
+$トレモ\2P位置\台上\中央台真ん中 [Training mode 2P position]
+8122D52C 0000
+8122D52E 0609
+
+$トレモ\2P位置\台上\中央台左 [Training mode 2P position]
+8122D52C FE00
+8122D52E 0609
+
+$トレモ\2P位置\地上\左台真下 [Training mode 2P position]
+8122D52C FA8B
+8122D52E 0000
+
+$トレモ\2P位置\地上\左台右下 [Training mode 2P position]
+8122D52C FD00
+8122D52E 0000
+
+$トレモ\2P位置\地上\左台左下 [Training mode 2P position]
+8122D52C F800
+8122D52E 0000
+
+$トレモ\2P% [Training mode 2P damage]
+8118E2DA 00??
+8127D3C6 00??
+00 0%
+01 1%
+02 2%
+03 3%
+04 4%
+05 5%
+06 6%
+07 7%
+08 8%
+09 9%
+0A 10%
+0B 11%
+0C 12%
+0D 13%
+0E 14%
+0F 15%
+10 16%
+11 17%
+12 18%
+13 19%
+14 20%
+15 21%
+16 22%
+17 23%
+18 24%
+19 25%
+1A 26%
+1B 27%
+1C 28%
+1D 29%
+1E 30%
+1F 31%
+20 32%
+21 33%
+22 34%
+23 35%
+24 36%
+25 37%
+26 38%
+27 39%
+28 40%
+29 41%
+2A 42%
+2B 43%
+2C 44%
+2D 45%
+2E 46%
+2F 47%
+30 48%
+31 49%
+32 50%
+33 51%
+34 52%
+35 53%
+36 54%
+37 55%
+38 56%
+39 57%
+3A 58%
+3B 59%
+3C 60%
+3D 61%
+3E 62%
+3F 63%
+40 64%
+41 65%
+42 66%
+43 67%
+44 68%
+45 69%
+46 70%
+47 71%
+48 72%
+49 73%
+4A 74%
+4B 75%
+4C 76%
+4D 77%
+4E 78%
+4F 79%
+50 80%
+51 81%
+52 82%
+53 83%
+54 84%
+55 85%
+56 86%
+57 87%
+58 88%
+59 89%
+5A 90%
+5B 91%
+5C 92%
+5D 93%
+5E 94%
+5F 95%
+60 96%
+61 97%
+62 98%
+63 99%
+64 100%
+65 101%
+66 102%
+67 103%
+68 104%
+69 105%
+6A 106%
+6B 107%
+6C 108%
+6D 109%
+6E 110%
+6F 111%
+70 112%
+71 113%
+72 114%
+73 115%
+74 116%
+75 117%
+76 118%
+77 119%
+78 120%
+79 121%
+7A 122%
+7B 123%
+7C 124%
+7D 125%
+7E 126%
+7F 127%
+80 128%
+81 129%
+82 130%
+83 131%
+84 132%
+85 133%
+86 134%
+87 135%
+88 136%
+89 137%
+8A 138%
+8B 139%
+8C 140%
+8D 141%
+8E 142%
+8F 143%
+90 144%
+91 145%
+92 146%
+93 147%
+94 148%
+95 149%
+96 150%
+97 151%
+98 152%
+99 153%
+
+$結果スキップA [Skip results A]
+Note=結果画面がスタートボタンですぐにスキップできます。 [The results screen can be skipped immediately using the Start button.]
+8113771A 1FCA
+
+$結果スキップB [Skip results B]
+Note=結果画面がスキップされます。 [The results screen is skipped.]
+8018BC87 0010
+
 $Bonus Stage Character Modifier (Training Mode)
 Note=Only put this on after you have alreay Chose your Character on the Main Menu,& Do not use more then 1 Character Modifier at a time.Using this Code This could also result freezing at the end of the Level.
 8018D193 00??
@@ -28,9 +261,6 @@ Note=Only put this on after you have alreay Chose your Character on the Main Men
 
 $Give Kirby A Wierd Blow-Up
 8025C118 000A
-
-$Have All Characters
-810A28F8 0FF0
 
 $P1 Press Down On D-Pad To Make Items Appear In Random Spots
 D109CF64 0400
@@ -223,9 +453,6 @@ $Story Mode\Player 4\Low % Health
 
 $Story Mode\Skip Straight To Master Hand
 800A2AA7 000D
-
-$VS. Mode\Have Mushroom Kindom
-800A28F7 00FF
 
 $VS. Mode\Infinite Time
 810A2CDE 43CB
