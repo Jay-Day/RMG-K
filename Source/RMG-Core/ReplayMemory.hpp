@@ -69,6 +69,20 @@ struct PortPlayerState
     uint8_t  team;      // team number this port is assigned to
     uint8_t  handicap;  // this port's handicap value (meaningful when MatchInfo::handicapMode != 0)
     uint8_t  cpuLevel;  // CPU difficulty; meaningless for human ports
+    // Render scale of the fighter's root joint (DObj scale x/y) - 1.0 x
+    // Remix's Giant/Tiny setting normally; 0 if unreadable. See
+    // PS_TOP_JOINT_PTR in the .cpp.
+    float    scaleX;
+    float    scaleY;
+    // passive_vars' first word - Samus/DK charge level, Kirby copy_id; see
+    // PS_PASSIVE_VAR in the .cpp.
+    int32_t  characterSpecific;
+    // See PS_SHIELD_HEALTH / PS_SPECIAL_HITSTATUS / PS_STAR_HITSTATUS /
+    // PS_KNOCKBACK_RESIST in the .cpp.
+    int32_t  shieldHealth;
+    uint8_t  specialHitStatus;
+    uint8_t  starHitStatus;
+    float    knockbackResist;
 };
 
 // One live entry from the Item or Weapon GObj list (see ReadItemObjects()
@@ -99,6 +113,10 @@ struct ItemObject
     float    positionX;
     float    positionY;
     float    positionZ; // confirmed exactly via the decomp - see ram-map.md section 10.4.1
+    // Render scale (DObj scale x/y, ram-map.md section 10.4.1) - constant for
+    // most objects, grows with charge for Samus's Charge Shot.
+    float    scaleX;
+    float    scaleY;
 };
 
 // Live stage-hazard state. Currently just Whispy Woods' wind on Dream Land

@@ -80,6 +80,31 @@ constexpr uint32_t PS_HITSTUN_COUNTER      = 0xB1A;
 constexpr uint32_t PS_TEAM                 = 0x0C;
 constexpr uint32_t PS_HANDICAP             = 0x12;
 constexpr uint32_t PS_CPU_LEVEL            = 0x13;
+// FTStruct+0x8E8: joints[0] (TopN, the fighter's root joint) - already a DObj*,
+// no extra GObj+0x74 hop. Its scale (DObj+0x40/+0x44, the same field
+// ItemUpdate records) is the fighter's render size: 1.0 x Remix's Giant/Tiny
+// setting normally. Remix's Size.asm (which reads this exact offset) also
+// derives the ECB and ledge-grab reach from it, and Kirby's aerial up-B can
+// leave it stuck above 1.0 until he respawns.
+constexpr uint32_t PS_TOP_JOINT_PTR        = 0x8E8;
+// s32, FTStruct+0xADC: the first word of the per-character passive_vars
+// union. Samus: charge_level (0-7). DK: Giant Punch charge_level (0-10).
+// Kirby: copy_id, the FTKind of the copied fighter (8 = Kirby = no copy).
+// Meaningless for every other character.
+constexpr uint32_t PS_PASSIVE_VAR          = 0xADC;
+// s32, FTStruct+0x34: shield_health.
+constexpr uint32_t PS_SHIELD_HEALTH        = 0x34;
+// Low bytes of two s32 GMHitStatus fields (0 none, 1 normal, 2 invincible,
+// 3 intangible), read like PS_HURTBOX_STATE. They're separate from the
+// motion-script hitstatus (dodge/roll/ledge): special_hitstatus (+0x5AC) is
+// driven by the timed invincible/intangible counters (respawn invincibility,
+// wall-bounce, Yoshi's egg), star_hitstatus (+0x5B4) by the Star item.
+constexpr uint32_t PS_SPECIAL_HITSTATUS    = 0x5AF;
+constexpr uint32_t PS_STAR_HITSTATUS       = 0x5B7;
+// f32, FTStruct+0x7E8: knockback_resist_status - temporary armor, knockback
+// units subtracted from incoming knockback; cleared on every status change.
+// Only Yoshi's aerial jump sets it among the original 12 (140 US / 110 JP).
+constexpr uint32_t PS_KNOCKBACK_RESIST     = 0x7E8;
 
 // GObj (universal engine object) linked lists - independent of MatchInfo,
 // fixed global head pointers. See smashremix docs/ram-map.md section 10.4 -
@@ -108,6 +133,12 @@ constexpr uint32_t IT_OR_WP_STRUCT_KIND = 0x0C; // s32: ITKind or WPKind, per GO
 constexpr uint32_t DOBJ_POSITION_X = 0x1C;
 constexpr uint32_t DOBJ_POSITION_Y = 0x20;
 constexpr uint32_t DOBJ_POSITION_Z = 0x24;
+// Render scale (the DObj's scale.vec.f.x/.y) - see ram-map.md section 10.4.1.
+// Constant for most objects; dynamic for e.g. Samus's Charge Shot, whose
+// wpSamusChargeShotProcUpdate sets x = y = gfx_size / 30 for its current
+// charge level every frame while charging (docs/RMGR_SPEC.md section 5.3).
+constexpr uint32_t DOBJ_SCALE_X = 0x40;
+constexpr uint32_t DOBJ_SCALE_Y = 0x44;
 
 // ITStruct+0x08 (owner_gobj) is NOT usable to detect "currently held" -
 // confirmed against the decomp's itMainSetFighterRelease(): owner_gobj is
@@ -302,6 +333,20 @@ PortPlayerState ReadPortPlayerState(uint32_t matchInfoPtr, int port)
     state.team                              = m64p::Core.DebugMemRead8(playerStruct + PS_TEAM);
     state.handicap                           = m64p::Core.DebugMemRead8(playerStruct + PS_HANDICAP);
     state.cpuLevel                            = m64p::Core.DebugMemRead8(playerStruct + PS_CPU_LEVEL);
+    state.characterSpecific                    = static_cast<int32_t>(m64p::Core.DebugMemRead32(playerStruct + PS_PASSIVE_VAR));
+    state.shieldHealth                         = static_cast<int32_t>(m64p::Core.DebugMemRead32(playerStruct + PS_SHIELD_HEALTH));
+    state.specialHitStatus                     = m64p::Core.DebugMemRead8(playerStruct + PS_SPECIAL_HITSTATUS);
+    state.starHitStatus                        = m64p::Core.DebugMemRead8(playerStruct + PS_STAR_HITSTATUS);
+    state.knockbackResist                      = ReadFloat(playerStruct + PS_KNOCKBACK_RESIST);
+
+    // Left at 0 (not a plausible scale) if the joint pointer is unreadable,
+    // rather than guessing 1.0.
+    const uint32_t topJoint = m64p::Core.DebugMemRead32(playerStruct + PS_TOP_JOINT_PTR);
+    if (IsValidRdramPointer(topJoint))
+    {
+        state.scaleX = ReadFloat(topJoint + DOBJ_SCALE_X);
+        state.scaleY = ReadFloat(topJoint + DOBJ_SCALE_Y);
+    }
 
     uint32_t positionPtr = m64p::Core.DebugMemRead32(playerStruct + PS_POSITION_PTR);
     if (IsValidRdramPointer(positionPtr))
@@ -369,6 +414,8 @@ std::vector<ItemObject> ReadItemObjects(void)
             object.positionX     = posX;
             object.positionY     = posY;
             object.positionZ     = posZ;
+            object.scaleX        = ReadFloat(dObj + DOBJ_SCALE_X);
+            object.scaleY        = ReadFloat(dObj + DOBJ_SCALE_Y);
             objects.push_back(object);
         });
     };

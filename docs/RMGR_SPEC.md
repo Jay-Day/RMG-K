@@ -382,7 +382,10 @@ Named `StateFrame` for the same reason as `InputFrame` above — it's paired
 with the core input event by convention/ordering, not by a "Pre/Post"
 naming relationship baked into the format itself.
 
-Payload size: **50 bytes.**
+Payload size: **72 bytes** (recorder schema 2+). Files from recorder
+schema 1 declare **50 bytes** and end after `comboDamage` — a reader must
+take the size from `EventPayloads` (§5.0) and only read the trailing fields
+when the declared size includes them (§6).
 
 | Offset | Size | Type   | Field                | Notes |
 |-------:|-----:|--------|------------------------|-------|
@@ -399,11 +402,46 @@ Payload size: **50 bytes.**
 | 0x20   | 1    | `i8`   | `stocksRemaining`       | 0-based; negative once eliminated. |
 | 0x21   | 1    | `u8`   | `jumpsRemaining`        | `jumpsMax` (per-character) minus `jumps_used`, which resets to `0` on landing. `0` through most of a grounded match is normal. |
 | 0x22   | 1    | `u8`   | `groundedState`         | `0` grounded, `1` airborne. |
-| 0x23   | 1    | `u8`   | `hurtboxState`          | `0x03` = intangible/invincible; see `ReplayMemory.cpp` for the full set observed. |
+| 0x23   | 1    | `u8`   | `hurtboxState`          | The motion-script hit status (`GMHitStatus`, low byte of `hitstatus`, `FTStruct+0x5B8`): `0` hurtboxes off, `1` normal, `2` invincible (can be hit, takes no damage/knockback), `3` intangible (can't be hit). Dodges, rolls and ledge-grab intangibility show here; respawn and Star invincibility don't (see `specialHitStatus`, `starHitStatus`). |
 | 0x24   | 2    | `u16`  | `hitstunCounter`        | Non-zero while in hitstun. |
 | 0x26   | 4    | `u32`  | `actionFrameCounter`    | Frame counter of the current action state (resets when the action state changes). |
 | 0x2A   | 4    | `u32`  | `comboHitCount`         | Belongs to the *victim* (this port), not the attacker: hits taken in the current unbroken chain. `0` = no active chain, `1` = a single hit, `2+` = an actual combo. |
 | 0x2E   | 4    | `u32`  | `comboDamage`           | Running damage dealt within the same chain as `comboHitCount`; zeroes at the same instant. |
+| 0x32   | 4    | `f32`  | `scaleX`                | Schema 2+. The fighter's render scale: its root joint's `DObj` `scale.vec.f.x` (`FTStruct+0x8E8` → `DObj+0x40`). `1.0` × Remix's Giant/Tiny setting normally; `0` if unreadable. |
+| 0x36   | 4    | `f32`  | `scaleY`                | Schema 2+. Same joint, `DObj+0x44`. |
+| 0x3A   | 4    | `i32`  | `characterSpecific`     | Schema 2+. `FTStruct+0xADC`, the first word of the per-character `passive_vars` union — meaning depends on the character (table below). |
+| 0x3E   | 4    | `i32`  | `shieldHealth`          | Schema 2+. `FTStruct+0x34` (`shield_health`). |
+| 0x42   | 1    | `u8`   | `specialHitStatus`      | Schema 2+. Low byte of `special_hitstatus` (`FTStruct+0x5AC`), a hit status (values as `hurtboxState`) set by the timed invincible/intangible counters: respawn invincibility (`2`), wall-bounce and being trapped in Yoshi's egg (`3`), and a 1-frame re-hit grace after taking damage. |
+| 0x43   | 1    | `u8`   | `starHitStatus`         | Schema 2+. Low byte of `star_hitstatus` (`FTStruct+0x5B4`): `2` while Star (Super Star item) invincibility is active. |
+| 0x44   | 4    | `f32`  | `knockbackResist`       | Schema 2+. `FTStruct+0x7E8` (`knockback_resist_status`): temporary armor, knockback units subtracted from incoming knockback; cleared on every action change. Among the original 12 only Yoshi's double jump sets it (140 US / 110 JP). `0` = no armor. |
+
+The game treats `hurtboxState`, `specialHitStatus` and `starHitStatus` as
+independent layers active at the same time: a fighter can't be hit if any
+of them is `3`, and takes no damage if any is `2`. Dodges, rolls and
+ledge-grab intangibility show in `hurtboxState`; respawn invincibility in
+`specialHitStatus`; Star invincibility in `starHitStatus`.
+
+`scaleX`/`scaleY` matter for gameplay, not just visuals: Remix derives the
+fighter's ECB and ledge-grab reach from the same size multiplier. In
+particular, Kirby's aerial up-special can leave him stuck slightly larger
+than normal until he respawns (a known Remix issue), which shows up here.
+
+`characterSpecific` by character (identical in US and JP builds):
+
+| Character | Meaning | Values |
+|---|---|---|
+| Samus | Stored Charge Shot level (`charge_level`) | `0`–`7`; reset to `0` on firing |
+| Donkey Kong | Stored Giant Punch charge (`charge_level`) | `0`–`10`; reset to `0` on release |
+| Kirby | Copied ability (`copy_id`) — the copied fighter's character ID | §8.1 IDs; **`8` (Kirby) = no copy ability**. Can be lost at random (1 in 12) when hit, or replaced by inhaling again |
+| Everyone else | Not meaningful | — |
+
+These values appear to **persist through losing a stock**. In the
+decompilation, every reset of Samus's/DK's `charge_level` and Kirby's
+`copy_id` is tied to a gameplay event (firing the charge, losing the copy
+ability, the 1-in-12 roll when hit), and the respawn path
+(`ftcommonrebirth.c`, `ftcommondead.c`, `ftcommonentry.c`) doesn't clear
+them. This comes from reading the code, not from testing in a live game —
+treat them as persisting until a recording shows otherwise.
 
 ### 5.3 Item Update — code `0x06`
 
@@ -415,7 +453,10 @@ Link's bomb while still in his hand) is not emitted: while held, its
 position reads as a meaningless local offset near `(0,0,0)` instead of a
 world coordinate, and that's used as the "currently held" proxy.
 
-Payload size: **25 bytes.**
+Payload size: **33 bytes** (recorder schema 2+). Files from recorder
+schema 1 declare **25 bytes** and end after `positionZ` — a reader must
+take the size from `EventPayloads` (§5.0) and only read `scaleX`/`scaleY`
+when the declared size includes them (§6).
 
 | Offset | Size | Type    | Field           | Notes |
 |-------:|-----:|---------|------------------|-------|
@@ -426,9 +467,32 @@ Payload size: **25 bytes.**
 | 0x0D   | 4    | `f32`   | `positionX`      | IEEE-754 single precision. World-space. |
 | 0x11   | 4    | `f32`   | `positionY`      | |
 | 0x15   | 4    | `f32`   | `positionZ`      | |
+| 0x19   | 4    | `f32`   | `scaleX`         | Schema 2+. The object's render scale — its `DObj`'s `scale.vec.f.x` (`GObj+0x74` → `DObj+0x40`). |
+| 0x1D   | 4    | `f32`   | `scaleY`         | Schema 2+. `DObj+0x44` (`scale.vec.f.y`). |
+
+`scaleX`/`scaleY` are constant for most objects. Samus's Charge Shot
+(`WPKind` `0x02`) is the notable exception: the orb she charges in front of
+her cannon is the same weapon object that's later fired, and while charging
+the game sets `scaleX = scaleY = gfx_size / 30` for its current charge level
+(`wpSamusChargeShotProcUpdate`), which climbs one level every 20 frames of
+charging:
+
+| Charge level | `gfx_size` | Scale (`gfx_size / 30`) | Damage | Hitbox size |
+|---:|---:|---:|---:|---:|
+| 0 | 150 | 5.00 | 3 | 100 |
+| 1 | 230 | 7.67 | 6 | 120 |
+| 2 | 280 | 9.33 | 9 | 140 |
+| 3 | 340 | 11.33 | 12 | 160 |
+| 4 | 410 | 13.67 | 15 | 180 |
+| 5 | 490 | 16.33 | 18 | 200 |
+| 6 | 600 | 20.00 | 21 | 240 |
+| 7 (full) | 700 | 23.33 | 26 | 260 |
+
+(From `dWPSamusChargeShotWeaponAttributes[]`, `wpsamuschargeshot.c`, same
+for US and JP builds.)
 
 Deliberately not captured (not yet mapped in memory): velocity,
-damage/knockback dealt, size, owner/attacker port, and any per-object
+damage/knockback dealt, owner/attacker port, and any per-object
 timer/expiration. A future schema version can append any of these as
 trailing fields (§6) once mapped, without breaking this version's readers.
 
@@ -771,9 +835,10 @@ tracked (Zebes' rising acid, Duel Zone's disappearing platforms, …).
   future design can reintroduce this from scratch if there's a concrete
   need.
 - **Item/weapon tracking has no velocity, damage, owner/attacker port, or
-  expiration data.** `ItemUpdate` (§5.3) records a named `kind` (§8.6) and
-  position for every live, non-held Item/Weapon object, but none of those
-  additional fields have been mapped in memory yet.
+  expiration data.** `ItemUpdate` (§5.3) records a named `kind` (§8.6),
+  position and (recorder schema 2+) render scale for every live, non-held
+  Item/Weapon object, but none of those additional fields have been mapped
+  in memory yet.
 - **Stage hazard tracking covers exactly one hazard.** `StageHazardUpdate`
   (§5.4) currently only tracks Whispy Woods' wind on Dream Land.
 - **No RNG seed is recorded.** No known Smash Remix RNG seed address has

@@ -180,7 +180,7 @@ struct StateFrameEvent
     // without that many real jump inputs (e.g. certain up-specials).
     uint8_t  jumpsRemaining;
     uint8_t  groundedState; // 0 grounded, 1 airborne
-    uint8_t  hurtboxState;  // 0x03 = intangible/invincible; see ReplayMemory.cpp
+    uint8_t  hurtboxState;  // motion-script GMHitStatus: 0 off, 1 normal, 2 invincible, 3 intangible
     uint16_t hitstunCounter;
     uint32_t actionFrameCounter;
     // Native engine combo tracking, not mod-added. Belongs to the victim
@@ -189,8 +189,23 @@ struct StateFrameEvent
     // Both zero the instant the chain breaks.
     uint32_t comboHitCount;
     uint32_t comboDamage;
+    // Appended in recorder schema 2 (docs/RMGR_SPEC.md sections 5.2 and 6);
+    // schema-1 files' StateFrame ends after comboDamage. scaleX/scaleY: the
+    // fighter's render scale (root joint DObj scale); characterSpecific:
+    // Samus/DK charge level or Kirby's copied fighter (see ReplayMemory.cpp's
+    // PS_PASSIVE_VAR).
+    float    scaleX;
+    float    scaleY;
+    int32_t  characterSpecific;
+    // Also schema 2: shield health, the timed/Star hit statuses (GMHitStatus,
+    // separate from hurtboxState's motion-script one), and temporary
+    // knockback armor (Yoshi's double jump).
+    int32_t  shieldHealth;
+    uint8_t  specialHitStatus;
+    uint8_t  starHitStatus;
+    float    knockbackResist;
 };
-static_assert(sizeof(StateFrameEvent) == 50, "StateFrameEvent must be 50 bytes");
+static_assert(sizeof(StateFrameEvent) == 72, "StateFrameEvent must be 72 bytes");
 
 // smash64 extension event, code 0x06. Zero or more per frame - one per live
 // Item or Weapon GObj (ReplayMemory::ItemObject) currently not held by a
@@ -207,8 +222,13 @@ struct ItemUpdateEvent
     float    positionX;
     float    positionY;
     float    positionZ;
+    // Appended in recorder schema 2 (docs/RMGR_SPEC.md sections 5.3 and 6) -
+    // the object's render scale (DObj scale x/y). Schema-1 files' ItemUpdate
+    // ends after positionZ; EventPayloads' declared size tells readers which.
+    float    scaleX;
+    float    scaleY;
 };
-static_assert(sizeof(ItemUpdateEvent) == 25, "ItemUpdateEvent must be 25 bytes");
+static_assert(sizeof(ItemUpdateEvent) == 33, "ItemUpdateEvent must be 33 bytes");
 
 // smash64 extension event, code 0x07. Zero or one per frame, following that
 // frame's ItemUpdate events - written only when at least one tracked hazard
@@ -334,7 +354,14 @@ constexpr const char* kSmash64Family      = "smash64";
 // reflected as correct in ReplayMemory.cpp today. There's nothing left to
 // carry forward; the old numbering tracked a struct layout (GameStart/
 // PostFrameUpdate) that no longer exists.
-constexpr uint32_t kRecorderSchemaVersion = 1;
+//
+// History (this container):
+//   1 - initial version.
+//   2 - ItemUpdate gains trailing scaleX/scaleY (render scale), and
+//       StateFrame gains trailing scaleX/scaleY/characterSpecific/
+//       shieldHealth/specialHitStatus/starHitStatus/knockbackResist -
+//       docs/RMGR_SPEC.md sections 5.2 and 5.3.
+constexpr uint32_t kRecorderSchemaVersion = 2;
 
 // Whether the currently-loaded ROM is a recognized smash64-family build.
 // Only Smash Remix 2.0.1 is recognized today - see kSmashRemixGoodName's
@@ -852,6 +879,13 @@ void RecordFrame(const ReplayMemory::MatchInfo& matchInfo)
             stateFrame.actionFrameCounter = state.actionFrameCounter;
             stateFrame.comboHitCount     = portInfo.comboHitCount;
             stateFrame.comboDamage       = portInfo.comboDamage;
+            stateFrame.scaleX            = state.scaleX;
+            stateFrame.scaleY            = state.scaleY;
+            stateFrame.characterSpecific = state.characterSpecific;
+            stateFrame.shieldHealth      = state.shieldHealth;
+            stateFrame.specialHitStatus  = state.specialHitStatus;
+            stateFrame.starHitStatus     = state.starHitStatus;
+            stateFrame.knockbackResist   = state.knockbackResist;
             WriteEvent(EventCode::StateFrame, stateFrame);
         }
     }
@@ -873,6 +907,8 @@ void RecordFrame(const ReplayMemory::MatchInfo& matchInfo)
             itemEvent.positionX     = item.positionX;
             itemEvent.positionY     = item.positionY;
             itemEvent.positionZ     = item.positionZ;
+            itemEvent.scaleX        = item.scaleX;
+            itemEvent.scaleY        = item.scaleY;
             WriteEvent(EventCode::ItemUpdate, itemEvent);
         }
 
