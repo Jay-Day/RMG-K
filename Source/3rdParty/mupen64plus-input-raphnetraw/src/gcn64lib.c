@@ -217,9 +217,7 @@ int gcn64lib_rawSiCommand(gcn64_hdl_t hdl, unsigned char channel, unsigned char 
 	if (n<0)
 		return n;
 
-    if (n < 3 || rep[0] != RQ_GCN64_RAW_SI_COMMAND || rep[1] != channel) return -1;
 	rx_len = rep[2];
-    if (rx_len > max_rx || n < 3 + rx_len) return -1;
 	if (rx) {
 		memcpy(rx, rep + 3, rx_len);
 	}
@@ -427,16 +425,14 @@ int gcn64lib_blockIO(gcn64_hdl_t hdl, struct blockio_op *iops, int n_iops)
 		for (p=1,i=0; i<n_iops; i++) {
 			if (p >= sizeof(iobuf)) {
 				fprintf(stderr, "blockIO: adapter reports too much received data\n");
-                return -1;
+				break;
 			}
 
-            const unsigned char expected = iops[i].rx_len & BIO_RXTX_MASK;
 			iops[i].rx_len = iobuf[p];
 			p++;
-			if ((iops[i].rx_len & BIO_RXTX_MASK) > expected ||
-                (size_t)p + (iops[i].rx_len & BIO_RXTX_MASK) > sizeof(iobuf)) {
+			if (p + (iops[i].rx_len & BIO_RXTX_MASK) >= sizeof(iobuf)) {
 				fprintf(stderr, "blockIO: adapter reports too much received data\n");
-                return -1;
+				break;
 			}
 			memcpy(iops[i].rx_data, iobuf + p, iops[i].rx_len & BIO_RXTX_MASK);
 			p += iops[i].rx_len & BIO_RXTX_MASK;
