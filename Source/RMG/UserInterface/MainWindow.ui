@@ -40,7 +40,7 @@
      <property name="icon">
       <iconset theme="restart-line"/>
      </property>
-     <addaction name="action_Netplay_Start"/>
+     <addaction name="action_System_SoftReset"/>
      <addaction name="action_System_HardReset"/>
     </widget>
     <widget class="QMenu" name="menuCurrent_Save_State">
@@ -242,6 +242,14 @@
    </property>
    <property name="text">
     <string>&amp;Netplay</string>
+   </property>
+  </action>
+  <action name="action_System_SoftReset">
+   <property name="icon">
+    <iconset theme="restart-line"/>
+   </property>
+   <property name="text">
+    <string>&amp;Soft Reset</string>
    </property>
   </action>
   <action name="action_System_HardReset">
