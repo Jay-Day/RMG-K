@@ -197,15 +197,14 @@ struct StateFrameEvent
     float    scaleX;
     float    scaleY;
     int32_t  characterSpecific;
-    // Also schema 2: shield health, the timed/Star hit statuses (GMHitStatus,
-    // separate from hurtboxState's motion-script one), and temporary
-    // knockback armor (Yoshi's double jump).
+    // Also schema 2: shield health, the timed hit status (GMHitStatus -
+    // respawn invincibility etc., separate from hurtboxState's motion-script
+    // one), and temporary knockback armor (Yoshi's double jump).
     int32_t  shieldHealth;
     uint8_t  specialHitStatus;
-    uint8_t  starHitStatus;
     float    knockbackResist;
 };
-static_assert(sizeof(StateFrameEvent) == 72, "StateFrameEvent must be 72 bytes");
+static_assert(sizeof(StateFrameEvent) == 71, "StateFrameEvent must be 71 bytes");
 
 // smash64 extension event, code 0x06. Zero or more per frame - one per live
 // Item or Weapon GObj (ReplayMemory::ItemObject) currently not held by a
@@ -359,7 +358,7 @@ constexpr const char* kSmash64Family      = "smash64";
 //   1 - initial version.
 //   2 - ItemUpdate gains trailing scaleX/scaleY (render scale), and
 //       StateFrame gains trailing scaleX/scaleY/characterSpecific/
-//       shieldHealth/specialHitStatus/starHitStatus/knockbackResist -
+//       shieldHealth/specialHitStatus/knockbackResist -
 //       docs/RMGR_SPEC.md sections 5.2 and 5.3.
 constexpr uint32_t kRecorderSchemaVersion = 2;
 
@@ -884,7 +883,6 @@ void RecordFrame(const ReplayMemory::MatchInfo& matchInfo)
             stateFrame.characterSpecific = state.characterSpecific;
             stateFrame.shieldHealth      = state.shieldHealth;
             stateFrame.specialHitStatus  = state.specialHitStatus;
-            stateFrame.starHitStatus     = state.starHitStatus;
             stateFrame.knockbackResist   = state.knockbackResist;
             WriteEvent(EventCode::StateFrame, stateFrame);
         }

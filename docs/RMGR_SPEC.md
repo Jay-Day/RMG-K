@@ -382,7 +382,7 @@ Named `StateFrame` for the same reason as `InputFrame` above — it's paired
 with the core input event by convention/ordering, not by a "Pre/Post"
 naming relationship baked into the format itself.
 
-Payload size: **72 bytes** (recorder schema 2+). Files from recorder
+Payload size: **71 bytes** (recorder schema 2+). Files from recorder
 schema 1 declare **50 bytes** and end after `comboDamage` — a reader must
 take the size from `EventPayloads` (§5.0) and only read the trailing fields
 when the declared size includes them (§6).
@@ -402,7 +402,7 @@ when the declared size includes them (§6).
 | 0x20   | 1    | `i8`   | `stocksRemaining`       | 0-based; negative once eliminated. |
 | 0x21   | 1    | `u8`   | `jumpsRemaining`        | `jumpsMax` (per-character) minus `jumps_used`, which resets to `0` on landing. `0` through most of a grounded match is normal. |
 | 0x22   | 1    | `u8`   | `groundedState`         | `0` grounded, `1` airborne. |
-| 0x23   | 1    | `u8`   | `hurtboxState`          | The motion-script hit status (`GMHitStatus`, low byte of `hitstatus`, `FTStruct+0x5B8`): `0` hurtboxes off, `1` normal, `2` invincible (can be hit, takes no damage/knockback), `3` intangible (can't be hit). Dodges, rolls and ledge-grab intangibility show here; respawn and Star invincibility don't (see `specialHitStatus`, `starHitStatus`). |
+| 0x23   | 1    | `u8`   | `hurtboxState`          | The motion-script hit status (`GMHitStatus`, low byte of `hitstatus`, `FTStruct+0x5B8`): `0` hurtboxes off, `1` normal, `2` invincible (can be hit, takes no damage/knockback), `3` intangible (can't be hit). Dodges, rolls and ledge-grab intangibility show here; respawn invincibility doesn't (see `specialHitStatus`), and Super Star item invincibility isn't recorded. |
 | 0x24   | 2    | `u16`  | `hitstunCounter`        | Non-zero while in hitstun. |
 | 0x26   | 4    | `u32`  | `actionFrameCounter`    | Frame counter of the current action state (resets when the action state changes). |
 | 0x2A   | 4    | `u32`  | `comboHitCount`         | Belongs to the *victim* (this port), not the attacker: hits taken in the current unbroken chain. `0` = no active chain, `1` = a single hit, `2+` = an actual combo. |
@@ -412,14 +412,14 @@ when the declared size includes them (§6).
 | 0x3A   | 4    | `i32`  | `characterSpecific`     | Schema 2+. `FTStruct+0xADC`, the first word of the per-character `passive_vars` union — meaning depends on the character (table below). |
 | 0x3E   | 4    | `i32`  | `shieldHealth`          | Schema 2+. `FTStruct+0x34` (`shield_health`). |
 | 0x42   | 1    | `u8`   | `specialHitStatus`      | Schema 2+. Low byte of `special_hitstatus` (`FTStruct+0x5AC`), a hit status (values as `hurtboxState`) set by the timed invincible/intangible counters: respawn invincibility (`2`), wall-bounce and being trapped in Yoshi's egg (`3`), and a 1-frame re-hit grace after taking damage. |
-| 0x43   | 1    | `u8`   | `starHitStatus`         | Schema 2+. Low byte of `star_hitstatus` (`FTStruct+0x5B4`): `2` while Star (Super Star item) invincibility is active. |
-| 0x44   | 4    | `f32`  | `knockbackResist`       | Schema 2+. `FTStruct+0x7E8` (`knockback_resist_status`): temporary armor, knockback units subtracted from incoming knockback; cleared on every action change. Among the original 12 only Yoshi's double jump sets it (140 US / 110 JP). `0` = no armor. |
+| 0x43   | 4    | `f32`  | `knockbackResist`       | Schema 2+. `FTStruct+0x7E8` (`knockback_resist_status`): temporary armor, knockback units subtracted from incoming knockback; cleared on every action change. Among the original 12 only Yoshi's double jump sets it (140 US / 110 JP). `0` = no armor. |
 
-The game treats `hurtboxState`, `specialHitStatus` and `starHitStatus` as
-independent layers active at the same time: a fighter can't be hit if any
-of them is `3`, and takes no damage if any is `2`. Dodges, rolls and
-ledge-grab intangibility show in `hurtboxState`; respawn invincibility in
-`specialHitStatus`; Star invincibility in `starHitStatus`.
+The game treats `hurtboxState` and `specialHitStatus` as independent layers
+active at the same time: a fighter can't be hit if either is `3`, and takes
+no damage if either is `2`. Dodges, rolls and ledge-grab intangibility show
+in `hurtboxState`; respawn invincibility in `specialHitStatus`. A third
+layer, the Super Star item's invincibility (`star_hitstatus`,
+`FTStruct+0x5B4`), isn't recorded.
 
 `scaleX`/`scaleY` matter for gameplay, not just visuals: Remix derives the
 fighter's ECB and ledge-grab reach from the same size multiplier. In

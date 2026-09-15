@@ -77,11 +77,10 @@ struct PortPlayerState
     // passive_vars' first word - Samus/DK charge level, Kirby copy_id; see
     // PS_PASSIVE_VAR in the .cpp.
     int32_t  characterSpecific;
-    // See PS_SHIELD_HEALTH / PS_SPECIAL_HITSTATUS / PS_STAR_HITSTATUS /
-    // PS_KNOCKBACK_RESIST in the .cpp.
+    // See PS_SHIELD_HEALTH / PS_SPECIAL_HITSTATUS / PS_KNOCKBACK_RESIST in
+    // the .cpp.
     int32_t  shieldHealth;
     uint8_t  specialHitStatus;
-    uint8_t  starHitStatus;
     float    knockbackResist;
 };
 

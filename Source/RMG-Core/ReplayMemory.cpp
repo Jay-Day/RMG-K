@@ -94,13 +94,12 @@ constexpr uint32_t PS_TOP_JOINT_PTR        = 0x8E8;
 constexpr uint32_t PS_PASSIVE_VAR          = 0xADC;
 // s32, FTStruct+0x34: shield_health.
 constexpr uint32_t PS_SHIELD_HEALTH        = 0x34;
-// Low bytes of two s32 GMHitStatus fields (0 none, 1 normal, 2 invincible,
-// 3 intangible), read like PS_HURTBOX_STATE. They're separate from the
-// motion-script hitstatus (dodge/roll/ledge): special_hitstatus (+0x5AC) is
-// driven by the timed invincible/intangible counters (respawn invincibility,
-// wall-bounce, Yoshi's egg), star_hitstatus (+0x5B4) by the Star item.
+// Low byte of special_hitstatus (s32, FTStruct+0x5AC), a GMHitStatus (0 none,
+// 1 normal, 2 invincible, 3 intangible) read like PS_HURTBOX_STATE. Separate
+// from the motion-script hitstatus (dodge/roll/ledge): driven by the timed
+// invincible/intangible counters (respawn invincibility, wall-bounce,
+// Yoshi's egg). The Star item's own star_hitstatus (+0x5B4) isn't recorded.
 constexpr uint32_t PS_SPECIAL_HITSTATUS    = 0x5AF;
-constexpr uint32_t PS_STAR_HITSTATUS       = 0x5B7;
 // f32, FTStruct+0x7E8: knockback_resist_status - temporary armor, knockback
 // units subtracted from incoming knockback; cleared on every status change.
 // Only Yoshi's aerial jump sets it among the original 12 (140 US / 110 JP).
@@ -336,7 +335,6 @@ PortPlayerState ReadPortPlayerState(uint32_t matchInfoPtr, int port)
     state.characterSpecific                    = static_cast<int32_t>(m64p::Core.DebugMemRead32(playerStruct + PS_PASSIVE_VAR));
     state.shieldHealth                         = static_cast<int32_t>(m64p::Core.DebugMemRead32(playerStruct + PS_SHIELD_HEALTH));
     state.specialHitStatus                     = m64p::Core.DebugMemRead8(playerStruct + PS_SPECIAL_HITSTATUS);
-    state.starHitStatus                        = m64p::Core.DebugMemRead8(playerStruct + PS_STAR_HITSTATUS);
     state.knockbackResist                      = ReadFloat(playerStruct + PS_KNOCKBACK_RESIST);
 
     // Left at 0 (not a plausible scale) if the joint pointer is unreadable,
