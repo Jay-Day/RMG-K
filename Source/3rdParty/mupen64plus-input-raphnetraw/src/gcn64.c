@@ -18,11 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <time.h>
-#endif
 #include "gcn64.h"
 #include "gcn64_priv.h"
 #include "gcn64lib.h"
@@ -347,20 +342,8 @@ int gcn64_poll_result(gcn64_hdl_t hdl, unsigned char *cmd, int cmd_maxlen)
 	return res_len;
 }
 
-static uint64_t monotonic_ms(void)
-{
-#if defined(_WIN32)
-    return GetTickCount64();
-#else
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
-#endif
-}
-
 int gcn64_exchange(gcn64_hdl_t hdl, unsigned char *outcmd, int outlen, unsigned char *result, int result_max)
 {
-    const uint64_t started = monotonic_ms();
 	int n;
 
 	n = gcn64_send_cmd(hdl, outcmd, outlen);
@@ -377,9 +360,9 @@ int gcn64_exchange(gcn64_hdl_t hdl, unsigned char *outcmd, int outlen, unsigned 
 			fprintf(stderr, "Error\r\n");
 			break;
 		}
-        // An adapter that never replies must not trap the monitor's shutdown or
-        // configuration handoff in an infinite loop. Failed reads are not timed.
-        if (n == 0 && monotonic_ms() - started >= 250) return -1;
+		if (n==0) {
+//			printf("."); fflush(stdout);
+		}
 
 	} while (n==0);
 
