@@ -2720,12 +2720,13 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
 #endif
     this->menuReset->setEnabled(inEmulation && !netplaySessionActive);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_SoftReset));
+    this->action_System_SoftReset->setEnabled(inEmulation && !netplaySessionActive);
+    this->action_System_SoftReset->setShortcut(QKeySequence(keyBinding));
 #ifdef NETPLAY
     this->action_Netplay_Start->setEnabled(!inEmulation && this->netplaySessionDialog == nullptr && this->kailleraSessionManager == nullptr);
 #else
     this->action_Netplay_Start->setEnabled(inEmulation && !CoreHasInitNetplay() && !CoreHasInitKaillera());
 #endif
-    this->action_Netplay_Start->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_HardReset));
     this->action_System_HardReset->setEnabled(inEmulation && !netplaySessionActive);
     this->action_System_HardReset->setShortcut(QKeySequence(keyBinding));
@@ -3022,7 +3023,8 @@ void MainWindow::configureActions(void)
     {
         // System actions
         this->action_System_StartRom, this->action_System_OpenCombo,
-        this->action_System_Shutdown, this->action_Netplay_Start,
+        this->action_System_Shutdown, this->action_System_SoftReset,
+        this->action_Netplay_Start,
         this->action_System_HardReset, this->action_System_Pause,
         this->action_System_Screenshot, this->action_System_LimitFPS,
         this->actionSpeed25, this->actionSpeed50, this->actionSpeed75,
@@ -3149,6 +3151,7 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_System_Exit, &QAction::triggered, this, &MainWindow::on_Action_System_Exit);
 
     connect(this->action_System_Shutdown, &QAction::triggered, this, &MainWindow::on_Action_System_Shutdown);
+    connect(this->action_System_SoftReset, &QAction::triggered, this, &MainWindow::on_Action_System_SoftReset);
 #ifdef NETPLAY
     // The toolbar Netplay button is the primary, streamlined entry: it connects
     // straight to the rollback lobby (onboarding the first time).
