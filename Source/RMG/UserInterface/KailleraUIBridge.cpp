@@ -13,11 +13,17 @@
 
 #include "n02_client.h"
 #include "common/k_socket.h"  // for sockaddr_in
+#include "common/kaillera_encoding.h"
 
-// Helper: safely convert char* to QString (handles nullptr)
-static inline QString safeStr(const char* s)
+static inline QString safeUtf8Str(const char* s)
 {
     return QString::fromUtf8(s ? s : "");
+}
+
+static inline QString safeKailleraStr(const char* s)
+{
+    const std::string utf8 = n02::encoding::decodeKailleraText(s ? s : "");
+    return QString::fromUtf8(utf8.c_str());
 }
 
 KailleraUIBridge::KailleraUIBridge()
@@ -54,11 +60,11 @@ void KailleraUIBridge::registerCallbacks()
     // ---- P2P callbacks ----
 
     cb.p2pChatCallback = [this](char* nick, char* msg) {
-        emit p2pChatReceived(safeStr(nick), safeStr(msg));
+        emit p2pChatReceived(safeUtf8Str(nick), safeUtf8Str(msg));
     };
 
     cb.p2pGameCallback = [this](char* game, int player, int maxplayers) {
-        emit p2pGameStarted(safeStr(game), player, maxplayers);
+        emit p2pGameStarted(safeUtf8Str(game), player, maxplayers);
     };
 
     cb.p2pEndGameCallback = [this]() {
@@ -66,15 +72,15 @@ void KailleraUIBridge::registerCallbacks()
     };
 
     cb.p2pClientDroppedCallback = [this](char* nick, int player) {
-        emit p2pClientDropped(safeStr(nick), player);
+        emit p2pClientDropped(safeUtf8Str(nick), player);
     };
 
     cb.p2pDebugCallback = [this](char* msg) {
-        emit p2pDebugMessage(safeStr(msg));
+        emit p2pDebugMessage(safeUtf8Str(msg));
     };
 
     cb.p2pHostedGameCallback = [this](char* game) {
-        emit p2pHostedGame(safeStr(game));
+        emit p2pHostedGame(safeUtf8Str(game));
     };
 
     cb.p2pPingCallback = [this](int ping) {
@@ -90,7 +96,7 @@ void KailleraUIBridge::registerCallbacks()
     };
 
     cb.p2pPeerInfoCallback = [this](char* name, char* app) {
-        emit p2pPeerInfo(safeStr(name), safeStr(app));
+        emit p2pPeerInfo(safeUtf8Str(name), safeUtf8Str(app));
     };
 
     cb.p2pGetSelectedDelayCallback = [this]() -> int {
@@ -109,41 +115,41 @@ void KailleraUIBridge::registerCallbacks()
     };
 
     cb.p2pFodippCallback = [this](char* host) {
-        emit p2pFodippResult(safeStr(host));
+        emit p2pFodippResult(safeUtf8Str(host));
     };
 
     // ---- Kaillera server callbacks ----
 
     cb.kailleraUserAddCallback = [this](char* name, int ping, int status, unsigned short id, char conn) {
-        emit kailleraUserAdded(safeStr(name), ping, status, id, conn);
+        emit kailleraUserAdded(safeKailleraStr(name), ping, status, id, conn);
     };
 
     cb.kailleraGameAddCallback = [this](char* gname, unsigned int id, char* emulator, char* owner, char* users, char status) {
-        emit kailleraGameAdded(safeStr(gname), id, safeStr(emulator), safeStr(owner), safeStr(users), status);
+        emit kailleraGameAdded(safeKailleraStr(gname), id, safeKailleraStr(emulator), safeKailleraStr(owner), safeKailleraStr(users), status);
     };
 
     cb.kailleraChatCallback = [this](char* name, char* msg) {
-        emit kailleraChatReceived(safeStr(name), safeStr(msg));
+        emit kailleraChatReceived(safeKailleraStr(name), safeKailleraStr(msg));
     };
 
     cb.kailleraGameChatCallback = [this](char* name, char* msg) {
-        emit kailleraGameChatReceived(safeStr(name), safeStr(msg));
+        emit kailleraGameChatReceived(safeKailleraStr(name), safeKailleraStr(msg));
     };
 
     cb.kailleraMotdCallback = [this](char* name, char* msg) {
-        emit kailleraMotdReceived(safeStr(name), safeStr(msg));
+        emit kailleraMotdReceived(safeKailleraStr(name), safeKailleraStr(msg));
     };
 
     cb.kailleraUserJoinCallback = [this](char* name, int ping, unsigned short id, char conn) {
-        emit kailleraUserJoined(safeStr(name), ping, id, conn);
+        emit kailleraUserJoined(safeKailleraStr(name), ping, id, conn);
     };
 
     cb.kailleraUserLeaveCallback = [this](char* name, char* quitmsg, unsigned short id) {
-        emit kailleraUserLeft(safeStr(name), safeStr(quitmsg), id);
+        emit kailleraUserLeft(safeKailleraStr(name), safeKailleraStr(quitmsg), id);
     };
 
     cb.kailleraGameCreateCallback = [this](char* gname, unsigned int id, char* emulator, char* owner) {
-        emit kailleraGameCreated(safeStr(gname), id, safeStr(emulator), safeStr(owner));
+        emit kailleraGameCreated(safeKailleraStr(gname), id, safeKailleraStr(emulator), safeKailleraStr(owner));
     };
 
     cb.kailleraGameCloseCallback = [this](unsigned int id) {
@@ -167,15 +173,15 @@ void KailleraUIBridge::registerCallbacks()
     };
 
     cb.kailleraPlayerAddCallback = [this](char* name, int ping, unsigned short id, char conn) {
-        emit kailleraPlayerAdded(safeStr(name), ping, id, conn);
+        emit kailleraPlayerAdded(safeKailleraStr(name), ping, id, conn);
     };
 
     cb.kailleraPlayerJoinedCallback = [this](char* username, int ping, unsigned short uid, char connset) {
-        emit kailleraPlayerJoined(safeStr(username), ping, uid, connset);
+        emit kailleraPlayerJoined(safeKailleraStr(username), ping, uid, connset);
     };
 
     cb.kailleraPlayerLeftCallback = [this](char* user, unsigned short id) {
-        emit kailleraPlayerLeft(safeStr(user), id);
+        emit kailleraPlayerLeft(safeKailleraStr(user), id);
     };
 
     cb.kailleraUserKickedCallback = [this]() {
@@ -183,15 +189,15 @@ void KailleraUIBridge::registerCallbacks()
     };
 
     cb.kailleraLoginStatCallback = [this](char* lsmsg) {
-        emit kailleraLoginStatus(safeStr(lsmsg));
+        emit kailleraLoginStatus(safeKailleraStr(lsmsg));
     };
 
     cb.kailleraPlayerDroppedCallback = [this](char* user, int gdpl) {
-        emit kailleraPlayerDropped(safeStr(user), gdpl);
+        emit kailleraPlayerDropped(safeKailleraStr(user), gdpl);
     };
 
     cb.kailleraGameStartCallback = [this](char* game, char player, char players) {
-        emit kailleraGameStarted(safeStr(game), static_cast<int>(player), static_cast<int>(players));
+        emit kailleraGameStarted(safeKailleraStr(game), static_cast<int>(player), static_cast<int>(players));
     };
 
     cb.kailleraGameNetsyncWaitCallback = [this](int tx) {
@@ -203,11 +209,11 @@ void KailleraUIBridge::registerCallbacks()
     };
 
     cb.kailleraDebugCallback = [this](char* msg) {
-        emit kailleraDebugMessage(safeStr(msg));
+        emit kailleraDebugMessage(safeKailleraStr(msg));
     };
 
     cb.kailleraErrorCallback = [this](char* msg) {
-        emit kailleraErrorMessage(safeStr(msg));
+        emit kailleraErrorMessage(safeKailleraStr(msg));
     };
 
     cb.recordingFileClosedCallback = [this]() {
