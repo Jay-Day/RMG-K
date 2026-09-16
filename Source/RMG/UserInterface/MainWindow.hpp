@@ -57,6 +57,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     bool Init(QApplication* app, bool showUI, bool launchROM);
     void OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation, int stateSlot);
+#ifdef UPDATER
+    bool GetPostExitLaunch(QString& program, QStringList& arguments);
+#endif // UPDATER
 #ifdef NETPLAY
     QString ResolveKailleraRomByName(QString gameName);
 #endif
@@ -126,6 +129,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     QAction* action_Audio_ToggleVolumeMute = nullptr;
 
     bool ui_SilentUpdateCheck = false;
+    QString     ui_PostExitLaunchProgram;
+    QStringList ui_PostExitLaunchArguments;
 
     int ui_ResetStatusBarTimerId = 0;
     int ui_StatusBarTimerTimeout = 0;

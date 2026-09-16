@@ -30,10 +30,11 @@ class InstallUpdateDialog : public QDialog, private Ui::InstallUpdateDialog
     QString temporaryDirectory;
     QString filename;
 
-    void install(void);
+    QString     launchProgram;
+    QStringList launchArguments;
 
-    void writeAndRunScript(QStringList stringList);
-    void launchProcess(QString file, QStringList arguments);
+    void install(void);
+    bool installPortable(QString extractDirectory, QString& error);
 
   protected:
     void timerEvent(QTimerEvent *) Q_DECL_OVERRIDE;
@@ -41,6 +42,23 @@ class InstallUpdateDialog : public QDialog, private Ui::InstallUpdateDialog
   public:
     InstallUpdateDialog(QWidget *parent, QString installationDirectory, QString temporaryDirectory, QString filename);
     ~InstallUpdateDialog(void);
+
+    // program (and arguments) which should be started
+    // after RMG-K has fully shut down to finish the update
+    QString GetLaunchProgram(void);
+    QStringList GetLaunchArguments(void);
+
+    // returns the directory used to download updates to
+    static QString GetUpdateDirectory(void);
+
+    // returns the path of the updater log file
+    static QString GetLogPath(void);
+
+    // appends a line to the updater log file
+    static void WriteLog(QString logPath, QString message);
+
+    // removes files left behind by a previous update
+    static void CleanupPreviousUpdate(void);
 };
 } // namespace Dialog
 } // namespace UserInterface

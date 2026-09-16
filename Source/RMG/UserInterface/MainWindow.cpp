@@ -1617,6 +1617,9 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->updateActions(false, false);
 
 #ifdef UPDATER
+#ifndef APPIMAGE_UPDATER
+    Dialog::InstallUpdateDialog::CleanupPreviousUpdate();
+#endif // APPIMAGE_UPDATER
     this->checkForUpdates(true, false);
 #else
     this->action_Help_Update->setVisible(false);
@@ -3854,7 +3857,20 @@ void MainWindow::on_networkAccessManager_Finished(QNetworkReply* reply)
     {
         return;
     }
+
+    // the update is finished by main() after RMG-K has shut down
+    this->ui_PostExitLaunchProgram   = installUpdateDialog.GetLaunchProgram();
+    this->ui_PostExitLaunchArguments = installUpdateDialog.GetLaunchArguments();
+    this->ui_ForceClose = true;
+    this->close();
 #endif // APPIMAGE_UPDATER
+}
+
+bool MainWindow::GetPostExitLaunch(QString& program, QStringList& arguments)
+{
+    program   = this->ui_PostExitLaunchProgram;
+    arguments = this->ui_PostExitLaunchArguments;
+    return !program.isEmpty();
 }
 #endif // UPDATER
 

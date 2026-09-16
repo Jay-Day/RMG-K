@@ -18,6 +18,11 @@
 #include <QFile>
 #include <QDir>
 #include <QTranslator>
+#ifdef UPDATER
+#include "UserInterface/Dialog/Update/InstallUpdateDialog.hpp"
+#include <QMessageBox>
+#include <QProcess>
+#endif // UPDATER
 
 #include <iostream>
 #include <cstdlib>
@@ -319,6 +324,11 @@ int main(int argc, char **argv)
 
     int exitCode = 1;
     bool windowInitialized = false;
+#ifdef UPDATER
+    QString postExitProgram;
+    QStringList postExitArguments;
+    QString updaterLogPath;
+#endif // UPDATER
     {
         UserInterface::MainWindow window;
 
@@ -354,6 +364,14 @@ int main(int argc, char **argv)
 
             exitCode = app.exec();
         }
+
+#ifdef UPDATER
+        if (window.GetPostExitLaunch(postExitProgram, postExitArguments))
+        {
+            // retrieve the log path before the core shuts down
+            updaterLogPath = UserInterface::Dialog::InstallUpdateDialog::GetLogPath();
+        }
+#endif // UPDATER
     }
 
     if (windowInitialized)
@@ -361,5 +379,21 @@ int main(int argc, char **argv)
         CoreSettingsSave();
     }
     CoreShutdown();
+
+#ifdef UPDATER
+    // finish installing an update now that
+    // all settings have been saved
+    if (!postExitProgram.isEmpty())
+    {
+        UserInterface::Dialog::InstallUpdateDialog::WriteLog(updaterLogPath, "Starting '" + postExitProgram + "' " + postExitArguments.join(' '));
+        if (!QProcess::startDetached(postExitProgram, postExitArguments))
+        {
+            UserInterface::Dialog::InstallUpdateDialog::WriteLog(updaterLogPath, "Failed to start '" + postExitProgram + "'");
+            QMessageBox::critical(nullptr, "RMG Kaillera Edition failed to update",
+                "Failed to start " + postExitProgram + ", check " + QDir::toNativeSeparators(updaterLogPath) + " for more information");
+            return 1;
+        }
+    }
+#endif // UPDATER
     return exitCode;
 }

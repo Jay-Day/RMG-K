@@ -8,17 +8,20 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "DownloadUpdateDialog.hpp"
+#ifndef APPIMAGE_UPDATER
+#include "InstallUpdateDialog.hpp"
+#endif // APPIMAGE_UPDATER
 #include "Utilities/QtMessageBox.hpp"
 
 #include <QNetworkAccessManager>
 #include <QDesktopServices>
 #include <QNetworkRequest>
 #include <QNetworkReply>
-#include <QTemporaryDir>
 #include <QPushButton>
 #include <QFileInfo>
 #include <QProcess>
 #include <QFile>
+#include <QDir>
 
 using namespace UserInterface::Dialog;
 using namespace Utilities;
@@ -73,18 +76,20 @@ void DownloadUpdateDialog::on_reply_finished(void)
     QString filePath;
 
 #ifndef APPIMAGE_UPDATER
-    QTemporaryDir temporaryDir;
-    temporaryDir.setAutoRemove(false);
-    if (!temporaryDir.isValid())
+    // download into a known directory so leftover
+    // files can be removed when RMG-K starts again
+    QDir updateDir(InstallUpdateDialog::GetUpdateDirectory());
+    if ((updateDir.exists() && !updateDir.removeRecursively()) ||
+        !updateDir.mkpath("."))
     {
-        QtMessageBox::Error(this, "Failed to create temporary directory", "");
+        QtMessageBox::Error(this, "Failed to create update directory", updateDir.path());
         this->reply->deleteLater();
         this->reject();
         return;
     }
 
-    this->temporaryDirectory = temporaryDir.path();
-    filePath = temporaryDir.filePath(this->filename);
+    this->temporaryDirectory = updateDir.path();
+    filePath = updateDir.filePath(this->filename);
 #else
     const char* appImageEnv = std::getenv("APPIMAGE");
     if (appImageEnv == nullptr ||
