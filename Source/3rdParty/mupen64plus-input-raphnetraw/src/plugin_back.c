@@ -110,6 +110,7 @@ static atomic_llong g_sample_time[MAX_CHANNELS];
 static raphnet_polling_health g_health[MAX_CHANNELS]; /* protected by g_io_mutex */
 static atomic_int g_rom_active;
 static int g_monitor_paused;
+static raphnet_polling_mode g_polling_mode = RAPHNET_POLLING_AUTOMATIC; /* changed with worker stopped */
 static int64_t g_last_probe[MAX_CHANNELS];
 static int64_t g_last_reopen[MAX_ADAPTERS];
 static atomic_int g_transport_failed[MAX_ADAPTERS];
@@ -138,6 +139,7 @@ int pb_init(pb_debugFunc debugFn)
 	DebugMessage = debugFn;
     g_n_channels = g_n_adapters = 0;
     g_monitor_paused = 0;
+    g_polling_mode = RAPHNET_POLLING_AUTOMATIC;
     atomic_store(&g_rom_active, 0);
     atomic_store(&g_health_status, 0);
     memset(g_channels, 0, sizeof(g_channels));
@@ -179,9 +181,10 @@ int pb_shutdown(void)
 /**
  * \return The number of channels available.
  */
-int pb_scanControllers(void)
+int pb_scanControllers(int pollingMode)
 {
     pb_stopGetKeysPolling();
+    g_polling_mode = raphnet_polling_mode_from_int(pollingMode);
     // Run before controller initialization and rollback setup, with no worker
     // competing for USB. Reuse recent idle results where possible.
     atomic_store(&g_rom_active, 0);
@@ -288,10 +291,11 @@ static int pb_scanControllersInternal(void)
             for (int k = 0; k < previous_count; ++k) {
                 if (previous[k].channel == j && strcmp(previous[k].path, adap->inf.str_path) == 0) {
                     g_health[g_n_channels] = previous[k].health;
-                    atomic_store(&g_cached_mode[g_n_channels], previous[k].health.cached);
                     break;
                 }
             }
+            atomic_store(&g_cached_mode[g_n_channels],
+                raphnet_polling_uses_cache(g_polling_mode, g_health[g_n_channels].cached));
 			g_n_channels++;
 		}
 	}
@@ -299,10 +303,11 @@ static int pb_scanControllersInternal(void)
 	return g_n_channels;
 }
 
-int pb_usesRawData(void)
+int pb_usesRawData(int control)
 {
-    /* Keep raw controller/pak capabilities stable even when button reads are cached. */
-    return 1;
+    /* Capabilities are declared after the pre-game decision and remain fixed
+     * throughout the ROM: cached GetKeys has no Pak; direct raw I/O supports it. */
+    return control >= 0 && control < g_n_channels && !atomic_load(&g_cached_mode[control]);
 }
 
 int pb_romOpen(void)
@@ -442,7 +447,8 @@ static void pb_recordSample(int control, int valid, unsigned int keys, int64_t e
 {
     if (!atomic_load(&g_rom_active)) {
         raphnet_health_observe(&g_health[control], valid, elapsed, now);
-        atomic_store(&g_cached_mode[control], g_health[control].cached);
+        atomic_store(&g_cached_mode[control],
+            raphnet_polling_uses_cache(g_polling_mode, g_health[control].cached));
     }
     atomic_store(&g_cached_keys[control], valid ? keys : 0);
     atomic_store(&g_sample_time[control], valid ? now : 0);
@@ -489,6 +495,12 @@ static void pb_checkBeforeGame(void)
     for (int i = 0; i < g_n_channels; ++i) {
         unsigned int keys;
         pending[i] = pb_pollGetKeysOnce(i, &keys);
+    }
+    // An explicit choice needs no automatic classification delay. Measurements
+    // still feed the warning independently of whether caching was overridden.
+    if (g_polling_mode != RAPHNET_POLLING_AUTOMATIC) {
+        pb_publishHealth();
+        return;
     }
     do {
         any_pending = 0;

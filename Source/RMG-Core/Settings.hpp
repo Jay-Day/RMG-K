@@ -291,6 +291,7 @@ enum class SettingsID
     Input_DeviceNum,
     Input_DevicePath,
     Input_DeviceSerial,
+    Input_DeviceGUID,
     Input_Deadzone,
     Input_Range,
     Input_RealN64Range,
@@ -531,6 +532,8 @@ enum class SettingsID
 	
     // Raphnet Input Plugin Settings
     RaphnetInput_LastUsbWarning,
+    RaphnetInput_StartupNoticeShown,
+    RaphnetInput_PollingMode,
 
     // GCA Input Plugin Settings
     GCAInput_Deadzone,

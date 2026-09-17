@@ -72,6 +72,7 @@ static const int default_emu2adap_portmap[MAX_CONTROLLERS] = { 0, 1, 2, 3 };
 
 #define RAPHNETRAW_CONFIG_SECTION "Input-RaphnetRaw"
 #define RAPHNETRAW_CONFIG_PLAYER1_ADAPTER_PORT "Player1AdapterPort"
+#define RAPHNETRAW_CONFIG_POLLING_MODE "PollingMode"
 
 static ptr_ConfigOpenSection l_ConfigOpenSection = NULL;
 static ptr_ConfigSetDefaultInt l_ConfigSetDefaultInt = NULL;
@@ -126,6 +127,15 @@ static void DebugMessage(int level, const char *message, ...)
 	(*l_DebugCallback)(l_DebugCallContext, level, msgbuf);
 
 	va_end(args);
+}
+
+static int load_polling_mode_config(void)
+{
+    if (!l_RaphnetConfigSection || !l_ConfigSetDefaultInt || !l_ConfigGetParamInt)
+        return RAPHNET_POLLING_AUTOMATIC;
+    l_ConfigSetDefaultInt(l_RaphnetConfigSection, RAPHNETRAW_CONFIG_POLLING_MODE,
+        RAPHNET_POLLING_AUTOMATIC, "0 = Automatic; 1 = Cached / No Pak; 2 = Direct / Pak support");
+    return l_ConfigGetParamInt(l_RaphnetConfigSection, RAPHNETRAW_CONFIG_POLLING_MODE);
 }
 
 static void load_port_map_config(void)
@@ -317,7 +327,7 @@ EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
 
 	load_port_map_config();
 
-	n_controllers = pb_scanControllers();
+	n_controllers = pb_scanControllers(load_polling_mode_config());
 
 	if (n_controllers <= 0) {
     	DebugMessage(PB_MSG_ERROR, "No adapters detected\n");
@@ -328,7 +338,8 @@ EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
 		adap_port = EMU_2_ADAP_PORT(i);
 
 		if (adap_port < n_controllers) {
-			ControlInfo.Controls[i].RawData = pb_usesRawData() ? 1 : 0;
+			ControlInfo.Controls[i].RawData = pb_usesRawData(adap_port) ? 1 : 0;
+            ControlInfo.Controls[i].Plugin = PLUGIN_NONE;
 
 			/* Setting this is currently required or we
 			 * won't be called at all.

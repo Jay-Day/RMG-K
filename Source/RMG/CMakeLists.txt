@@ -93,6 +93,8 @@ set(RMG_SOURCES
     VidExt.cpp
     main.cpp
     ../RMG-Input/UserInterface/Widget/ControllerImageWidget.cpp
+    ../RMG-Input/UserInterface/UICommon.cpp
+    ../RMG-Input/Utilities/Sdl3ButtonLabelToString.cpp
 )
 
 if (UPDATER)

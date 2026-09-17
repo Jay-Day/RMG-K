@@ -54,6 +54,11 @@ bool CorePluginsHasConfig(CorePluginType type);
 // used plugin of given type
 bool CorePluginsOpenConfig(CorePluginType type, void* parent = nullptr);
 
+// Runs the frontend's binding editor through the active USB plugin's device
+// handoff and settings reload, without pausing or replacing the running plugin.
+bool CorePluginsCanConfigureInputLive(void);
+bool CorePluginsConfigureInputLive(void (*showDialog)(void*), void* context);
+
 // returns wether the currently used plugin
 // of the given type has a ROM config GUI
 bool CorePluginsHasROMConfig(CorePluginType type);

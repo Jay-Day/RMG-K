@@ -16,6 +16,11 @@ struct RaphnetPollingHealth
 
     void reset() { *this = {}; }
 
+    bool averageExceedsCutoff() const
+    {
+        return samples > 0 && totalUs >= static_cast<std::int64_t>(RAPHNET_SLOW_POLL_US) * samples;
+    }
+
     void observe(std::int64_t elapsedUs, std::int64_t nowUs)
     {
         raphnet_health_observe(&connection, 1, elapsedUs, nowUs);

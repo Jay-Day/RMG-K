@@ -68,7 +68,7 @@ class UnifiedInputDialog : public QDialog
         QStringList lines;
     };
 
-    UnifiedInputDialog(QWidget* parent, InputPluginType currentPlugin);
+    UnifiedInputDialog(QWidget* parent, InputPluginType currentPlugin, bool inGame = false);
     ~UnifiedInputDialog(void) override;
 
     InputPluginType GetSelectedPlugin(void) const;
@@ -114,7 +114,7 @@ class UnifiedInputDialog : public QDialog
     void startListeningForBinding(int pageIndex, int bindingIndex);
     void stopListeningForBinding(bool restoreText);
     void clearBinding(int pageIndex, int bindingIndex);
-    void setGamecubeTriggerAnalog(bool leftTrigger, bool analog);
+    void setGamecubeTriggerAnalog(int pageIndex, bool leftTrigger, bool analog);
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
     void done(int result) override;
@@ -128,6 +128,8 @@ class UnifiedInputDialog : public QDialog
     bool openRaphnetPreview(void);
     bool pollRaphnetPreview(void);
     void updateRaphnetDiagnostics(void);
+    void selectRaphnetPollingMode(int index);
+    bool confirmRaphnetDirectPolling(void);
     bool setRaphnetPollingSuspended(bool suspended);
     bool exchangeRaphnetCommand(const unsigned char* command, int commandLength, unsigned char* response, int& responseLength);
 
@@ -157,6 +159,8 @@ class UnifiedInputDialog : public QDialog
         uint16_t vendorId = 0;
         uint16_t productId = 0;
         bool connected = true;
+        QString guid;
+        QString displayName;
     };
 
     struct ControllerPage
@@ -197,13 +201,17 @@ class UnifiedInputDialog : public QDialog
         UsbDeviceChoice usbDevice;
         bool usbEnabled = false;
         bool usbDirty = false;
+        bool usbFilterButtons = true;
+        bool usbFilterAxis = true;
         bool gamecubeEnabled = false;
         int gamecubePort = 0;
+        int gamecubeCButtonThreshold = 40;
         std::string usbSection;
     };
 
   private:
     InputPluginType selectedPlugin = InputPluginType::USB;
+    bool inGame = false;
     InputDetectionReport detectionReport;
     PreviewBackend previewBackend = PreviewBackend::None;
 
@@ -218,6 +226,12 @@ class UnifiedInputDialog : public QDialog
     QDialogButtonBox* buttonBox = nullptr;
     QTimer* pollTimer = nullptr;
     QLabel* raphnetTimingLabel = nullptr;
+    QLabel* raphnetSummaryLabel = nullptr;
+    QWidget* raphnetPollingControls = nullptr;
+    QComboBox* raphnetPollingModeComboBox = nullptr;
+    int raphnetPollingMode = 0;
+    int initialRaphnetPollingMode = 0;
+    bool raphnetDirectWarningAccepted = false;
     QElapsedTimer listeningTimer;
     int raphnetPlayer1Port = 0;
     RaphnetPollingHealth raphnetPollingHealth;

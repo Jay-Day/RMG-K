@@ -1,6 +1,8 @@
 #ifndef _plugin_back_h__
 #define _plugin_back_h__
 
+#include "polling_mode.h"
+
 /* Those match mupen64plus levels */
 #define PB_MSG_ERROR	1
 #define PB_MSG_WARNING	2
@@ -12,10 +14,10 @@ typedef void (*pb_debugFunc)(int level, const char *message, ...);
 
 int pb_init(pb_debugFunc debugFn);
 int pb_shutdown(void);
-int pb_scanControllers(void);
+int pb_scanControllers(int pollingMode);
 void pb_pauseMonitoring(int pause);
 void pb_setHealthCallback(void (*callback)(int));
-int pb_usesRawData(void);
+int pb_usesRawData(int control);
 int pb_getKeys(int Control, unsigned int *Keys);
 int pb_readController(int Control, unsigned char *Command);
 int pb_controllerCommand(int Control, unsigned char *Command);

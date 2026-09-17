@@ -412,6 +412,12 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::RaphnetInput_LastUsbWarning:
         setting = {SETTING_SECTION_RAPHNET_INPUT, "LastUsbWarning", std::string("0"), "USB latency warning time; nonzero means the one-time popup has been shown"};
         break;
+    case SettingsID::RaphnetInput_StartupNoticeShown:
+        setting = {SETTING_SECTION_RAPHNET_INPUT, "StartupNoticeShown", false, "Whether the one-time slow USB status-bar notice has been shown"};
+        break;
+    case SettingsID::RaphnetInput_PollingMode:
+        setting = {SETTING_SECTION_RAPHNET_INPUT, "PollingMode", 0, "0 = Automatic; 1 = Cached / No Pak; 2 = Direct / Pak support"};
+        break;
     case SettingsID::Core_OverrideGameSpecificSettings:
         setting = {SETTING_SECTION_CORE, "OverrideGameSpecificSettings", false};
         break;
@@ -860,6 +866,9 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::Input_DeviceSerial:
         setting = {"", "DeviceSerial"};
+        break;
+    case SettingsID::Input_DeviceGUID:
+        setting = {"", "DeviceGUID"};
         break;
     case SettingsID::Input_Deadzone:
         setting = {"", "Deadzone"};

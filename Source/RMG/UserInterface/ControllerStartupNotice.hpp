@@ -4,8 +4,8 @@
 #include <algorithm>
 #include <cstdint>
 
-// One brief notice on the ROM list per application launch. Wait for measured
-// slow polling, then expire after 15 seconds without rearming on reconnects.
+// One brief notice on the ROM list. The caller restores and persists `shown`.
+// Wait for measured slow polling, then expire after 15 seconds.
 struct ControllerStartupNotice
 {
     bool shown = false;

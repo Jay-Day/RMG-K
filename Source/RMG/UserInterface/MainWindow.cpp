@@ -1958,6 +1958,7 @@ void MainWindow::initializeUI(bool launchROM)
 
     this->ui_EventFilter = new EventFilter(this);
     this->ui_StatusBar_Label = new QLabel(this);
+    this->controllerStartupNotice.shown = CoreSettingsGetBoolValue(SettingsID::RaphnetInput_StartupNoticeShown);
     this->controllerNoticeClock.start();
     this->controllerNoticeTimer = new QTimer(this);
     this->controllerNoticeTimer->setSingleShot(true);
@@ -2829,9 +2830,10 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_Settings_Rsp->setEnabled(CorePluginsHasConfig(CorePluginType::Rsp));
     this->action_Settings_Rsp->setShortcut(QKeySequence(keyBinding));
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_InputSettings));
-    this->action_Settings_Input->setEnabled(!inEmulation);
+    const bool canConfigureInput = !inEmulation || CorePluginsCanConfigureInputLive();
+    this->action_Settings_Input->setEnabled(canConfigureInput);
     this->action_Settings_Input->setShortcut(QKeySequence(keyBinding));
-    this->action_Toolbar_Input->setEnabled(!inEmulation);
+    this->action_Toolbar_Input->setEnabled(canConfigureInput);
     keyBinding = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::KeyBinding_Settings));
     this->action_Settings_Settings->setShortcut(QKeySequence(keyBinding));
 
@@ -4199,12 +4201,18 @@ void MainWindow::updateControllerConnectionNotice(void)
     const bool inGame = this->emulationThread != nullptr && this->emulationThread->isRunning();
     const bool romListVisible = !inGame && this->isVisible() && this->statusBar()->isVisible() &&
         this->ui_Widgets->currentWidget() == this->ui_Widget_RomBrowser;
+    const bool previouslyShown = this->controllerStartupNotice.shown;
     const bool show = this->controllerStartupNotice.observe(CoreGetRaphnetHealth() == 2, romListVisible, nowMs);
     if (show)
     {
         // Use the existing single-line status area; never add a browser row or
         // change the window's minimum size for a connection notice.
         this->statusBar()->showMessage(tr("Slow controller USB polling detected. Try another USB port without a hub."));
+        if (!previouslyShown)
+        {
+            CoreSettingsSetValue(SettingsID::RaphnetInput_StartupNoticeShown, true);
+            CoreSettingsSave();
+        }
     }
     else if (this->controllerConnectionNoticeVisible)
     {
@@ -4244,6 +4252,22 @@ void MainWindow::on_Action_Settings_Input(void)
 {
     if (this->emulationThread->isRunning() || CoreIsEmulationRunning())
     {
+        if (!CorePluginsCanConfigureInputLive()) return;
+        if (!CorePluginsConfigureInputLive([](void* context)
+        {
+            auto* window = static_cast<MainWindow*>(context);
+            Dialog::UnifiedInputDialog dialog(window, InputPluginType::USB, true);
+            dialog.exec();
+            if (dialog.ShouldRememberInputChoice())
+            {
+                // The running ROM can override the globally configured plugin.
+                CoreSettingsSetValue(SettingsID::GUI_PreferredInputPlugin, static_cast<int>(InputPluginType::USB));
+                CoreSettingsSave();
+            }
+        }, this))
+        {
+            this->showErrorMessage("Input Settings", QString::fromStdString(CoreGetError()));
+        }
         return;
     }
 

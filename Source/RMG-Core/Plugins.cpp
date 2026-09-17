@@ -634,6 +634,34 @@ CORE_EXPORT int CoreGetRaphnetHealth(void)
     return l_RaphnetHealth.load();
 }
 
+using ConfigureInputLive = m64p_error (CALL *)(void (*)(void*), void*);
+
+static ConfigureInputLive get_live_input_config(void)
+{
+    auto& plugin = get_plugin(CorePluginType::Input);
+    return plugin.IsHooked() ? reinterpret_cast<ConfigureInputLive>(
+        CoreGetLibrarySymbol(plugin.GetHandle(), "RMGInputConfigureLive")) : nullptr;
+}
+
+CORE_EXPORT bool CorePluginsCanConfigureInputLive(void)
+{
+    return get_live_input_config() != nullptr;
+}
+
+CORE_EXPORT bool CorePluginsConfigureInputLive(void (*showDialog)(void*), void* context)
+{
+    const auto configure = get_live_input_config();
+    if (!configure || !showDialog)
+    {
+        CoreSetError("The active input plugin does not support live binding configuration.");
+        return false;
+    }
+    const m64p_error result = configure(showDialog, context);
+    if (result != M64ERR_SUCCESS)
+        CoreSetError("Live input configuration failed: " + std::string(m64p::Core.ErrorMessage(result)));
+    return result == M64ERR_SUCCESS;
+}
+
 // Only called on the UI thread while emulation is stopped, before opening input
 // configuration. Join the worker before handing exclusive USB access to preview.
 CORE_EXPORT void CorePauseRaphnetMonitoring(bool pause)
