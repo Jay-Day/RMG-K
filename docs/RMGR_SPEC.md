@@ -13,16 +13,28 @@ prototyped, and starting past it avoids a reader mistaking one of those
 for a valid file under this spec. There is no migration path from
 anything recorded before this document, and none is planned.
 
+`MatchSettings` (§5.1) is now on **recorder schema `3`** for `goodName ==
+"SmashRemix2.0.1"` (`kRecorderSchemaVersion` in `Replay.cpp`) — it adds the
+RNG seed and Smash Remix's `Toggles.asm` gameplay/stage settings. This is a
+`recorderSchemaVersion` bump, not a container `version` bump (§3.2): the
+container format itself hasn't changed, only this event's per-`goodName`
+memory-layout schema, the same mechanism already used for schema `2`'s
+`StateFrame`/`ItemUpdate` additions (§5.2/§5.3).
+
 ## 1. Overview
 
 A `.rmgr` file is a self-contained binary recording of one N64 match. It
 is designed for two distinct consumers:
 
-1. **Best-effort deterministic replay** — the recorded controller inputs
-   are enough to re-simulate the match's player-driven events from
-   scratch, but this is not full frame-perfect determinism: no RNG seed is
-   captured (§9), so any RNG-dependent outcome (item spawn rolls, certain
-   move variance, …) can diverge from the original match on replay.
+1. **Best-effort deterministic replay** — the recorded controller inputs,
+   together with the RNG seed captured in `MatchSettings` (§5.1), are
+   enough to re-simulate the match's player-driven and RNG-dependent
+   events from scratch. This is deterministic replay-from-inputs, not
+   frame-perfect *live analysis without re-simulating*: the seed lets a
+   replayer reproduce the original RNG stream by driving it forward with
+   the same inputs, but it does not make any already-recorded state field
+   (e.g. an item spawn that already happened) independently derivable
+   without actually re-running that simulation.
 2. **Direct analysis** — recorded game state (position, damage, stocks,
    action state, …) is enough to build stats, visualizations, or search
    tooling *without* re-running the emulator at all.
@@ -353,7 +365,13 @@ pre-match countdown), that port's `characterId`/`costumeId`/`teamColor`/
 than the real value — a reader can't distinguish "genuinely 0" from "not
 available yet" for those alone.
 
-Payload size: **32 bytes.**
+Payload size: **75 bytes** (recorder schema 3+ for `SmashRemix2.0.1`,
+adding `rngSeed` and the Remix settings below). Files declaring **32
+bytes** in `EventPayloads` (§5.0) predate this addition (recorder schema 1
+or 2) and end after `portCpuLevel` — a reader must take the size from
+`EventPayloads` and only read the trailing fields when the declared size
+includes them (§6), the same pattern already used for `StateFrame`/
+`ItemUpdate`'s own schema-2 additions (§5.2/§5.3).
 
 | Offset | Size | Type    | Field                | Notes |
 |-------:|-----:|---------|-----------------------|-------|
@@ -371,6 +389,125 @@ Payload size: **32 bytes.**
 | 0x14   | 4    | `u8[4]` | `portTeam`            | Team number per port 0-3. |
 | 0x18   | 4    | `u8[4]` | `portHandicap`        | Per-port handicap value, meaningful only when `handicapMode != 0`. |
 | 0x1C   | 4    | `u8[4]` | `portCpuLevel`        | CPU difficulty per port; meaningless for a `human` port. |
+| 0x20   | 4    | `i32`   | `rngSeed`             | `sSYUtilsRandomSeed` at match start — vanilla SSB64 code, unmodified by Remix, region/version-independent. See the note below the table for the determinism story. |
+| 0x24   | 1    | `u8`    | `hitstun`             | Gameplay setting. See §5.1.1. |
+| 0x25   | 1    | `u8`    | `hitlag`              | Gameplay setting. See §5.1.1. |
+| 0x26   | 1    | `u8`    | `di`                  | Gameplay setting. See §5.1.1. |
+| 0x27   | 1    | `u8`    | `japaneseSounds`      | Gameplay setting. See §5.1.1. |
+| 0x28   | 1    | `u8`    | `japaneseStunSleep`   | Gameplay setting. See §5.1.1. |
+| 0x29   | 1    | `u8`    | `momentumSlide`       | Gameplay setting. See §5.1.1. |
+| 0x2A   | 1    | `u8`    | `shieldStun`          | Gameplay setting. See §5.1.1. |
+| 0x2B   | 1    | `u8`    | `zCancel`             | Gameplay setting. See §5.1.1. |
+| 0x2C   | 1    | `u8`    | `punishFailedZCancel` | Gameplay setting. See §5.1.1. |
+| 0x2D   | 1    | `u8`    | `improvedAI`          | Gameplay setting. See §5.1.1. |
+| 0x2E   | 1    | `u8`    | `tripping`            | Gameplay setting. See §5.1.1. |
+| 0x2F   | 1    | `u8`    | `rage`                | Gameplay setting. See §5.1.1. |
+| 0x30   | 1    | `u8`    | `footstoolJumping`    | Gameplay setting. See §5.1.1. |
+| 0x31   | 1    | `u8`    | `airDodging`          | Gameplay setting. See §5.1.1. |
+| 0x32   | 1    | `u8`    | `jabLocking`          | Gameplay setting. See §5.1.1. |
+| 0x33   | 1    | `u8`    | `edgeCJumping`        | Gameplay setting. See §5.1.1. |
+| 0x34   | 1    | `u8`    | `perfectShielding`    | Gameplay setting. See §5.1.1. |
+| 0x35   | 1    | `u8`    | `parrying`            | Gameplay setting (labeled BETA in Remix's own menu). See §5.1.1. |
+| 0x36   | 1    | `u8`    | `spotDodging`         | Gameplay setting. See §5.1.1. |
+| 0x37   | 1    | `u8`    | `fastFallAerials`     | Gameplay setting. See §5.1.1. |
+| 0x38   | 1    | `u8`    | `ledgeTrumping`       | Gameplay setting. See §5.1.1. |
+| 0x39   | 1    | `u8`    | `wallTeching`         | Gameplay setting. See §5.1.1. |
+| 0x3A   | 1    | `u8`    | `chargeSmashes`       | Gameplay setting. See §5.1.1. |
+| 0x3B   | 1    | `u8`    | `itemContainers`      | Gameplay setting. See §5.1.1. |
+| 0x3C   | 1    | `u8`    | `gameSpeed`           | Gameplay setting. See §5.1.1. |
+| 0x3D   | 1    | `u8`    | `specialZoom`         | Gameplay setting (labeled BETA in Remix's own menu). See §5.1.1. |
+| 0x3E   | 1    | `u8`    | `blastzoneWarp`       | Gameplay setting (labeled BETA in Remix's own menu). See §5.1.1. |
+| 0x3F   | 1    | `u8`    | `singleButtonMode`    | Gameplay setting. See §5.1.1. |
+| 0x40   | 1    | `u8`    | `allItemsRDropAerial` | Gameplay setting. See §5.1.1. |
+| 0x41   | 1    | `u8`    | `moveStaling`         | Gameplay setting. See §5.1.1. |
+| 0x42   | 1    | `u8`    | `stopwatchItem`       | Gameplay setting. See §5.1.1. |
+| 0x43   | 1    | `u8`    | `stageSelectLayout`   | Stage setting. See §5.1.2. |
+| 0x44   | 1    | `u8`    | `hazardMode`          | Stage setting. See §5.1.2. |
+| 0x45   | 1    | `u8`    | `whispyMode`          | Stage setting. See §5.1.2. |
+| 0x46   | 1    | `u8`    | `saffronPokemonRate`  | Stage setting. See §5.1.2. |
+| 0x47   | 1    | `u8`    | `pokemonAnnouncer`    | Stage setting. See §5.1.2. |
+| 0x48   | 1    | `u8`    | `dragonKingHUD`       | Stage setting. See §5.1.2. |
+| 0x49   | 1    | `u8`    | `cameraMode`          | Stage setting. See §5.1.2. |
+| 0x4A   | 1    | `u8`    | `yoshiIslandCloudAnims` | Stage setting. See §5.1.2. |
+
+**RNG seed and determinism.** `rngSeed` is `sSYUtilsRandomSeed`
+(`0x8003B940`, live value, big-endian `s32`) captured once, at the same
+moment as the rest of `MatchSettings`. It's a classic LCG: every "random"
+draw anywhere in the game — item spawns, CPU decisions, hit-effect
+variance, damage rolls, Whispy Woods' wind timing, and more — advances
+this one shared 32-bit value via `seed = (seed * 214013 + 2531011) mod
+2^32`. There's no dedicated per-mechanic seed and no min/max — any 32-bit
+value is valid state. Loading this seed at match start and then replaying
+this match's recorded `InputFrame` events reproduces the same sequence of
+draws, and therefore the same RNG-dependent outcomes, as the original
+match. This is sufficient for deterministic replay-from-inputs; it is not
+a substitute for re-deriving an already-recorded outcome without actually
+re-simulating (see §1).
+
+**Gameplay/stage settings.** The 39 fields from `hitstun` through
+`yoshiIslandCloudAnims` are Smash Remix's own `Toggles.asm`
+menu-configured mutators — **match properties, captured once alongside
+the rest of `MatchSettings`, not per-frame data**: they reflect the
+setting in effect for the whole match, not anything that can change frame
+to frame. Every value is a raw `u8` read from a 4-byte, big-endian memory
+word (the *live value* at a `Toggles.asm` entry's `+0x4` offset, not the
+entry's own base address) — see §5.1.1/§5.1.2 for what each value means.
+Out of Remix's full settings surface, this intentionally covers only the
+"Gameplay Settings" and core "Stage Settings" categories — the ~18 named
+plus ~170 auto-generated per-stage/per-track random-pool toggles (stage
+selection weighting, music selection weighting, and similar), and the
+Player Tags/other cosmetic-only settings, are not captured. Any of those
+can be added later the same way, via an ordinary field-append (§6), if a
+concrete need comes up.
+
+#### 5.1.1 Gameplay settings — value meanings
+
+| Field | Values (0-based) |
+|---|---|
+| `hitstun` | `0`=Normal; `1`=Melee |
+| `hitlag` | `0`=Normal; `1`=Japanese; `2`=Melee; `3`=Ultimate; `4`=None |
+| `di` | `0`=Normal; `1`=Japanese; `2`=Ultimate |
+| `japaneseSounds` | `0`=Default; `1`=Always; `2`=Never |
+| `japaneseStunSleep` | `0`=Off; `1`=On |
+| `momentumSlide` | `0`=Off; `1`=On |
+| `shieldStun` | `0`=Default; `1`=Japanese; `2`=Melee; `3`=Brawl; `4`=Ultimate |
+| `zCancel` | `0`=Default; `1`=Disabled; `2`=Melee (7 frames); `3`=Auto; `4`=Glide Mode |
+| `punishFailedZCancel` | `0`=Off; `1`=7% Damage; `2`=Lava Floor; `3`=Shield-Break; `4`=Instant K.O.; `5`=Force Taunt; `6`=Bury; `7`=Laugh Track; `8`=Egg; `9`=Sleep; `10`=Trip; `11`=Random |
+| `improvedAI` | `0`=Off; `1`=On |
+| `tripping` | `0`=Off; `1`=Low; `2`=High; `3`="Brawl" |
+| `rage` | `0`=Off; `1`=Ultimate; `2`=Smash 4; `3`=Berserk; `4`=Fatigue |
+| `footstoolJumping` | `0`=Off; `1`=On |
+| `airDodging` | `0`=Off; `1`=Melee; `2`=Ultimate; `3`=Air Dash |
+| `jabLocking` | `0`=Off; `1`=On |
+| `edgeCJumping` | `0`=Off; `1`=On |
+| `perfectShielding` | `0`=Off; `1`=On |
+| `parrying` | `0`=Off; `1`=On |
+| `spotDodging` | `0`=Off; `1`=On |
+| `fastFallAerials` | `0`=Off; `1`=On |
+| `ledgeTrumping` | `0`=Off; `1`=On |
+| `wallTeching` | `0`=Off; `1`=On |
+| `chargeSmashes` | `0`=Off; `1`=On; `2`=Unlimited Charge |
+| `itemContainers` | `0`=Default; `1`=Off; `2`=Never Explode; `3`=Always Explode |
+| `gameSpeed` | `0`=1/1; `1`=1.2x; `2`=1.3x; `3`=1.5x; `4`=1.75x; `5`=2.0x; `6`=3.0x; `7`=1/8; `8`=1/4; `9`=1/3; `10`=1/2; `11`=2/3; `12`=3/4 |
+| `specialZoom` | `0`=Off; `1`=Match End; `2`=Any KO |
+| `blastzoneWarp` | `0`=Off; `1`=Left/Right; `2`=Top/Bottom; `3`=All |
+| `singleButtonMode` | `0`=Off; `1`="A"; `2`="B"; `3`="R"; `4`="A"+"C"; `5`="B"+"C"; `6`="R"+"C" |
+| `allItemsRDropAerial` | `0`=Off; `1`=On |
+| `moveStaling` | `0`=Default; `1`=Disabled; `2`=Lenient; `3`=Strict; `4`=Wait For It; `5`=Reverse; `6`=Cheap Shot |
+| `stopwatchItem` | `0`=Default; `1`=Slow Always; `2`=Fast Always; `3`=Backfire Always; `4`=Backfire Never |
+
+#### 5.1.2 Stage settings — value meanings
+
+| Field | Values (0-based) |
+|---|---|
+| `stageSelectLayout` | `0`=Normal; `1`=Tournament |
+| `hazardMode` | `0`=Normal; `1`=Hazards Off; `2`=Movement Off; `3`=All Off |
+| `whispyMode` | `0`=Normal; `1`=Japanese; `2`=Super; `3`=Hyper |
+| `saffronPokemonRate` | `0`=Normal; `1`=Super; `2`=Hyper; `3`=Quick Attack |
+| `pokemonAnnouncer` | `0`=Stadium; `1`=All Stages; `2`=Off |
+| `dragonKingHUD` | `0`=Dragon King; `1`=All Stages; `2`=Off |
+| `cameraMode` | `0`=Normal; `1`=Bonus; `2`=Fixed; `3`=Scene |
+| `yoshiIslandCloudAnims` | `0`=Off; `1`=On |
 
 ### 5.2 State Frame — code `0x04`
 
@@ -841,17 +978,14 @@ tracked (Zebes' rising acid, Duel Zone's disappearing platforms, …).
   in memory yet.
 - **Stage hazard tracking covers exactly one hazard.** `StageHazardUpdate`
   (§5.4) currently only tracks Whispy Woods' wind on Dream Land.
-- **No RNG seed is recorded.** No known Smash Remix RNG seed address has
-  been identified yet, so any RNG-dependent outcome (item spawn rolls,
-  certain move variance, …) is not currently reproducible from a `.rmgr`
-  file alone — see the determinism caveat in §1.
-- **Most of Smash Remix's own settings/mutators aren't captured yet.**
-  `MatchSettings` (§5.1) covers the original SSB64 settings plus a small
-  set of Remix additions (teams, handicap, CPU level, item frequency);
-  Remix has added considerably more match-configuration options since
-  those fields were last extended, and none of the newer ones are mapped
-  to memory or captured here yet. This is a mapping gap to close via
-  ordinary field-appends (§6) as each setting gets identified, not a
+- **Most of Smash Remix's settings surface beyond Gameplay/Stage Settings
+  still isn't captured.** `MatchSettings` (§5.1) now records `rngSeed` plus
+  all 31 Gameplay Settings and 8 (core) Stage Settings, but Remix also has
+  Music Settings, Player Tags, and ~18 named plus ~170 auto-generated
+  per-stage/per-track random-pool toggles that are deliberately out of
+  scope for now (§5.1's note) — none of those are mapped to memory or
+  captured here yet. This is a mapping gap to close via ordinary
+  field-appends (§6) as/if a concrete need for them comes up, not a
   structural limitation of `MatchSettings` itself.
 - **No aggregate damage-dealt/taken breakdown or incoming-damage-this-hit
   field**, even though the emulator exposes them.
@@ -874,7 +1008,8 @@ tracked (Zebes' rising acid, Duel Zone's disappearing platforms, …).
 ## 10. Reference implementation
 
 - **Writer:** `Source/RMG-Core/Replay.cpp` / `Source/RMG-Core/Replay.hpp` -
-  implements this version (`5`). Memory reading:
+  implements this version (`5`, `MatchSettings` recorder schema `3`).
+  Memory reading:
   `Source/RMG-Core/ReplayMemory.cpp` / `Source/RMG-Core/ReplayMemory.hpp`.
 - **TypeScript reader/writer + tests:** [`rmgr-ts`](https://github.com/hopskipnfall/rmgr-ts),
   its own repository (extracted from this one). **Not yet updated for this

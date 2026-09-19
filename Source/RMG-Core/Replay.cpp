@@ -154,8 +154,54 @@ struct MatchSettingsEvent
     uint8_t portTeam[4];       // team number per port
     uint8_t portHandicap[4];   // meaningful only when handicapMode != 0
     uint8_t portCpuLevel[4];   // meaningless for a human port
+    // Added in recorder schema 3 (kRecorderSchemaVersion above) - see
+    // docs/RMGR_SPEC.md for what every value below means (enum lookup
+    // tables); this struct only documents shape, not semantics, to avoid
+    // keeping two copies of the same table.
+    int32_t rngSeed; // sSYUtilsRandomSeed at match start - see ReplayMemory::MatchInfo::rngSeed
+    // Gameplay Settings (31, Remix Toggles.asm)
+    uint8_t hitstun;
+    uint8_t hitlag;
+    uint8_t di;
+    uint8_t japaneseSounds;
+    uint8_t japaneseStunSleep;
+    uint8_t momentumSlide;
+    uint8_t shieldStun;
+    uint8_t zCancel;
+    uint8_t punishFailedZCancel;
+    uint8_t improvedAI;
+    uint8_t tripping;
+    uint8_t rage;
+    uint8_t footstoolJumping;
+    uint8_t airDodging;
+    uint8_t jabLocking;
+    uint8_t edgeCJumping;
+    uint8_t perfectShielding;
+    uint8_t parrying;
+    uint8_t spotDodging;
+    uint8_t fastFallAerials;
+    uint8_t ledgeTrumping;
+    uint8_t wallTeching;
+    uint8_t chargeSmashes;
+    uint8_t itemContainers;
+    uint8_t gameSpeed;
+    uint8_t specialZoom;
+    uint8_t blastzoneWarp;
+    uint8_t singleButtonMode;
+    uint8_t allItemsRDropAerial;
+    uint8_t moveStaling;
+    uint8_t stopwatchItem;
+    // Stage Settings (8, Remix Toggles.asm)
+    uint8_t stageSelectLayout;
+    uint8_t hazardMode;
+    uint8_t whispyMode;
+    uint8_t saffronPokemonRate;
+    uint8_t pokemonAnnouncer;
+    uint8_t dragonKingHUD;
+    uint8_t cameraMode;
+    uint8_t yoshiIslandCloudAnims;
 };
-static_assert(sizeof(MatchSettingsEvent) == 32, "MatchSettingsEvent must be 32 bytes");
+static_assert(sizeof(MatchSettingsEvent) == 75, "MatchSettingsEvent must be 75 bytes");
 
 // smash64 extension event, code 0x04. State-side data, captured after that
 // frame's physics/collision resolution - the resulting state. One event per
@@ -360,7 +406,10 @@ constexpr const char* kSmash64Family      = "smash64";
 //       StateFrame gains trailing scaleX/scaleY/characterSpecific/
 //       shieldHealth/specialHitStatus/knockbackResist -
 //       docs/RMGR_SPEC.md sections 5.2 and 5.3.
-constexpr uint32_t kRecorderSchemaVersion = 2;
+//   3 - MatchSettings gains trailing rngSeed plus 31 Gameplay Settings and
+//       8 Stage Settings from Remix's Toggles.asm - docs/RMGR_SPEC.md
+//       section 5.1.
+constexpr uint32_t kRecorderSchemaVersion = 3;
 
 // Whether the currently-loaded ROM is a recognized smash64-family build.
 // Only Smash Remix 2.0.1 is recognized today - see kSmashRemixGoodName's
@@ -723,6 +772,48 @@ bool OpenNewFile(const ReplayMemory::MatchInfo& matchInfo)
         settingsEvent.itemFrequency     = matchInfo.itemFrequency;
         settingsEvent.teamsEnabled      = matchInfo.teamsEnabled ? 1 : 0;
         settingsEvent.handicapMode      = matchInfo.handicapMode;
+        settingsEvent.rngSeed           = matchInfo.rngSeed;
+
+        ReplayMemory::RemixSettings remixSettings = ReplayMemory::ReadRemixSettings();
+        settingsEvent.hitstun               = remixSettings.hitstun;
+        settingsEvent.hitlag                = remixSettings.hitlag;
+        settingsEvent.di                    = remixSettings.di;
+        settingsEvent.japaneseSounds        = remixSettings.japaneseSounds;
+        settingsEvent.japaneseStunSleep     = remixSettings.japaneseStunSleep;
+        settingsEvent.momentumSlide         = remixSettings.momentumSlide;
+        settingsEvent.shieldStun            = remixSettings.shieldStun;
+        settingsEvent.zCancel               = remixSettings.zCancel;
+        settingsEvent.punishFailedZCancel   = remixSettings.punishFailedZCancel;
+        settingsEvent.improvedAI            = remixSettings.improvedAI;
+        settingsEvent.tripping              = remixSettings.tripping;
+        settingsEvent.rage                  = remixSettings.rage;
+        settingsEvent.footstoolJumping      = remixSettings.footstoolJumping;
+        settingsEvent.airDodging            = remixSettings.airDodging;
+        settingsEvent.jabLocking            = remixSettings.jabLocking;
+        settingsEvent.edgeCJumping          = remixSettings.edgeCJumping;
+        settingsEvent.perfectShielding      = remixSettings.perfectShielding;
+        settingsEvent.parrying              = remixSettings.parrying;
+        settingsEvent.spotDodging           = remixSettings.spotDodging;
+        settingsEvent.fastFallAerials       = remixSettings.fastFallAerials;
+        settingsEvent.ledgeTrumping         = remixSettings.ledgeTrumping;
+        settingsEvent.wallTeching           = remixSettings.wallTeching;
+        settingsEvent.chargeSmashes         = remixSettings.chargeSmashes;
+        settingsEvent.itemContainers        = remixSettings.itemContainers;
+        settingsEvent.gameSpeed             = remixSettings.gameSpeed;
+        settingsEvent.specialZoom           = remixSettings.specialZoom;
+        settingsEvent.blastzoneWarp         = remixSettings.blastzoneWarp;
+        settingsEvent.singleButtonMode      = remixSettings.singleButtonMode;
+        settingsEvent.allItemsRDropAerial   = remixSettings.allItemsRDropAerial;
+        settingsEvent.moveStaling           = remixSettings.moveStaling;
+        settingsEvent.stopwatchItem         = remixSettings.stopwatchItem;
+        settingsEvent.stageSelectLayout     = remixSettings.stageSelectLayout;
+        settingsEvent.hazardMode            = remixSettings.hazardMode;
+        settingsEvent.whispyMode            = remixSettings.whispyMode;
+        settingsEvent.saffronPokemonRate    = remixSettings.saffronPokemonRate;
+        settingsEvent.pokemonAnnouncer      = remixSettings.pokemonAnnouncer;
+        settingsEvent.dragonKingHUD         = remixSettings.dragonKingHUD;
+        settingsEvent.cameraMode            = remixSettings.cameraMode;
+        settingsEvent.yoshiIslandCloudAnims = remixSettings.yoshiIslandCloudAnims;
 
         for (int port = 0; port < 4; port++)
         {

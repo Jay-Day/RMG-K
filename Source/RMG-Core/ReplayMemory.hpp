@@ -146,6 +146,63 @@ struct MatchInfo
     bool     matchWasReset;
     bool     teamsEnabled;
     uint8_t  handicapMode;     // 0 off, 1 on, 2 auto
+    // sSYUtilsRandomSeed, captured once at match start - see ADDR_RNG_SEED
+    // in the .cpp for the full determinism story. Sufficient for
+    // deterministic replay when paired with this match's recorded inputs;
+    // does NOT make already-recorded state fields independently derivable
+    // without re-simulating.
+    int32_t  rngSeed;
+};
+
+// Remix's Toggles.asm-based settings (gameplay mutators + stage config),
+// read once at match start - NOT per-frame. Every value here is a raw u8
+// enum/flag read from a 4-byte word in memory (every range tops out at
+// 12); see docs/RMGR_SPEC.md for what each value means per field - this
+// struct intentionally carries no semantic comments of its own, to avoid
+// documenting the same lookup tables in two places.
+struct RemixSettings
+{
+    // Gameplay Settings (31)
+    uint8_t hitstun;
+    uint8_t hitlag;
+    uint8_t di;
+    uint8_t japaneseSounds;
+    uint8_t japaneseStunSleep;
+    uint8_t momentumSlide;
+    uint8_t shieldStun;
+    uint8_t zCancel;
+    uint8_t punishFailedZCancel;
+    uint8_t improvedAI;
+    uint8_t tripping;
+    uint8_t rage;
+    uint8_t footstoolJumping;
+    uint8_t airDodging;
+    uint8_t jabLocking;
+    uint8_t edgeCJumping;
+    uint8_t perfectShielding;
+    uint8_t parrying;
+    uint8_t spotDodging;
+    uint8_t fastFallAerials;
+    uint8_t ledgeTrumping;
+    uint8_t wallTeching;
+    uint8_t chargeSmashes;
+    uint8_t itemContainers;
+    uint8_t gameSpeed;
+    uint8_t specialZoom;
+    uint8_t blastzoneWarp;
+    uint8_t singleButtonMode;
+    uint8_t allItemsRDropAerial;
+    uint8_t moveStaling;
+    uint8_t stopwatchItem;
+    // Stage Settings (8)
+    uint8_t stageSelectLayout;
+    uint8_t hazardMode;
+    uint8_t whispyMode;
+    uint8_t saffronPokemonRate;
+    uint8_t pokemonAnnouncer;
+    uint8_t dragonKingHUD;
+    uint8_t cameraMode;
+    uint8_t yoshiIslandCloudAnims;
 };
 
 // current_screen == 0x16 ("in a VS match")
@@ -193,6 +250,12 @@ std::vector<ItemObject> ReadItemObjects(void);
 // checked before any hazard-specific offset is trusted; this function does
 // that internally and returns all-false for a stage it doesn't know yet.
 StageHazards ReadStageHazards(uint8_t stageId);
+
+// Fixed global Toggles.asm addresses, independent of MatchInfo - always
+// readable regardless of match state (these are menu-configured settings,
+// not live match state). Called once at match start, alongside
+// ReadMatchInfo() - see RemixSettings's own doc comment.
+RemixSettings ReadRemixSettings(void);
 } // namespace ReplayMemory
 
 #endif // REPLAY_MEMORY_HPP
