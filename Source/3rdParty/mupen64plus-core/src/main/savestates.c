@@ -371,7 +371,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
 
         memcpy(header, memory_data, 44);
         memory_offset = 44;
-        rollback_load_start = SDL_GetPerformanceCounter();
+        if (rollback_verbose_stats)
+            rollback_load_start = SDL_GetPerformanceCounter();
         curr = header;
     }
     // Check if this is a memory load (for rollback debug ring)
@@ -405,7 +406,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         }
         memcpy(header, memory_data, 44);
         memory_offset = 44;
-        rollback_load_start = SDL_GetPerformanceCounter();
+        if (rollback_verbose_stats)
+            rollback_load_start = SDL_GetPerformanceCounter();
         curr = header;
     }
     else
@@ -567,7 +569,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     SDL_UnlockMutex(savestates_lock);
 
     // Parse savestate
-    if (memory_data != NULL)
+    if (memory_data != NULL && rollback_verbose_stats)
         rollback_parse_start = SDL_GetPerformanceCounter();
 
     dev->rdram.regs[0][RDRAM_CONFIG_REG]       = GETDATA(curr, uint32_t);
@@ -684,17 +686,17 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     dev->dp.dps_regs[DPS_BUFTEST_ADDR_REG] = GETDATA(curr, uint32_t);
     dev->dp.dps_regs[DPS_BUFTEST_DATA_REG] = GETDATA(curr, uint32_t);
 
-    if (memory_data != NULL)
+    if (memory_data != NULL && rollback_verbose_stats)
     {
         rollback_fixed_end = SDL_GetPerformanceCounter();
         rollback_rdram_start = rollback_fixed_end;
     }
     COPYARRAY(dev->rdram.dram, curr, uint32_t, RDRAM_MAX_SIZE/4);
-    if (memory_data != NULL)
+    if (memory_data != NULL && rollback_verbose_stats)
         rollback_rdram_end = SDL_GetPerformanceCounter();
     COPYARRAY(dev->sp.mem, curr, uint32_t, SP_MEM_SIZE/4);
     COPYARRAY(dev->pif.ram, curr, uint8_t, PIF_RAM_SIZE);
-    if (memory_data != NULL)
+    if (memory_data != NULL && rollback_verbose_stats)
         rollback_sp_pif_end = SDL_GetPerformanceCounter();
 
     dev->cart.use_flashram = GETDATA(curr, int32_t);
@@ -705,7 +707,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
 #if defined(M64P_BIG_ENDIAN)
     COPYARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
     COPYARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
-    if (memory_data != NULL)
+    if (memory_data != NULL && rollback_verbose_stats)
         rollback_tlb_end = SDL_GetPerformanceCounter();
 #else
     if (memory_data != NULL)
@@ -723,7 +725,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     {
         COPYARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
         COPYARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
-        if (memory_data != NULL)
+        if (memory_data != NULL && rollback_verbose_stats)
             rollback_tlb_end = SDL_GetPerformanceCounter();
     }
 #endif
@@ -769,7 +771,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     }
     if (memory_data != NULL)
     {
-        rollback_tlb_start = SDL_GetPerformanceCounter();
+        if (rollback_verbose_stats)
+            rollback_tlb_start = SDL_GetPerformanceCounter();
         /* The "entries unchanged -> keep existing LUT" shortcut is only valid for the OMITTED
          * (stripped rollback) format, where there's no LUT in the buffer to install. A FULL
          * buffer (omit flag clear) carries its own LUT — a cold spectator must always install
@@ -791,7 +794,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             memcpy(dev->r4300.cp0.tlb.LUT_r, rollback_lut_r_data, 0x100000 * sizeof(uint32_t));
             memcpy(dev->r4300.cp0.tlb.LUT_w, rollback_lut_w_data, 0x100000 * sizeof(uint32_t));
         }
-        rollback_tlb_end = SDL_GetPerformanceCounter();
+        if (rollback_verbose_stats)
+            rollback_tlb_end = SDL_GetPerformanceCounter();
     }
 
     savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t), memory_data == NULL);
@@ -799,7 +803,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     *r4300_cp0_next_interrupt(&dev->r4300.cp0) = GETDATA(curr, uint32_t);
     curr += 4; /* here there used to be next_vi */
     dev->vi.field = GETDATA(curr, uint32_t);
-    if (memory_data != NULL)
+    if (memory_data != NULL && rollback_verbose_stats)
         rollback_cpu_end = SDL_GetPerformanceCounter();
 
     // assert(savestateData+savestateSize == curr)
@@ -1273,7 +1277,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             poweron_dd(&dev->dd);
         }
     }
-    if (memory_data != NULL)
+    if (memory_data != NULL && rollback_verbose_stats)
         rollback_extra_end = SDL_GetPerformanceCounter();
 
     /* Zilmar-Spec plugin expect a call with control_id = -1 when RAM processing is done */
@@ -1287,7 +1291,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     dev->r4300.cp0.interrupt_unsafe_state = 0;
 
     *r4300_cp0_last_addr(&dev->r4300.cp0) = *r4300_pc(&dev->r4300);
-    if (memory_data != NULL)
+    if (memory_data != NULL && rollback_verbose_stats)
         rollback_finalize_end = SDL_GetPerformanceCounter();
 
     if (free_savestate_data)
@@ -1935,7 +1939,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     save->filepath = strdup(filepath);
     memory_save = strcmp(filepath, "MEMORY") == 0;
     rollback_buffer_save = strcmp(filepath, "ROLLBACK") == 0;
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_start = SDL_GetPerformanceCounter();
 
     if(autoinc_save_slot)
@@ -2145,30 +2149,30 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->dp.dps_regs[DPS_BUFTEST_ADDR_REG]);
     PUTDATA(curr, uint32_t, dev->dp.dps_regs[DPS_BUFTEST_DATA_REG]);
 
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && rollback_verbose_stats)
     {
         rollback_save_fixed_end = SDL_GetPerformanceCounter();
         rollback_save_rdram_start = rollback_save_fixed_end;
     }
     PUTARRAY(dev->rdram.dram, curr, uint32_t, RDRAM_MAX_SIZE/4);
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_rdram_end = SDL_GetPerformanceCounter();
     PUTARRAY(dev->sp.mem, curr, uint32_t, SP_MEM_SIZE/4);
     PUTARRAY(dev->pif.ram, curr, uint8_t, PIF_RAM_SIZE);
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_sp_pif_end = SDL_GetPerformanceCounter();
 
     PUTDATA(curr, int32_t, dev->cart.use_flashram);
     ZERODATA(curr, 4+8+4+4); // Here used to be flashram state
 
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_tlb_start = SDL_GetPerformanceCounter();
     if (!rollback_buffer_save || rollback_save_full)
     {
         PUTARRAY(dev->r4300.cp0.tlb.LUT_r, curr, uint32_t, 0x100000);
         PUTARRAY(dev->r4300.cp0.tlb.LUT_w, curr, uint32_t, 0x100000);
     }
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_tlb_end = SDL_GetPerformanceCounter();
 
     /* OK to cast away const qualifier */
@@ -2214,7 +2218,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, *r4300_cp0_next_interrupt((struct cp0*)&dev->r4300.cp0));
     PUTDATA(curr, uint32_t, 0); /* here there used to be next_vi */
     PUTDATA(curr, uint32_t, dev->vi.field);
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_cpu_end = SDL_GetPerformanceCounter();
 
     to_little_endian_buffer(queue, 4, sizeof(queue)/4);
@@ -2373,7 +2377,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->sp.rsp_status);
     PUTDATA(curr, uint32_t, dev->sp.first_run);
     PUTDATA(curr, uint32_t, dev->sp.rsp_wait);
-    if (rollback_buffer_save)
+    if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_extra_end = SDL_GetPerformanceCounter();
 
     if (rollback_buffer_save)
@@ -2394,11 +2398,13 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
             *rollback_save_buffer_len = (int)rollback_buffer_len;
         if (rollback_save_buffer != NULL)
             *rollback_save_buffer = (unsigned char *)save->data;
-        rollback_save_finalize_end = SDL_GetPerformanceCounter();
+        if (rollback_verbose_stats)
+            rollback_save_finalize_end = SDL_GetPerformanceCounter();
 
         free(save->filepath);
         free(save);
-        rollback_save_end = SDL_GetPerformanceCounter();
+        if (rollback_verbose_stats)
+            rollback_save_end = SDL_GetPerformanceCounter();
         if (rollback_verbose_stats)
         {
             DebugMessage(M64MSG_INFO,
