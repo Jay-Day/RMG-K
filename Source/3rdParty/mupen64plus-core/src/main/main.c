@@ -68,6 +68,7 @@
 #include "device/controllers/paks/transferpak.h"
 #include "device/gb/gb_cart.h"
 #include "device/pif/bootrom_hle.h"
+#include "device/pif/pif.h"
 #include "device/r4300/interrupt.h"
 #include "device/r4300/new_dynarec/new_dynarec.h"
 #include "eventloop.h"
@@ -410,7 +411,10 @@ static int   l_RollbackVisibleStepCompleted = 0;
 static int   l_RollbackPresentPacedThisFrame = 0;
 static int   l_RollbackHiddenStepActive = 0;
 static int   l_RollbackHiddenStepCompleted = 0;
+static int   l_RollbackVerboseStatsEnabled = 0;
 static m64p_rollback_run_frame_stats l_RollbackRunFrameStats;
+static m64p_rollback_run_frame_stats l_RollbackVisibleFrameStats;
+static uint64_t l_RollbackVisibleFrameBeginUs = 0;
 static uint32_t l_RollbackLoadProbePc = 0;
 static uint32_t l_RollbackLoadProbeCp0Count = 0;
 static uint32_t l_RollbackLoadProbeNextInterrupt = 0;
@@ -941,6 +945,11 @@ void main_set_rollback_timesync_scale(double scale)
     l_RollbackTimesyncScale = scale;
 }
 
+void main_set_rollback_verbose_stats(int enabled)
+{
+    l_RollbackVerboseStatsEnabled = enabled != 0;
+}
+
 static uint64_t rollback_profile_now_us(void)
 {
     uint64_t counter = SDL_GetPerformanceCounter();
@@ -982,6 +991,9 @@ void main_set_rollback_execute_callbacks(m64p_rollback_execute_callbacks* callba
         l_RollbackPresentPacedThisFrame = 0;
         l_RollbackHiddenStepActive = 0;
         l_RollbackHiddenStepCompleted = 0;
+        l_RollbackVisibleFrameBeginUs = 0;
+        pif_rollback_stats_stop();
+        interrupt_rollback_stats_stop();
         l_RmgkPresentBaseHzPublished = 0;
 #ifdef NEW_DYNAREC
         new_dynarec_rollback_stats_reset();
@@ -1020,11 +1032,98 @@ void main_rollback_visible_frame_begin(void)
     l_RollbackVisibleStepActive = 1;
     l_RollbackVisibleStepCompleted = 0;
     l_RollbackPresentPacedThisFrame = 0;
+
+    if (l_RmgkPacingEnabled)
+    {
+        memset(&l_RollbackVisibleFrameStats, 0,
+            sizeof(l_RollbackVisibleFrameStats));
+        l_RollbackVisibleFrameStats.emumode = g_dev.r4300.emumode;
+#ifdef NEW_DYNAREC
+        new_dynarec_rollback_stats_reset();
+#endif
+        r4300_cached_code_rollback_stats_reset();
+        interrupt_rollback_stats_reset(1);
+        pif_rollback_stats_reset();
+        l_RollbackVisibleFrameBeginUs = rollback_profile_now_us();
+    }
 }
 
 int main_rollback_visible_frame_completed(void)
 {
     int completed = l_RollbackVisibleStepCompleted;
+
+    if (l_RmgkPacingEnabled && l_RollbackVisibleFrameBeginUs != 0)
+    {
+        struct pif_rollback_stats pif_stats;
+
+        l_RollbackVisibleFrameStats.total_us =
+            rollback_profile_now_us() - l_RollbackVisibleFrameBeginUs;
+        l_RollbackVisibleFrameStats.r4300_us =
+            l_RollbackVisibleFrameStats.total_us;
+        interrupt_rollback_stats_fill(&l_RollbackVisibleFrameStats);
+        interrupt_rollback_stats_stop();
+        pif_rollback_stats_get(&pif_stats);
+        pif_rollback_stats_stop();
+        l_RollbackVisibleFrameStats.pif_sync_count = pif_stats.sync_count;
+        l_RollbackVisibleFrameStats.pif_sync_us = pif_stats.sync_us;
+        l_RollbackVisibleFrameStats.pif_input_callback_us =
+            pif_stats.input_callback_us;
+        l_RollbackVisibleFrameStats.pif_controller_reads =
+            pif_stats.controller_reads;
+
+#ifdef NEW_DYNAREC
+        {
+            struct new_dynarec_rollback_stats dynarec_stats;
+            new_dynarec_rollback_stats_get(&dynarec_stats);
+            l_RollbackVisibleFrameStats.dynarec_recompile_count =
+                dynarec_stats.recompile_count;
+            l_RollbackVisibleFrameStats.dynarec_recompile_us =
+                dynarec_stats.recompile_us;
+            l_RollbackVisibleFrameStats.dynarec_invalidate_us =
+                dynarec_stats.invalidate_us;
+            l_RollbackVisibleFrameStats.dynarec_full_invalidate_count =
+                dynarec_stats.full_invalidate_count;
+            l_RollbackVisibleFrameStats.dynarec_range_invalidate_count =
+                dynarec_stats.range_invalidate_count;
+            l_RollbackVisibleFrameStats.dynarec_block_invalidate_count =
+                dynarec_stats.block_invalidate_count;
+            l_RollbackVisibleFrameStats.dynarec_verify_dirty_count =
+                dynarec_stats.verify_dirty_count;
+            l_RollbackVisibleFrameStats.dynarec_verify_dirty_us =
+                dynarec_stats.verify_dirty_us;
+            l_RollbackVisibleFrameStats.dynarec_get_addr_count =
+                dynarec_stats.get_addr_count;
+            l_RollbackVisibleFrameStats.dynarec_get_addr_us =
+                dynarec_stats.get_addr_us;
+            l_RollbackVisibleFrameStats.dynarec_get_addr_ht_count =
+                dynarec_stats.get_addr_ht_count;
+            l_RollbackVisibleFrameStats.dynarec_get_addr_32_count =
+                dynarec_stats.get_addr_32_count;
+            l_RollbackVisibleFrameStats.dynarec_dynamic_linker_count =
+                dynarec_stats.dynamic_linker_count;
+            l_RollbackVisibleFrameStats.dynarec_dynamic_linker_us =
+                dynarec_stats.dynamic_linker_us;
+            l_RollbackVisibleFrameStats.dynarec_dynamic_linker_ds_count =
+                dynarec_stats.dynamic_linker_ds_count;
+            l_RollbackVisibleFrameStats.dynarec_dynamic_linker_ds_us =
+                dynarec_stats.dynamic_linker_ds_us;
+        }
+#endif
+
+        r4300_cached_code_rollback_stats_get(
+            &l_RollbackVisibleFrameStats.cached_code_full_invalidate_count,
+            &l_RollbackVisibleFrameStats.cached_code_range_invalidate_count);
+
+        if (l_RollbackExecuteCallbacks.visible_frame_complete != NULL)
+        {
+            l_RollbackExecuteCallbacks.visible_frame_complete(
+                l_RollbackExecuteCallbacks.user_data,
+                &l_RollbackVisibleFrameStats);
+        }
+
+        l_RollbackVisibleFrameBeginUs = 0;
+    }
+
     l_RollbackVisibleStepActive = 0;
     l_RollbackVisibleStepCompleted = 0;
     return completed;
@@ -1107,8 +1206,9 @@ int main_rollback_run_frame(int output_flags)
     int old_pacing = l_FrameOutputPacing;
     int old_input = l_FrameOutputInput;
     uint32_t* cp0_regs;
-    uint64_t total_begin;
-    uint64_t r4300_begin;
+    uint64_t total_begin = 0;
+    uint64_t r4300_begin = 0;
+    int profile_active = l_RollbackVerboseStatsEnabled;
     int result;
 
     memset(&l_RollbackRunFrameStats, 0, sizeof(l_RollbackRunFrameStats));
@@ -1141,13 +1241,14 @@ int main_rollback_run_frame(int output_flags)
     l_RollbackRunFrameStats.dynarec_pending_exception_before = g_dev.r4300.new_dynarec_hot_state.pending_exception;
     l_RollbackRunFrameStats.dynarec_stop_before = g_dev.r4300.new_dynarec_hot_state.stop;
 #endif
-    total_begin = rollback_profile_now_us();
+    if (profile_active)
+        total_begin = rollback_profile_now_us();
 
 #ifdef NEW_DYNAREC
     new_dynarec_rollback_stats_reset();
 #endif
     r4300_cached_code_rollback_stats_reset();
-    interrupt_rollback_stats_reset();
+    interrupt_rollback_stats_reset(profile_active);
 
     main_set_frame_output(
         (output_flags & M64FRAME_OUTPUT_VIDEO) != 0,
@@ -1156,10 +1257,13 @@ int main_rollback_run_frame(int output_flags)
         (output_flags & M64FRAME_OUTPUT_INPUT) != 0);
 
     main_rollback_hidden_frame_begin();
-    r4300_begin = rollback_profile_now_us();
+    if (profile_active)
+        r4300_begin = rollback_profile_now_us();
     result = run_r4300_current(&g_dev.r4300);
-    l_RollbackRunFrameStats.r4300_us = rollback_profile_now_us() - r4300_begin;
+    if (profile_active)
+        l_RollbackRunFrameStats.r4300_us = rollback_profile_now_us() - r4300_begin;
     interrupt_rollback_stats_fill(&l_RollbackRunFrameStats);
+    interrupt_rollback_stats_stop();
     if (!main_rollback_hidden_frame_completed())
         result = 0;
     l_RollbackRunFrameStats.cp0_count_after = cp0_regs[CP0_COUNT_REG];
@@ -1210,7 +1314,8 @@ int main_rollback_run_frame(int output_flags)
         &l_RollbackRunFrameStats.cached_code_full_invalidate_count,
         &l_RollbackRunFrameStats.cached_code_range_invalidate_count);
     r4300_cached_code_rollback_stats_reset();
-    l_RollbackRunFrameStats.total_us = rollback_profile_now_us() - total_begin;
+    if (profile_active)
+        l_RollbackRunFrameStats.total_us = rollback_profile_now_us() - total_begin;
     return result != 0;
 }
 
@@ -1904,7 +2009,8 @@ void new_vi(void)
     int frame_output_input = main_frame_frontend_input_enabled();
     uint64_t rollback_vi_begin = 0;
     uint64_t rollback_step_begin = 0;
-    int rollback_profile_active = l_RollbackSingleStepActive || l_RollbackHiddenStepActive;
+    int rollback_profile_active = l_RollbackVerboseStatsEnabled &&
+        (l_RollbackSingleStepActive || l_RollbackHiddenStepActive);
 
     if (rollback_profile_active)
         rollback_vi_begin = rollback_profile_now_us();

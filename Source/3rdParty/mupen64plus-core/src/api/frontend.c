@@ -466,6 +466,7 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
             return M64ERR_SUCCESS;
         case M64CMD_ROLLBACK_SET_VERBOSE_STATS:
             savestates_set_rollback_verbose_stats(ParamInt != 0);
+            main_set_rollback_verbose_stats(ParamInt != 0);
             return M64ERR_SUCCESS;
         case M64CMD_ROLLBACK_SET_TIMESYNC_SCALE:
             if (ParamPtr == NULL)

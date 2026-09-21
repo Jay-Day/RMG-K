@@ -63,6 +63,7 @@ void new_frame(void);
 void new_vi(void);
 void main_set_frame_output(int video, int audio, int pacing, int frontend_input);
 void main_set_rollback_timesync_scale(double scale);
+void main_set_rollback_verbose_stats(int enabled);
 int main_frame_video_enabled(void);
 int main_frame_audio_enabled(void);
 int main_frame_pacing_enabled(void);

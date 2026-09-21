@@ -67,6 +67,7 @@ typedef struct {
   int size;
   int players;
 } m64p_rollback_input_sample;
+typedef struct m64p_rollback_run_frame_stats m64p_rollback_run_frame_stats;
 typedef struct {
   void *user_data;
   int (*begin_frame)(void *user_data);
@@ -74,10 +75,13 @@ typedef struct {
   /* RMG-K: called by the core from the video plugin rendering callback,
    * immediately before the plugin presents the visible rollback frame. */
   void (*pace_before_present)(void *user_data);
+  /* RMG-K: reports detailed timings for the visible emulated frame. */
+  void (*visible_frame_complete)(void *user_data,
+    const m64p_rollback_run_frame_stats *stats);
   /* RMG-K: enable buffered frontend/core pacing CSV traces. */
   int pacing_trace_enabled;
 } m64p_rollback_execute_callbacks;
-typedef struct {
+struct m64p_rollback_run_frame_stats {
   uint64_t total_us;
   uint64_t r4300_us;
   uint64_t vi_us;
@@ -136,6 +140,10 @@ typedef struct {
   uint64_t ai_fifo_pop_us;
   uint64_t ai_raise_interrupt_count;
   uint64_t ai_raise_interrupt_us;
+  uint64_t pif_sync_count;
+  uint64_t pif_sync_us;
+  uint64_t pif_input_callback_us;
+  uint64_t pif_controller_reads;
   uint32_t emumode;
   uint32_t interrupt_max_type;
   uint32_t cp0_count_before;
@@ -187,7 +195,7 @@ typedef struct {
   int32_t  delay_slot_before;
   int32_t  delay_slot_after;
   int      output_flags;
-} m64p_rollback_run_frame_stats;
+};
 
 typedef enum {
   M64TYPE_INT = 1,
