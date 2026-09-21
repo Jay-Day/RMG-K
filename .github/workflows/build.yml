@@ -168,9 +168,62 @@ jobs:
           cmake --install "$build_dir" --strip --prefix="$src_dir"
           cmake --build "$build_dir" --target=bundle_dependencies
         shell: msys2 {0}
+      # --- Code signing (SignPath) -----------------------------------------
+      # Only runs on tagged release builds. Pull requests (including forks,
+      # which cannot read secrets) skip signing entirely. The portable
+      # binaries are signed BEFORE the installer is built so the installer
+      # bundles signed files (MyAppDir=Bin/Release in RMG.iss), then the
+      # installer itself is signed. SignPath signs in the cloud and downloads
+      # the signed artifact back over the originals via output-artifact-directory.
+      - name: Upload portable for signing
+        id: portable-unsigned
+        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: unsigned-portable-${{ env.GIT_REVISION }}
+          path: Bin/Release
+          retention-days: 1
+      - name: Sign portable binaries (SignPath)
+        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && startsWith(github.ref, 'refs/tags/v') }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_PORTABLE_CONFIG_SLUG }}
+          github-artifact-id: ${{ steps.portable-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: Bin/Release
+
       - name: Create Installer
         if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' }}
         run: .\Build\Release\Source\Installer\CreateInstaller.bat
+
+      - name: Upload installer for signing
+        id: installer-unsigned
+        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: unsigned-installer-${{ env.GIT_REVISION }}
+          path: Bin/*.exe
+          retention-days: 1
+      - name: Sign installer (SignPath)
+        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && startsWith(github.ref, 'refs/tags/v') }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_INSTALLER_CONFIG_SLUG }}
+          github-artifact-id: ${{ steps.installer-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: Bin
+      # ---------------------------------------------------------------------
+
       - name: Configure RMG (Portable)
         if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' }}
         run: touch Bin/Release/portable.txt
