@@ -1008,7 +1008,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         {
             CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
             netplay_ret = rmgk_gekko::start_local_session("rmgk-gekko-local",
-                2, static_cast<int>(sizeof(uint32_t)), 0);
+                4, static_cast<int>(sizeof(uint32_t)), 0);
             rollbackExecute = netplay_ret;
             if (!netplay_ret)
             {
