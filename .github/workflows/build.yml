@@ -177,14 +177,14 @@ jobs:
       # the signed artifact back over the originals via output-artifact-directory.
       - name: Upload portable for signing
         id: portable-unsigned
-        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         uses: actions/upload-artifact@v5
         with:
           name: unsigned-portable-${{ env.GIT_REVISION }}
           path: Bin/Release
           retention-days: 1
       - name: Sign portable binaries (SignPath)
-        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -203,14 +203,14 @@ jobs:
 
       - name: Upload installer for signing
         id: installer-unsigned
-        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         uses: actions/upload-artifact@v5
         with:
           name: unsigned-installer-${{ env.GIT_REVISION }}
           path: Bin/*.exe
           retention-days: 1
       - name: Sign installer (SignPath)
-        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ matrix.features == 'ON' && matrix.configuration == 'Release' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') }}
         uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
