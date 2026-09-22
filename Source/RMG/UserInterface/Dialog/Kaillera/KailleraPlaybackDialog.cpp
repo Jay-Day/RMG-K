@@ -53,6 +53,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QListView>
+#include <QListWidget>
 #include <QStringList>
 #include <QTextEdit>
 
@@ -640,6 +641,43 @@ void KailleraPlaybackDialog::setupUI()
         m_frameLabel->setObjectName("KailleraPaneMeta");
     }
     mainLayout->addWidget(m_frameLabel);
+
+#ifdef RMGK_GAME_STATS
+    // Non-modal panel for queued .rmgr exports - see enqueueReplayExport().
+    // Unlike Export MP4's modal QProgressDialog, this stays out of the way:
+    // hidden until the first replay export starts, then just keeps updating
+    // in place for the rest of the dialog's lifetime so you can keep
+    // selecting recordings and clicking Export Replays while it runs.
+    m_replayExportPanel = new QWidget(this);
+    if (modern)
+    {
+        m_replayExportPanel->setObjectName("KailleraPaneMeta");
+    }
+    auto* replayExportLayout = new QVBoxLayout(m_replayExportPanel);
+    replayExportLayout->setContentsMargins(0, 0, 0, 0);
+    replayExportLayout->setSpacing(4);
+
+    m_replayExportStatusLabel = new QLabel(m_replayExportPanel);
+    m_replayExportStatusLabel->setWordWrap(true);
+    replayExportLayout->addWidget(m_replayExportStatusLabel);
+
+    m_replayExportProgressBar = new QProgressBar(m_replayExportPanel);
+    m_replayExportProgressBar->setTextVisible(true);
+    replayExportLayout->addWidget(m_replayExportProgressBar);
+
+    m_replayExportQueueLabel = new QLabel(m_replayExportPanel);
+    m_replayExportQueueLabel->setVisible(false);
+    replayExportLayout->addWidget(m_replayExportQueueLabel);
+
+    // Last-N-finished log, not a persisted record - see appendReplayExportLogLine().
+    m_replayExportHistoryList = new QListWidget(m_replayExportPanel);
+    m_replayExportHistoryList->setMaximumHeight(96);
+    m_replayExportHistoryList->setFocusPolicy(Qt::NoFocus);
+    replayExportLayout->addWidget(m_replayExportHistoryList);
+
+    m_replayExportPanel->setVisible(false);
+    mainLayout->addWidget(m_replayExportPanel);
+#endif
 
     // Bottom actions
     auto* bottomLayout = new QHBoxLayout();
@@ -1495,6 +1533,8 @@ void KailleraPlaybackDialog::resetExportUi()
     {
         m_btnExportReplay->setEnabled(true);
     }
+    m_exportDisplayName.clear();
+    m_replayExportInFlightPath.clear();
 #endif
 
     m_exportPendingOutput.clear();
@@ -1642,7 +1682,8 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
 void KailleraPlaybackDialog::startReplayFileExportProcess(const QString& recordingPath,
                                                            const QString& romPath,
                                                            const QString& outputPath,
-                                                           int totalFrames)
+                                                           int totalFrames,
+                                                           const QString& displayName)
 {
     if (m_exportProcess != nullptr)
     {
@@ -1651,6 +1692,8 @@ void KailleraPlaybackDialog::startReplayFileExportProcess(const QString& recordi
 
     m_exportCanceled = false;
     m_exportIsReplayFile = true;
+    m_exportDisplayName = displayName;
+    m_replayExportInFlightPath = recordingPath;
     m_exportLog.clear();
     m_exportPendingOutput.clear();
     m_exportStatusLine = "Starting export...";
@@ -1677,66 +1720,24 @@ void KailleraPlaybackDialog::startReplayFileExportProcess(const QString& recordi
             this,
             &KailleraPlaybackDialog::onExportProcessFinished);
 
-    m_exportProgressDialog = new QProgressDialog("Exporting recording to .rmgr...", "Cancel", 0, 0, this);
-    m_exportProgressDialog->setWindowTitle("Export Replays");
-    m_exportProgressDialog->setWindowModality(Qt::WindowModal);
-    m_exportProgressDialog->setMinimumDuration(0);
-    m_exportProgressDialog->setAutoClose(false);
-    m_exportProgressDialog->setAutoReset(false);
-    m_exportProgressDialog->setMinimumWidth(520);
-    m_exportProgressDialog->setMaximumWidth(700);
-    if (useModernPlaybackUi())
-    {
-        m_exportProgressDialog->setObjectName("KailleraPlaybackExportDialog");
-
-        auto* progressLabel = new QLabel(m_exportProgressDialog);
-        progressLabel->setObjectName("KailleraPlaybackProgressLabel");
-        progressLabel->setWordWrap(true);
-        m_exportProgressDialog->setLabel(progressLabel);
-
-        auto* progressBar = new QProgressBar(m_exportProgressDialog);
-        progressBar->setObjectName("KailleraPlaybackExportBar");
-        progressBar->setTextVisible(true);
-        m_exportProgressDialog->setBar(progressBar);
-
-        auto* cancelButton = new QPushButton("Cancel", m_exportProgressDialog);
-        configurePlaybackButton(cancelButton, "KailleraSecondaryButton");
-        m_exportProgressDialog->setCancelButton(cancelButton);
-        m_exportProgressDialog->setStyleSheet(buildPlaybackStyleSheet());
-    }
-    if (m_exportTotalFrames > 0)
-    {
-        m_exportProgressDialog->setRange(0, m_exportTotalFrames);
-        m_exportProgressDialog->setValue(0);
-    }
-    else
-    {
-        m_exportProgressDialog->setRange(0, 0);
-    }
-    connect(m_exportProgressDialog, &QProgressDialog::canceled, this, [this]() {
-        m_exportCanceled = true;
-        if (m_exportProcess != nullptr)
-        {
-            m_exportProcess->kill();
-        }
-    });
-
-    if (m_btnExportReplay != nullptr)
-    {
-        m_btnExportReplay->setEnabled(false);
-    }
-
+    // No modal QProgressDialog here (unlike Export MP4) - progress goes to
+    // the non-modal m_replayExportPanel instead, set up once in setupUI()
+    // and driven from updateExportProgressDialog(). This is exactly what
+    // lets you keep selecting recordings and queuing more exports while
+    // this one runs. The button also stays enabled the whole time (see
+    // enqueueReplayExport()) - it's what you click to add to the queue.
     m_exportProcess->start();
     if (!m_exportProcess->waitForStarted())
     {
         const QString message = m_exportProcess->errorString();
         resetExportUi();
-        QMessageBox::warning(this, "Export Replays", "Failed to start export process.\n\n" + message);
+        appendReplayExportLogLine(QString("✗ %1: failed to start export process (%2)").arg(displayName, message));
+        startNextQueuedReplayExportIfAny();
         return;
     }
 
+    ensureReplayExportPanelVisible();
     updateExportProgressDialog();
-    m_exportProgressDialog->show();
 }
 #endif
 
@@ -1946,10 +1947,9 @@ void KailleraPlaybackDialog::onPlaybackExport()
 #ifdef RMGK_GAME_STATS
 void KailleraPlaybackDialog::onPlaybackExportReplay()
 {
-    if (m_exportProcess != nullptr)
-    {
-        return;
-    }
+    // No m_exportProcess-busy guard here (unlike onPlaybackExport()'s MP4
+    // path): a busy export just means this one queues instead of starting
+    // immediately - see enqueueReplayExport().
 
     if (CoreIsEmulationRunning() || n02::isPlaybackActive())
     {
@@ -2002,7 +2002,98 @@ void KailleraPlaybackDialog::onPlaybackExportReplay()
     const QString outputPath = QDir::toNativeSeparators(
         QDir(QStringLiteral("replays")).filePath(recordingFileInfo.completeBaseName() + ".rmgr"));
 
-    startReplayFileExportProcess(recordingPath, romPath, outputPath, totalFrames);
+    ReplayExportQueueItem item;
+    item.displayName = recordingFileInfo.fileName();
+    item.recordingPath = recordingPath;
+    item.romPath = romPath;
+    item.outputPath = outputPath;
+    item.totalFrames = totalFrames;
+
+    enqueueReplayExport(item);
+}
+
+void KailleraPlaybackDialog::enqueueReplayExport(const ReplayExportQueueItem& item)
+{
+    const bool alreadyInFlight = m_exportProcess != nullptr
+        && m_exportIsReplayFile
+        && m_replayExportInFlightPath == item.recordingPath;
+    const bool alreadyQueued = std::any_of(m_replayExportQueue.cbegin(), m_replayExportQueue.cend(),
+        [&item](const ReplayExportQueueItem& queued) { return queued.recordingPath == item.recordingPath; });
+
+    if (alreadyInFlight || alreadyQueued)
+    {
+        ensureReplayExportPanelVisible();
+        appendReplayExportLogLine("Already queued: " + item.displayName);
+        return;
+    }
+
+    if (m_exportProcess == nullptr)
+    {
+        startReplayFileExportProcess(item.recordingPath, item.romPath, item.outputPath, item.totalFrames, item.displayName);
+        return;
+    }
+
+    m_replayExportQueue.append(item);
+    ensureReplayExportPanelVisible();
+    updateReplayExportQueueLabel();
+}
+
+void KailleraPlaybackDialog::startNextQueuedReplayExportIfAny()
+{
+    if (m_replayExportQueue.isEmpty())
+    {
+        return;
+    }
+
+    const ReplayExportQueueItem next = m_replayExportQueue.takeFirst();
+    updateReplayExportQueueLabel();
+    startReplayFileExportProcess(next.recordingPath, next.romPath, next.outputPath, next.totalFrames, next.displayName);
+}
+
+void KailleraPlaybackDialog::ensureReplayExportPanelVisible()
+{
+    if (m_replayExportPanel != nullptr && !m_replayExportPanel->isVisible())
+    {
+        m_replayExportPanel->setVisible(true);
+    }
+}
+
+void KailleraPlaybackDialog::updateReplayExportQueueLabel()
+{
+    if (m_replayExportQueueLabel == nullptr)
+    {
+        return;
+    }
+
+    if (m_replayExportQueue.isEmpty())
+    {
+        m_replayExportQueueLabel->setVisible(false);
+        return;
+    }
+
+    m_replayExportQueueLabel->setText(m_replayExportQueue.size() == 1
+        ? "1 more queued"
+        : QString("%1 more queued").arg(m_replayExportQueue.size()));
+    m_replayExportQueueLabel->setVisible(true);
+}
+
+void KailleraPlaybackDialog::appendReplayExportLogLine(const QString& text)
+{
+    if (m_replayExportHistoryList == nullptr)
+    {
+        return;
+    }
+
+    m_replayExportHistoryList->addItem(text);
+    m_replayExportHistoryList->scrollToBottom();
+
+    // Convenience log, not a persisted record - cap it so it can't grow
+    // unbounded over a long session of exports.
+    constexpr int kMaxReplayExportLogLines = 20;
+    while (m_replayExportHistoryList->count() > kMaxReplayExportLogLines)
+    {
+        delete m_replayExportHistoryList->takeItem(0);
+    }
 }
 #endif
 
@@ -2027,10 +2118,44 @@ void KailleraPlaybackDialog::onExportProcessFinished(int exitCode, QProcess::Exi
     const QString outputPath = m_exportOutputPath;
     const QString fullLog = m_exportLog;
     const QString logSummary = summarizeExportLog(m_exportLog);
+#ifdef RMGK_GAME_STATS
+    const bool wasReplayExport = m_exportIsReplayFile;
+    const QString replayDisplayName = m_exportDisplayName;
+#endif
 
     resetExportUi();
 
     const QString dialogTitle = exportDialogTitle();
+
+#ifdef RMGK_GAME_STATS
+    if (wasReplayExport)
+    {
+        // No popup for this path (unlike MP4 below) - several queued
+        // exports could otherwise finish close together and stack dialogs.
+        // The result goes to the panel's history log instead, and the
+        // queue keeps draining regardless of this one's outcome.
+        if (canceled)
+        {
+            appendReplayExportLogLine(QString("✗ %1: canceled").arg(replayDisplayName));
+        }
+        else if (exitStatus == QProcess::NormalExit && exitCode == 0)
+        {
+            appendReplayExportLogLine(QString("✓ %1 → %2").arg(replayDisplayName, outputPath));
+        }
+        else
+        {
+            QString message = "export failed";
+            if (!logSummary.isEmpty())
+            {
+                message += ": " + logSummary;
+            }
+            appendReplayExportLogLine(QString("✗ %1: %2").arg(replayDisplayName, message));
+        }
+
+        startNextQueuedReplayExportIfAny();
+        return;
+    }
+#endif
 
     if (canceled)
     {
@@ -2310,14 +2435,50 @@ QString KailleraPlaybackDialog::buildExportProgressSummary() const
 
 void KailleraPlaybackDialog::updateExportProgressDialog()
 {
-    if (m_exportProgressDialog == nullptr)
-    {
-        return;
-    }
-
     if (m_exportCaptureCompleteElapsedMs < 0 && isExportCaptureComplete() && m_exportElapsedTimer.isValid())
     {
         m_exportCaptureCompleteElapsedMs = m_exportElapsedTimer.elapsed();
+    }
+
+    const QString summary = buildExportProgressSummary();
+
+#ifdef RMGK_GAME_STATS
+    // Export Replays drives the non-modal panel instead of the modal
+    // QProgressDialog below - same progress math, different widgets, so a
+    // queued replay export's progress never depends on a dialog being open.
+    if (m_exportIsReplayFile)
+    {
+        if (m_replayExportProgressBar != nullptr)
+        {
+            if (m_exportTotalFrames > 0)
+            {
+                const int boundedValue = static_cast<int>(std::llround(
+                    exportProgressFraction() * static_cast<double>(m_exportTotalFrames)));
+                if (m_replayExportProgressBar->maximum() != m_exportTotalFrames)
+                {
+                    m_replayExportProgressBar->setRange(0, m_exportTotalFrames);
+                }
+                if (m_replayExportProgressBar->value() != boundedValue)
+                {
+                    m_replayExportProgressBar->setValue(boundedValue);
+                }
+            }
+            else if (m_replayExportProgressBar->maximum() != 0)
+            {
+                m_replayExportProgressBar->setRange(0, 0);
+            }
+        }
+        if (m_replayExportStatusLabel != nullptr && m_replayExportStatusLabel->text() != summary)
+        {
+            m_replayExportStatusLabel->setText(summary);
+        }
+        return;
+    }
+#endif
+
+    if (m_exportProgressDialog == nullptr)
+    {
+        return;
     }
 
     if (m_exportTotalFrames > 0)
@@ -2338,7 +2499,6 @@ void KailleraPlaybackDialog::updateExportProgressDialog()
         m_exportProgressDialog->setRange(0, 0);
     }
 
-    const QString summary = buildExportProgressSummary();
     if (m_exportProgressDialog->labelText() != summary)
     {
         m_exportProgressDialog->setLabelText(summary);
