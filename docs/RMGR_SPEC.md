@@ -799,10 +799,10 @@ Remix adds a very large number of additional stages (`0x29` onward, into the
 ### 8.3 Action state IDs
 
 `0x000`-`0x0DB` are shared across every character; `>= 0x0DC` is
-character-specific (special moves — see §9). Where a name ends in a
-numbered/lettered range (e.g. `Walk1-3`), the `Value` column's range
-covers that many consecutive, individually-meaningful states in that
-order — not one state that happens to span multiple codes.
+character-specific. Where a name ends in a numbered/lettered range (e.g.
+`Walk1-3`), the `Value` column's range covers that many consecutive,
+individually-meaningful states in that order — not one state that happens
+to span multiple codes.
 
 | Value | Name | | Value | Name |
 |---:|---|---|---:|---|
@@ -873,6 +873,245 @@ Derived predicates a consumer may find useful: dead/being-KO'd =
 `0x098`-`0x09B`; grabbed = `actionStateId` in `0x0AB`-`0x0BC`; attacking =
 `actionStateId >= 0x0BE`. Airborne state should come from `groundedState`
 (§5.2), not be inferred from `actionStateId` alone.
+
+#### 8.3.1 Character-specific action states (`>= 0x0DC`)
+
+**There is no cross-character ID sharing at the engine level.** Every
+character's status enum independently restarts at `0x0DC` in its own
+source file — the same numeric value means something different (or
+nothing) per character, entirely dependent on which character is asking.
+**The one exception**: Luigi's status table is byte-for-byte identical to
+Mario's and points at the literal same functions — not merely
+coincidentally same-numbered — so the two share one table below. No other
+pair shares code this way; every other character below has genuinely its
+own, independently-verified table (confirmed directly against each
+character's own `ftchar/ft<name>/ft<name>.h` in the decompilation, not
+inferred or guessed).
+
+A handful of states in this range are **not** special moves despite
+sharing the block: `Attack13` (Mario/Luigi/Falcon/Link/Ness) and
+`Attack100Start/Loop/End` (Fox/Kirby/Jigglypuff) are jab-combo
+continuation states that simply live in the same numeric block as the
+specials in the original engine's per-character table layout.
+
+These tables cover the original 12 characters only (by moveset, i.e. also
+covering their same-moveset Polygon/JP/EU-region variant IDs — see §8.1 —
+but *not* any Remix-added unique character, even one that looks like a
+reskin, e.g. `Dr. Mario`/`Dr. Luigi`/`Dark Samus`/`Giant DK`: unlike
+Polygon/JP/EU variants, these are not confirmed to share the original
+character's code). A character-specific ID for any character not covered
+below has no name yet and should render as a generic placeholder (e.g.
+`Special 0x0DC`).
+
+No Japanese names exist for any of the states below — like `ItemUpdate`'s
+`kind` (§8.6), these come straight from the decompilation's English
+symbol names, and guessing a translation would be worse than not having
+one.
+
+**Mario / Luigi** (9 states, `0x0DC`-`0x0E4`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | Attack13 (jab-combo continuation, not a special) | | `0x0E0` | SpecialAirN |
+| `0x0DD` | AppearR | | `0x0E1` | SpecialHi |
+| `0x0DE` | AppearL | | `0x0E2` | SpecialAirHi |
+| `0x0DF` | SpecialN | | `0x0E3` | SpecialLw |
+| | | | `0x0E4` | SpecialAirLw |
+
+**Fox** (26 states, `0x0DC`-`0x0F5`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | Attack100Start (jab-combo continuation, not a special) | | `0x0EA` | SpecialAirHiEnd |
+| `0x0DD` | Attack100Loop (jab-combo continuation, not a special) | | `0x0EB` | SpecialAirHiBound |
+| `0x0DE` | Attack100End (jab-combo continuation, not a special) | | `0x0EC` | SpecialLwStart |
+| `0x0DF` | AppearR | | `0x0ED` | SpecialLwHit |
+| `0x0E0` | AppearL | | `0x0EE` | SpecialLwEnd |
+| `0x0E1` | SpecialN | | `0x0EF` | SpecialLwLoop |
+| `0x0E2` | SpecialAirN | | `0x0F0` | SpecialLwTurn |
+| `0x0E3` | SpecialHiStart | | `0x0F1` | SpecialAirLwStart |
+| `0x0E4` | SpecialAirHiStart | | `0x0F2` | SpecialAirLwHit |
+| `0x0E5` | SpecialHiHold | | `0x0F3` | SpecialAirLwEnd |
+| `0x0E6` | SpecialAirHiHold | | `0x0F4` | SpecialAirLwLoop |
+| `0x0E7` | SpecialHi | | `0x0F5` | SpecialAirLwTurn |
+| `0x0E8` | SpecialAirHi | | | |
+| `0x0E9` | SpecialHiEnd | | | |
+
+**Donkey Kong** (30 states, `0x0DC`-`0x0F9`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | AppearR | | `0x0EB` | ThrowFWait |
+| `0x0DD` | AppearL | | `0x0EC` | ThrowFWalkSlow |
+| `0x0DE` | SpecialNStart | | `0x0ED` | ThrowFWalkMiddle |
+| `0x0DF` | SpecialAirNStart | | `0x0EE` | ThrowFWalkFast |
+| `0x0E0` | SpecialNLoop | | `0x0EF` | ThrowFTurn |
+| `0x0E1` | SpecialAirNLoop | | `0x0F0` | ThrowFKneeBend |
+| `0x0E2` | SpecialNEnd | | `0x0F1` | ThrowFFall |
+| `0x0E3` | SpecialAirNEnd | | `0x0F2` | ThrowFLanding |
+| `0x0E4` | SpecialNFull | | `0x0F3` | ThrowFDamage (ThrowFEnd) |
+| `0x0E5` | SpecialAirNFull | | `0x0F4` | ThrowFF |
+| `0x0E6` | SpecialHi | | `0x0F5` | ThrowAirFF |
+| `0x0E7` | SpecialAirHi | | `0x0F6` | HeavyThrowF |
+| `0x0E8` | SpecialLwStart | | `0x0F7` | HeavyThrowB |
+| `0x0E9` | SpecialLwLoop | | `0x0F8` | HeavyThrowF4 |
+| `0x0EA` | SpecialLwEnd | | `0x0F9` | HeavyThrowB4 |
+
+**Samus** (11 states, `0x0DC`-`0x0E6`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | AppearR | | `0x0E2` | SpecialAirNEnd |
+| `0x0DD` | AppearL | | `0x0E3` | SpecialHi |
+| `0x0DE` | SpecialNStart | | `0x0E4` | SpecialAirHi |
+| `0x0DF` | SpecialNLoop | | `0x0E5` | SpecialLw |
+| `0x0E0` | SpecialNEnd | | `0x0E6` | SpecialAirLw |
+| `0x0E1` | SpecialAirNStart | | | |
+
+**Link** (17 states, `0x0DC`-`0x0EC`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | Attack13 (jab-combo continuation, not a special) | | `0x0E5` | SpecialN |
+| `0x0DD` | Attack100Start | | `0x0E6` | SpecialNGet |
+| `0x0DE` | Attack100Loop | | `0x0E7` | SpecialNEmpty |
+| `0x0DF` | Attack100End | | `0x0E8` | SpecialAirN |
+| `0x0E0` | AppearR | | `0x0E9` | SpecialAirNReturn |
+| `0x0E1` | AppearL | | `0x0EA` | SpecialAirNEmpty |
+| `0x0E2` | SpecialHi | | `0x0EB` | SpecialLw |
+| `0x0E3` | SpecialHiEnd | | `0x0EC` | SpecialAirLw |
+| `0x0E4` | SpecialAirHi | | | |
+
+**Yoshi** (14 states, `0x0DC`-`0x0E9`) — `SpecialHi`/`SpecialAirHi` here are
+the plain double-jump slot; Yoshi has no real up-B:
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | AppearR | | `0x0E3` | SpecialAirLwLoop |
+| `0x0DD` | AppearL | | `0x0E4` | SpecialN |
+| `0x0DE` | SpecialHi | | `0x0E5` | SpecialNCatch |
+| `0x0DF` | SpecialAirHi | | `0x0E6` | SpecialNRelease |
+| `0x0E0` | SpecialLwStart | | `0x0E7` | SpecialAirN |
+| `0x0E1` | SpecialLwLanding | | `0x0E8` | SpecialAirNCatch |
+| `0x0E2` | SpecialAirLwStart | | `0x0E9` | SpecialAirNRelease |
+
+**Captain Falcon** (19 states, `0x0DC`-`0x0EE`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | Attack13 (jab-combo continuation, not a special) | | `0x0E6` | SpecialLw |
+| `0x0DD` | Attack100Start | | `0x0E7` | SpecialLwAir |
+| `0x0DE` | Attack100Loop | | `0x0E8` | SpecialLwLanding |
+| `0x0DF` | Attack100End | | `0x0E9` | SpecialAirLw |
+| `0x0E0` | AppearRStart | | `0x0EA` | SpecialLwBound |
+| `0x0E1` | AppearLStart | | `0x0EB` | SpecialHi |
+| `0x0E2` | AppearREnd | | `0x0EC` | SpecialHiCatch |
+| `0x0E3` | AppearLEnd | | `0x0ED` | SpecialHiThrow |
+| `0x0E4` | SpecialN | | `0x0EE` | SpecialAirHi |
+| `0x0E5` | SpecialAirN | | | |
+
+**Pikachu** (18 states, `0x0DC`-`0x0ED`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | AppearR | | `0x0E6` | SpecialAirLwHit |
+| `0x0DD` | AppearL | | `0x0E7` | SpecialAirLwEnd |
+| `0x0DE` | SpecialN | | `0x0E8` | SpecialHiStart |
+| `0x0DF` | SpecialAirN | | `0x0E9` | SpecialHi |
+| `0x0E0` | SpecialLwStart | | `0x0EA` | SpecialHiEnd |
+| `0x0E1` | SpecialLwLoop | | `0x0EB` | SpecialAirHiStart |
+| `0x0E2` | SpecialLwHit | | `0x0EC` | SpecialAirHi |
+| `0x0E3` | SpecialLwEnd | | `0x0ED` | SpecialAirHiEnd |
+| `0x0E4` | SpecialAirLwStart | | | |
+| `0x0E5` | SpecialAirLwLoop | | | |
+
+**Jigglypuff** (16 states, `0x0DC`-`0x0EB`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | Attack100Start (unused) | | `0x0E4` | AppearR |
+| `0x0DD` | Attack100Loop (unused) | | `0x0E5` | AppearL |
+| `0x0DE` | Attack100End (unused) | | `0x0E6` | SpecialN |
+| `0x0DF` | JumpAerialF1 | | `0x0E7` | SpecialAirN |
+| `0x0E0` | JumpAerialF2 | | `0x0E8` | SpecialHi |
+| `0x0E1` | JumpAerialF3 | | `0x0E9` | SpecialAirHi |
+| `0x0E2` | JumpAerialF4 | | `0x0EA` | SpecialLw |
+| `0x0E3` | JumpAerialF5 | | `0x0EB` | SpecialAirLw |
+
+**Ness** (25 states, `0x0DC`-`0x0F4`):
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | Attack13 (jab-combo continuation, not a special) | | `0x0E9` | SpecialAirHiHold |
+| `0x0DD` | AppearRStart | | `0x0EA` | SpecialAirHiEnd |
+| `0x0DE` | AppearLStart | | `0x0EB` | SpecialAirHiBound |
+| `0x0DF` | AppearWait | | `0x0EC` | SpecialAirHiJibaku |
+| `0x0E0` | AppearREnd | | `0x0ED` | SpecialLwStart |
+| `0x0E1` | AppearLEnd | | `0x0EE` | SpecialLwHold |
+| `0x0E2` | SpecialN | | `0x0EF` | SpecialLwHit |
+| `0x0E3` | SpecialAirN | | `0x0F0` | SpecialLwEnd |
+| `0x0E4` | SpecialHiStart | | `0x0F1` | SpecialAirLwStart |
+| `0x0E5` | SpecialHiHold | | `0x0F2` | SpecialAirLwHold |
+| `0x0E6` | SpecialHiEnd | | `0x0F3` | SpecialAirLwHit |
+| `0x0E7` | SpecialHiJibaku | | `0x0F4` | SpecialAirLwEnd |
+| `0x0E8` | SpecialAirHiStart | | | |
+
+**Kirby** (83 states, `0x0DC`-`0x12E`) — by far the largest, since it
+includes a full duplicate move-set slot for every character whose
+neutral-B he can copy. `Purin` is Jigglypuff's Japanese name, used
+verbatim in the decompilation's own symbol names. There is no
+`CopyKirbySpecialN` and no Copy-DK-SpecialHi/Lw slots, since only
+neutral-B is copyable — matches the decompilation's own naming exactly,
+nothing inferred:
+
+| Value | Name | | Value | Name |
+|---:|---|---|---:|---|
+| `0x0DC` | Attack100Start (jab-combo continuation, not a special) | | `0x101` | SpecialHiLanding |
+| `0x0DD` | Attack100Loop (jab-combo continuation, not a special) | | `0x102` | SpecialAirHi |
+| `0x0DE` | Attack100End (jab-combo continuation, not a special) | | `0x103` | SpecialAirHiFall |
+| `0x0DF` | JumpAerialF1 | | `0x104` | SpecialLwStart |
+| `0x0E0` | JumpAerialF2 | | `0x105` | SpecialLwUnk |
+| `0x0E1` | JumpAerialF3 | | `0x106` | SpecialLwHold |
+| `0x0E2` | JumpAerialF4 | | `0x107` | SpecialLwEnd |
+| `0x0E3` | JumpAerialF5 | | `0x108` | SpecialAirLwStart |
+| `0x0E4` | ThrowF | | `0x109` | SpecialAirLwHold |
+| `0x0E5` | ThrowFFall | | `0x10A` | SpecialAirLwLanding |
+| `0x0E6` | ThrowFLanding | | `0x10B` | SpecialAirLwFall |
+| `0x0E7` | CopyMarioSpecialN | | `0x10C` | SpecialAirLwEnd |
+| `0x0E8` | CopyMarioSpecialAirN | | `0x10D` | SpecialNStart |
+| `0x0E9` | CopyLuigiSpecialN | | `0x10E` | SpecialNLoop |
+| `0x0EA` | CopyLuigiSpecialAirN | | `0x10F` | SpecialNEnd |
+| `0x0EB` | CopyFoxSpecialN | | `0x110` | SpecialNCatch |
+| `0x0EC` | CopyFoxSpecialAirN | | `0x111` | SpecialNEat |
+| `0x0ED` | CopySamusSpecialNStart | | `0x112` | SpecialNThrow |
+| `0x0EE` | CopySamusSpecialNLoop | | `0x113` | SpecialNWait |
+| `0x0EF` | CopySamusSpecialNEnd | | `0x114` | SpecialNTurn |
+| `0x0F0` | CopySamusSpecialAirNStart | | `0x115` | SpecialNCopy |
+| `0x0F1` | CopySamusSpecialAirNEnd | | `0x116` | SpecialAirNStart |
+| `0x0F2` | CopyDonkeySpecialNStart | | `0x117` | SpecialAirNLoop |
+| `0x0F3` | CopyDonkeySpecialAirNStart | | `0x118` | SpecialAirNEnd |
+| `0x0F4` | CopyDonkeySpecialNLoop | | `0x119` | SpecialAirNCatch |
+| `0x0F5` | CopyDonkeySpecialAirNLoop | | `0x11A` | SpecialAirNEat |
+| `0x0F6` | CopyDonkeySpecialNEnd | | `0x11B` | SpecialAirNThrow |
+| `0x0F7` | CopyDonkeySpecialAirNEnd | | `0x11C` | SpecialAirNWait |
+| `0x0F8` | CopyDonkeySpecialNFull | | `0x11D` | SpecialAirNTurn |
+| `0x0F9` | CopyDonkeySpecialAirNFull | | `0x11E` | SpecialAirNCopy |
+| `0x0FA` | AppearR | | `0x11F` | CopyLinkSpecialN |
+| `0x0FB` | AppearL | | `0x120` | CopyLinkSpecialNGet |
+| `0x0FC` | CopyPikachuSpecialN | | `0x121` | CopyLinkSpecialNEmpty |
+| `0x0FD` | CopyPikachuSpecialAirN | | `0x122` | CopyLinkSpecialAirN |
+| `0x0FE` | CopyNessSpecialN | | `0x123` | CopyLinkSpecialAirNReturn |
+| `0x0FF` | CopyNessSpecialAirN | | `0x124` | CopyLinkSpecialAirNEmpty |
+| `0x100` | SpecialHi | | `0x125` | CopyPurinSpecialN |
+| | | | `0x126` | CopyPurinSpecialAirN |
+| | | | `0x127` | CopyCaptainSpecialN |
+| | | | `0x128` | CopyCaptainSpecialAirN |
+| | | | `0x129` | CopyYoshiSpecialN |
+| | | | `0x12A` | CopyYoshiSpecialNCatch |
+| | | | `0x12B` | CopyYoshiSpecialNRelease |
+| | | | `0x12C` | CopyYoshiSpecialAirN |
+| | | | `0x12D` | CopyYoshiSpecialAirNCatch |
+| | | | `0x12E` | CopyYoshiSpecialAirNRelease |
 
 ### 8.4 Controller button bits (`InputFrame.buttons`)
 
@@ -991,8 +1230,11 @@ tracked (Zebes' rising acid, Duel Zone's disappearing platforms, …).
   field**, even though the emulator exposes them.
 - **`MatchEnd.endReason` cannot currently distinguish time-out from
   stock-out** — both collapse to `1` ("normal end").
-- **Character-specific action states (`>= 0x0DC`) have no shared table** —
-  meaning is entirely per-character.
+- **Character-specific action states (`>= 0x0DC`) are only named for the
+  original 12 characters** (§8.3.1) — a Remix-added unique character
+  (Bowser, Marth, Sonic, Ganondorf, Wolf, Mewtwo, Dr. Mario/Luigi, Dark
+  Samus, and so on) still has no table and falls back to a generic
+  placeholder (e.g. `Special 0x0DC`).
 - **Remix-specific stage IDs (`0x29`+) are not enumerated** in §8.2.
 - **No ROM-identity check for the extension layer.** Nothing currently
   verifies the loaded ROM matches `gameFamily`'s expectations beyond
