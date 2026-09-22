@@ -51,7 +51,7 @@ BEGIN
             VALUE "InternalName", "RMG-K.exe"
             VALUE "LegalCopyright", "Copyright (C) 2020-2025 Rosalie Wanders"
             VALUE "OriginalFilename", "RMG-K.exe"
-            VALUE "ProductName", "RMG Kaillera Edition"
+            VALUE "ProductName", "RMG-K"
             VALUE "ProductVersion", "1.0.0.1"
         END
     END
