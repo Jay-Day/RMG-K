@@ -28,6 +28,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef USE_SDL3
+#include <SDL3/SDL.h>
+#else
+#include <SDL.h>
+#endif
+
 #include "api/callbacks.h"
 #include "api/m64p_plugin.h"
 #include "api/m64p_types.h"
@@ -72,6 +78,33 @@ static m64p_rollback_input_callback l_rollback_input_callback = NULL;
 static uint32_t l_rollback_input_values[ROLLBACK_INPUT_PLAYERS];
 static int l_rollback_input_valid = 0;
 static int l_rollback_input_players = 0;
+static struct pif_rollback_stats l_rollback_stats;
+static int l_rollback_stats_enabled = 0;
+
+static uint64_t pif_rollback_now_us(void)
+{
+    uint64_t counter = SDL_GetPerformanceCounter();
+    uint64_t frequency = SDL_GetPerformanceFrequency();
+    return (counter / frequency) * 1000000ULL +
+        ((counter % frequency) * 1000000ULL) / frequency;
+}
+
+void pif_rollback_stats_reset(void)
+{
+    memset(&l_rollback_stats, 0, sizeof(l_rollback_stats));
+    l_rollback_stats_enabled = 1;
+}
+
+void pif_rollback_stats_get(struct pif_rollback_stats* stats)
+{
+    if (stats != NULL)
+        *stats = l_rollback_stats;
+}
+
+void pif_rollback_stats_stop(void)
+{
+    l_rollback_stats_enabled = 0;
+}
 
 static uint32_t rollback_read_controller_input(const uint8_t* rx_buf)
 {
@@ -271,11 +304,17 @@ static void rollback_sync_input(struct pif* pif)
 {
     uint32_t input_values[ROLLBACK_INPUT_PLAYERS] = { 0 };
     int has_controller_read = 0;
+    uint64_t sync_begin;
+    uint64_t callback_begin;
     size_t k;
 
     if (l_rollback_input_callback == NULL) {
         return;
     }
+
+    sync_begin = l_rollback_stats_enabled ? pif_rollback_now_us() : 0;
+    if (l_rollback_stats_enabled)
+        l_rollback_stats.sync_count++;
 
     for (k = 0; k < (size_t)l_rollback_input_players && k < PIF_CHANNELS_COUNT; ++k) {
         rollback_force_controller_present(&pif->channels[k]);
@@ -287,10 +326,14 @@ static void rollback_sync_input(struct pif* pif)
 
             if (rollback_channel_has_command(channel)
             && channel->tx_buf[0] == JCMD_CONTROLLER_READ) {
+                if (l_rollback_stats_enabled)
+                    l_rollback_stats.controller_reads++;
                 *channel->rx &= (uint8_t)~0xc0;
                 rollback_write_controller_input(channel->rx_buf, l_rollback_input_values[k]);
             }
         }
+        if (l_rollback_stats_enabled)
+            l_rollback_stats.sync_us += pif_rollback_now_us() - sync_begin;
         return;
     }
 
@@ -301,17 +344,29 @@ static void rollback_sync_input(struct pif* pif)
         && channel->tx_buf[0] == JCMD_CONTROLLER_READ
         && ((*channel->rx & 0x80) == 0)) {
             has_controller_read = 1;
+            if (l_rollback_stats_enabled)
+                l_rollback_stats.controller_reads++;
             input_values[k] = rollback_read_controller_input(channel->rx_buf);
         }
     }
 
     if (!has_controller_read) {
+        if (l_rollback_stats_enabled)
+            l_rollback_stats.sync_us += pif_rollback_now_us() - sync_begin;
         return;
     }
 
+    callback_begin = l_rollback_stats_enabled ? pif_rollback_now_us() : 0;
     if (!l_rollback_input_callback(input_values, sizeof(input_values[0]), l_rollback_input_players)) {
+        if (l_rollback_stats_enabled)
+        {
+            l_rollback_stats.input_callback_us += pif_rollback_now_us() - callback_begin;
+            l_rollback_stats.sync_us += pif_rollback_now_us() - sync_begin;
+        }
         return;
     }
+    if (l_rollback_stats_enabled)
+        l_rollback_stats.input_callback_us += pif_rollback_now_us() - callback_begin;
 
     memcpy(l_rollback_input_values, input_values, sizeof(l_rollback_input_values));
     l_rollback_input_valid = 1;
@@ -325,6 +380,9 @@ static void rollback_sync_input(struct pif* pif)
             rollback_write_controller_input(channel->rx_buf, input_values[k]);
         }
     }
+
+    if (l_rollback_stats_enabled)
+        l_rollback_stats.sync_us += pif_rollback_now_us() - sync_begin;
 }
 
 static void process_channel(struct pif_channel* channel)

@@ -160,6 +160,15 @@ void run_r4300(struct r4300_core* r4300)
         new_dynarec_init();
         if (main_rollback_execute_active())
         {
+            /* The rollback begin-frame callback runs before new_dyna_start() on
+             * the first frame. GekkoNet saves its pre-frame baseline (-1) from
+             * that callback, and savestates serialize the new dynarec's pcaddr.
+             * Seed it with the boot PC established by the PIF before that save;
+             * otherwise the baseline contains address 0 and restoring it via
+             * new_dyna_resume() can crash on a frame-0 misprediction. */
+            r4300->new_dynarec_hot_state.pcaddr =
+                *r4300_cp0_last_addr(&r4300->cp0);
+
             int dynarec_started = 0;
             while (g_EmulatorRunning)
             {

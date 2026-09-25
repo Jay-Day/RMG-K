@@ -69,10 +69,10 @@ bool CoreIsSynchronizedNetplayActive(void);
 // used for synchronization in netplay/Kaillera
 int CoreGetCurrentFrameCount(void);
 
-// Spectate keyframe restore. Stage a savestate (raw rollback-state bytes) for the
+// Spectate keyframe restore. Stage a full in-memory savestate for the
 // spectator's emulation to load on its emulation thread before it consumes the first
-// recorded input, so its replay starts at the broadcaster's snapshot (frame) instead
-// of boot. Stage BEFORE the spectate emulation starts. Clear when not spectating.
+// recorded input. frame identifies the first krec record after the saved state.
+// Stage BEFORE the spectate emulation starts. Clear when not spectating.
 void CoreStageSpectateKeyframe(const unsigned char* data, int len, int frame);
 void CoreClearSpectateKeyframe(void);
 
