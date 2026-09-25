@@ -28,6 +28,7 @@ struct OptionsDialogSettings
     bool RemoveDuplicateMappings = false;
     bool FilterEventsForButtons  = true;
     bool FilterEventsForAxis     = true;
+    int ControllerMode = -1;
 };
 
 namespace UserInterface
@@ -38,7 +39,7 @@ Q_OBJECT
 
 public:
     OptionsDialog(QWidget *parent, OptionsDialogSettings settings, 
-                  SDL_Joystick* joystick, SDL_Gamepad* gamepad);
+                  SDL_Joystick* joystick, SDL_Gamepad* gamepad, bool persistControllerMode = true);
 
     OptionsDialogSettings GetSettings();
 
@@ -47,6 +48,7 @@ protected:
 
 private:
     OptionsDialogSettings settings;
+    bool persistControllerMode = true;
 
     SDL_Joystick* currentJoystick = nullptr;
     SDL_Gamepad* currentGamepad = nullptr;

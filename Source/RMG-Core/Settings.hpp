@@ -536,6 +536,8 @@ enum class SettingsID
     RaphnetInput_PollingMode,
 
     // GCA Input Plugin Settings
+    GCAInput_Profiles,
+    GCAInput_UseProfile,
     GCAInput_Deadzone,
     GCAInput_Sensitivity,
     GCAInput_CButtonTreshold,

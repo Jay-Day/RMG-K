@@ -94,6 +94,9 @@ set(RMG_SOURCES
     main.cpp
     ../RMG-Input/UserInterface/Widget/ControllerImageWidget.cpp
     ../RMG-Input/UserInterface/UICommon.cpp
+    ../RMG-Input/UserInterface/OptionsDialog.cpp
+    ../RMG-Input/UserInterface/HotkeysDialog.cpp
+    ../RMG-Input/UserInterface/Widget/HotkeyButton.cpp
     ../RMG-Input/Utilities/Sdl3ButtonLabelToString.cpp
 )
 

@@ -1582,6 +1582,12 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {"", "Hotkey_Fullscreen_ExtraData" };
         break;
 
+    case SettingsID::GCAInput_Profiles:
+        setting = {SETTING_SECTION_GCA, "Profiles", std::string("")};
+        break;
+    case SettingsID::GCAInput_UseProfile:
+        setting = {"", "UseProfile"};
+        break;
     case SettingsID::GCAInput_Deadzone:
         setting = {SETTING_SECTION_GCA, "Deadzone", 5};
         break;

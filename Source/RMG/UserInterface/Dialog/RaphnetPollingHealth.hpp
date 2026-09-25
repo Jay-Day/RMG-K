@@ -16,6 +16,9 @@ struct RaphnetPollingHealth
 
     void reset() { *this = {}; }
 
+    // An empty port is not evidence that a previously slow connection recovered.
+    void missingResponse() { raphnet_health_break_window(&connection); }
+
     bool averageExceedsCutoff() const
     {
         return samples > 0 && totalUs >= static_cast<std::int64_t>(RAPHNET_SLOW_POLL_US) * samples;

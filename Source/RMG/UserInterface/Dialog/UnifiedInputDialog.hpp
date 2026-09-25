@@ -4,6 +4,8 @@
 #include "RaphnetPollingHealth.hpp"
 
 #include <common.hpp>
+#include <RMG-Input/UserInterface/OptionsDialog.hpp>
+#include <RMG-Input/UserInterface/HotkeysDialog.hpp>
 
 #include <QVector>
 #include <QElapsedTimer>
@@ -13,6 +15,7 @@
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
+#include <map>
 
 class QCheckBox;
 class QComboBox;
@@ -104,8 +107,6 @@ class UnifiedInputDialog : public QDialog
     void setSelectedPlugin(InputPluginType plugin);
     int currentPageIndex(void) const;
     void saveAllSettings(void);
-    void saveUsbSettings(int pageIndex);
-    void syncSharedUsbProfile(int pageIndex);
     void saveGamecubeSettings(void);
     void saveRaphnetSettings(void);
     void loadPageSettings(int pageIndex);
@@ -167,12 +168,24 @@ class UnifiedInputDialog : public QDialog
     {
         QComboBox* backendComboBox = nullptr;
         QComboBox* deviceComboBox = nullptr;
+        QWidget* profileControls = nullptr;
+        QComboBox* profileComboBox = nullptr;
+        QPushButton* removeProfileButton = nullptr;
+        QPushButton* usbOptionsButton = nullptr;
+        QPushButton* usbHotkeysButton = nullptr;
+        QString usbProfileName;
+        QString usbFallbackProfileName;
+        QString gamecubeProfileName;
+        std::string gamecubeSection;
+        OptionsDialogSettings usbOptions;
+        QList<UserInterface::HotkeySettingMapping> usbHotkeys;
         QLabel* statusLabel = nullptr;
         QCheckBox* pluggedInCheckBox = nullptr;
         QGroupBox* mappingsGroupBox = nullptr;
         QGroupBox* usbStickGroupBox = nullptr;
         QGroupBox* gamecubeStickGroupBox = nullptr;
         QGroupBox* gamecubeTriggerGroupBox = nullptr;
+        QGroupBox* analogMappingsGroupBox = nullptr;
         QGroupBox* portGroupBox = nullptr;
         QWidget* messageArea = nullptr;
         QLabel* messages = nullptr;
@@ -207,9 +220,47 @@ class UnifiedInputDialog : public QDialog
         int gamecubePort = 0;
         int gamecubeCButtonThreshold = 40;
         std::string usbSection;
+        std::string usbGameSection;
     };
 
   private:
+    struct ProfileState
+    {
+        QVector<BindingValue> bindings;
+        QVector<int> gamecubeBindings;
+        UsbDeviceChoice device;
+        bool enabled = false;
+        int deadzone = 0;
+        int range = 100;
+        bool n64Range = true;
+        int triggerThreshold = 50;
+        int cButtonThreshold = 40;
+        bool leftAnalog = true;
+        bool rightAnalog = true;
+        OptionsDialogSettings options;
+        QList<UserInterface::HotkeySettingMapping> hotkeys;
+    };
+    ProfileState readProfile(bool usb, const std::string& section, int player);
+    ProfileState captureProfile(int player, bool usb) const;
+    void applyProfile(int player, bool usb, const ProfileState& profile);
+    void writeProfile(bool usb, const std::string& section, const ProfileState& profile);
+    void rememberProfile(int player);
+    void updateProfileChoices(int player);
+    void selectProfile(int player);
+    void addProfile(int player);
+    void removeProfile(int player);
+    void openUsbOptions(int player);
+    void openUsbHotkeys(int player);
+    void assignUsbBinding(int player, int binding, const BindingValue& value);
+    std::map<std::string, ProfileState> usbProfileEdits;
+    std::map<std::string, ProfileState> gamecubeProfileEdits;
+    QStringList usbProfileNames;
+    QStringList gamecubeProfileNames;
+    QSet<QString> removedUsbProfiles;
+    QSet<QString> removedGamecubeProfiles;
+    UserInterface::HotkeysDialog* currentHotkeysDialog = nullptr;
+    int usbControllerMode = 0;
+
     InputPluginType selectedPlugin = InputPluginType::USB;
     bool inGame = false;
     InputDetectionReport detectionReport;
@@ -235,6 +286,7 @@ class UnifiedInputDialog : public QDialog
     QElapsedTimer listeningTimer;
     int raphnetPlayer1Port = 0;
     RaphnetPollingHealth raphnetPollingHealth;
+    QString raphnetMeasurementDevice;
     QElapsedTimer raphnetMeasurementTimer;
     bool raphnetConnectionSlow = false;
     bool settingsLoaded = false;
