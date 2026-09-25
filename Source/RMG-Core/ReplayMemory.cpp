@@ -1,0 +1,589 @@
+/*
+ * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
+ *  Copyright (C) 2020-2025 Rosalie Wanders <rosalie@mailbox.org>
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 3.
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+#include "ReplayMemory.hpp"
+#include "m64p/Api.hpp"
+
+#include <cmath>
+#include <cstring>
+
+namespace
+{
+constexpr uint32_t ADDR_CURRENT_SCREEN   = 0x800A4AD0;
+constexpr uint32_t ADDR_MATCH_RESET_FLAG = 0x800A4AE2;
+constexpr uint32_t ADDR_MATCH_INFO_PTR   = 0x800A50E8;
+// Smash Remix's "Salty Runback" feature (GameEnd.asm) - holding Start (or
+// the configured combo) on the no-contest/results screen instantly
+// restarts the match from scratch, bypassing the normal win/loss
+// end-of-match flow entirely. GameEnd.is_salty_runback: non-zero (u32)
+// once triggered, written in update_screen_'s _success branch; zeroed in
+// its _end branch (every other outcome). Confirmed via a bass -sym build
+// against real Remix source, not inferred. IMPORTANT: this flag is NOT
+// the same as ADDR_MATCH_RESET_FLAG above (that one is unrelated - the
+// pause-menu abort combo - and is never written by this feature at all).
+// See IsSaltyRunbackActive()'s doc comment for what's confirmed vs. not
+// about how long this stays set.
+constexpr uint32_t ADDR_SALTY_RUNBACK    = 0x8048B174;
+
+constexpr uint32_t MI_GAME_MODE          = 0x00;
+constexpr uint32_t MI_STAGE_ID           = 0x01;
+constexpr uint32_t MI_TEAMS_ENABLED      = 0x02;
+constexpr uint32_t MI_GAME_TYPE          = 0x03;
+constexpr uint32_t MI_TIME_LIMIT         = 0x06;
+constexpr uint32_t MI_STOCK_COUNT        = 0x07;
+constexpr uint32_t MI_HANDICAP_MODE      = 0x08;
+constexpr uint32_t MI_DAMAGE_RATIO       = 0x0B;
+constexpr uint32_t MI_GAME_STATUS        = 0x11;
+constexpr uint32_t MI_ITEM_FREQUENCY     = 0x1C;
+constexpr uint32_t MI_PORT_STRUCT_BASE   = 0x20;
+constexpr uint32_t MI_PORT_STRUCT_STRIDE = 0x74;
+
+constexpr uint32_t PORT_SLOT_TYPE        = 0x02;
+constexpr uint32_t PORT_CHARACTER_ID     = 0x03;
+constexpr uint32_t PORT_COSTUME_ID       = 0x06;
+constexpr uint32_t PORT_TEAM_COLOR       = 0x07;
+constexpr uint32_t PORT_STOCKS_REMAINING = 0x0B;
+constexpr uint32_t PORT_COMBO_DAMAGE     = 0x50;
+constexpr uint32_t PORT_COMBO_HIT_COUNT  = 0x54;
+constexpr uint32_t PORT_PLAYER_OBJECT    = 0x58;
+
+constexpr uint32_t PLAYER_OBJECT_TO_STRUCT = 0x84;
+
+constexpr uint32_t PS_ACTION_FRAME_COUNTER = 0x1C;
+constexpr uint32_t PS_ACTION_STATE_ID      = 0x24;
+constexpr uint32_t PS_DAMAGE_PERCENT       = 0x2C;
+constexpr uint32_t PS_FACING_DIRECTION     = 0x44;
+constexpr uint32_t PS_VELOCITY_X           = 0x48;
+constexpr uint32_t PS_VELOCITY_Y           = 0x4C;
+constexpr uint32_t PS_POSITION_PTR         = 0x78;
+// A single byte (u8), NOT a u32 - confirmed via the decomp, where the very
+// next byte (+0x149) is independently named `unk_ft_0x149`, a naming
+// convention that literally encodes its own byte offset. +0x14A-0x14B are
+// padding; +0x14C (PS_KINETIC_STATE, "ga"/Ground-Air bool below) is the
+// next real field. An earlier version of this code read this as a u32,
+// which - on a word-swapped emulator, where a *byte* read needs its
+// address XORed with 3 to land correctly - explains the earlier symptom
+// exactly (a wrong-width/wrong-swizzle read landing on the 0x14A-0x14B
+// padding instead, reading a constant 0 for an entire match, both ports).
+// Resets to 0 on landing, so reading 0 through most of a grounded match is
+// completely normal, not a sign this is still broken.
+constexpr uint32_t PS_JUMPS_USED           = 0x148;
+// FTAttributes* - per-character static move data, cached once per port at
+// match start (jumps_max is per-character, not universal) rather than
+// re-chased every frame. See PS_ATTRIBUTES_PTR's own read site.
+constexpr uint32_t PS_ATTRIBUTES_PTR       = 0x9C8;
+// s32, within FTAttributes - confirmed by two independent sources
+// agreeing: counting FTAttributes' fields in the decomp (all 4-byte, no
+// bitfields/padding) lands on +0x64, and Smash Remix's own ASM
+// independently comments this exact read ("t0 = max jumps").
+constexpr uint32_t FT_ATTR_MAX_JUMPS       = 0x64;
+constexpr uint32_t PS_KINETIC_STATE        = 0x14C;
+constexpr uint32_t PS_PROCESSED_BUTTONS    = 0x1BC;
+constexpr uint32_t PS_STICK_X              = 0x1C2;
+constexpr uint32_t PS_STICK_Y              = 0x1C3;
+constexpr uint32_t PS_HURTBOX_STATE        = 0x5BB;
+constexpr uint32_t PS_HITSTUN_COUNTER      = 0xB1A;
+constexpr uint32_t PS_TEAM                 = 0x0C;
+constexpr uint32_t PS_HANDICAP             = 0x12;
+constexpr uint32_t PS_CPU_LEVEL            = 0x13;
+// FTStruct+0x8E8: joints[0] (TopN, the fighter's root joint) - already a DObj*,
+// no extra GObj+0x74 hop. Its scale (DObj+0x40/+0x44, the same field
+// ItemUpdate records) is the fighter's render size: 1.0 x Remix's Giant/Tiny
+// setting normally. Remix's Size.asm (which reads this exact offset) also
+// derives the ECB and ledge-grab reach from it, and Kirby's aerial up-B can
+// leave it stuck above 1.0 until he respawns.
+constexpr uint32_t PS_TOP_JOINT_PTR        = 0x8E8;
+// s32, FTStruct+0xADC: the first word of the per-character passive_vars
+// union. Samus: charge_level (0-7). DK: Giant Punch charge_level (0-10).
+// Kirby: copy_id, the FTKind of the copied fighter (8 = Kirby = no copy).
+// Meaningless for every other character.
+constexpr uint32_t PS_PASSIVE_VAR          = 0xADC;
+// s32, FTStruct+0x34: shield_health.
+constexpr uint32_t PS_SHIELD_HEALTH        = 0x34;
+// Low byte of special_hitstatus (s32, FTStruct+0x5AC), a GMHitStatus (0 none,
+// 1 normal, 2 invincible, 3 intangible) read like PS_HURTBOX_STATE. Separate
+// from the motion-script hitstatus (dodge/roll/ledge): driven by the timed
+// invincible/intangible counters (respawn invincibility, wall-bounce,
+// Yoshi's egg). The Star item's own star_hitstatus (+0x5B4) isn't recorded.
+constexpr uint32_t PS_SPECIAL_HITSTATUS    = 0x5AF;
+// f32, FTStruct+0x7E8: knockback_resist_status - temporary armor, knockback
+// units subtracted from incoming knockback; cleared on every status change.
+// Only Yoshi's aerial jump sets it among the original 12 (140 US / 110 JP).
+constexpr uint32_t PS_KNOCKBACK_RESIST     = 0x7E8;
+
+// GObj (universal engine object) linked lists - independent of MatchInfo,
+// fixed global head pointers. See smashremix docs/ram-map.md section 10.4 -
+// confirmed against the real SSB64 decompilation (VetriTheRetri/ssb-decomp-re)
+// after an earlier version of that doc misdocumented GOBJ_LINK_ID as a
+// 32-bit "item ID" (it's actually 4 packed single bytes; only the first,
+// link_id, matters here).
+//
+// gGCCommonLinks is a fixed 33-entry array of *per-link_id* list heads, not
+// one shared list filtered by link_id - an earlier version of this function
+// walked only gGCCommonLinks[4] (the Item list) and relied on a link_id
+// filter to also pick out Weapons, but structurally that list can only ever
+// contain Items; Weapons (fireballs, boomerang, charge shot, PK Fire/
+// Thunder, ...) live on the separate list at gGCCommonLinks[5] and were
+// never actually reachable that way. See ram-map.md section 10.4 (updated).
+constexpr uint32_t ADDR_GC_COMMON_LINKS = 0x800466F0; // gGCCommonLinks[0]; list head for link_id N is this + N*4
+constexpr uint32_t GOBJ_NEXT            = 0x04;
+constexpr uint32_t GOBJ_LINK_ID         = 0x0C; // u8: 3 = Fighter, 4 = Item, 5 = Weapon
+constexpr uint32_t GOBJ_OBJ_PTR         = 0x74; // -> DObj (position/scale)
+constexpr uint32_t GOBJ_USER_DATA_PTR   = 0x84; // -> ITStruct* (Item) or WPStruct* (Weapon)
+constexpr uint8_t  GOBJ_LINK_ID_ITEM    = 4;
+constexpr uint8_t  GOBJ_LINK_ID_WEAPON  = 5;
+// Both ITStruct and WPStruct happen to place `kind` at the same sub-offset
+// (a coincidence of parallel struct design per the ram-map, not a rule).
+constexpr uint32_t IT_OR_WP_STRUCT_KIND = 0x0C; // s32: ITKind or WPKind, per GOBJ_LINK_ID
+constexpr uint32_t DOBJ_POSITION_X = 0x1C;
+constexpr uint32_t DOBJ_POSITION_Y = 0x20;
+constexpr uint32_t DOBJ_POSITION_Z = 0x24;
+// Render scale (the DObj's scale.vec.f.x/.y) - see ram-map.md section 10.4.1.
+// Constant for most objects; dynamic for e.g. Samus's Charge Shot, whose
+// wpSamusChargeShotProcUpdate sets x = y = gfx_size / 30 for its current
+// charge level every frame while charging (docs/RMGR_SPEC.md section 5.3).
+constexpr uint32_t DOBJ_SCALE_X = 0x40;
+constexpr uint32_t DOBJ_SCALE_Y = 0x44;
+
+// ITStruct+0x08 (owner_gobj) is NOT usable to detect "currently held" -
+// confirmed against the decomp's itMainSetFighterRelease(): owner_gobj is
+// deliberately RETAINED across the throw/drop (needed later for damage/KO
+// attribution) and is only cleared by the separate, not-always-called
+// itMainClearOwnerStats(). It's non-NULL for essentially an item's entire
+// lifetime, held or not - an earlier version of this code used
+// `owner_gobj != NULL` as a "currently held" proxy, which silently
+// swallowed every thrown/dropped item for its whole flight (see git
+// history for the investigation). The real per-instance flag
+// (ITStruct.is_hold, a single bit inside a packed bitfield run well past
+// the embedded MPCollData) doesn't have a pinned-down offset yet.
+//
+// What IS available today without new offset work: while held, the engine
+// re-parents the item's DObj onto the holding fighter's hand-bone joint
+// (lbCommonEjectTreeDObj() undoes this exactly once, in the same release
+// function, writing the item's real world coordinates back), so
+// GOBJ_OBJ_PTR's position reads as a small/near-zero local offset instead
+// of a world coordinate for as long as it's held. IsHeldItemPosition()
+// below treats "still reads as ~(0,0,0)" as the proxy for "still held" -
+// imperfect (a genuinely free item passing through world-origin on all
+// three axes simultaneously would be misclassified for that one frame),
+// but unlike the owner_gobj proxy this one actually flips at the right
+// moment. See ram-map.md section 10.4.2.
+constexpr float HELD_ITEM_POSITION_EPSILON = 10.0f;
+
+bool IsHeldItemPosition(float x, float y, float z)
+{
+    return std::fabs(x) < HELD_ITEM_POSITION_EPSILON &&
+        std::fabs(y) < HELD_ITEM_POSITION_EPSILON &&
+        std::fabs(z) < HELD_ITEM_POSITION_EPSILON;
+}
+
+// Slippi caps its own per-frame item event count at 15 (see
+// rmgk-replay-file-agent-prompt.md section 4.4); reused here as a sane
+// per-frame budget, mainly to bound a corrupt/cyclic list to a fixed number
+// of reads rather than looping until something crashes.
+constexpr int ITEM_LIST_MAX_OBJECTS = 32;
+
+// Stage hazards. See smashremix docs/ram-map.md section 10.3 (is Whispy
+// blowing) and 10.3.1 (which direction) - Dream Land's live hazard state
+// lives in a fixed global that is a *union* shared by every "common
+// ground" stage; these exact offsets are only valid when the current
+// stage is actually Dream Land.
+constexpr uint8_t  STAGE_ID_DREAM_LAND       = 0x06;
+constexpr uint32_t ADDR_PUPUPU_WHISPY_STATUS = 0x80131416; // gGRCommonStruct (0x801313F0) + 0x26, Dream Land's union view
+constexpr uint8_t  WHISPY_STATUS_BLOW        = 4;          // grPupupuWhispyWindStatus::Blow
+constexpr uint32_t ADDR_PUPUPU_WHISPY_LR     = 0x8013141A; // gGRCommonStruct + 0x2A - lr_players: 0 = blowing left, 1 = blowing right
+
+// KSEG0, 8MB expansion-pak RDRAM window. A value outside this range means a
+// pointer chase hit garbage - treat as "not currently available", not a crash.
+bool IsValidRdramPointer(uint32_t ptr)
+{
+    return ptr >= 0x80000000u && ptr < 0x80800000u;
+}
+
+float ReadFloat(uint32_t address)
+{
+    uint32_t bits = m64p::Core.DebugMemRead32(address);
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+// Walks one gGCCommonLinks[linkId] list (Items or Weapons, never mixed - see
+// ADDR_GC_COMMON_LINKS's doc comment), invoking `visitor(objectAddress,
+// userData)` for every live entry whose own link_id byte actually matches
+// (defensively skipping anything else, per that list's documented
+// guarantee). `userData` is that GObj's ITStruct*/WPStruct* pointer
+// (GOBJ_USER_DATA_PTR), NOT validated as a real RDRAM pointer here - callers
+// that dereference it must check IsValidRdramPointer() themselves.
+template <typename Visitor>
+void WalkGObjLinkList(uint8_t linkId, Visitor&& visitor)
+{
+    const uint32_t listHead = ADDR_GC_COMMON_LINKS + static_cast<uint32_t>(linkId) * 4;
+    uint32_t current = m64p::Core.DebugMemRead32(listHead);
+    for (int i = 0; i < ITEM_LIST_MAX_OBJECTS && IsValidRdramPointer(current); i++)
+    {
+        const uint32_t next = m64p::Core.DebugMemRead32(current + GOBJ_NEXT);
+
+        const uint8_t actualLinkId = m64p::Core.DebugMemRead8(current + GOBJ_LINK_ID);
+        if (actualLinkId == linkId)
+        {
+            const uint32_t userData = m64p::Core.DebugMemRead32(current + GOBJ_USER_DATA_PTR);
+            visitor(current, userData);
+        }
+        // else: this list is documented to only ever contain `linkId`
+        // entries - skip defensively rather than trust unexpected data.
+
+        current = next;
+    }
+}
+
+// Chases matchStruct+0x58 -> playerObject+0x84 -> playerStruct - the same
+// two-hop pattern ReadPortPlayerState() needs. Returns 0 if the first hop
+// (matchStruct+0x58) isn't a valid pointer; otherwise returns the second
+// hop's raw value as-is, WITHOUT validating it - the caller already calls
+// IsValidRdramPointer() on the result immediately, so re-checking here
+// would just be redundant.
+uint32_t ResolvePlayerStruct(uint32_t matchInfoPtr, int port)
+{
+    const uint32_t base = matchInfoPtr + MI_PORT_STRUCT_BASE +
+        static_cast<uint32_t>(port) * MI_PORT_STRUCT_STRIDE;
+
+    const uint32_t playerObject = m64p::Core.DebugMemRead32(base + PORT_PLAYER_OBJECT);
+    if (!IsValidRdramPointer(playerObject))
+    {
+        return 0;
+    }
+
+    return m64p::Core.DebugMemRead32(playerObject + PLAYER_OBJECT_TO_STRUCT);
+}
+
+// sSYUtilsRandomSeed (src/sys/utils.c in the decomp) - vanilla SSB64 code,
+// unmodified by Remix, identical across regions/versions. The single global
+// seed for the whole game's RNG (a classic LCG: seed = seed*214013 +
+// 2531011 mod 2^32), reused for every "random" draw anywhere (items, CPU
+// decisions, hit-effect variance, damage rolls, Whispy's timing, ...) - one
+// shared stream, not scoped per-mechanic. Never explicitly reset at match
+// start; keeps advancing continuously from power-on, including once per
+// frame per active player slot while sitting on the character-select
+// screen. Captured once, at match start: sufficient for deterministic
+// replay when the exact same recorded inputs are replayed against a
+// from-seed re-simulation (the game's own logic reproduces the same RNG
+// draws at the same points given the same seed and inputs) - it does NOT
+// make a `.rmgr` file's *recorded* state fields independently reproducible
+// without re-simulating.
+constexpr uint32_t ADDR_RNG_SEED = 0x8003b940;
+
+// Remix settings (Toggles.asm). Every setting - gameplay, stage, music,
+// etc. - is one instance of the same struct; the address below is already
+// `entry + 0x4` (the live `value` field), not the entry's own address
+// (which points at `type` - `value` is the next word). All 4-byte
+// big-endian words in memory; stored as u8 in the replay file since every
+// range here tops out at 12. See docs/RMGR_SPEC.md for what each value
+// means - this is deliberately just addresses, not semantics, to avoid
+// documenting the same lookup table in two places.
+//
+// Gameplay Settings (31 of them):
+constexpr uint32_t ADDR_REMIX_HITSTUN               = 0x804623F8;
+constexpr uint32_t ADDR_REMIX_HITLAG                = 0x80462428;
+constexpr uint32_t ADDR_REMIX_DI                    = 0x80462458;
+constexpr uint32_t ADDR_REMIX_JAPANESE_SOUNDS       = 0x80462484;
+constexpr uint32_t ADDR_REMIX_JAPANESE_STUN_SLEEP   = 0x804624BC;
+constexpr uint32_t ADDR_REMIX_MOMENTUM_SLIDE        = 0x804624F8;
+constexpr uint32_t ADDR_REMIX_SHIELD_STUN           = 0x80462530;
+constexpr uint32_t ADDR_REMIX_Z_CANCEL              = 0x80462564;
+constexpr uint32_t ADDR_REMIX_PUNISH_FAILED_Z_CANCEL = 0x80462598;
+constexpr uint32_t ADDR_REMIX_IMPROVED_AI           = 0x804625D8;
+constexpr uint32_t ADDR_REMIX_TRIPPING              = 0x8046260C;
+constexpr uint32_t ADDR_REMIX_RAGE                  = 0x80462640;
+constexpr uint32_t ADDR_REMIX_FOOTSTOOL_JUMPING     = 0x80462670;
+constexpr uint32_t ADDR_REMIX_AIR_DODGING           = 0x804626AC;
+constexpr uint32_t ADDR_REMIX_JAB_LOCKING           = 0x804626E0;
+constexpr uint32_t ADDR_REMIX_EDGE_C_JUMPING        = 0x80462714;
+constexpr uint32_t ADDR_REMIX_PERFECT_SHIELDING     = 0x8046274C;
+constexpr uint32_t ADDR_REMIX_PARRYING              = 0x80462788;
+constexpr uint32_t ADDR_REMIX_SPOT_DODGING          = 0x804627C0;
+constexpr uint32_t ADDR_REMIX_FAST_FALL_AERIALS     = 0x804627F8;
+constexpr uint32_t ADDR_REMIX_LEDGE_TRUMPING        = 0x80462834;
+constexpr uint32_t ADDR_REMIX_WALL_TECHING          = 0x8046286C;
+constexpr uint32_t ADDR_REMIX_CHARGE_SMASHES        = 0x804628A4;
+constexpr uint32_t ADDR_REMIX_ITEM_CONTAINERS       = 0x804628DC;
+constexpr uint32_t ADDR_REMIX_GAME_SPEED            = 0x80462914;
+constexpr uint32_t ADDR_REMIX_SPECIAL_ZOOM          = 0x80462948;
+constexpr uint32_t ADDR_REMIX_BLASTZONE_WARP        = 0x80462984;
+constexpr uint32_t ADDR_REMIX_SINGLE_BUTTON_MODE    = 0x804629C4;
+constexpr uint32_t ADDR_REMIX_ALL_ITEMS_R_DROP_AERIAL = 0x80462A00;
+constexpr uint32_t ADDR_REMIX_MOVE_STALING          = 0x80462A44;
+constexpr uint32_t ADDR_REMIX_STOPWATCH_ITEM        = 0x80462A7C;
+// Stage Settings (8 of them; the ~18 named + ~170 auto-generated
+// random-stage-pool toggles that follow in memory are deliberately not
+// read - see docs/RMGR_SPEC.md's Known Limitations):
+constexpr uint32_t ADDR_REMIX_STAGE_SELECT_LAYOUT   = 0x80466ED4;
+constexpr uint32_t ADDR_REMIX_HAZARD_MODE           = 0x80466F10;
+constexpr uint32_t ADDR_REMIX_WHISPY_MODE           = 0x80466F44;
+constexpr uint32_t ADDR_REMIX_SAFFRON_POKEMON_RATE  = 0x80466F78;
+constexpr uint32_t ADDR_REMIX_POKEMON_ANNOUNCER     = 0x80466FB8;
+constexpr uint32_t ADDR_REMIX_DRAGON_KING_HUD       = 0x80466FF4;
+constexpr uint32_t ADDR_REMIX_CAMERA_MODE           = 0x8046702C;
+constexpr uint32_t ADDR_REMIX_YOSHI_ISLAND_CLOUD_ANIMS = 0x80467060;
+} // namespace
+
+namespace ReplayMemory
+{
+bool IsInVsMatchScreen(void)
+{
+    return m64p::Core.DebugMemRead8(ADDR_CURRENT_SCREEN) == 0x16;
+}
+
+// See ADDR_SALTY_RUNBACK's own doc comment for what this flag is. Callers
+// MUST treat this as a level, not an edge, and do their own 0->1
+// transition detection (see Replay.cpp's OnFrame()) - two things are not
+// yet confirmed and make a naive "non-zero == just happened" read unsafe:
+// (1) exactly how many frames it stays non-zero (confirmed to survive
+// past the immediate trigger frame, since BGM.asm reads it during the new
+// match's music-init, but no exact frame count is confirmed), and (2)
+// whether it's guaranteed to drop back to zero between two runbacks
+// triggered back-to-back with no non-runback match end in between, or
+// whether update_screen_'s _success branch just rewrites the same value 1
+// - which a caller polling only the current value, not the previous one,
+// would have no way to distinguish from "still the first runback".
+bool IsSaltyRunbackActive(void)
+{
+    return m64p::Core.DebugMemRead32(ADDR_SALTY_RUNBACK) != 0;
+}
+
+MatchInfo ReadMatchInfo(void)
+{
+    MatchInfo info{};
+    info.valid = false;
+
+    uint32_t matchInfoPtr = m64p::Core.DebugMemRead32(ADDR_MATCH_INFO_PTR);
+    if (!IsValidRdramPointer(matchInfoPtr))
+    {
+        return info;
+    }
+
+    info.valid             = true;
+    info.matchInfoPtr      = matchInfoPtr;
+    info.gameMode          = m64p::Core.DebugMemRead8(matchInfoPtr + MI_GAME_MODE);
+    info.stageId            = m64p::Core.DebugMemRead8(matchInfoPtr + MI_STAGE_ID);
+    info.gameType            = m64p::Core.DebugMemRead8(matchInfoPtr + MI_GAME_TYPE);
+    info.timeLimitMinutes    = m64p::Core.DebugMemRead8(matchInfoPtr + MI_TIME_LIMIT);
+    info.stockCountSetting   = m64p::Core.DebugMemRead8(matchInfoPtr + MI_STOCK_COUNT);
+    info.damageRatio         = m64p::Core.DebugMemRead8(matchInfoPtr + MI_DAMAGE_RATIO);
+    info.itemFrequency       = m64p::Core.DebugMemRead8(matchInfoPtr + MI_ITEM_FREQUENCY);
+    info.gameStatus          = m64p::Core.DebugMemRead8(matchInfoPtr + MI_GAME_STATUS);
+    info.matchWasReset       = m64p::Core.DebugMemRead8(ADDR_MATCH_RESET_FLAG) != 0;
+    info.teamsEnabled        = m64p::Core.DebugMemRead8(matchInfoPtr + MI_TEAMS_ENABLED) != 0;
+    info.handicapMode        = m64p::Core.DebugMemRead8(matchInfoPtr + MI_HANDICAP_MODE);
+    info.rngSeed             = static_cast<int32_t>(m64p::Core.DebugMemRead32(ADDR_RNG_SEED));
+    return info;
+}
+
+PortMatchInfo ReadPortMatchInfo(uint32_t matchInfoPtr, int port)
+{
+    PortMatchInfo info{};
+    uint32_t base = matchInfoPtr + MI_PORT_STRUCT_BASE +
+        static_cast<uint32_t>(port) * MI_PORT_STRUCT_STRIDE;
+
+    uint8_t slotType = m64p::Core.DebugMemRead8(base + PORT_SLOT_TYPE);
+    info.slotType          = slotType;
+    info.seated             = slotType != 2;
+    info.isCpu               = slotType == 1;
+    info.characterId          = m64p::Core.DebugMemRead8(base + PORT_CHARACTER_ID);
+    info.costumeId             = m64p::Core.DebugMemRead8(base + PORT_COSTUME_ID);
+    info.teamColor              = m64p::Core.DebugMemRead8(base + PORT_TEAM_COLOR);
+    info.stocksRemaining         = static_cast<int8_t>(m64p::Core.DebugMemRead8(base + PORT_STOCKS_REMAINING));
+    info.comboDamage              = m64p::Core.DebugMemRead32(base + PORT_COMBO_DAMAGE);
+    info.comboHitCount             = m64p::Core.DebugMemRead32(base + PORT_COMBO_HIT_COUNT);
+    return info;
+}
+
+PortPlayerState ReadPortPlayerState(uint32_t matchInfoPtr, int port)
+{
+    PortPlayerState state{};
+    state.valid = false;
+
+    uint32_t playerStruct = ResolvePlayerStruct(matchInfoPtr, port);
+    if (!IsValidRdramPointer(playerStruct))
+    {
+        return state;
+    }
+
+    state.valid               = true;
+    state.actionStateId         = static_cast<uint16_t>(m64p::Core.DebugMemRead32(playerStruct + PS_ACTION_STATE_ID));
+    state.actionFrameCounter    = m64p::Core.DebugMemRead32(playerStruct + PS_ACTION_FRAME_COUNTER);
+    state.facingDirection        = static_cast<int32_t>(m64p::Core.DebugMemRead32(playerStruct + PS_FACING_DIRECTION));
+    state.velocityX               = ReadFloat(playerStruct + PS_VELOCITY_X);
+    state.velocityY                = ReadFloat(playerStruct + PS_VELOCITY_Y);
+    state.groundedState              = static_cast<uint8_t>(m64p::Core.DebugMemRead32(playerStruct + PS_KINETIC_STATE));
+    state.processedButtons            = m64p::Core.DebugMemRead16(playerStruct + PS_PROCESSED_BUTTONS);
+    state.stickX                       = static_cast<int8_t>(m64p::Core.DebugMemRead8(playerStruct + PS_STICK_X));
+    state.stickY                        = static_cast<int8_t>(m64p::Core.DebugMemRead8(playerStruct + PS_STICK_Y));
+    state.hurtboxState                   = m64p::Core.DebugMemRead8(playerStruct + PS_HURTBOX_STATE);
+    state.hitstunCounter                  = m64p::Core.DebugMemRead16(playerStruct + PS_HITSTUN_COUNTER);
+    state.damagePercent                    = m64p::Core.DebugMemRead32(playerStruct + PS_DAMAGE_PERCENT);
+    state.team                              = m64p::Core.DebugMemRead8(playerStruct + PS_TEAM);
+    state.handicap                           = m64p::Core.DebugMemRead8(playerStruct + PS_HANDICAP);
+    state.cpuLevel                            = m64p::Core.DebugMemRead8(playerStruct + PS_CPU_LEVEL);
+    state.characterSpecific                    = static_cast<int32_t>(m64p::Core.DebugMemRead32(playerStruct + PS_PASSIVE_VAR));
+    state.shieldHealth                         = static_cast<int32_t>(m64p::Core.DebugMemRead32(playerStruct + PS_SHIELD_HEALTH));
+    state.specialHitStatus                     = m64p::Core.DebugMemRead8(playerStruct + PS_SPECIAL_HITSTATUS);
+    state.knockbackResist                      = ReadFloat(playerStruct + PS_KNOCKBACK_RESIST);
+
+    // Left at 0 (not a plausible scale) if the joint pointer is unreadable,
+    // rather than guessing 1.0.
+    const uint32_t topJoint = m64p::Core.DebugMemRead32(playerStruct + PS_TOP_JOINT_PTR);
+    if (IsValidRdramPointer(topJoint))
+    {
+        state.scaleX = ReadFloat(topJoint + DOBJ_SCALE_X);
+        state.scaleY = ReadFloat(topJoint + DOBJ_SCALE_Y);
+    }
+
+    uint32_t positionPtr = m64p::Core.DebugMemRead32(playerStruct + PS_POSITION_PTR);
+    if (IsValidRdramPointer(positionPtr))
+    {
+        state.positionX = ReadFloat(positionPtr + 0x00);
+        state.positionY = ReadFloat(positionPtr + 0x04);
+    }
+
+    // jumps_used resets to 0 on landing and is a per-instance counter, not
+    // per-character, so it's cheap to just read fresh every frame. jumps_max
+    // IS per-character (FTAttributes is shared static move data), so chase
+    // it here rather than hardcoding 2 - Remix also writes jumps_used ==
+    // jumps_max in some places to deliberately exhaust jumps (e.g. certain
+    // up-specials), so jumpsRemaining can legitimately hit 0 without that
+    // many real jump inputs.
+    const uint8_t jumpsUsed = m64p::Core.DebugMemRead8(playerStruct + PS_JUMPS_USED);
+    const uint32_t attributesPtr = m64p::Core.DebugMemRead32(playerStruct + PS_ATTRIBUTES_PTR);
+    if (IsValidRdramPointer(attributesPtr))
+    {
+        const int32_t jumpsMax = static_cast<int32_t>(m64p::Core.DebugMemRead32(attributesPtr + FT_ATTR_MAX_JUMPS));
+        state.jumpsRemaining = jumpsMax - static_cast<int32_t>(jumpsUsed);
+    }
+
+    return state;
+}
+
+std::vector<ItemObject> ReadItemObjects(void)
+{
+    std::vector<ItemObject> objects;
+
+    auto collectNonHeld = [&](uint8_t linkId)
+    {
+        WalkGObjLinkList(linkId, [&](uint32_t current, uint32_t userData)
+        {
+            int32_t kind = 0;
+            if (IsValidRdramPointer(userData))
+            {
+                kind = static_cast<int32_t>(m64p::Core.DebugMemRead32(userData + IT_OR_WP_STRUCT_KIND));
+            }
+
+            // Position has to be read before the held-item check can even
+            // run (see IsHeldItemPosition's doc comment) - an invalid DObj
+            // pointer means there's no reliable position either way, so
+            // skip the object entirely rather than recording a
+            // meaningless (0,0,0).
+            const uint32_t dObj = m64p::Core.DebugMemRead32(current + GOBJ_OBJ_PTR);
+            if (!IsValidRdramPointer(dObj))
+            {
+                return;
+            }
+
+            const float posX = ReadFloat(dObj + DOBJ_POSITION_X);
+            const float posY = ReadFloat(dObj + DOBJ_POSITION_Y);
+            const float posZ = ReadFloat(dObj + DOBJ_POSITION_Z);
+
+            if (linkId == GOBJ_LINK_ID_ITEM && IsHeldItemPosition(posX, posY, posZ))
+            {
+                return;
+            }
+
+            ItemObject object{};
+            object.objectAddress = current;
+            object.linkId        = linkId;
+            object.kind          = kind;
+            object.positionX     = posX;
+            object.positionY     = posY;
+            object.positionZ     = posZ;
+            object.scaleX        = ReadFloat(dObj + DOBJ_SCALE_X);
+            object.scaleY        = ReadFloat(dObj + DOBJ_SCALE_Y);
+            objects.push_back(object);
+        });
+    };
+
+    collectNonHeld(GOBJ_LINK_ID_ITEM);
+    collectNonHeld(GOBJ_LINK_ID_WEAPON);
+
+    return objects;
+}
+
+StageHazards ReadStageHazards(uint8_t stageId)
+{
+    StageHazards hazards{};
+    if (stageId == STAGE_ID_DREAM_LAND)
+    {
+        hazards.whispyBlowing =
+            m64p::Core.DebugMemRead8(ADDR_PUPUPU_WHISPY_STATUS) == WHISPY_STATUS_BLOW;
+        // Read unconditionally (cheap, single byte) even when not currently
+        // blowing - the engine holds the last-decided direction steady
+        // between blows too (see ram-map.md section 10.3.1), harmless to
+        // read regardless; only meaningful to a caller when whispyBlowing
+        // is true.
+        hazards.whispyBlowingRight =
+            m64p::Core.DebugMemRead8(ADDR_PUPUPU_WHISPY_LR) != 0;
+    }
+    return hazards;
+}
+
+RemixSettings ReadRemixSettings(void)
+{
+    RemixSettings settings{};
+    settings.hitstun             = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_HITSTUN));
+    settings.hitlag              = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_HITLAG));
+    settings.di                  = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_DI));
+    settings.japaneseSounds      = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_JAPANESE_SOUNDS));
+    settings.japaneseStunSleep   = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_JAPANESE_STUN_SLEEP));
+    settings.momentumSlide       = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_MOMENTUM_SLIDE));
+    settings.shieldStun          = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_SHIELD_STUN));
+    settings.zCancel             = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_Z_CANCEL));
+    settings.punishFailedZCancel = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_PUNISH_FAILED_Z_CANCEL));
+    settings.improvedAI          = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_IMPROVED_AI));
+    settings.tripping            = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_TRIPPING));
+    settings.rage                = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_RAGE));
+    settings.footstoolJumping    = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_FOOTSTOOL_JUMPING));
+    settings.airDodging          = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_AIR_DODGING));
+    settings.jabLocking          = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_JAB_LOCKING));
+    settings.edgeCJumping        = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_EDGE_C_JUMPING));
+    settings.perfectShielding    = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_PERFECT_SHIELDING));
+    settings.parrying            = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_PARRYING));
+    settings.spotDodging         = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_SPOT_DODGING));
+    settings.fastFallAerials     = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_FAST_FALL_AERIALS));
+    settings.ledgeTrumping       = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_LEDGE_TRUMPING));
+    settings.wallTeching         = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_WALL_TECHING));
+    settings.chargeSmashes       = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_CHARGE_SMASHES));
+    settings.itemContainers      = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_ITEM_CONTAINERS));
+    settings.gameSpeed           = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_GAME_SPEED));
+    settings.specialZoom         = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_SPECIAL_ZOOM));
+    settings.blastzoneWarp       = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_BLASTZONE_WARP));
+    settings.singleButtonMode    = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_SINGLE_BUTTON_MODE));
+    settings.allItemsRDropAerial = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_ALL_ITEMS_R_DROP_AERIAL));
+    settings.moveStaling         = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_MOVE_STALING));
+    settings.stopwatchItem       = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_STOPWATCH_ITEM));
+
+    settings.stageSelectLayout    = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_STAGE_SELECT_LAYOUT));
+    settings.hazardMode           = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_HAZARD_MODE));
+    settings.whispyMode           = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_WHISPY_MODE));
+    settings.saffronPokemonRate   = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_SAFFRON_POKEMON_RATE));
+    settings.pokemonAnnouncer     = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_POKEMON_ANNOUNCER));
+    settings.dragonKingHUD        = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_DRAGON_KING_HUD));
+    settings.cameraMode           = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_CAMERA_MODE));
+    settings.yoshiIslandCloudAnims = static_cast<uint8_t>(m64p::Core.DebugMemRead32(ADDR_REMIX_YOSHI_ISLAND_CLOUD_ANIMS));
+    return settings;
+}
+} // namespace ReplayMemory
