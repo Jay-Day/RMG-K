@@ -313,6 +313,12 @@ enum class State
 
 State                s_State = State::Idle;
 int32_t              s_FrameNumber = 0;
+// Previous frame's ReplayMemory::IsSaltyRunbackActive() reading, while
+// s_State == Recording - see OnFrame()'s own doc comment on why this is
+// edge-detected (0->1 transition) rather than a level check, and why it's
+// re-baselined to the current value every time a new recording starts
+// rather than reset to false.
+bool                 s_PrevSaltyRunbackActive = false;
 // Everything for the in-progress match accumulates here instead of being
 // streamed to disk incrementally - see docs/RMGR_SPEC.md section 2 for the
 // buffered/compressed-once rationale and its accepted crash-safety
@@ -1166,6 +1172,15 @@ CORE_EXPORT void OnFrame(void)
             if (OpenNewFile(matchInfo))
             {
                 s_State = State::Recording;
+                // Re-baseline to whatever the flag currently reads, not
+                // false - see IsSaltyRunbackActive()'s doc comment: if this
+                // very match was itself opened by a runback (or two
+                // runbacks happened back-to-back with the flag never
+                // dropping to 0 in between), the flag may already be
+                // non-zero right now. Starting from false here would
+                // immediately misfire a spurious 0->1 "edge" on this
+                // match's very first frame.
+                s_PrevSaltyRunbackActive = ReplayMemory::IsSaltyRunbackActive();
             }
             // else: stay in WaitingForMatch and retry next frame.
         }
@@ -1173,8 +1188,33 @@ CORE_EXPORT void OnFrame(void)
     }
 
     // s_State == State::Recording
-    if (matchInfo.gameStatus == 5)
+    //
+    // Smash Remix's Salty Runback (ReplayMemory::IsSaltyRunbackActive)
+    // bypasses the normal end-of-match flow: it restarts play directly
+    // from the no-contest/results screen without going through the
+    // character-select/results transition IsInVsMatchScreen() above would
+    // catch, and game_status's transition through 5 (ended) on the way
+    // may be a single-frame spike this per-frame poll can miss entirely.
+    // Detected here via a 0->1 *edge*, deliberately not a level check:
+    // the flag likely stays set for this match's own entire replacement
+    // match too (nothing clears it until that next match's own
+    // end-of-match decision runs), so a level check would immediately -
+    // and repeatedly, every frame - misfire on the match this runback
+    // itself just started. Edge detection means two runbacks triggered
+    // back-to-back with no non-runback match end between them may not be
+    // independently caught - see docs/RMGR_SPEC.md's Known Limitations.
+    const bool saltyRunbackActive = ReplayMemory::IsSaltyRunbackActive();
+    const bool saltyRunbackTriggered = saltyRunbackActive && !s_PrevSaltyRunbackActive;
+    s_PrevSaltyRunbackActive = saltyRunbackActive;
+
+    if (matchInfo.gameStatus == 5 || saltyRunbackTriggered)
     {
+        // matchWasReset is unrelated to Salty Runback (it's the pause-menu
+        // abort combo - see ReplayMemory.cpp) and correctly reads false
+        // here, so a runback-triggered close reports as a normal end (1) -
+        // the match genuinely concluded, just via "no contest" rather than
+        // a win/loss, a distinction MatchResult can't represent yet
+        // regardless (see Known Limitations).
         uint8_t endReason = matchInfo.matchWasReset ? 0 : 1;
         FinalizeFile(endReason, matchInfo);
         s_State = State::WaitingForMatch;

@@ -18,6 +18,18 @@ namespace
 constexpr uint32_t ADDR_CURRENT_SCREEN   = 0x800A4AD0;
 constexpr uint32_t ADDR_MATCH_RESET_FLAG = 0x800A4AE2;
 constexpr uint32_t ADDR_MATCH_INFO_PTR   = 0x800A50E8;
+// Smash Remix's "Salty Runback" feature (GameEnd.asm) - holding Start (or
+// the configured combo) on the no-contest/results screen instantly
+// restarts the match from scratch, bypassing the normal win/loss
+// end-of-match flow entirely. GameEnd.is_salty_runback: non-zero (u32)
+// once triggered, written in update_screen_'s _success branch; zeroed in
+// its _end branch (every other outcome). Confirmed via a bass -sym build
+// against real Remix source, not inferred. IMPORTANT: this flag is NOT
+// the same as ADDR_MATCH_RESET_FLAG above (that one is unrelated - the
+// pause-menu abort combo - and is never written by this feature at all).
+// See IsSaltyRunbackActive()'s doc comment for what's confirmed vs. not
+// about how long this stays set.
+constexpr uint32_t ADDR_SALTY_RUNBACK    = 0x8048B174;
 
 constexpr uint32_t MI_GAME_MODE          = 0x00;
 constexpr uint32_t MI_STAGE_ID           = 0x01;
@@ -326,6 +338,23 @@ namespace ReplayMemory
 bool IsInVsMatchScreen(void)
 {
     return m64p::Core.DebugMemRead8(ADDR_CURRENT_SCREEN) == 0x16;
+}
+
+// See ADDR_SALTY_RUNBACK's own doc comment for what this flag is. Callers
+// MUST treat this as a level, not an edge, and do their own 0->1
+// transition detection (see Replay.cpp's OnFrame()) - two things are not
+// yet confirmed and make a naive "non-zero == just happened" read unsafe:
+// (1) exactly how many frames it stays non-zero (confirmed to survive
+// past the immediate trigger frame, since BGM.asm reads it during the new
+// match's music-init, but no exact frame count is confirmed), and (2)
+// whether it's guaranteed to drop back to zero between two runbacks
+// triggered back-to-back with no non-runback match end in between, or
+// whether update_screen_'s _success branch just rewrites the same value 1
+// - which a caller polling only the current value, not the previous one,
+// would have no way to distinguish from "still the first runback".
+bool IsSaltyRunbackActive(void)
+{
+    return m64p::Core.DebugMemRead32(ADDR_SALTY_RUNBACK) != 0;
 }
 
 MatchInfo ReadMatchInfo(void)

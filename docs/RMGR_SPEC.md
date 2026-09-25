@@ -1229,7 +1229,19 @@ tracked (Zebes' rising acid, Duel Zone's disappearing platforms, …).
 - **No aggregate damage-dealt/taken breakdown or incoming-damage-this-hit
   field**, even though the emulator exposes them.
 - **`MatchEnd.endReason` cannot currently distinguish time-out from
-  stock-out** — both collapse to `1` ("normal end").
+  stock-out, or either from a "no contest"/Salty Runback-triggered end**
+  — all three collapse to `1` ("normal end"). Salty Runback (holding Start
+  on the no-contest/results screen to instantly restart, bypassing the
+  normal win/loss flow) is at least correctly recognized as its own match
+  boundary (§5.1's determinism note doesn't apply across it) via
+  `ReplayMemory::IsSaltyRunbackActive()`, a decomp-confirmed flag
+  (`GameEnd.is_salty_runback`) checked once per frame in `Replay.cpp`'s
+  `OnFrame()` state machine and edge-detected (0→1 transition) rather than
+  read as a level, since the flag likely stays set for the *entire*
+  following match too. **Known gap**: this edge detection means two
+  runbacks triggered back-to-back, with no non-runback match end between
+  them, may not be independently caught — whether the flag reliably drops
+  back to `0` in between hasn't been live-verified.
 - **Character-specific action states (`>= 0x0DC`) are only named for the
   original 12 characters** (§8.3.1) — a Remix-added unique character
   (Bowser, Marth, Sonic, Ganondorf, Wolf, Mewtwo, Dr. Mario/Luigi, Dark

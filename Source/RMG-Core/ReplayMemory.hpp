@@ -208,6 +208,12 @@ struct RemixSettings
 // current_screen == 0x16 ("in a VS match")
 bool IsInVsMatchScreen(void);
 
+// Smash Remix's "Salty Runback" feature - see the .cpp's own doc comment
+// (on ADDR_SALTY_RUNBACK and this function) for exactly what's confirmed,
+// and why a caller must do its own 0->1 edge detection rather than
+// treating "non-zero" alone as "a runback just happened".
+bool IsSaltyRunbackActive(void);
+
 // Reads the match info block at *0x800A50E8. MatchInfo::valid is false if
 // the pointer isn't in the valid KSEG0 RDRAM window (0x80000000-0x80800000).
 MatchInfo ReadMatchInfo(void);
