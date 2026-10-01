@@ -50,6 +50,7 @@
 #include "main/workqueue.h"
 #include "main/screenshot.h"
 #include "main/netplay.h"
+#include "device/r4300/interrupt.h"
 #include "plugin/plugin.h"
 #include "vidext.h"
 
@@ -153,6 +154,8 @@ EXPORT m64p_error CALL CoreShutdown(void)
 {
     if (!l_CoreInit)
         return M64ERR_NOT_INIT;
+
+    interrupt_set_rollback_input_active(0);
 
     /* close down some core sub-systems */
     romdatabase_close();
@@ -457,6 +460,7 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
             return M64ERR_SUCCESS;
         case M64CMD_ROLLBACK_SET_INPUT_CALLBACK:
             pif_set_rollback_input_callback((m64p_rollback_input_callback)ParamPtr);
+            interrupt_set_rollback_input_active(ParamPtr != NULL);
             return M64ERR_SUCCESS;
         case M64CMD_ROLLBACK_SET_INPUT_PLAYERS:
             pif_set_rollback_input_players(ParamInt);

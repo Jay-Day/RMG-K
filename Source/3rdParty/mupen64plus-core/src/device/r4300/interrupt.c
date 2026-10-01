@@ -92,6 +92,7 @@ struct rollback_interrupt_stats
 
 static struct rollback_interrupt_stats l_RollbackInterruptStats;
 static int l_RollbackInterruptStatsEnabled = 0;
+static int l_RollbackInputActive = 0;
 
 static uint64_t rollback_interrupt_now_us(void)
 {
@@ -260,6 +261,11 @@ static int before_event(const struct cp0* cp0, unsigned int evt1, unsigned int e
     else return 0;
 }
 
+void interrupt_set_rollback_input_active(int active)
+{
+    l_RollbackInputActive = active != 0;
+}
+
 unsigned int add_random_interrupt_time(struct r4300_core* r4300)
 {
     if (r4300->randomize_interrupt) {
@@ -270,8 +276,11 @@ unsigned int add_random_interrupt_time(struct r4300_core* r4300)
         value = rand();
 #endif
         return value % 0x40;
-    } else
-        return 0;
+    }
+
+    /* Rollback peers need identical timing, but a zero PI/SI offset can leave
+     * Bomberman 64 waiting forever during its startup polling sequence. */
+    return l_RollbackInputActive ? 1 : 0;
 }
 
 void add_interrupt_event(struct cp0* cp0, int type, unsigned int delay)
