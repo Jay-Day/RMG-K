@@ -87,6 +87,33 @@ CORE_EXPORT bool CoreWriteFile(std::filesystem::path file, std::vector<char>& bu
     return true;
 }
 
+CORE_EXPORT std::filesystem::path CoreFindCollisionFreePath(std::filesystem::path desiredPath)
+{
+    std::error_code errorCode;
+    if (!std::filesystem::exists(desiredPath, errorCode))
+    {
+        return desiredPath;
+    }
+
+    const std::filesystem::path directory = desiredPath.parent_path();
+    const std::filesystem::path extension = desiredPath.extension();
+    const std::string           stem      = desiredPath.stem().string();
+
+    for (int suffix = 2; suffix < 10000; suffix++)
+    {
+        std::filesystem::path candidate = directory / (stem + "-" + std::to_string(suffix) + extension.string());
+        if (!std::filesystem::exists(candidate, errorCode))
+        {
+            return candidate;
+        }
+    }
+
+    // Pathological case (10000 collisions) - fall through to the original
+    // path rather than loop forever; the caller's own file open just
+    // overwrites it same as before this function existed.
+    return desiredPath;
+}
+
 CORE_EXPORT CoreFileTime CoreGetFileTime(std::filesystem::path file)
 {
 #ifdef _WIN32

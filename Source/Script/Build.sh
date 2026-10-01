@@ -9,21 +9,24 @@ generator="Unix Makefiles"
 install_cheats="ON"
 bundle_dependencies="ON"
 use_angrylion="ON"
+game_stats="ON"
 
 if [[ "$1" = "--help" ]] || [[ "$1" = "-h" ]]; then
-    echo "$0 [Build Config] [Thread Count] [--kaillera-app-version <version>] [--no-cheats] [--no-angrylion] [--no-bundle-dependencies] [--fast-dev]"
+    echo "$0 [Build Config] [Thread Count] [--kaillera-app-version <version>] [--no-cheats] [--no-angrylion] [--no-bundle-dependencies] [--fast-dev] [--no-game-stats]"
     echo ""
     echo "Options:"
     echo "  --no-cheats              Skip installing bundled cheat files"
     echo "  --no-angrylion           Skip building/installing the angrylion video plugin"
     echo "  --no-bundle-dependencies Skip Windows dependency bundling"
-    echo "  --fast-dev               Equivalent to --no-cheats --no-angrylion --no-bundle-dependencies"
+    echo "  --fast-dev               Equivalent to --no-cheats --no-angrylion --no-bundle-dependencies --no-game-stats"
+    echo "  --no-game-stats          Disable GAME_STATS (replay file recording); skips the DEBUGGER=1/binutils dependency"
     echo ""
     echo "Examples:"
     echo "  $0 Release"
     echo "  $0 Release 12"
     echo "  $0 Release --kaillera-app-version v0.8.21"
     echo "  $0 Release --fast-dev"
+    echo "  $0 Release --no-game-stats"
     exit
 fi
 
@@ -46,6 +49,11 @@ while [[ $# -gt 0 ]]; do
             install_cheats="OFF"
             bundle_dependencies="OFF"
             use_angrylion="OFF"
+            game_stats="OFF"
+            shift
+            ;;
+        --no-game-stats)
+            game_stats="OFF"
             shift
             ;;
         --kaillera-app-version)
@@ -84,6 +92,7 @@ cmake_args=(
     -DPORTABLE_INSTALL=ON
     -DUSE_ANGRYLION="$use_angrylion"
     -DINSTALL_CHEATS="$install_cheats"
+    -DGAME_STATS="$game_stats"
 )
 if [[ -n "$kaillera_app_version_override" ]]; then
     cmake_args+=(-DKAILLERA_APP_VERSION_OVERRIDE="$kaillera_app_version_override")

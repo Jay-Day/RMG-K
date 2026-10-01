@@ -234,6 +234,11 @@ public:
     void readScreen(void* destination, int* width, int* height);
     void shutdown();
     m64p_dynlib_handle getAudioPluginHandle() const;
+    // Lets a caller elsewhere in this process (e.g. RMG-Core's m64p::Core
+    // wrapper, via its own Hook()) resolve function pointers against the
+    // SAME loaded core module this proxy is driving, without this class
+    // needing to know anything about RMG-Core itself.
+    m64p_dynlib_handle getCoreHandle() const;
 
     using CoreDoCommandFn = m64p_error (*)(m64p_command, int, void*);
     CoreDoCommandFn coreDoCommand = nullptr;

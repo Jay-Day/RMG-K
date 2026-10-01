@@ -25,6 +25,10 @@
 #include <QSplitter>
 #include <QMenu>
 
+#ifdef RMGK_GAME_STATS
+#include <RMG-Core/Replay.hpp>
+#endif
+
 class KailleraServerBrowserDialog : public QDialog
 {
     Q_OBJECT
@@ -161,6 +165,12 @@ private:
     QPushButton* m_btnOptions = nullptr;
     QPushButton* m_btnAdvertise = nullptr;
     QCheckBox* m_recordCheck = nullptr;
+#ifdef RMGK_GAME_STATS
+    // Independent .rmgr toggle, mirrors m_recordCheck's pattern - see
+    // RollbackLobbyDialog.hpp for the full rationale. Only shown when
+    // m_currentGameName is Smash Remix 2.0.1.
+    QCheckBox* m_replayRecordCheck = nullptr;
+#endif
     QLabel* m_fpsLabel = nullptr;
     QLabel* m_playersInGameCountLabel = nullptr;
     int m_roomMaxPlayers = 0;
