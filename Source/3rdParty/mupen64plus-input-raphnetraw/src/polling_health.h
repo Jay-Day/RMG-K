@@ -4,10 +4,9 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Temporarily use 1 ms for testing; restore the production cutoff to 4 ms.
- * Sustained slow polls trigger caching and the slow-connection warning.
+/* Sustained polls of 4 ms or longer trigger caching and the slow-connection warning.
  * Recover below the entry threshold to avoid overlapping decisions. */
-#define RAPHNET_SLOW_POLL_US 1000
+#define RAPHNET_SLOW_POLL_US 4000
 #define RAPHNET_FAST_POLL_US (RAPHNET_SLOW_POLL_US / 2)
 
 /* Shared by the worker and raw input path under the USB lock. Times are monotonic.
