@@ -5,7 +5,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.2 COMPONENTS Gui Widgets Core LinguistTools REQUIRED)
+find_package(Qt6 6.2 COMPONENTS Gui Widgets Core Svg LinguistTools REQUIRED)
 
 if (NOT WIN32)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
@@ -46,6 +46,7 @@ if (WIN32)
 else()
     pkg_check_modules(HIDAPI REQUIRED hidapi-hidraw)
 endif()
+pkg_check_modules(LIBUSB1 REQUIRED libusb-1.0)
 
 set(RMG_SOURCES
     UserInterface/MainWindow.cpp
@@ -70,11 +71,11 @@ set(RMG_SOURCES
     UserInterface/Dialog/Cheats/AddCheatDialog.ui
     UserInterface/Dialog/Cheats/ChooseCheatOptionDialog.cpp
     UserInterface/Dialog/Cheats/ChooseCheatOptionDialog.ui
+    UserInterface/Dialog/UnifiedInputDialog.cpp
     UserInterface/Dialog/RomInfoDialog.cpp
     UserInterface/Dialog/RomInfoDialog.ui
     UserInterface/Dialog/AboutDialog.cpp
     UserInterface/Dialog/AboutDialog.ui
-    UserInterface/Dialog/RaphnetInputDialog.cpp
     UserInterface/Dialog/LogDialog.cpp
     UserInterface/Dialog/LogDialog.ui
     UserInterface/NoFocusDelegate.cpp
@@ -91,6 +92,12 @@ set(RMG_SOURCES
     Callbacks.cpp
     VidExt.cpp
     main.cpp
+    ../RMG-Input/UserInterface/Widget/ControllerImageWidget.cpp
+    ../RMG-Input/UserInterface/UICommon.cpp
+    ../RMG-Input/UserInterface/OptionsDialog.cpp
+    ../RMG-Input/UserInterface/HotkeysDialog.cpp
+    ../RMG-Input/UserInterface/Widget/HotkeyButton.cpp
+    ../RMG-Input/Utilities/Sdl3ButtonLabelToString.cpp
 )
 
 if (UPDATER)
@@ -175,11 +182,13 @@ target_include_directories(RMG PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input
     ${IMGUI_DIR}
     ${HIDAPI_INCLUDE_DIRS}
+    ${LIBUSB1_INCLUDE_DIRS}
 )
 
-target_link_libraries(RMG Qt6::Gui Qt6::Widgets ${HIDAPI_LIBRARIES})
+target_link_libraries(RMG Qt6::Gui Qt6::Widgets Qt6::Svg ${HIDAPI_LIBRARIES} ${LIBUSB1_LIBRARIES} SDL3::SDL3)
 
 set(RMG_TRANSLATION_TS
     ${CMAKE_CURRENT_SOURCE_DIR}/Translations/rmg_ja_JP.ts

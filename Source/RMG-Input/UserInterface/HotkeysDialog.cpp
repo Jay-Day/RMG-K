@@ -11,6 +11,7 @@
 
 #include "UserInterface/UICommon.hpp"
 #include "common.hpp"
+#include <algorithm>
 
 using namespace UserInterface;
 
@@ -82,12 +83,15 @@ HotkeysDialog::HotkeysDialog(QWidget* parent, QList<HotkeySettingMapping> hotkey
     this->infoIconLabel_5->setPixmap(QIcon::fromTheme("information-line").pixmap(16, 16));
 
     // load settings from given mappings
-    for (qsizetype i = 0; i < hotkeySettingMappings.size(); i++)
+    for (auto& buttonMapping : this->hotkeySettingMappings)
     {
-        auto& buttonMapping = this->hotkeySettingMappings.at(i);
-        auto& givenMapping  = hotkeySettingMappings.at(i);
-
-        for (size_t y = 0; y < givenMapping.inputTypes.size(); y++)
+        const auto found = std::find_if(hotkeySettingMappings.cbegin(), hotkeySettingMappings.cend(),
+            [&](const auto& mapping) { return mapping.inputTypeSettingsId == buttonMapping.inputTypeSettingsId; });
+        if (found == hotkeySettingMappings.cend()) continue;
+        const auto& givenMapping = *found;
+        const size_t count = std::min({givenMapping.inputTypes.size(), givenMapping.inputData.size(),
+            givenMapping.extraInputData.size(), givenMapping.inputText.size()});
+        for (size_t y = 0; y < count; y++)
         {
             buttonMapping.button->AddInputData(
                 static_cast<InputType>(givenMapping.inputTypes.at(y)),

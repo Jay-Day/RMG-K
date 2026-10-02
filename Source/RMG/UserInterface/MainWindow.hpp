@@ -12,6 +12,8 @@
 
 #include "Thread/EmulationThread.hpp"
 #include "EventFilter.hpp"
+#include "RaphnetWarningPolicy.hpp"
+#include "ControllerStartupNotice.hpp"
 #include "Callbacks.hpp"
 
 #include <RMG-Core/RollbackNetcode.hpp>
@@ -21,6 +23,7 @@
 #include "Widget/Render/OGLWidget.hpp"
 #include "Widget/Render/VKWidget.hpp"
 
+#include "Dialog/UnifiedInputDialog.hpp"
 #ifdef NETPLAY
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #include "Dialog/Lobby/RollbackLobbyDialog.hpp"
@@ -40,10 +43,14 @@
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QAction>
+#include <QPointer>
+#include <QElapsedTimer>
 #include <chrono>
 #include <deque>
 
 #include "ui_MainWindow.h"
+
+class QTimer;
 
 namespace UserInterface
 {
@@ -66,6 +73,15 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void startVerifyDebugReplay(bool withGraphics, bool stress = false);
 
     Thread::EmulationThread *emulationThread = nullptr;
+    RaphnetWarningPolicy raphnetWarningPolicy;
+    QPointer<QMessageBox> raphnetWarningBox;
+    void checkRaphnetConnection(void);
+    void updateControllerConnectionNotice(void);
+    bool controllerConnectionNoticeVisible = false;
+    ControllerStartupNotice controllerStartupNotice;
+    QElapsedTimer controllerNoticeClock;
+    QTimer* controllerNoticeTimer = nullptr;
+    void setStatusBarMessage(const QString& message);
 
     CoreCallbacks* coreCallBacks = nullptr;
 
@@ -76,7 +92,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     Widget::RomBrowserWidget *ui_Widget_RomBrowser = nullptr;
     EventFilter *ui_EventFilter                    = nullptr;
     QLabel *ui_StatusBar_Label                     = nullptr;
-    QLabel *ui_StatusBar_RenderModeLabel           = nullptr;
 
     QByteArray ui_Geometry;
     bool ui_Geometry_Maximized = false;
@@ -196,8 +211,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     std::deque<PendingLocalChatEcho> ui_PendingLocalChatEchoes;
 #endif // NETPLAY
 
-    bool ui_CheckRaphnetPluginMismatchPending = false;
-
     // Opens the Kaillera launcher; initialTab >= 0 jumps to that tab
     // (0=Server delay, 1=Peer to Peer), -1 uses the persisted last tab.
     // No-op when built without NETPLAY.
@@ -215,7 +228,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
     void showErrorMessage(QString text, QString details = "", bool force = true);
 
-    void checkRaphnetPluginMismatch(void);
+    void applyAutomaticInputSelection(void);
+    bool applyInputPluginSelection(Dialog::UnifiedInputDialog::InputPluginType plugin, bool rememberPreference = false);
+    void rememberInputPluginPreference(void);
 
     void updateUI(bool inEmulation, bool isPaused);
 

@@ -8,6 +8,7 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "ControllerWidget.hpp"
+#include "DeviceIdentity.hpp"
 #include "UserInterface/OptionsDialog.hpp"
 
 #include "UserInterface/Layout/AlignCenterLayout.hpp"
@@ -866,7 +867,6 @@ void ControllerWidget::on_inputDeviceComboBox_currentIndexChanged(int value)
 #else
                 CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, std::string("mupen64plus-input-raphnetraw.so"));
 #endif
-                CoreSettingsSetValue(SettingsID::Internal_InputPluginSwitchRequested, true);
                 CoreSettingsSave();
                 emit this->RaphnetPluginSwitchRequested();
                 return;
@@ -2011,6 +2011,7 @@ void ControllerWidget::SaveDefaultSettings()
     CoreSettingsSetValue(SettingsID::Input_DeviceType, section, static_cast<int>(InputDeviceType::None));
     CoreSettingsSetValue(SettingsID::Input_DevicePath, section, std::string(""));
     CoreSettingsSetValue(SettingsID::Input_DeviceSerial, section, std::string(""));
+    CoreSettingsSetValue(SettingsID::Input_DeviceGUID, section, std::string(""));
     CoreSettingsSetValue(SettingsID::Input_Deadzone, section, 9);
     CoreSettingsSetValue(SettingsID::Input_Range, section, 66);
     CoreSettingsSetValue(SettingsID::Input_RealN64Range, section, true);
@@ -2123,6 +2124,12 @@ void ControllerWidget::SaveSettings(QString section)
 
     this->GetCurrentInputDevice(device, true);
 
+    const std::string guid = device.type == InputDeviceType::Joystick && device.id != 0 ? InputDeviceGuid(device.id) :
+        (device.type == InputDeviceType::Joystick &&
+         CoreSettingsGetStringValue(SettingsID::Input_DeviceName, sectionStr) == device.name &&
+         CoreSettingsGetStringValue(SettingsID::Input_DevicePath, sectionStr) == device.path ?
+            CoreSettingsGetStringValue(SettingsID::Input_DeviceGUID, sectionStr) : std::string());
+    CoreSettingsSetValue(SettingsID::Input_DeviceGUID, sectionStr, guid);
     CoreSettingsSetValue(SettingsID::Input_PluggedIn, sectionStr, this->IsPluggedIn());
     CoreSettingsSetValue(SettingsID::Input_DeviceName, sectionStr, device.name);
     CoreSettingsSetValue(SettingsID::Input_DeviceType, sectionStr, static_cast<int>(device.type));

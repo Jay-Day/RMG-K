@@ -54,18 +54,18 @@ struct GCButtonMapping
     GCInput A       = GCInput::A;
     GCInput B       = GCInput::B;
     GCInput Start   = GCInput::Start;
-    GCInput Z       = GCInput::Z;
+    GCInput Z       = GCInput::RightTrigger;
     GCInput Z2      = GCInput::None;
     GCInput L       = GCInput::LeftTrigger;
-    GCInput R       = GCInput::RightTrigger;
+    GCInput R       = GCInput::Z;
     GCInput DpadUp    = GCInput::DpadUp;
     GCInput DpadDown  = GCInput::DpadDown;
     GCInput DpadLeft  = GCInput::DpadLeft;
     GCInput DpadRight = GCInput::DpadRight;
-    GCInput CUp     = GCInput::CStickUp;
-    GCInput CDown   = GCInput::CStickDown;
-    GCInput CLeft   = GCInput::CStickLeft;
-    GCInput CRight  = GCInput::CStickRight;
+    GCInput CUp     = GCInput::None;
+    GCInput CDown   = GCInput::None;
+    GCInput CLeft   = GCInput::Y;
+    GCInput CRight  = GCInput::X;
 };
 
 inline QString GCInputToString(GCInput input)
@@ -78,14 +78,14 @@ inline QString GCInputToString(GCInput input)
     case GCInput::Y:            return "Y";
     case GCInput::Z:            return "Z";
     case GCInput::Start:        return "Start";
-    case GCInput::L:            return "L";
-    case GCInput::R:            return "R";
+    case GCInput::L:            return "L (digital)";
+    case GCInput::R:            return "R (digital)";
     case GCInput::DpadUp:       return "D-Pad Up";
     case GCInput::DpadDown:     return "D-Pad Down";
     case GCInput::DpadLeft:     return "D-Pad Left";
     case GCInput::DpadRight:    return "D-Pad Right";
-    case GCInput::LeftTrigger:  return "L Trigger";
-    case GCInput::RightTrigger: return "R Trigger";
+    case GCInput::LeftTrigger:  return "L (analog)";
+    case GCInput::RightTrigger: return "R (analog)";
     case GCInput::CStickUp:     return "C-Stick Up";
     case GCInput::CStickDown:   return "C-Stick Down";
     case GCInput::CStickLeft:   return "C-Stick Left";
@@ -94,7 +94,48 @@ inline QString GCInputToString(GCInput input)
     }
 }
 
-inline bool isGCInputActive(const GameCubeAdapterControllerState& state, GCInput input, double triggerThreshold, double cStickThreshold)
+inline GCInput GCInputWithTriggerMode(GCInput input, bool analog)
+{
+    switch (input)
+    {
+    case GCInput::L:
+    case GCInput::LeftTrigger:
+        return analog ? GCInput::LeftTrigger : GCInput::L;
+    case GCInput::R:
+    case GCInput::RightTrigger:
+        return analog ? GCInput::RightTrigger : GCInput::R;
+    default:
+        return input;
+    }
+}
+
+inline void ApplyGCTriggerMode(GCInput& input, bool leftTrigger, bool analog)
+{
+    const GCInput digitalInput = leftTrigger ? GCInput::L : GCInput::R;
+    const GCInput analogInput = leftTrigger ? GCInput::LeftTrigger : GCInput::RightTrigger;
+    if (input == digitalInput || input == analogInput)
+    {
+        input = GCInputWithTriggerMode(input, analog);
+    }
+}
+
+inline void ApplyGCTriggerModes(GCButtonMapping& mapping, bool leftTriggerAnalog, bool rightTriggerAnalog)
+{
+    GCInput* inputs[] = {
+        &mapping.A, &mapping.B, &mapping.Start, &mapping.Z, &mapping.Z2, &mapping.L, &mapping.R,
+        &mapping.DpadUp, &mapping.DpadDown, &mapping.DpadLeft, &mapping.DpadRight,
+        &mapping.CUp, &mapping.CDown, &mapping.CLeft, &mapping.CRight
+    };
+
+    for (GCInput* input : inputs)
+    {
+        ApplyGCTriggerMode(*input, true, leftTriggerAnalog);
+        ApplyGCTriggerMode(*input, false, rightTriggerAnalog);
+    }
+}
+
+inline bool isGCInputActive(const GameCubeAdapterControllerState& state, GCInput input,
+    double triggerThreshold, double cStickThreshold, bool leftTriggerAnalog, bool rightTriggerAnalog)
 {
     const int triggerThresh = static_cast<int>(INT8_MAX * triggerThreshold);
     const int cStickThresh  = static_cast<int>(INT8_MAX * cStickThreshold);
@@ -109,14 +150,14 @@ inline bool isGCInputActive(const GameCubeAdapterControllerState& state, GCInput
     case GCInput::Y:            return state.Y;
     case GCInput::Z:            return state.Z;
     case GCInput::Start:        return state.Start;
-    case GCInput::L:            return state.L;
-    case GCInput::R:            return state.R;
+    case GCInput::L:            return !leftTriggerAnalog && state.L;
+    case GCInput::R:            return !rightTriggerAnalog && state.R;
     case GCInput::DpadUp:       return state.DpadUp;
     case GCInput::DpadDown:     return state.DpadDown;
     case GCInput::DpadLeft:     return state.DpadLeft;
     case GCInput::DpadRight:    return state.DpadRight;
-    case GCInput::LeftTrigger:  return state.LeftTrigger > triggerThresh;
-    case GCInput::RightTrigger: return state.RightTrigger > triggerThresh;
+    case GCInput::LeftTrigger:  return leftTriggerAnalog && state.LeftTrigger > triggerThresh;
+    case GCInput::RightTrigger: return rightTriggerAnalog && state.RightTrigger > triggerThresh;
     case GCInput::CStickUp:     return cY > cStickThresh;
     case GCInput::CStickDown:   return cY < -cStickThresh;
     case GCInput::CStickLeft:   return cX < -cStickThresh;
@@ -125,7 +166,8 @@ inline bool isGCInputActive(const GameCubeAdapterControllerState& state, GCInput
     }
 }
 
-inline GCInput DetectGCInput(const GameCubeAdapterControllerState& prev, const GameCubeAdapterControllerState& curr, double triggerThreshold, double cStickThreshold)
+inline GCInput DetectGCInput(const GameCubeAdapterControllerState& prev, const GameCubeAdapterControllerState& curr,
+    double triggerThreshold, double cStickThreshold, bool leftTriggerAnalog, bool rightTriggerAnalog)
 {
     const int triggerThresh = static_cast<int>(INT8_MAX * triggerThreshold);
     const int cStickThresh  = static_cast<int>(INT8_MAX * cStickThreshold);
@@ -137,16 +179,16 @@ inline GCInput DetectGCInput(const GameCubeAdapterControllerState& prev, const G
     if (!prev.Y && curr.Y) return GCInput::Y;
     if (!prev.Z && curr.Z) return GCInput::Z;
     if (!prev.Start && curr.Start) return GCInput::Start;
-    if (!prev.L && curr.L) return GCInput::L;
-    if (!prev.R && curr.R) return GCInput::R;
+    if (!prev.L && curr.L) return leftTriggerAnalog ? GCInput::LeftTrigger : GCInput::L;
+    if (!prev.R && curr.R) return rightTriggerAnalog ? GCInput::RightTrigger : GCInput::R;
     if (!prev.DpadUp && curr.DpadUp) return GCInput::DpadUp;
     if (!prev.DpadDown && curr.DpadDown) return GCInput::DpadDown;
     if (!prev.DpadLeft && curr.DpadLeft) return GCInput::DpadLeft;
     if (!prev.DpadRight && curr.DpadRight) return GCInput::DpadRight;
 
     // Check analog triggers (thresholded)
-    if (prev.LeftTrigger <= triggerThresh && curr.LeftTrigger > triggerThresh) return GCInput::LeftTrigger;
-    if (prev.RightTrigger <= triggerThresh && curr.RightTrigger > triggerThresh) return GCInput::RightTrigger;
+    if (leftTriggerAnalog && prev.LeftTrigger <= triggerThresh && curr.LeftTrigger > triggerThresh) return GCInput::LeftTrigger;
+    if (rightTriggerAnalog && prev.RightTrigger <= triggerThresh && curr.RightTrigger > triggerThresh) return GCInput::RightTrigger;
 
     // Check C-Stick (thresholded)
     const int8_t prevCX = static_cast<int8_t>(prev.RightStickX + 128);
