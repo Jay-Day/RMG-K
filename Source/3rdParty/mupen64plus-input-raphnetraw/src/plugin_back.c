@@ -117,6 +117,9 @@ static atomic_int g_transport_failed[MAX_ADAPTERS];
 static atomic_int g_health_status; /* 0: no response, 1: checking/normal, 2: slow */
 static void (*g_health_callback)(int) = NULL; /* set only with worker stopped */
 static atomic_int g_getKeys_polling = 0;
+/* Keep the cached worker from repeatedly reacquiring the USB lock while an
+ * emulation-thread read is waiting (Automatic may mix cached and raw ports). */
+static atomic_int g_game_io_pending = 0;
 static int g_getKeys_thread_running = 0;
 static int g_threading_initialized = 0;
 
@@ -141,6 +144,7 @@ int pb_init(pb_debugFunc debugFn)
     g_monitor_paused = 0;
     g_polling_mode = RAPHNET_POLLING_AUTOMATIC;
     atomic_store(&g_rom_active, 0);
+    atomic_store(&g_game_io_pending, 0);
     atomic_store(&g_health_status, 0);
     memset(g_channels, 0, sizeof(g_channels));
     memset(g_adapters, 0, sizeof(g_adapters));
@@ -190,6 +194,24 @@ int pb_scanControllers(int pollingMode)
     atomic_store(&g_rom_active, 0);
     const int count = pb_scanControllersInternal();
     pb_checkBeforeGame();
+    /* Automatic selects one of the explicit modes for the entire game. Mixing
+     * a cached worker with direct reads on another (even empty) port makes
+     * Automatic slower than forced Cached because both contend for USB. */
+    int cached = g_polling_mode == RAPHNET_POLLING_CACHED;
+    if (g_polling_mode == RAPHNET_POLLING_AUTOMATIC) {
+        for (int i = 0; i < count; ++i)
+            if (atomic_load(&g_cached_mode[i])) cached = 1;
+    }
+    for (int i = 0; i < count; ++i) atomic_store(&g_cached_mode[i], cached);
+    DebugMessage(PB_MSG_INFO, "Raphnet game polling: %s for all %d adapter channel(s)",
+        cached ? "Cached" : "Default", count);
+    for (int i = 0; i < count; ++i) {
+        DebugMessage(PB_MSG_INFO, "Raphnet channel %d: %s, %s (polling setting: %s)",
+            i + 1, atomic_load(&g_cached_mode[i]) ? "cached" : "direct/raw",
+            atomic_load(&g_sample_time[i]) ? "controller responding" : "no controller response",
+            g_polling_mode == RAPHNET_POLLING_AUTOMATIC ? "Automatic" :
+                (g_polling_mode == RAPHNET_POLLING_CACHED ? "Cached" : "Default"));
+    }
     // Both channel assignments and input mode stay fixed until RomClosed.
     atomic_store(&g_rom_active, 1);
     return count;
@@ -575,6 +597,10 @@ static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
             last_scan = now;
         }
         for (int i = 0; i < g_n_channels && atomic_load(&g_getKeys_polling); ++i) {
+            /* Sleep(0)/sched_yield does not hand the USB mutex to a waiting
+             * thread. Stop submitting background reads until game I/O finishes.
+             * At most the already-started USB read can delay the foreground. */
+            if (atomic_load(&g_game_io_pending)) break;
             /* During a game, only the selected cached channels need a worker.
              * Detection and recovery decisions are reserved for idle time. */
             const int valid = atomic_load(&g_sample_time[i]) != 0;
@@ -719,7 +745,12 @@ int pb_controllerCommand(int Control, unsigned char *Command)
 int pb_getKeys(int control, unsigned int *keys)
 {
     if (!keys || control < 0 || control >= g_n_channels) return 0;
-    if (!atomic_load(&g_cached_mode[control])) return pb_pollGetKeysOnce(control, keys);
+    if (!atomic_load(&g_cached_mode[control])) {
+        atomic_fetch_add(&g_game_io_pending, 1);
+        const int valid = pb_pollGetKeysOnce(control, keys);
+        atomic_fetch_sub(&g_game_io_pending, 1);
+        return valid;
+    }
     const int64_t sample_time = atomic_load(&g_sample_time[control]);
     *keys = sample_time && pb_nowUs() - sample_time < 250000 ? atomic_load(&g_cached_keys[control]) : 0;
     return 1;
@@ -757,6 +788,7 @@ static int pb_performIo(void)
 #ifdef TIME_RAW_IO
 		timing(1, NULL);
 #endif
+        atomic_fetch_add(&g_game_io_pending, 1);
 		pb_mutexLockIo();
         const int64_t start = pb_nowUs();
         res = adap->handle ? gcn64lib_blockIO(adap->handle, biops, adap->n_ops) : -1;
@@ -777,6 +809,7 @@ static int pb_performIo(void)
             }
         }
         pb_mutexUnlockIo();
+        atomic_fetch_sub(&g_game_io_pending, 1);
 #ifdef TIME_RAW_IO
 		timing(0, "blockIO");
 #endif
