@@ -3316,7 +3316,7 @@
                    <number>1048576</number>
                   </property>
                   <property name="value">
-                   <number>1024</number>
+                   <number>512</number>
                   </property>
                   <property name="suffix">
                    <string> MB</string>
