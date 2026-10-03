@@ -391,9 +391,8 @@ private:
     // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
     QCheckBox* m_recordCheck     = nullptr;
 
-    // When checked, this client also streams the match's .krec up to the server
-    // so others can spectate. Broadcasting implies recording (the stream is the
-    // krec bytes). Only the room host broadcasts. On the emulation thread,
+    // When checked, the room host streams replay bytes so others can spectate,
+    // independently of whether a local .krec file is saved. On the emulation thread,
     // bytes are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
     // and drained to the WebSocket by m_broadcastDrainTimer on the UI thread.
     QCheckBox* m_broadcastCheck       = nullptr;

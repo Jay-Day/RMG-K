@@ -5204,11 +5204,11 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     CoreAddCallbackMessage(CoreDebugMessageType::Info,
         "Lobby→LobbySession: launching emulation thread (lobby UDP transport)");
 
-    // Open a .krec for this match if the player ticked "Record game" in the lobby
-    // room. recordingOpen self-gates on the shared recording flag and writes the
-    // same KRC1 header the p2p / kaillera paths do; the seated player names were
-    // captured in the lobby's onMatchBegin. Point n02 at the configured records
-    // dir + app id first, since the lobby path never runs CoreInitKaillera.
+    // Begin replay capture for local saving and/or Live Replay. recordingOpen
+    // writes the same KRC1 header as the p2p / kaillera paths; seated player names
+    // were captured in onMatchBegin. The local recording flag controls file
+    // output independently of the broadcast sink. Set the records directory
+    // here because the lobby path never runs CoreInitKaillera.
     n02::setRecordsDirectory(CoreGetKailleraRecordsDirectory());
 
     // Seats can be sparse — two players in P1 and P3 is a 3-port match with P2

@@ -1200,11 +1200,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     toggleRow->setContentsMargins(0, 0, 0, 0);
     toggleRow->setSpacing(SPACING_DEFAULT);
 
-    // Per-player local recording toggle. Editable before the match unless the
-    // host needs it for Live Replay. Initialized from the cap-aware default
-    // and kept in the shared n02 recording flag, exactly like
-    // the p2p / kaillera lobbies.
-    m_recordCheck = new QCheckBox("Record game", this);
+    // Per-player local saving, independent of the host's Live Replay choice.
+    // Editable before the match and initialized from the cap-aware default.
+    m_recordCheck = new QCheckBox("Record locally", this);
     const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
     n02_kaillera_recording_enabled = recordingDefault;
     m_recordCheck->setChecked(recordingDefault);
@@ -1213,9 +1211,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     });
     toggleRow->addWidget(m_recordCheck);
 
-    // Broadcast: stream this match's krec to the server so others can spectate.
-    // Broadcasting implies recording (the stream is the krec), so ticking it
-    // also forces "Record game" on.
+    // Broadcast replay bytes to the server without requiring a local file.
     m_broadcastCheck = new QCheckBox("Live Replay", this);
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (m_suppressSettingsSignal) return;
@@ -3396,7 +3392,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
 
     // The host owns the room-wide live-replay choice, but every seated player
     // sees its authoritative value. Non-hosts get a disabled checkbox instead
-    // of a hidden option. The host must record when Live Replay is enabled.
+    // of a hidden option. Local saving remains each player's separate choice.
     if (m_broadcastCheck)
     {
         m_suppressSettingsSignal = true;
@@ -3520,18 +3516,10 @@ void RollbackLobbyDialog::updateRecordingControls()
     const bool iAmHost = m_client && m_currentRoomId != 0 &&
         m_currentRoomHostId == m_client->selfUserId();
     const bool liveReplayEnabled = m_broadcastCheck->isChecked();
-    const bool recordingRequired = iAmHost && liveReplayEnabled;
     const bool editable = m_currentRoomState == "waiting" && !matchTransportInProgress();
 
-    if (recordingRequired)
-        m_recordCheck->setChecked(true);
-    m_recordCheck->setEnabled(editable && !recordingRequired);
-    if (recordingRequired)
-    {
-        m_recordCheck->setToolTip(
-            QStringLiteral("Recording is required while you host a Live Replay."));
-    }
-    else if (!editable)
+    m_recordCheck->setEnabled(editable);
+    if (!editable)
     {
         m_recordCheck->setToolTip(
             QStringLiteral("Recording can't be changed during a match."));
@@ -3540,7 +3528,7 @@ void RollbackLobbyDialog::updateRecordingControls()
     {
         m_recordCheck->setToolTip(
             QStringLiteral("Record this match to a .krec file on your PC.\n"
-                           "Local setting — each player records their own copy."));
+                           "Independent of Live Replay — each player chooses whether to save a copy."));
     }
 
     m_broadcastCheck->setEnabled(iAmHost && editable);
@@ -3559,7 +3547,7 @@ void RollbackLobbyDialog::updateRecordingControls()
     {
         m_broadcastCheck->setToolTip(
             QStringLiteral("Let others in the lobby watch this match live.\n"
-                           "Requires recording this match on your PC."));
+                           "A local replay is saved only if Record locally is checked."));
     }
 }
 
@@ -4708,7 +4696,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         return;
     }
 
-    // Make this room's "Record game" checkbox authoritative for the match, in
+    // Make this room's "Record locally" checkbox authoritative for the match, in
     // case another netplay dialog touched the shared flag since the box was built.
     if (m_recordCheck)
     {
@@ -4723,14 +4711,13 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         (m_client && m_currentRoomHostId == m_client->selfUserId());
     if (iAmHostForBroadcast && m_broadcastCheck && m_broadcastCheck->isChecked())
     {
-        n02_kaillera_recording_enabled = true; // broadcasting requires the krec
         startBroadcast(matchId);
     }
 
     // Capture seated player names (slot-indexed) for the .krec header, the same
     // way the p2p / kaillera paths fill recording_player_names before a recording
-    // opens. MainWindow opens the file when it launches the match; this is
-    // harmless when "Record game" is off (the open self-gates on the flag).
+    // starts. MainWindow begins replay capture when it launches the match,
+    // saving locally and/or streaming according to the two independent choices.
     {
         std::memset(recording_player_names, 0, sizeof(recording_player_names));
         for (const auto& p : peers)
