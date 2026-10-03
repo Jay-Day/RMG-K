@@ -1317,17 +1317,10 @@ bool save_gekko_state(const PendingGekkoSave& save)
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
     CoreRollbackState state;
-    // Frame -1 is the pre-frame baseline. At zero input delay, frame 0 may be
-    // simulated before the peer's first input arrives; if that input differs
-    // from the neutral prediction, GekkoNet must restore this exact baseline
-    // before re-simulating frame 0. Preserve the negative frame marker and save
-    // a real state instead of fabricating an empty baseline.
-    const int coreFrame = save.frame;
     if (g_GekkoLogEnabled)
     {
         std::ostringstream stream;
         stream << "save_state begin frame=" << save.frame
-               << " core_frame=" << coreFrame
                << " state_ptr=" << static_cast<void*>(save.state)
                << " state_len_ptr=" << static_cast<void*>(save.stateLen)
                << " checksum_ptr=" << static_cast<void*>(save.checksum);
@@ -1341,7 +1334,7 @@ bool save_gekko_state(const PendingGekkoSave& save)
         return false;
     }
 
-    if (!CoreRollbackSaveGameStateInto(state, save.state, static_cast<int>(kGekkoStateCapacity), coreFrame))
+    if (!CoreRollbackSaveGameStateInto(state, save.state, static_cast<int>(kGekkoStateCapacity), save.frame))
     {
         g_GekkoLastSaveStateUs = timingEnabled
             ? std::chrono::duration_cast<std::chrono::microseconds>(

@@ -27,7 +27,7 @@ Gekko::GameSession::GameSession()
 {
 	_host = nullptr;
 	_started = false;
-    _last_saved_frame = GameInput::NULL_FRAME - 1;
+    _last_saved_frame = GameInput::NULL_FRAME;
 	_disconnected_input = nullptr;
     _last_sent_healthcheck = GameInput::NULL_FRAME;
     _runahead_start_frame = GameInput::NULL_FRAME;
@@ -174,7 +174,11 @@ GekkoGameEvent** Gekko::GameSession::UpdateSession(i32* count)
 
         // then advance the session
         if (_game_events.AddAdvanceEvent(_sync, false)) {
-            if (!_config.limited_saving ||
+            // Frame 0 is the rollback baseline. It is executed only after every
+            // peer's real frame-0 input is present, then saved for rollbacks
+            // beginning at frame 1.
+            if (_sync.GetCurrentFrame() == 0 ||
+                !_config.limited_saving ||
                 IsPlayingLocally() &&
                 _sync.GetCurrentFrame() % _config.input_prediction_window == 0) {
                 _game_events.AddSaveEvent(_sync, _storage, &_last_saved_frame);
@@ -393,24 +397,22 @@ void Gekko::GameSession::SendSpectatorInputs()
 
 void Gekko::GameSession::HandleRollback()
 {
-	Frame current = _sync.GetCurrentFrame();
-	if (_last_saved_frame == GameInput::NULL_FRAME - 1) {
-		_sync.SetCurrentFrame(current - 1);
-		_game_events.AddSaveEvent(_sync, _storage, &_last_saved_frame);
-		_sync.IncrementFrame();
-	}
-
 	if (IsLockstepActive() || IsPlayingLocally()) {
         return;
     }
 
-	current = _sync.GetCurrentFrame();
+	const Frame current = _sync.GetCurrentFrame();
 	const Frame min = _sync.GetMinIncorrectFrame();
 
-	// dont allow rollbacks starting before the null frame
+    // Frame 0 is never predicted, so the first valid rollback restores its
+    // post-frame state and re-simulates beginning at frame 1.
     if (min == GameInput::NULL_FRAME) {
         return;
     }
+	assert(min > 0);
+	if (min <= 0) {
+		return;
+	}
 
 	const Frame sync_frame = _config.limited_saving ? _last_saved_frame : min - 1;
 	const Frame frame_to_save = std::min(current - 1, min);

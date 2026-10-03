@@ -79,6 +79,7 @@ static const int rollback_state_header_magic = 'RLBK';
 static const int rollback_state_legacy_header_magic = ('G' << 24) | ('G' << 16) | ('P' << 8) | 'O';
 static const int rollback_state_header_size = 6 * sizeof(int);
 static const int rollback_state_flag_omit_tlb_lut = 1 << 0;
+static const int rollback_state_flag_has_sram = 1 << 1;
 static const size_t rollback_tlb_lut_size = 0x100000 * sizeof(uint32_t) * 2;
 static const unsigned char pj64_magic[4] = { 0xC8, 0xA6, 0xD8, 0x23 };
 
@@ -318,8 +319,11 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     uint64_t rollback_finalize_end = 0;
     int rollback_tlb_lut_skipped = 0;
     int rollback_tlb_lut_omitted = 0;
+    int rollback_has_sram = 0;
     unsigned char *rollback_lut_r_data = NULL;
     unsigned char *rollback_lut_w_data = NULL;
+    const unsigned char *rollback_sram_data = NULL;
+    uint8_t *rollback_sram_storage = NULL;
     struct tlb_entry rollback_old_tlb_entries[32];
 
     size_t savestateSize;
@@ -362,6 +366,9 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             rollback_tlb_lut_omitted =
                 rollback_header[0] == rollback_state_header_magic &&
                 (rollback_header[4] & rollback_state_flag_omit_tlb_lut) != 0;
+            rollback_has_sram =
+                rollback_header[0] == rollback_state_header_magic &&
+                (rollback_header[4] & rollback_state_flag_has_sram) != 0;
         }
         else
         {
@@ -464,6 +471,25 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     }
     curr += 32;
 
+    if (rollback_has_sram)
+    {
+        if (dev->cart.sram.storage != NULL &&
+            dev->cart.sram.istorage != NULL &&
+            dev->cart.sram.istorage->data != NULL &&
+            dev->cart.sram.istorage->size != NULL &&
+            dev->cart.sram.istorage->size(dev->cart.sram.storage) >= SRAM_SIZE)
+        {
+            rollback_sram_storage = dev->cart.sram.istorage->data(dev->cart.sram.storage);
+        }
+
+        if (rollback_sram_storage == NULL)
+        {
+            main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Rollback SRAM storage is unavailable.");
+            SDL_UnlockMutex(savestates_lock);
+            return 0;
+        }
+    }
+
     /* Read the rest of the savestate */
     savestateSize = 16788244;
     rollback_payload_size = savestateSize;
@@ -478,6 +504,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             required_size += sizeof(queue) + sizeof(using_tlb_data);
         else
             required_size += sizeof(queue) + sizeof(using_tlb_data) + sizeof(data_0001_0200);
+        if (rollback_has_sram)
+            required_size += SRAM_SIZE;
 
         if (memory_size - memory_offset < required_size)
         {
@@ -522,6 +550,12 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         if (version >= 0x00010200)
         {
             memcpy(data_0001_0200, memory_data + memory_offset, sizeof(data_0001_0200));
+            memory_offset += sizeof(data_0001_0200);
+        }
+        if (rollback_has_sram)
+        {
+            rollback_sram_data = memory_data + memory_offset;
+            memory_offset += SRAM_SIZE;
         }
     }
     else if (version == 0x00010000) /* original savestate version */
@@ -1291,6 +1325,13 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     dev->r4300.cp0.interrupt_unsafe_state = 0;
 
     *r4300_cp0_last_addr(&dev->r4300.cp0) = *r4300_pc(&dev->r4300);
+
+    if (rollback_sram_data != NULL)
+    {
+        /* Restore only the in-memory image. In particular, do not call the storage backend's
+         * save callback: rollback must never persist a historical state to the user's .sra. */
+        memcpy(rollback_sram_storage, rollback_sram_data, SRAM_SIZE);
+    }
     if (memory_data != NULL && rollback_verbose_stats)
         rollback_finalize_end = SDL_GetPerformanceCounter();
 
@@ -1908,6 +1949,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     int i;
     int memory_save;
     int rollback_buffer_save;
+    const uint8_t *rollback_sram_data = NULL;
     uint64_t rollback_save_start = 0;
     uint64_t rollback_save_fixed_end = 0;
     uint64_t rollback_save_rdram_start = 0;
@@ -1939,6 +1981,15 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     save->filepath = strdup(filepath);
     memory_save = strcmp(filepath, "MEMORY") == 0;
     rollback_buffer_save = strcmp(filepath, "ROLLBACK") == 0;
+    if (rollback_buffer_save &&
+        dev->cart.sram.storage != NULL &&
+        dev->cart.sram.istorage != NULL &&
+        dev->cart.sram.istorage->data != NULL &&
+        dev->cart.sram.istorage->size != NULL &&
+        dev->cart.sram.istorage->size(dev->cart.sram.storage) >= SRAM_SIZE)
+    {
+        rollback_sram_data = dev->cart.sram.istorage->data(dev->cart.sram.storage);
+    }
     if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_start = SDL_GetPerformanceCounter();
 
@@ -1952,6 +2003,8 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     save->size = 16788288 + sizeof(queue) + 4 + 4096;
     if (rollback_buffer_save && !rollback_save_full)
         save->size -= rollback_tlb_lut_size;
+    if (rollback_sram_data != NULL)
+        save->size += SRAM_SIZE;
     allocation_size = save->size;
     if (rollback_buffer_save)
     {
@@ -2377,6 +2430,10 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->sp.rsp_status);
     PUTDATA(curr, uint32_t, dev->sp.first_run);
     PUTDATA(curr, uint32_t, dev->sp.rsp_wait);
+    if (rollback_sram_data != NULL)
+    {
+        PUTARRAY(rollback_sram_data, curr, uint8_t, SRAM_SIZE);
+    }
     if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_extra_end = SDL_GetPerformanceCounter();
 
@@ -2390,6 +2447,8 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         rollback_header[2] = savestate_latest_version;
         rollback_header[3] = rollback_save_buffer_frame;
         rollback_header[4] = rollback_save_full ? 0 : rollback_state_flag_omit_tlb_lut;
+        if (rollback_sram_data != NULL)
+            rollback_header[4] |= rollback_state_flag_has_sram;
         rollback_header[5] = 0;
 
         if (rollback_save_buffer_checksum != NULL)
