@@ -167,6 +167,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::GUI_OnScreenDisplayKailleraPortLabels:
         setting = {SETTING_SECTION_GUI, "OnScreenDisplayKailleraPortLabels", false};
         break;
+    case SettingsID::GUI_OnScreenDisplayLiveReplayStatus:
+        setting = {SETTING_SECTION_GUI, "OnScreenDisplayLiveReplayStatus", false};
+        break;
     case SettingsID::GUI_AutoStartNetplayOnStartup:
         setting = {SETTING_SECTION_GUI, "AutoStartNetplayOnStartup", false};
         break;

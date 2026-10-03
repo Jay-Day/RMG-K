@@ -330,6 +330,7 @@ private:
     // both onRoomStateChanged (seats change) and onPingMeasured (ping lands),
     // since pings arrive asynchronously after seats populate.
     void refreshStartButton();
+    void updateRecordingControls();
 
     LobbyClient* m_client = nullptr;
 
@@ -374,9 +375,9 @@ private:
 
     // In-room header card
     QLabel*    m_roomTitle      = nullptr;   // ROM title (large)
-    QLabel*    m_roomSubtitle   = nullptr;   // host · region · max
     QLabel*    m_roomStateLabel = nullptr;   // "Waiting" / "In Game"
-    QLabel*    m_roomMetaLabel  = nullptr;   // Seats 2/4 · Region NTSC
+    QLabel*    m_roomRegionLabel = nullptr;  // Region NTSC, when available
+    QLabel*    m_seatCountLabel  = nullptr;  // (2/4) beside SEATS
 
     // Delay is locally editable for every player; prediction is room-wide and
     // host-editable. Both lock once the match starts. Delay uses data -1 for
@@ -392,9 +393,8 @@ private:
 
     // When checked, this client also streams the match's .krec up to the server
     // so others can spectate. Broadcasting implies recording (the stream is the
-    // krec bytes). Only one player per match becomes the broadcaster (server
-    // picks the first). The krec is written on the emulation thread, so bytes
-    // are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
+    // krec bytes). Only the room host broadcasts. On the emulation thread,
+    // bytes are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
     // and drained to the WebSocket by m_broadcastDrainTimer on the UI thread.
     QCheckBox* m_broadcastCheck       = nullptr;
     QTimer*    m_broadcastDrainTimer  = nullptr;

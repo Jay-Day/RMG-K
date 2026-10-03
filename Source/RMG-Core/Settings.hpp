@@ -41,6 +41,7 @@ enum class SettingsID
     GUI_OnScreenDisplayMaxMessages,
     GUI_OnScreenDisplayChatEnabled,
     GUI_OnScreenDisplayKailleraPortLabels,
+    GUI_OnScreenDisplayLiveReplayStatus,
     GUI_AutoStartNetplayOnStartup,
     GUI_Toolbar,
     GUI_ToolbarArea,

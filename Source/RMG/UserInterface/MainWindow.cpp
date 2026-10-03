@@ -4470,9 +4470,9 @@ void MainWindow::on_Lobby_SpectateClosed(QString reason)
 
 void MainWindow::on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isSpectator)
 {
-    const std::string role = isSpectator ? "Watching Live" : "Live Replay";
+    const std::string prefix = isSpectator ? "Watching Live | " : "";
     const std::string noun = viewerCount == 1 ? " viewer" : " viewers";
-    OnScreenDisplaySetLiveReplayStatus(role + " | " + std::to_string(viewerCount) + noun);
+    OnScreenDisplaySetLiveReplayStatus(prefix + std::to_string(viewerCount) + noun);
 }
 
 void MainWindow::stopLobbySpectate()

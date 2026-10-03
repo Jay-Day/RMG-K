@@ -1126,18 +1126,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_roomTitle->setWordWrap(true);
     lay->addWidget(m_roomTitle);
 
-    // Subtitle (host / max players) — default WindowText since this is
-    // important info; the bold title above gives the hierarchy.
-    m_roomSubtitle = new QLabel("—", this);
-    m_roomSubtitle->setWordWrap(true);
-    lay->addWidget(m_roomSubtitle);
-
-    // Meta line (Seats / Region) — plain rich text. Local delay lives in the
-    // editable settings row below instead of a read-only chip.
-    m_roomMetaLabel = new QLabel("—", this);
-    m_roomMetaLabel->setTextFormat(Qt::RichText);
-    m_roomMetaLabel->setContentsMargins(0, SPACING_TIGHT, 0, 0);
-    lay->addWidget(m_roomMetaLabel);
+    m_roomRegionLabel = new QLabel(this);
+    m_roomRegionLabel->setTextFormat(Qt::RichText);
+    m_roomRegionLabel->setContentsMargins(0, SPACING_TIGHT, 0, 0);
+    m_roomRegionLabel->setVisible(false);
+    lay->addWidget(m_roomRegionLabel);
 
     // ── Rollback settings row ──
     auto* settingsRow = new QHBoxLayout;
@@ -1207,14 +1200,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     toggleRow->setContentsMargins(0, 0, 0, 0);
     toggleRow->setSpacing(SPACING_DEFAULT);
 
-    // Per-player local recording toggle. Stays enabled for everyone — each
-    // player decides whether to save their own .krec. Initialized from the
-    // cap-aware default and kept in the shared n02 recording flag, exactly like
+    // Per-player local recording toggle. Editable before the match unless the
+    // host needs it for Live Replay. Initialized from the cap-aware default
+    // and kept in the shared n02 recording flag, exactly like
     // the p2p / kaillera lobbies.
     m_recordCheck = new QCheckBox("Record game", this);
-    m_recordCheck->setToolTip(
-        "Record this match to a .krec file on your PC.\n"
-        "Local setting — each player records their own copy.");
     const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
     n02_kaillera_recording_enabled = recordingDefault;
     m_recordCheck->setChecked(recordingDefault);
@@ -1227,19 +1217,15 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     // Broadcasting implies recording (the stream is the krec), so ticking it
     // also forces "Record game" on.
     m_broadcastCheck = new QCheckBox("Live Replay", this);
-    m_broadcastCheck->setToolTip(
-        "Let others in the lobby watch this match live.\n"
-        "Implies Record game (the live replay is the .krec). Only one player\n"
-        "per match streams it — whoever enables it first.");
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (m_suppressSettingsSignal) return;
-        if (checked && m_recordCheck)
-            m_recordCheck->setChecked(true); // broadcasting needs the krec written
+        updateRecordingControls();
         if (m_currentRoomId != 0 && m_client)
             m_client->updateRoomLiveReplay(checked);
     });
     toggleRow->addWidget(m_broadcastCheck);
     toggleRow->addStretch(1);
+    updateRecordingControls();
 
     lay->addLayout(toggleRow);
 
@@ -1265,10 +1251,17 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
             this, applyPrediction);
 
     // ── Seats — bold section header + vertical player-list rows ──
+    auto* seatsHeaderRow = new QHBoxLayout;
+    seatsHeaderRow->setContentsMargins(0, SPACING_DEFAULT, 0, 0);
+    seatsHeaderRow->setSpacing(SPACING_TIGHT);
     auto* seatsHeader = new QLabel("SEATS", this);
     seatsHeader->setProperty("class", "SectionHeader");
-    seatsHeader->setContentsMargins(0, SPACING_DEFAULT, 0, 0);
-    lay->addWidget(seatsHeader);
+    seatsHeaderRow->addWidget(seatsHeader, 0, Qt::AlignBaseline);
+    m_seatCountLabel = new QLabel(this);
+    bumpFont(m_seatCountLabel, -1);
+    seatsHeaderRow->addWidget(m_seatCountLabel, 0, Qt::AlignBaseline);
+    seatsHeaderRow->addStretch(1);
+    lay->addLayout(seatsHeaderRow);
 
     auto* seatsBox = new QWidget(this);
     m_seatsBox = seatsBox;
@@ -2956,8 +2949,8 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     m_probeFailureAnnounced.clear();
 
     if (m_roomTitle) m_roomTitle->setText(QStringLiteral("—"));
-    if (m_roomSubtitle) m_roomSubtitle->setText(QStringLiteral("—"));
-    if (m_roomMetaLabel) m_roomMetaLabel->setText(QStringLiteral("—"));
+    if (m_roomRegionLabel) m_roomRegionLabel->setVisible(false);
+    if (m_seatCountLabel) m_seatCountLabel->clear();
     if (m_chatViewRoom) m_chatViewRoom->clear();
     if (m_roomChatInput)
     {
@@ -3361,29 +3354,12 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         title = QString("%1 — %2").arg(name, romName);
     m_roomTitle->setText(title);
 
-    // Resolve host display name: prefer hostName, fall back to users() map,
-    // then to our own username if we're the host.
-    QString hostName = roomState.value("hostName").toString();
-    if (hostName.isEmpty())
-    {
-        const auto& users = m_client->users();
-        const auto it = users.constFind(hostId);
-        if (it != users.constEnd()) hostName = it->username;
-    }
-    if (hostName.isEmpty() && iAmHost) hostName = m_username;
-    if (hostName.isEmpty()) hostName = QStringLiteral("—");
-
-    m_roomSubtitle->setText(QString("Hosted by %1  ·  %2 players max")
-                                .arg(hostName).arg(maxPlayers));
-
     applyRoomStateBadge(roomStateLabel(state), stateHex(state, isDarkTheme()));
 
     const QJsonArray players = roomState.value("players").toArray();
-    QStringList metaParts;
-    metaParts << QString("<b>Seats:</b> %1/%2").arg(players.size()).arg(maxPlayers);
-    if (!romRegion.isEmpty())
-        metaParts << QString("<b>Region:</b> %1").arg(romRegion);
-    m_roomMetaLabel->setText(metaParts.join("  ·  "));
+    m_seatCountLabel->setText(QString("(%1/%2)").arg(players.size()).arg(maxPlayers));
+    m_roomRegionLabel->setText(QString("<b>Region:</b> %1").arg(romRegion.toHtmlEscaped()));
+    m_roomRegionLabel->setVisible(!romRegion.isEmpty());
 
     // Delay remains local to every player. Prediction mirrors authoritative
     // room state and is editable only by the host while waiting.
@@ -3420,32 +3396,15 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
 
     // The host owns the room-wide live-replay choice, but every seated player
     // sees its authoritative value. Non-hosts get a disabled checkbox instead
-    // of a hidden option. "Record game" remains each player's local choice.
+    // of a hidden option. The host must record when Live Replay is enabled.
     if (m_broadcastCheck)
     {
         m_suppressSettingsSignal = true;
         m_broadcastCheck->setChecked(liveReplayEnabled);
         m_suppressSettingsSignal = false;
         m_broadcastCheck->setVisible(true);
-        m_broadcastCheck->setEnabled(iAmHost && state == "waiting");
-        if (!iAmHost)
-        {
-            m_broadcastCheck->setToolTip(liveReplayEnabled
-                ? QStringLiteral("The room host will stream this match as a live replay.")
-                : QStringLiteral("The room host has live replay streaming turned off."));
-        }
-        else if (state != "waiting")
-        {
-            m_broadcastCheck->setToolTip(
-                QStringLiteral("The live replay choice is locked while a match is running."));
-        }
-        else
-        {
-            m_broadcastCheck->setToolTip(
-                QStringLiteral("Let others in the lobby watch this match live.\n"
-                               "Implies Record game (the live replay is the .krec)."));
-        }
     }
+    updateRecordingControls();
 
     // ── Seats ──
     QVector<bool> filled(4, false);
@@ -3553,6 +3512,57 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     refreshStartButton();
 }
 
+void RollbackLobbyDialog::updateRecordingControls()
+{
+    if (!m_recordCheck || !m_broadcastCheck)
+        return;
+
+    const bool iAmHost = m_client && m_currentRoomId != 0 &&
+        m_currentRoomHostId == m_client->selfUserId();
+    const bool liveReplayEnabled = m_broadcastCheck->isChecked();
+    const bool recordingRequired = iAmHost && liveReplayEnabled;
+    const bool editable = m_currentRoomState == "waiting" && !matchTransportInProgress();
+
+    if (recordingRequired)
+        m_recordCheck->setChecked(true);
+    m_recordCheck->setEnabled(editable && !recordingRequired);
+    if (recordingRequired)
+    {
+        m_recordCheck->setToolTip(
+            QStringLiteral("Recording is required while you host a Live Replay."));
+    }
+    else if (!editable)
+    {
+        m_recordCheck->setToolTip(
+            QStringLiteral("Recording can't be changed during a match."));
+    }
+    else
+    {
+        m_recordCheck->setToolTip(
+            QStringLiteral("Record this match to a .krec file on your PC.\n"
+                           "Local setting — each player records their own copy."));
+    }
+
+    m_broadcastCheck->setEnabled(iAmHost && editable);
+    if (!iAmHost)
+    {
+        m_broadcastCheck->setToolTip(liveReplayEnabled
+            ? QStringLiteral("The room host will stream this match as a live replay.")
+            : QStringLiteral("The room host has live replay streaming turned off."));
+    }
+    else if (!editable)
+    {
+        m_broadcastCheck->setToolTip(
+            QStringLiteral("The live replay choice is locked while a match is running."));
+    }
+    else
+    {
+        m_broadcastCheck->setToolTip(
+            QStringLiteral("Let others in the lobby watch this match live.\n"
+                           "Requires recording this match on your PC."));
+    }
+}
+
 void RollbackLobbyDialog::refreshStartButton()
 {
     if (!m_startBtn)
@@ -3652,6 +3662,7 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     m_awaitingEmulationStart = false;
     if (m_client)
         m_client->setMatchTransportActive(false);
+    updateRecordingControls();
 
     {
         char buf[128];
@@ -4582,6 +4593,7 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
     emit closeMatchRequested();
     if (matchId != 0 && m_client)
         m_client->reportMatchFinished(matchId);
+    updateRecordingControls();
 
     if (m_dropBtn) m_dropBtn->setEnabled(false);
 
@@ -4649,6 +4661,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     m_currentMatchId = matchId;
     m_awaitingEmulationStart = true;
+    updateRecordingControls();
 
     // Disable start; enable Drop now — MATCH_BEGIN arrives *after* the
     // ROOM_STATE that flipped us to in_game, so onRoomStateChanged ran before
@@ -4704,7 +4717,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     // If broadcasting, arm the krec tee and announce to the server now — before
     // MainWindow calls recordingOpen, so the .krec header is captured too. Host-
-    // only: the broadcast checkbox is hidden for non-hosts, and the server also
+    // only: the broadcast checkbox is disabled for non-hosts, and the server also
     // rejects a non-host BROADCAST_BEGIN — this is the matching client guard.
     const bool iAmHostForBroadcast =
         (m_client && m_currentRoomHostId == m_client->selfUserId());

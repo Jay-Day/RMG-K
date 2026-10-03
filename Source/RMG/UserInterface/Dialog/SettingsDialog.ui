@@ -776,6 +776,16 @@
                 </widget>
                </item>
                <item>
+                <widget class="QCheckBox" name="osdLiveReplayStatusCheckBox">
+                 <property name="toolTip">
+                  <string>Show the live replay viewer count in the top-left corner while playing or watching a match.</string>
+                 </property>
+                 <property name="text">
+                  <string>Show live replay viewer count</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <spacer name="verticalSpacer_17">
                  <property name="orientation">
                   <enum>Qt::Orientation::Vertical</enum>
