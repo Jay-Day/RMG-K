@@ -219,6 +219,12 @@ std::unique_ptr<Gekko::GameInput> Gekko::InputBuffer::GetInput(Frame frame, bool
     auto inp = std::make_unique<GameInput>();
 
 	if (_last_received_input < frame) {
+		// Frame 0 is the shared starting point for every peer. Do not predict it;
+		// wait until the real input has arrived before allowing emulation to start.
+		if (frame == 0) {
+			return inp;
+		}
+
 		// no input? check if we should predict the input
 		if (prediction) {
             if (_last_predicted_input != GameInput::NULL_FRAME &&
