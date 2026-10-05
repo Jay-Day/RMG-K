@@ -25,6 +25,7 @@
 #include <mutex>
 #include <fstream>
 #include <filesystem>
+#include <system_error>
 #include <vector>
 #include <utility>
 
@@ -109,7 +110,7 @@ char * gamelist = 0;
 static std::ofstream recording_file;
 static std::filesystem::path recording_directory_path = std::filesystem::path("records");
 
-// Optional sink that receives the exact same bytes written to the .krec
+// Optional sink that receives replay bytes independently of local file saving
 // (header + every flushed record). Used by the broadcast path to stream a live
 // match to the lobby server. Set/cleared on the UI thread only while emulation
 // is stopped; invoked on the emulation thread during play. Null when not
@@ -151,6 +152,17 @@ static std::filesystem::path pathFromUtf8String(const char* utf8) {
     return pathFromUtf8String(std::string(utf8));
 }
 
+// Local saving and live streaming are independent destinations for the same
+// replay bytes. A stream-only session never opens a file or creates a directory.
+static void writeRecordingBytes(const void* data, int size) {
+    if (recording_file.is_open()) {
+        recording_file.write(static_cast<const char*>(data), size);
+        recording_file.flush();
+    }
+    if (recording_stream_sink)
+        recording_stream_sink(data, size);
+}
+
 class RecordingBufferC {
 public:
     char buffer[500];
@@ -185,26 +197,22 @@ public:
     }
 
     void write() {
-        if (recording_file.is_open()) {
-            int n = len();
-            recording_file.write(buffer, n);
-            recording_file.flush();
-            if (n > 0 && recording_stream_sink)
-                recording_stream_sink(buffer, n);
-        }
+        const int n = len();
+        if (n > 0)
+            writeRecordingBytes(buffer, n);
         reset();
     }
 } RecordingBuffer;
 
 static void close_recording() {
-    recording_active.store(false, std::memory_order_release);
+    const bool wasActive = recording_active.exchange(false, std::memory_order_acq_rel);
     {
         std::lock_guard<std::mutex> lk(recording_chat_mutex);
         recording_chat_queue.clear();
     }
+    if (wasActive && RecordingBuffer.len() > 0)
+        RecordingBuffer.write();
     if (recording_file.is_open()) {
-        if (RecordingBuffer.len() > 0)
-            RecordingBuffer.write();
         recording_file.close();
 
         auto& callbacks = n02::getUICallbacks();
@@ -234,16 +242,18 @@ static void drain_recording_chat() {
     }
 }
 
-// Open a fresh .krec recording and write its KRC1 header. The caller fills the
-// recording_player_names global first (used for both the filename and header).
-// Shared by the n02 game-start path (gameCallbackWrapper) and the rollback
-// lobby path (n02::recordingOpen) so every transport writes an identical layout.
-static void openRecordingFile(const char* appName, const char* game, int player, int numplayers_arg) {
-        RecordingBuffer.reset();
-        recording_frame_count.store(0, std::memory_order_relaxed);
+// Begin a replay capture and write its KRC1 header to the selected destinations.
+// The caller fills recording_player_names first (used for filename and header).
+// Legacy n02 sessions save locally; rollback lobby sessions may stream only.
+static void openRecordingFile(const char* appName, const char* game, int player,
+                              int numplayers_arg, bool saveLocally = true) {
+    RecordingBuffer.reset();
+    recording_frame_count.store(0, std::memory_order_relaxed);
 
-        // Create records directory
-        std::filesystem::create_directories(recording_directory_path);
+    if (saveLocally) {
+        // A local filesystem error must not prevent an otherwise valid stream.
+        std::error_code directoryError;
+        std::filesystem::create_directories(recording_directory_path, directoryError);
 
         // Build filename: YYMMDDHHMMSS-Player1-Player2.krec
         // Player names are truncated to fit within MAX_PATH (260) on Windows.
@@ -340,35 +350,35 @@ static void openRecordingFile(const char* appName, const char* game, int player,
         if (!recording_file.is_open()) {
             std::string pathString = recordingPath.string();
             kprintf("recording %s failed", pathString.c_str());
-        } else {
-            // Build the 400-byte KRC1 header in one zero-filled buffer. Bounded
-            // strncpy avoids reading past appName/game (which may be shorter than
-            // their 128-byte fields), and writing it in one shot lets the live
-            // broadcast tee capture the header too.
-            char header[400];
-            memset(header, 0, sizeof(header));
-            memcpy(header + 0, "KRC1", 4);
-            if (appName) strncpy(header + 4, appName, 127);   // [4,132)  appName
-            if (game)    strncpy(header + 132, game, 127);    // [132,260) gameName
-            int32_t mytime = (int32_t)time(NULL);
-            memcpy(header + 260, &mytime, 4);                 // [260,264) timestamp
-            memcpy(header + 264, &player, 4);                 // [264,268) local player
-            memcpy(header + 268, &numplayers_arg, 4);         // [268,272) num players
-            memcpy(header + 272, recording_player_names, 128);// [272,400) player names
-
-            recording_file.write(header, sizeof(header));
-            recording_file.flush();
-            if (recording_stream_sink)
-                recording_stream_sink(header, (int)sizeof(header));
         }
+    }
 
-        // Fresh recording: drop any chat queued before this session and arm chat
-        // capture only if the file actually opened.
-        {
-            std::lock_guard<std::mutex> lk(recording_chat_mutex);
-            recording_chat_queue.clear();
-        }
-        recording_active.store(recording_file.is_open(), std::memory_order_release);
+    const bool captureEnabled = recording_file.is_open() || recording_stream_sink;
+    if (captureEnabled) {
+        // Build the 400-byte KRC1 header in one zero-filled buffer. Bounded
+        // strncpy avoids reading past appName/game (which may be shorter than
+        // their 128-byte fields), and writing it in one shot lets the live
+        // broadcast tee capture the header too.
+        char header[400];
+        memset(header, 0, sizeof(header));
+        memcpy(header + 0, "KRC1", 4);
+        if (appName) strncpy(header + 4, appName, 127);   // [4,132)  appName
+        if (game)    strncpy(header + 132, game, 127);    // [132,260) gameName
+        int32_t mytime = (int32_t)time(NULL);
+        memcpy(header + 260, &mytime, 4);                 // [260,264) timestamp
+        memcpy(header + 264, &player, 4);                 // [264,268) local player
+        memcpy(header + 268, &numplayers_arg, 4);         // [268,272) num players
+        memcpy(header + 272, recording_player_names, 128);// [272,400) player names
+
+        writeRecordingBytes(header, static_cast<int>(sizeof(header)));
+    }
+
+    // Fresh capture: drop old chat and enable capture for either destination.
+    {
+        std::lock_guard<std::mutex> lk(recording_chat_mutex);
+        recording_chat_queue.clear();
+    }
+    recording_active.store(captureEnabled, std::memory_order_release);
 }
 
 static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
@@ -1043,7 +1053,7 @@ void recordingQueueChat(const char* nick, const char* msg) {
 }
 
 void recordingWriteInputs(const void* values, int size) {
-    if (!recording_file.is_open() || values == nullptr || size <= 0) {
+    if (!recording_active.load(std::memory_order_acquire) || values == nullptr || size <= 0) {
         return;
     }
     drain_recording_chat(); // flush any queued chat just ahead of this frame
@@ -1061,14 +1071,15 @@ int recordingFrameCount() {
 
 void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers) {
     // Close any recording left open from a previous match, then start a fresh
-    // one only when recording is enabled. Mirrors gameCallbackWrapper's gate for
-    // the GekkoNet rollback path, which syncs input via GekkoNet and so never
-    // reaches that callback. The caller fills recording_player_names first.
+    // one when either local saving or streaming is enabled. The local flag only
+    // controls disk output; a live replay can capture without creating a file.
+    // The caller fills recording_player_names first.
     close_recording();
-    if (!n02_kaillera_recording_enabled) {
+    if (!n02_kaillera_recording_enabled && !recording_stream_sink) {
         return;
     }
-    openRecordingFile(appName, gameName, localPlayer, numPlayers);
+    openRecordingFile(appName, gameName, localPlayer, numPlayers,
+                      n02_kaillera_recording_enabled);
 }
 
 void recordingClose() {

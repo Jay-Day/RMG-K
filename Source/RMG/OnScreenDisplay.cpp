@@ -77,6 +77,7 @@ static constexpr std::array<float, 4> l_KailleraPortLabelCenterOffset720p = { 19
 static std::string l_CenterMessage;
 // Persistent audience badge for broadcasters and spectators. Unlike ordinary
 // system messages, it remains visible until explicitly cleared.
+static bool l_LiveReplayStatusEnabled = false;
 static std::string l_LiveReplayStatus;
 static std::mutex l_LiveReplayStatusMutex;
 
@@ -387,6 +388,7 @@ void OnScreenDisplayLoadSettings(void)
     l_Enabled         = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayEnabled);
     l_KailleraChatEnabled = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayChatEnabled);
     l_KailleraPortLabelsEnabled = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels);
+    l_LiveReplayStatusEnabled = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayLiveReplayStatus);
     l_MessagePosition = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayLocation);
     l_MessagePaddingX = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayPaddingX);
     l_MessagePaddingY = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayPaddingY);
@@ -674,7 +676,7 @@ void OnScreenDisplayRender(void)
     }
     const bool hasPortLabels = l_KailleraPortLabelsEnabled && l_KailleraPortLabelPlayerCount > 0;
     const bool hasCenterMessage = !l_CenterMessage.empty();
-    const bool hasLiveReplayStatus = !liveReplayStatus.empty();
+    const bool hasLiveReplayStatus = l_LiveReplayStatusEnabled && !liveReplayStatus.empty();
     const bool hasMessages = l_Enabled && (hasVisibleQueueMessage || l_InputPromptActive ||
                                            hasPortLabels || hasCenterMessage || hasLiveReplayStatus);
 
