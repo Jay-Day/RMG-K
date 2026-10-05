@@ -3148,6 +3148,14 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
 {
     m_currentRoomId = roomId;
 
+    // The dialog survives reconnects and room changes. Recheck storage and
+    // reset the recording choice on entry, then preserve it for this room.
+    CoreRefreshKailleraRecordingStorageStatus();
+    const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
+    n02_kaillera_recording_enabled = recordingDefault;
+    if (m_recordCheck)
+        m_recordCheck->setChecked(recordingDefault);
+
     // Being in a room is mutually exclusive with searching. A successful Quick
     // Match drops us straight into an auto-created room without the server ever
     // sending QUICK_MATCH_STATUS{searching:false}, so clear the toggle state
