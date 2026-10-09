@@ -1333,6 +1333,11 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     if (memory_data != NULL && rollback_verbose_stats)
         rollback_extra_end = SDL_GetPerformanceCounter();
 
+    /* Rollback restores RDRAM registers by direct assignment, bypassing the
+     * register-write side effect which selects the normal or corrupt handler. */
+    if (memory_data != NULL)
+        rdram_sync_memory_map(&dev->rdram);
+
     /* Zilmar-Spec plugin expect a call with control_id = -1 when RAM processing is done */
     if (input.controllerCommand) {
         input.controllerCommand(-1, NULL);

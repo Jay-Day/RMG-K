@@ -76,6 +76,9 @@ void init_rdram(struct rdram* rdram,
 
 void poweron_rdram(struct rdram* rdram);
 
+/* Rebuild derived memory handlers after restoring RDRAM registers directly. */
+void rdram_sync_memory_map(struct rdram* rdram);
+
 void read_rdram_regs(void* opaque, uint32_t address, uint32_t* value);
 void write_rdram_regs(void* opaque, uint32_t address, uint32_t value, uint32_t mask);
 
