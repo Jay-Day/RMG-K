@@ -80,6 +80,7 @@ static const int rollback_state_legacy_header_magic = ('G' << 24) | ('G' << 16) 
 static const int rollback_state_header_size = 6 * sizeof(int);
 static const int rollback_state_flag_omit_tlb_lut = 1 << 0;
 static const int rollback_state_flag_has_sram = 1 << 1;
+static const int rollback_state_flag_has_ai_fifo_addresses = 1 << 2;
 static const size_t rollback_tlb_lut_size = 0x100000 * sizeof(uint32_t) * 2;
 static const unsigned char pj64_magic[4] = { 0xC8, 0xA6, 0xD8, 0x23 };
 
@@ -320,9 +321,11 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     int rollback_tlb_lut_skipped = 0;
     int rollback_tlb_lut_omitted = 0;
     int rollback_has_sram = 0;
+    int rollback_has_ai_fifo_addresses = 0;
     unsigned char *rollback_lut_r_data = NULL;
     unsigned char *rollback_lut_w_data = NULL;
     const unsigned char *rollback_sram_data = NULL;
+    unsigned char *rollback_ai_fifo_data = NULL;
     uint8_t *rollback_sram_storage = NULL;
     struct tlb_entry rollback_old_tlb_entries[32];
 
@@ -369,6 +372,9 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             rollback_has_sram =
                 rollback_header[0] == rollback_state_header_magic &&
                 (rollback_header[4] & rollback_state_flag_has_sram) != 0;
+            rollback_has_ai_fifo_addresses =
+                rollback_header[0] == rollback_state_header_magic &&
+                (rollback_header[4] & rollback_state_flag_has_ai_fifo_addresses) != 0;
         }
         else
         {
@@ -506,6 +512,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             required_size += sizeof(queue) + sizeof(using_tlb_data) + sizeof(data_0001_0200);
         if (rollback_has_sram)
             required_size += SRAM_SIZE;
+        if (rollback_has_ai_fifo_addresses)
+            required_size += AI_DMA_FIFO_SIZE * sizeof(uint32_t);
 
         if (memory_size - memory_offset < required_size)
         {
@@ -551,6 +559,11 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         {
             memcpy(data_0001_0200, memory_data + memory_offset, sizeof(data_0001_0200));
             memory_offset += sizeof(data_0001_0200);
+        }
+        if (rollback_has_ai_fifo_addresses)
+        {
+            rollback_ai_fifo_data = memory_data + memory_offset;
+            memory_offset += AI_DMA_FIFO_SIZE * sizeof(uint32_t);
         }
         if (rollback_has_sram)
         {
@@ -696,12 +709,18 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     dev->ai.fifo[1].length = GETDATA(curr, uint32_t);
     dev->ai.fifo[0].duration  = GETDATA(curr, uint32_t);
     dev->ai.fifo[0].length = GETDATA(curr, uint32_t);
-    /* best effort initialization of fifo addresses...
-     * You might get a small sound "pop" because address might be wrong.
-     * Proper initialization requires changes to savestate format
-     */
-    dev->ai.fifo[0].address = dev->ai.regs[AI_DRAM_ADDR_REG];
-    dev->ai.fifo[1].address = dev->ai.regs[AI_DRAM_ADDR_REG];
+    if (rollback_ai_fifo_data != NULL)
+    {
+        unsigned char *ai_fifo_curr = rollback_ai_fifo_data;
+        dev->ai.fifo[0].address = GETDATA(ai_fifo_curr, uint32_t);
+        dev->ai.fifo[1].address = GETDATA(ai_fifo_curr, uint32_t);
+    }
+    else
+    {
+        /* Older and ordinary disk savestates do not contain these addresses. */
+        dev->ai.fifo[0].address = dev->ai.regs[AI_DRAM_ADDR_REG];
+        dev->ai.fifo[1].address = dev->ai.regs[AI_DRAM_ADDR_REG];
+    }
     dev->ai.samples_format_changed = 1;
 
     dev->dp.dpc_regs[DPC_START_REG]    = GETDATA(curr, uint32_t);
@@ -1313,6 +1332,11 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     }
     if (memory_data != NULL && rollback_verbose_stats)
         rollback_extra_end = SDL_GetPerformanceCounter();
+
+    /* Rollback restores RDRAM registers by direct assignment, bypassing the
+     * register-write side effect which selects the normal or corrupt handler. */
+    if (memory_data != NULL)
+        rdram_sync_memory_map(&dev->rdram);
 
     /* Zilmar-Spec plugin expect a call with control_id = -1 when RAM processing is done */
     if (input.controllerCommand) {
@@ -2005,6 +2029,8 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         save->size -= rollback_tlb_lut_size;
     if (rollback_sram_data != NULL)
         save->size += SRAM_SIZE;
+    if (rollback_buffer_save)
+        save->size += AI_DMA_FIFO_SIZE * sizeof(uint32_t);
     allocation_size = save->size;
     if (rollback_buffer_save)
     {
@@ -2430,6 +2456,11 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->sp.rsp_status);
     PUTDATA(curr, uint32_t, dev->sp.first_run);
     PUTDATA(curr, uint32_t, dev->sp.rsp_wait);
+    if (rollback_buffer_save)
+    {
+        PUTDATA(curr, uint32_t, dev->ai.fifo[0].address);
+        PUTDATA(curr, uint32_t, dev->ai.fifo[1].address);
+    }
     if (rollback_sram_data != NULL)
     {
         PUTARRAY(rollback_sram_data, curr, uint8_t, SRAM_SIZE);
@@ -2447,6 +2478,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         rollback_header[2] = savestate_latest_version;
         rollback_header[3] = rollback_save_buffer_frame;
         rollback_header[4] = rollback_save_full ? 0 : rollback_state_flag_omit_tlb_lut;
+        rollback_header[4] |= rollback_state_flag_has_ai_fifo_addresses;
         if (rollback_sram_data != NULL)
             rollback_header[4] |= rollback_state_flag_has_sram;
         rollback_header[5] = 0;
