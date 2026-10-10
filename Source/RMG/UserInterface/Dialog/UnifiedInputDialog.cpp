@@ -18,6 +18,7 @@
 
 #include <QCheckBox>
 #include <QApplication>
+#include <QCoreApplication>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -523,7 +524,7 @@ QString binding_text(const BindingValue& binding)
 {
     if (binding_is_empty(binding))
     {
-        return QStringLiteral("Not set");
+        return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "Not set");
     }
 
     QStringList parts;
@@ -537,10 +538,23 @@ QString binding_text(const BindingValue& binding)
             continue;
         }
 
-        parts.append(binding.text[i].isEmpty() ? QStringLiteral("Input %1").arg(binding.data[i]) : binding.text[i]);
+        QString displayText = binding.text[i];
+        const InputType type = static_cast<InputType>(binding.types[i]);
+        if (displayText.isEmpty())
+            displayText = QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "Input %1").arg(binding.data[i]);
+        else if (type == InputType::JoystickButton && displayText == QStringLiteral("button %1").arg(binding.data[i]))
+            displayText = QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "button %1").arg(binding.data[i]);
+        else if (type == InputType::JoystickAxis &&
+            displayText == QStringLiteral("axis %1%2").arg(binding.data[i]).arg(binding.extraData[i] ? QStringLiteral("+") : QStringLiteral("-")))
+            displayText = QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "axis %1%2")
+                .arg(binding.data[i]).arg(binding.extraData[i] ? QStringLiteral("+") : QStringLiteral("-"));
+        else if (type == InputType::JoystickHat && displayText == QStringLiteral("hat %1:%2").arg(binding.data[i]).arg(binding.extraData[i]))
+            displayText = QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "hat %1:%2")
+                .arg(binding.data[i]).arg(binding.extraData[i]);
+        parts.append(displayText);
     }
 
-    return parts.isEmpty() ? QStringLiteral("Not set") : parts.join(QStringLiteral(", "));
+    return parts.isEmpty() ? QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "Not set") : parts.join(QStringLiteral(", "));
 }
 
 void set_single_binding(BindingValue& binding, InputType type, int data, int extraData, const QString& text)
@@ -643,21 +657,21 @@ QString gc_input_to_string(GCInput input)
     case GCInput::Y: return QStringLiteral("Y");
     case GCInput::Z: return QStringLiteral("Z");
     case GCInput::Start: return QStringLiteral("Start");
-    case GCInput::L: return QStringLiteral("L (digital)");
-    case GCInput::R: return QStringLiteral("R (digital)");
-    case GCInput::DpadUp: return QStringLiteral("D-Up");
-    case GCInput::DpadDown: return QStringLiteral("D-Down");
-    case GCInput::DpadLeft: return QStringLiteral("D-Left");
-    case GCInput::DpadRight: return QStringLiteral("D-Right");
-    case GCInput::LeftTrigger: return QStringLiteral("L (analog)");
-    case GCInput::RightTrigger: return QStringLiteral("R (analog)");
-    case GCInput::CStickUp: return QStringLiteral("C-Stick Up");
-    case GCInput::CStickDown: return QStringLiteral("C-Stick Down");
-    case GCInput::CStickLeft: return QStringLiteral("C-Stick Left");
-    case GCInput::CStickRight: return QStringLiteral("C-Stick Right");
+    case GCInput::L: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "L (digital)");
+    case GCInput::R: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "R (digital)");
+    case GCInput::DpadUp: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "D-Up");
+    case GCInput::DpadDown: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "D-Down");
+    case GCInput::DpadLeft: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "D-Left");
+    case GCInput::DpadRight: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "D-Right");
+    case GCInput::LeftTrigger: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "L (analog)");
+    case GCInput::RightTrigger: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "R (analog)");
+    case GCInput::CStickUp: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Stick Up");
+    case GCInput::CStickDown: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Stick Down");
+    case GCInput::CStickLeft: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Stick Left");
+    case GCInput::CStickRight: return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Stick Right");
     case GCInput::None:
     default:
-        return QStringLiteral("Not set");
+        return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "Not set");
     }
 }
 
@@ -815,10 +829,37 @@ void apply_n64_buttons(UserInterface::Widget::ControllerImageWidget* widget, uin
     set_button(widget, N64ControllerButton::CButtonRight, (buttons & kN64ButtonCRight) != 0);
 }
 
+QString binding_target_display_label(const char* label)
+{
+    const QString raw = QString::fromLatin1(label);
+    if (raw == QStringLiteral("D-Up")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "D-Up");
+    if (raw == QStringLiteral("D-Down")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "D-Down");
+    if (raw == QStringLiteral("D-Left")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "D-Left");
+    if (raw == QStringLiteral("D-Right")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "D-Right");
+    if (raw == QStringLiteral("C-Up")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Up");
+    if (raw == QStringLiteral("C-Down")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Down");
+    if (raw == QStringLiteral("C-Left")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Left");
+    if (raw == QStringLiteral("C-Right")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Right");
+    if (raw == QStringLiteral("Stick Up")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "Stick Up");
+    if (raw == QStringLiteral("Stick Down")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "Stick Down");
+    if (raw == QStringLiteral("Stick Left")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "Stick Left");
+    if (raw == QStringLiteral("Stick Right")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "Stick Right");
+    if (raw == QStringLiteral("L (digital)")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "L (digital)");
+    if (raw == QStringLiteral("R (digital)")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "R (digital)");
+    if (raw == QStringLiteral("L (analog)")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "L (analog)");
+    if (raw == QStringLiteral("R (analog)")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "R (analog)");
+    if (raw == QStringLiteral("C-Stick Up")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Stick Up");
+    if (raw == QStringLiteral("C-Stick Down")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Stick Down");
+    if (raw == QStringLiteral("C-Stick Left")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Stick Left");
+    if (raw == QStringLiteral("C-Stick Right")) return QCoreApplication::translate("UserInterface::Dialog::UnifiedInputDialog", "C-Stick Right");
+    return raw;
+}
+
 QPushButton* add_mapping_row(QGridLayout* layout, ControllerPage* page, int row, int bindingIndex, QWidget* parent)
 {
     const BindingTarget& target = kBindingTargets[static_cast<size_t>(bindingIndex)];
-    auto* label = new QLabel(QString::fromLatin1(target.label), parent);
+    const QString displayLabel = binding_target_display_label(target.label);
+    auto* label = new QLabel(displayLabel, parent);
     auto* button = new QPushButton(parent);
     auto* clearButton = new QPushButton(parent);
 
@@ -829,7 +870,7 @@ QPushButton* add_mapping_row(QGridLayout* layout, ControllerPage* page, int row,
     clearButton->setFixedWidth(24);
     clearButton->setToolTip(QCoreApplication::translate("UnifiedInputDialog", "Clear binding"));
     clearButton->setAccessibleName(QCoreApplication::translate("UnifiedInputDialog", "Clear %1 binding")
-        .arg(QString::fromLatin1(target.label)));
+        .arg(displayLabel));
     clearButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
     layout->addWidget(label, row, 0);
@@ -1760,7 +1801,9 @@ void UnifiedInputDialog::updatePageDeviceChoices(int pageIndex)
         {
             const UsbDeviceChoice& device = this->usbDevices[i];
             if (pageIndex == 0 && device.type == InputDeviceType::None) continue;
-            const QString name = device.displayName.isEmpty() ? usb_device_label(device) : device.displayName;
+            const QString name = device.type == InputDeviceType::None ? tr("None") :
+                device.type == InputDeviceType::Keyboard ? tr("Keyboard") :
+                (device.displayName.isEmpty() ? usb_device_label(device) : device.displayName);
             page->deviceComboBox->addItem(device.connected ? name : tr("%1 (disconnected)").arg(name), i);
             if (device.type == InputDeviceType::Joystick)
                 page->deviceComboBox->setItemData(page->deviceComboBox->count() - 1,
@@ -3488,10 +3531,11 @@ UnifiedInputDialog::InputDetectionReport UnifiedInputDialog::ScanInputDevices(vo
             }
 
             report.foundRaphnet = true;
-            report.lines.append(tr("raphnet adapter: HID %1 raw interface detected (%2 channel%3)")
+            report.lines.append((adapter->rawChannels == 1 ?
+                tr("raphnet adapter: HID %1 raw interface detected (%2 channel)") :
+                tr("raphnet adapter: HID %1 raw interface detected (%2 channels)"))
                 .arg(format_usb_id(kRaphnetVendorId, static_cast<uint16_t>(current->product_id)))
-                .arg(adapter->rawChannels)
-                .arg(adapter->rawChannels == 1 ? QString() : QStringLiteral("s")));
+                .arg(adapter->rawChannels));
         }
         hid_free_enumeration(devices);
         hid_exit();

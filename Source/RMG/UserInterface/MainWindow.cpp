@@ -1851,7 +1851,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmExitWhileInGame))
     {
         bool skipExitConfirmation = false;
-        bool ret = QtMessageBox::Question(this, "Are you sure you want to exit RMG?", "Don't ask for confirmation again", skipExitConfirmation);
+        bool ret = QtMessageBox::Question(this, tr("Are you sure you want to exit RMG?"), tr("Don't ask for confirmation again"), skipExitConfirmation);
         if (!ret)
         {
             event->ignore();
@@ -2263,7 +2263,7 @@ void MainWindow::showErrorMessage(QString text, QString details, bool force)
 
     QMessageBox* msgBox = new QMessageBox(this);
     msgBox->setIcon(QMessageBox::Icon::Critical);
-    msgBox->setWindowTitle("Error");
+    msgBox->setWindowTitle(tr("Error"));
     msgBox->setText(text);
     msgBox->setDetailedText(details);
     msgBox->addButton(QMessageBox::Ok);
@@ -2574,7 +2574,7 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
 
     if (!dragdrop && this->emulationThread->isRunning())
     {
-        this->showErrorMessage("EmulationThread::run Failed", "Cannot start emulation when emulation is already running or being started");
+        this->showErrorMessage("EmulationThread::run Failed", tr("Cannot start emulation when emulation is already running or being started"));
         return;
     }
 
@@ -3696,8 +3696,8 @@ void MainWindow::on_EventFilter_FileDropped(QDropEvent *event)
     if (inEmulation && confirmDragDrop)
     {
         confirmDragDrop = false;
-        bool ret = QtMessageBox::Question(this, "Are you sure you want to launch the drag & dropped ROM?",
-                                                "Don't ask for confirmation again", confirmDragDrop);
+        bool ret = QtMessageBox::Question(this, tr("Are you sure you want to launch the drag & dropped ROM?"),
+                                                tr("Don't ask for confirmation again"), confirmDragDrop);
         if (!ret)
         {
             return;
@@ -3911,7 +3911,7 @@ void MainWindow::on_Action_System_OpenRom(void)
         this->on_Action_System_Pause();
     }
 
-    QString romFile = QFileDialog::getOpenFileName(this, tr("Open N64 ROM or 64DD Disk"), "", "N64 ROMs & Disks (*.n64 *.z64 *.v64 *.ndd *.d64 *.zip *.7z)");
+    QString romFile = QFileDialog::getOpenFileName(this, tr("Open N64 ROM or 64DD Disk"), "", tr("N64 ROMs & Disks (*.n64 *.z64 *.v64 *.ndd *.d64 *.zip *.7z)"));
     if (romFile.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -3939,7 +3939,7 @@ void MainWindow::on_Action_System_OpenCombo(void)
         this->on_Action_System_Pause();
     }
 
-    QString cartRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", "N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)");
+    QString cartRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", tr("N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)"));
     if (cartRom.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -3950,7 +3950,7 @@ void MainWindow::on_Action_System_OpenCombo(void)
     }
 
 
-    QString diskRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", "N64DD Disk Image (*.ndd *.d64 *.zip *.7z)");
+    QString diskRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", tr("N64DD Disk Image (*.ndd *.d64 *.zip *.7z)"));
     if (diskRom.isEmpty())
     {
         if (isRunning && !isPaused)
@@ -4090,7 +4090,7 @@ void MainWindow::on_Action_System_SaveState(void)
     }
     else
     {
-        OnScreenDisplaySetMessage("Saved state to slot: " + std::to_string(CoreGetSaveStateSlot()));
+        OnScreenDisplaySetMessage(tr("Saved state to slot: %1").arg(CoreGetSaveStateSlot()).toStdString());
     }
 }
 
@@ -4120,7 +4120,7 @@ void MainWindow::on_Action_System_SaveAs(void)
         }
         else
         {
-            OnScreenDisplaySetMessage("Saved state to: " + QDir::toNativeSeparators(fileName).toStdString());
+            OnScreenDisplaySetMessage(tr("Saved state to: %1").arg(QDir::toNativeSeparators(fileName)).toStdString());
         }
     }
 
@@ -4141,7 +4141,7 @@ void MainWindow::on_Action_System_LoadState(void)
     }
     else
     {
-        OnScreenDisplaySetMessage("State loaded from slot: " + std::to_string(CoreGetSaveStateSlot()));
+        OnScreenDisplaySetMessage(tr("State loaded from slot: %1").arg(CoreGetSaveStateSlot()).toStdString());
     }
 }
 
@@ -4169,7 +4169,7 @@ void MainWindow::on_Action_System_Load(void)
         }
         else
         {
-            OnScreenDisplaySetMessage("State loaded from: " + QDir::toNativeSeparators(fileName).toStdString());
+            OnScreenDisplaySetMessage(tr("State loaded from: %1").arg(QDir::toNativeSeparators(fileName)).toStdString());
         }
     }
 
@@ -4309,7 +4309,7 @@ void MainWindow::on_Action_Settings_Input(void)
             }
         }, this))
         {
-            this->showErrorMessage("Input Settings", QString::fromStdString(CoreGetError()));
+            this->showErrorMessage(tr("Input Settings"), QString::fromStdString(CoreGetError()));
         }
         return;
     }
@@ -4470,9 +4470,9 @@ void MainWindow::on_Lobby_SpectateClosed(QString reason)
 
 void MainWindow::on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isSpectator)
 {
-    const std::string prefix = isSpectator ? "Watching Live | " : "";
-    const std::string noun = viewerCount == 1 ? " viewer" : " viewers";
-    OnScreenDisplaySetLiveReplayStatus(prefix + std::to_string(viewerCount) + noun);
+    const QString viewers = (viewerCount == 1 ? tr("%1 viewer") : tr("%1 viewers")).arg(viewerCount);
+    const QString status = isSpectator ? tr("Watching Live | %1").arg(viewers) : viewers;
+    OnScreenDisplaySetLiveReplayStatus(status.toStdString());
 }
 
 void MainWindow::stopLobbySpectate()
@@ -5792,11 +5792,11 @@ void MainWindow::on_RomBrowser_PlayGameWith(CoreRomType type, QString file)
     if (type == CoreRomType::Cartridge)
     { // cartridge
         mainRom = file;
-        otherRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", "N64DD Disk Image (*.ndd *.d64 *.zip *.7z)");
+        otherRom = QFileDialog::getOpenFileName(this, tr("Open 64DD Disk"), "", tr("N64DD Disk Image (*.ndd *.d64 *.zip *.7z)"));
     }
     else
     { // disk
-        mainRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", "N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)");
+        mainRom = QFileDialog::getOpenFileName(this, tr("Open N64 ROM"), "", tr("N64 ROMs (*.n64 *.z64 *.v64 *.zip *.7z)"));
         otherRom = file;
     }
 
@@ -6302,7 +6302,7 @@ void MainWindow::on_Core_DebugCallback(QList<CoreCallbackMessage> messages)
         // emulation run, we'll stop displaying it
         if (this->ui_DebugCallbackErrors.count(statusbarMessage.Message) < 50)
         {
-            this->showErrorMessage("Core Error", statusbarMessage.Message, false);
+            this->showErrorMessage(tr("Core Error"), statusbarMessage.Message, false);
         }
         this->ui_DebugCallbackErrors.append(statusbarMessage.Message);
         return;
@@ -6344,7 +6344,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
         {
             QAction* slotAction  = this->ui_SlotActions[value];
             QString dateTimeText = this->getSaveStateSlotDateTimeText(slotAction);
-            std::string message  = "Selected save slot: " + std::to_string(value);
+            std::string message  = tr("Selected save slot: %1").arg(value).toStdString();
 
             if (this->ui_LoadSaveStateSlotTimerId != -1)
             {
@@ -6371,21 +6371,21 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
         } break;
         case CoreStateCallbackType::SpeedFactor:
         {
-            OnScreenDisplaySetMessage("Playback speed: " + std::to_string(value) + "%");
+            OnScreenDisplaySetMessage(tr("Playback speed: %1%").arg(value).toStdString());
         } break;
         case CoreStateCallbackType::AudioVolume:
         {
-            OnScreenDisplaySetMessage("Volume: " + std::to_string(value) + "%");
+            OnScreenDisplaySetMessage(tr("Volume: %1%").arg(value).toStdString());
         } break;
         case CoreStateCallbackType::AudioMute:
         {
             if (value == 0)
             {
-                OnScreenDisplaySetMessage("Volume unmuted");
+                OnScreenDisplaySetMessage(tr("Volume unmuted").toStdString());
             }
             else
             {
-                OnScreenDisplaySetMessage("Volume muted");
+                OnScreenDisplaySetMessage(tr("Volume muted").toStdString());
             }
         } break;
         case CoreStateCallbackType::SaveStateLoaded:
@@ -6395,7 +6395,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                 this->ui_LoadSaveStateSlotCounter++;
                 if (this->ui_LoadSaveStateSlotCounter >= 5)
                 { // give up after 5 attempts
-                    this->showErrorMessage("Failed to load save state");
+                    this->showErrorMessage(tr("Failed to load save state"));
                     this->ui_LoadSaveStateSlotCounter = 0;
                     this->ui_LoadSaveStateSlotTimerId = -1;
                     this->ui_LoadSaveStateSlot        = -1;
@@ -6413,11 +6413,11 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             }
             else if (value == 0)
             {
-                OnScreenDisplaySetMessage("Failed to load save state.");
+                OnScreenDisplaySetMessage(tr("Failed to load save state.").toStdString());
             }
             else if (!this->ui_ManuallyLoadedState)
             {
-                OnScreenDisplaySetMessage("Loaded save state.");
+                OnScreenDisplaySetMessage(tr("Loaded save state.").toStdString());
             }
 
             this->ui_ManuallyLoadedState = false;
@@ -6426,11 +6426,11 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
         {
             if (value == 0)
             {
-                OnScreenDisplaySetMessage("Failed to save state.");
+                OnScreenDisplaySetMessage(tr("Failed to save state.").toStdString());
             }
             else if (!this->ui_ManuallySavedState)
             {
-                OnScreenDisplaySetMessage("Saved state.");
+                OnScreenDisplaySetMessage(tr("Saved state.").toStdString());
             }
 
             // refresh savestate slot times in 1 second,
@@ -6450,11 +6450,11 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
         {
             if (value == 0)
             {
-                OnScreenDisplaySetMessage("Failed to capture screenshot.");
+                OnScreenDisplaySetMessage(tr("Failed to capture screenshot.").toStdString());
             }
             else
             {
-                OnScreenDisplaySetMessage("Captured screenshot.");
+                OnScreenDisplaySetMessage(tr("Captured screenshot.").toStdString());
             }
         } break;
     }
