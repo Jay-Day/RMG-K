@@ -238,29 +238,29 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     QWidget* rollbackTab = new QWidget(this->tabWidget);
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
-    QGroupBox* rollbackLoggingGroupBox = new QGroupBox("Logging", rollbackTab);
+    QGroupBox* rollbackLoggingGroupBox = new QGroupBox(tr("Logging"), rollbackTab);
     QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
-    this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
-    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
-    this->rollbackStallDiagnosticsCheckBox = new QCheckBox("Log netplay stalls only (lightweight freeze diagnostics)", rollbackLoggingGroupBox);
+    this->rollbackEnableLocalTestingCheckBox = new QCheckBox(tr("Use rollback engine for local play"), rollbackTab);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox(tr("Enable verbose rollback stats logging"), rollbackLoggingGroupBox);
+    this->rollbackStallDiagnosticsCheckBox = new QCheckBox(tr("Log netplay stalls only (lightweight freeze diagnostics)"), rollbackLoggingGroupBox);
     this->rollbackStallDiagnosticsCheckBox->setToolTip(
-        "Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
-        "network stats so you can see which player's input stopped arriving. Writes nothing\n"
-        "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
-        "frame. Safe to leave on; one player logging is enough to identify the culprit.");
-    this->rollbackPacingTraceCheckBox = new QCheckBox("Enable pacing trace logging", rollbackLoggingGroupBox);
+        tr("Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
+            "network stats so you can see which player's input stopped arriving. Writes nothing\n"
+            "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
+            "frame. Safe to leave on; one player logging is enough to identify the culprit."));
+    this->rollbackPacingTraceCheckBox = new QCheckBox(tr("Enable pacing trace logging"), rollbackLoggingGroupBox);
     this->rollbackPacingTraceCheckBox->setToolTip(
-        "Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
-        "Enable this only while diagnosing frame pacing; it is disabled by default.");
-    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
-    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
-    this->rollbackPingDiagnosticsCheckBox = new QCheckBox("Enable lobby ping diagnostics logging", rollbackLoggingGroupBox);
+        tr("Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
+            "Enable this only while diagnosing frame pacing; it is disabled by default."));
+    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox(tr("Enable verbose PIF input logging"), rollbackLoggingGroupBox);
+    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox(tr("Enable verbose Glide input logging"), rollbackLoggingGroupBox);
+    this->rollbackPingDiagnosticsCheckBox = new QCheckBox(tr("Enable lobby ping diagnostics logging"), rollbackLoggingGroupBox);
     this->rollbackPingDiagnosticsCheckBox->setToolTip(
-        "Write a detailed lobby_ping_*.log file (in the Logs folder) tracing ICE/STUN\n"
-        "candidate gathering, signaling, connectivity checks, and peer pings. Candidate\n"
-        "addresses are included, but ICE credentials are redacted. Only useful when\n"
-        "debugging connection problems. Applies the next time you connect to the lobby.");
-    this->rollbackHideLocationCheckBox = new QCheckBox("Hide my location from other players", rollbackTab);
+        tr("Write a detailed lobby_ping_*.log file (in the Logs folder) tracing ICE/STUN\n"
+            "candidate gathering, signaling, connectivity checks, and peer pings. Candidate\n"
+            "addresses are included, but ICE credentials are redacted. Only useful when\n"
+            "debugging connection problems. Applies the next time you connect to the lobby."));
+    this->rollbackHideLocationCheckBox = new QCheckBox(tr("Hide my location from other players"), rollbackTab);
     this->rollbackHideLocationCheckBox->setToolTip(
         "Your row in the netplay lobby shows no country flag, and no country in its\n"
         "hover tooltip, for everyone on the server. Region-based ping estimates still\n"
@@ -282,7 +282,7 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     rollbackLoggingLayout->addWidget(this->rollbackPingDiagnosticsCheckBox);
     rollbackLayout->addWidget(rollbackLoggingGroupBox);
     rollbackLayout->addStretch();
-    this->tabWidget->addTab(rollbackTab, "Rollback");
+    this->tabWidget->addTab(rollbackTab, tr("Rollback"));
 
     this->setIconsForEmulationInfoText();
 
@@ -398,7 +398,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
     if (!this->exclusiveMonitorComboBox->property("populated").toBool())
     {
         this->exclusiveMonitorComboBox->clear();
-        this->exclusiveMonitorComboBox->addItem("Primary Monitor", "");
+        this->exclusiveMonitorComboBox->addItem(tr("Primary Monitor"), "");
         DISPLAY_DEVICEW displayDevice = {};
         displayDevice.cb = sizeof(displayDevice);
         for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &displayDevice, 0); i++)
@@ -416,7 +416,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
             int displayIdx = devName.lastIndexOf("DISPLAY");
             if (displayIdx >= 0)
             {
-                displayNum = "Display " + devName.mid(displayIdx + 7);
+                displayNum = tr("Display %1").arg(devName.mid(displayIdx + 7));
             }
             QString label;
             if (EnumDisplayDevicesW(displayDevice.DeviceName, 0, &monitor, 0))
@@ -477,7 +477,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
 
     // populate resolutions
     this->exclusiveResolutionComboBox->clear();
-    this->exclusiveResolutionComboBox->addItem("Desktop Default", "");
+    this->exclusiveResolutionComboBox->addItem(tr("Desktop Default"), "");
     for (const auto& res : resolutions)
     {
         QString text = QString("%1x%2").arg(res.width).arg(res.height);
@@ -514,10 +514,10 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
 
     // populate refresh rates
     this->exclusiveRefreshRateComboBox->clear();
-    this->exclusiveRefreshRateComboBox->addItem("Desktop Default", 0);
+    this->exclusiveRefreshRateComboBox->addItem(tr("Desktop Default"), 0);
     for (int rate : refreshRates)
     {
-        QString text = QString("%1 Hz").arg(rate);
+        QString text = tr("%1 Hz").arg(rate);
         this->exclusiveRefreshRateComboBox->addItem(text, rate);
     }
 
@@ -779,7 +779,7 @@ void SettingsDialog::loadGamePluginSettings(void)
     for (QComboBox *comboBox : comboBoxArray)
     {
         comboBox->clear();
-        comboBox->addItem("**Use Core Plugin Settings**");
+        comboBox->addItem(tr("**Use Core Plugin Settings**"));
     }
 
     for (const auto &p : this->pluginList)
@@ -923,7 +923,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveMonitorComboBox->clear();
         // monitor combobox is populated in populateExclusiveFullscreenModes
         // seed with saved value so it gets selected after population
-        this->exclusiveMonitorComboBox->addItem("Primary Monitor", "");
+        this->exclusiveMonitorComboBox->addItem(tr("Primary Monitor"), "");
         if (!savedMonitor.isEmpty())
         {
             this->exclusiveMonitorComboBox->addItem(savedMonitor, savedMonitor);
@@ -932,7 +932,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveMonitorComboBox->blockSignals(false);
         this->exclusiveResolutionComboBox->blockSignals(true);
         this->exclusiveResolutionComboBox->clear();
-        this->exclusiveResolutionComboBox->addItem("Desktop Default", "");
+        this->exclusiveResolutionComboBox->addItem(tr("Desktop Default"), "");
         if (!savedRes.isEmpty())
         {
             this->exclusiveResolutionComboBox->addItem(savedRes, savedRes);
@@ -941,10 +941,10 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveResolutionComboBox->blockSignals(false);
         this->exclusiveRefreshRateComboBox->blockSignals(true);
         this->exclusiveRefreshRateComboBox->clear();
-        this->exclusiveRefreshRateComboBox->addItem("Desktop Default", 0);
+        this->exclusiveRefreshRateComboBox->addItem(tr("Desktop Default"), 0);
         if (savedRate > 0)
         {
-            this->exclusiveRefreshRateComboBox->addItem(QString("%1 Hz").arg(savedRate), savedRate);
+            this->exclusiveRefreshRateComboBox->addItem(tr("%1 Hz").arg(savedRate), savedRate);
             this->exclusiveRefreshRateComboBox->setCurrentIndex(1);
         }
         this->exclusiveRefreshRateComboBox->blockSignals(false);
@@ -2237,10 +2237,10 @@ void SettingsDialog::on_coreCpuEmulatorComboBox_currentIndexChanged(int index)
 
 void SettingsDialog::on_changeNTSCPifRomButton_clicked(void)
 {
-    this->chooseFile(this->ntscPifRomLineEdit, tr("Open NTSC PIF ROM"), "PIF ROMs (*.rom)", { "5C124E7948ADA85DA603A522782940D0", "4921D5F2165DEE6E2496F4388C4C81DA" });
+    this->chooseFile(this->ntscPifRomLineEdit, tr("Open NTSC PIF ROM"), tr("PIF ROMs (*.rom)"), { "5C124E7948ADA85DA603A522782940D0", "4921D5F2165DEE6E2496F4388C4C81DA" });
 }
 
 void SettingsDialog::on_changePALPifRomButton_clicked(void)
 {
-    this->chooseFile(this->palPifRomLineEdit, tr("Open PAL PIF ROM"), "PIF ROMs (*.rom)", { "D4232DC935CAD0650AC2664D52281F3A", "2B6EEC586FAA43F3462333B844834554" });
+    this->chooseFile(this->palPifRomLineEdit, tr("Open PAL PIF ROM"), tr("PIF ROMs (*.rom)"), { "D4232DC935CAD0650AC2664D52281F3A", "2B6EEC586FAA43F3462333B844834554" });
 }
