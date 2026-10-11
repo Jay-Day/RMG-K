@@ -256,6 +256,19 @@ namespace
         return c.fail;
     }
 
+    bool liveReplayPreference()
+    {
+        QSettings settings("RMG-K", "n02");
+        return settings.value("RollbackLobby/LiveReplayEnabled", true).toBool();
+    }
+
+    QString matchViewersLabel(const LobbyClient::LobbyRoomSummary& room)
+    {
+        if (!room.broadcasting || room.matchId == 0)
+            return {};
+        return QStringLiteral("%1 🔴").arg(room.viewerCount);
+    }
+
     // Friendly label for an authoritative *room* state. Distinct from
     // stateGlyph(), which maps per-user presence states ("playing", "in_room",
     // …); the room state machine uses a different vocabulary ("waiting",
@@ -705,7 +718,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
         s.setValue(QString("RollbackLobby/RoomsHeaderState.c%1").arg(m_roomsTree->columnCount()),
                    m_roomsTree->header()->saveState());
     if (m_matchesTree)
-        s.setValue(QString("RollbackLobby/MatchesHeaderState.v2.c%1").arg(m_matchesTree->columnCount()),
+        s.setValue(QString("RollbackLobby/MatchesHeaderState.v3.c%1").arg(m_matchesTree->columnCount()),
                    m_matchesTree->header()->saveState());
     if (m_browseSplitter)
         s.setValue("RollbackLobby/BrowseSplitterState", m_browseSplitter->saveState());
@@ -877,8 +890,8 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_quickMatchBtn->setCursor(Qt::PointingHandCursor);
     m_quickMatchBtn->setToolTip(
         "Auto-match with another player searching for the selected game.\n"
-        "Uses your automatic frame delay and default 7-frame prediction window.\n"
-        "Both can be changed per player during the warmup.");
+        "Uses Auto frame delay unless remembering your last choice is enabled.\n"
+        "Your frame delay can be changed during the warmup. Prediction defaults to 7 frames.");
 
     m_createRoomBtn = new QPushButton("Create Room…", this);
     m_createRoomBtn->setObjectName("CreateRoomBtn");
@@ -1026,12 +1039,8 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     m_matchesTree = new QTreeWidget(this);
     m_matchesTree->setObjectName("MatchesTree");
-    // Column order mirrors Active Rooms — the wide ROM column second-to-last
-    // with a narrow stat column (Duration, like Seats) at the right edge — so
-    // the two trees resize identically under clampTreeColumns. With ROM last,
-    // the divider beside it traded against ROM's whole width, which no divider
-    // in the rooms tree does.
-    m_matchesTree->setHeaderLabels({ "Players", "ROM", "Duration" });
+    // Keep the wide text columns first and the compact match stats at the right.
+    m_matchesTree->setHeaderLabels({ "Players", "ROM", "Duration", "Viewers" });
     m_matchesTree->setRootIsDecorated(false);
     m_matchesTree->setSortingEnabled(true);
     m_matchesTree->sortItems(2, Qt::AscendingOrder);
@@ -1044,14 +1053,23 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_matchesTree->setColumnWidth(0, 220);
     m_matchesTree->setColumnWidth(1, 160);
     m_matchesTree->setColumnWidth(2, 80);
+    m_matchesTree->setColumnWidth(3, 64);
     {
-        // v2: ROM and Duration swapped places, so unversioned states carry
-        // widths and a sort column for the old order — leave them orphaned.
+        // v3 keeps the stats compact while preserving saved text column widths.
         QSettings s("RMG-K", "n02");
-        const QString key = QString("RollbackLobby/MatchesHeaderState.v2.c%1").arg(m_matchesTree->columnCount());
+        const QString key = QString("RollbackLobby/MatchesHeaderState.v3.c%1").arg(m_matchesTree->columnCount());
         const QByteArray headerState = s.value(key).toByteArray();
         if (!headerState.isEmpty())
             m_matchesTree->header()->restoreState(headerState);
+        else
+        {
+            const QString oldKey = QString("RollbackLobby/MatchesHeaderState.v2.c%1").arg(m_matchesTree->columnCount());
+            const QByteArray oldState = s.value(oldKey).toByteArray();
+            if (!oldState.isEmpty())
+                m_matchesTree->header()->restoreState(oldState);
+            m_matchesTree->setColumnWidth(2, 80);
+            m_matchesTree->setColumnWidth(3, 64);
+        }
         m_matchesTree->header()->setStretchLastSection(false);
         m_matchesTree->header()->setSectionResizeMode(QHeaderView::Interactive);
     }
@@ -1213,11 +1231,16 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     // Broadcast replay bytes to the server without requiring a local file.
     m_broadcastCheck = new QCheckBox("Live Replay", this);
+    m_broadcastCheck->setChecked(liveReplayPreference());
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (m_suppressSettingsSignal) return;
         updateRecordingControls();
-        if (m_currentRoomId != 0 && m_client)
+        if (m_currentRoomId != 0 && m_client && m_currentRoomHostId == m_client->selfUserId())
+        {
+            QSettings settings("RMG-K", "n02");
+            settings.setValue("RollbackLobby/LiveReplayEnabled", checked);
             m_client->updateRoomLiveReplay(checked);
+        }
     });
     toggleRow->addWidget(m_broadcastCheck);
     toggleRow->addStretch(1);
@@ -1230,6 +1253,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         if (m_suppressSettingsSignal) return;
         if (m_currentRoomId == 0) return;
         m_delayAuto = (m_delayCombo->currentData().toInt() == -1);
+        if (CoreSettingsGetBoolValue(SettingsID::Rollback_RememberInputDelay))
+        {
+            QSettings settings("RMG-K", "n02");
+            settings.setValue("RollbackLobby/LastInputDelay", m_delayCombo->currentData().toInt());
+        }
         applyLocalFrameDelay(true);
     };
     connect(m_delayCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -2235,8 +2263,12 @@ void RollbackLobbyDialog::clampTreeColumns(QTreeWidget* tree, int resizedIndex)
     // left. Viewport resizes (index -1) — and direct resizes of the last
     // column, whose own right edge is the viewport border — are absorbed by
     // the fill column instead.
-    const int absorber = (resizedIndex >= 0 && resizedIndex < count - 1)
+    int absorber = (resizedIndex >= 0 && resizedIndex < count - 1)
         ? resizedIndex + 1 : 0;
+    // Match stats stay compact: trade spare space between Players and ROM
+    // instead of expanding Duration when the ROM column is narrowed.
+    if (tree == m_matchesTree)
+        absorber = resizedIndex == 0 ? 1 : 0;
 
     const auto fitToViewport = [&](int target) {
         int others = 0;
@@ -2262,11 +2294,16 @@ void RollbackLobbyDialog::clampTreeColumns(QTreeWidget* tree, int resizedIndex)
         const int dragged = (resizedIndex >= 0 && resizedIndex < count &&
                              resizedIndex != absorber) ? resizedIndex : -1;
         std::vector<int> order;
+        if (tree == m_matchesTree)
+            order.push_back(absorber == 0 ? 1 : 0);
         if (dragged >= 0)
-            order.push_back(dragged);
+        {
+            if (std::find(order.begin(), order.end(), dragged) == order.end())
+                order.push_back(dragged);
+        }
         for (int i = count - 1; i >= 0; --i)
         {
-            if (i != absorber && i != dragged)
+            if (i != absorber && std::find(order.begin(), order.end(), i) == order.end())
                 order.push_back(i);
         }
         for (int i : order)
@@ -2802,6 +2839,8 @@ public:
             // A later start means a shorter duration.
             return data(2, Qt::UserRole).toLongLong() > other.data(2, Qt::UserRole).toLongLong();
         }
+        if (tree && tree->sortColumn() == 3)
+            return data(3, Qt::UserRole).toInt() < other.data(3, Qt::UserRole).toInt();
         return QTreeWidgetItem::operator<(other);
     }
 };
@@ -2866,6 +2905,8 @@ void RollbackLobbyDialog::onRoomListChanged()
             matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(" vs "));
             matchRow->setText(1, r.romName);
             matchRow->setText(2, formatMatchDuration(r.startedAtMs));
+            matchRow->setText(3, matchViewersLabel(r));
+            matchRow->setData(3, Qt::UserRole, r.broadcasting && r.matchId != 0 ? r.viewerCount : -1);
             matchRow->setData(0, Qt::UserRole, QVariant::fromValue(r.id));
             matchRow->setData(0, Qt::UserRole + 1, QVariant::fromValue(r.matchId)); // 0 unless broadcast
             matchRow->setData(2, Qt::UserRole, r.startedAtMs); // for the duration ticker
@@ -2876,8 +2917,7 @@ void RollbackLobbyDialog::onRoomListChanged()
             {
                 const QColor live(0x2e, 0xa0, 0x43); // green, readable on light + dark
                 const QString tip = QStringLiteral("🔴 Live — double-click to watch");
-                matchRow->setText(0, QStringLiteral("🔴  ") + matchRow->text(0));
-                for (int col = 0; col < 3; ++col)
+                for (int col = 0; col < m_matchesTree->columnCount(); ++col)
                 {
                     matchRow->setForeground(col, live);
                     matchRow->setToolTip(col, tip);
@@ -3147,6 +3187,7 @@ void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
 void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatLine)
 {
     m_currentRoomId = roomId;
+    m_liveReplayPreferencePublished = false;
 
     // The dialog survives reconnects and room changes. Recheck storage and
     // reset the recording choice on entry, then preserve it for this room.
@@ -3165,17 +3206,26 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     m_quickMatchActive = false;
     if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
 
-    // Every freshly-entered room starts in Auto delay while waiting for the
-    // authoritative room prediction to arrive in ROOM_STATE.
-    m_delayAuto = true;
+    // Restore only our selected mode/value, never an Auto calculation or a
+    // remote player's delay. With remembering disabled, each room uses Auto.
+    int preferredDelay = -1;
+    if (CoreSettingsGetBoolValue(SettingsID::Rollback_RememberInputDelay))
+    {
+        QSettings settings("RMG-K", "n02");
+        bool valid = false;
+        const int savedDelay = settings.value("RollbackLobby/LastInputDelay", -1).toInt(&valid);
+        if (valid && m_delayCombo && m_delayCombo->findData(savedDelay) >= 0)
+            preferredDelay = savedDelay;
+    }
+    m_delayAuto = preferredDelay == -1;
     m_predictionAuto = true;
     m_localDelayPublished = false;
-    m_currentRoomDelay = autoFrameDelayForPing(-1);
+    m_currentRoomDelay = m_delayAuto ? autoFrameDelayForPing(-1) : preferredDelay;
     m_currentRoomPrediction = kDefaultPredictionWindow;
     if (m_delayCombo && m_predictionCombo)
     {
         m_suppressSettingsSignal = true;
-        m_delayCombo->setCurrentIndex(m_delayCombo->findData(-1));
+        m_delayCombo->setCurrentIndex(m_delayCombo->findData(preferredDelay));
         setAutoComboLabel(m_delayCombo, m_currentRoomDelay);
         m_predictionCombo->setCurrentIndex(m_predictionCombo->findData(0));
         m_suppressSettingsSignal = false;
@@ -3313,9 +3363,20 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     // New servers publish the host's choice. With an older server, preserve the
     // host's local checkbox so an unrelated ROOM_STATE cannot silently disarm it;
     // non-hosts have no authoritative value to display and therefore show off.
-    const bool liveReplayEnabled = roomState.contains("liveReplayEnabled")
+    bool liveReplayEnabled = roomState.contains("liveReplayEnabled")
         ? roomState.value("liveReplayEnabled").toBool()
         : (iAmHost && m_broadcastCheck && m_broadcastCheck->isChecked());
+
+    // Initialize each room we host from our own saved choice, including Quick
+    // Match rooms. Remote hosts' settings must never replace that preference.
+    if (iAmHost && state == "waiting" && !m_liveReplayPreferencePublished)
+    {
+        m_liveReplayPreferencePublished = true;
+        const bool preferred = liveReplayPreference();
+        if (roomState.contains("liveReplayEnabled") && liveReplayEnabled != preferred)
+            m_client->updateRoomLiveReplay(preferred);
+        liveReplayEnabled = preferred;
+    }
 
     m_currentRoomGame       = romName;
     m_currentRoomMd5        = romMd5;
@@ -3511,7 +3572,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     // Start button gating (host-only): waiting, 2+ seated, every pair measured.
     // Re-resolve local Auto after seat changes too: a join/leave can change this
     // player's worst relevant path even before another probe result arrives.
-    if (m_delayAuto)
+    // Publish a restored fixed choice once the initial room state has arrived.
+    if (m_delayAuto || !m_localDelayPublished)
         applyLocalFrameDelay(false);
     refreshStartButton();
 }
@@ -3980,7 +4042,7 @@ void RollbackLobbyDialog::applyLocalFrameDelay(bool force)
     }
 
     // Persist the concrete local value (never the Auto sentinel) as the legacy
-    // create-room seed. Auto mode itself intentionally resets for each room.
+    // create-room seed. The optional remembered choice is stored separately.
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     s.setValue("Delay", delay);
@@ -4397,6 +4459,11 @@ void RollbackLobbyDialog::onQuickMatchStatusChanged(bool searching, int queueSiz
 void RollbackLobbyDialog::startBroadcast(quint64 matchId)
 {
     if (m_broadcasting) return;
+    if (!m_client->sendBroadcastBegin(matchId))
+    {
+        appendChatSystemLine(CHANNEL_ROOM, "Live Replay unavailable: the match settings are missing or too large to sync.");
+        return;
+    }
     m_broadcasting = true;
     m_broadcastMatchId = matchId;
     m_lastKeyframeRequestMs = 0; // request the first keyframe on the next drain tick
@@ -4408,7 +4475,6 @@ void RollbackLobbyDialog::startBroadcast(quint64 matchId)
     n02::setRecordingStreamSink([this](const void* data, int len) {
         this->feedBroadcastBytes(data, len);
     });
-    m_client->sendBroadcastBegin(matchId);
     m_broadcastDrainTimer->start();
     emit liveReplayViewerCountChanged(0, false);
     appendChatSystemLine(CHANNEL_ROOM, "Live Replay on — others can watch this match.");
@@ -4503,9 +4569,19 @@ void RollbackLobbyDialog::stopSpectating()
     emit liveReplayViewerCountCleared();
 }
 
-void RollbackLobbyDialog::onSpectateBegan(quint64 matchId)
+void RollbackLobbyDialog::onSpectateBegan(quint64 matchId, const QByteArray& manifest)
 {
     if (matchId != m_spectatingMatchId) return;
+    if (m_spectateStreamArmed) return;
+    // Use the same parser and session-only cheat set as players, before any
+    // replay input or keyframe can start emulation. An empty cheat set is valid;
+    // a missing manifest is not safe to replay with local or leftover cheats.
+    if (!m_client->applySpectateManifest(manifest))
+    {
+        m_client->stopSpectate(matchId);
+        onSpectateFailed(matchId, QStringLiteral("invalid_manifest"));
+        return;
+    }
     // The session boundary: everything on the wire before this is leftover from a
     // prior watch of this same match. Arm the stream now; keyframe + tail follow.
     m_spectateStreamArmed = true;
@@ -4542,6 +4618,7 @@ void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reaso
     const QString human =
         reason == "not_broadcasting" ? QStringLiteral("That live replay isn't available anymore.") :
         reason == "ended"            ? QStringLiteral("That live replay just ended.") :
+        reason == "invalid_manifest" ? QStringLiteral("The live replay's cheat settings are missing or invalid. The host and lobby server need to support spectator cheat sync.") :
                                        QStringLiteral("Couldn't watch: %1").arg(reason);
     QMessageBox::information(this, "Live Replay", human);
     emit spectateStreamClosed(reason);
@@ -4549,6 +4626,19 @@ void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reaso
 
 void RollbackLobbyDialog::onBroadcastViewerCount(quint64 matchId, int viewerCount)
 {
+    // Refresh only the affected label so audience changes preserve selection.
+    for (int i = 0; i < m_matchesTree->topLevelItemCount(); ++i)
+    {
+        auto* row = m_matchesTree->topLevelItem(i);
+        if (row->data(0, Qt::UserRole + 1).toULongLong() != matchId) continue;
+        const auto room = m_client->rooms().constFind(row->data(0, Qt::UserRole).toULongLong());
+        if (room != m_client->rooms().constEnd())
+        {
+            row->setText(3, matchViewersLabel(room.value()));
+            row->setData(3, Qt::UserRole, room->broadcasting && room->matchId != 0 ? room->viewerCount : -1);
+        }
+        break;
+    }
     if (m_broadcasting && matchId == m_broadcastMatchId)
     {
         emit liveReplayViewerCountChanged(viewerCount, false);
@@ -4711,17 +4801,6 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         n02_kaillera_recording_enabled = m_recordCheck->isChecked();
     }
 
-    // If broadcasting, arm the krec tee and announce to the server now — before
-    // MainWindow calls recordingOpen, so the .krec header is captured too. Host-
-    // only: the broadcast checkbox is disabled for non-hosts, and the server also
-    // rejects a non-host BROADCAST_BEGIN — this is the matching client guard.
-    const bool iAmHostForBroadcast =
-        (m_client && m_currentRoomHostId == m_client->selfUserId());
-    if (iAmHostForBroadcast && m_broadcastCheck && m_broadcastCheck->isChecked())
-    {
-        startBroadcast(matchId);
-    }
-
     // Capture seated player names (slot-indexed) for the .krec header, the same
     // way the p2p / kaillera paths fill recording_player_names before a recording
     // starts. MainWindow begins replay capture when it launches the match,
@@ -4774,6 +4853,15 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         return;
     }
     appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");
+
+    // Share the exact settings just synced to the players. Arm the stream sink
+    // before matchReady begins capture, leaving local recording independent.
+    const bool iAmHostForBroadcast =
+        (m_client && m_currentRoomHostId == m_client->selfUserId());
+    if (iAmHostForBroadcast && m_broadcastCheck && m_broadcastCheck->isChecked())
+    {
+        startBroadcast(matchId);
+    }
 
     rmgk_gekko::clear_external_socket();
 

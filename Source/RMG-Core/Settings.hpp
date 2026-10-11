@@ -114,6 +114,7 @@ enum class SettingsID
     Rollback_PacingMode,
     Rollback_PingDiagnostics,
     Rollback_HideLocation,
+    Rollback_RememberInputDelay,
 
     // Core Plugin Settings
     Core_GFX_Plugin,

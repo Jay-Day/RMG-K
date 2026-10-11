@@ -1059,6 +1059,7 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.startedAtMs = static_cast<qint64>(o.value("startedAt").toDouble());
         r.broadcasting = o.value("broadcasting").toBool();
         r.matchId      = static_cast<quint64>(o.value("matchId").toDouble());
+        r.viewerCount  = qMax(0, o.value("viewerCount").toInt());
         for (const auto& n : o.value("playerNames").toArray())
             r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
@@ -1952,7 +1953,9 @@ void LobbyClient::handleQuickMatchStatus(const QJsonObject& data)
 
 void LobbyClient::handleSpectateBegin(const QJsonObject& data)
 {
-    emit spectateBegan(static_cast<quint64>(data.value("matchId").toDouble()));
+    const QByteArray manifest = QByteArray::fromBase64(
+        data.value("manifest").toString().toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
+    emit spectateBegan(static_cast<quint64>(data.value("matchId").toDouble()), manifest);
 }
 
 void LobbyClient::handleSpectateData(const QJsonObject& data)
@@ -2038,6 +2041,12 @@ void LobbyClient::handleBroadcastViewerCount(const QJsonObject& data)
 {
     const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
     const int viewerCount = qMax(0, data.value("viewerCount").toInt());
+    if (matchId == 0) return;
+    for (auto it = m_rooms.begin(); it != m_rooms.end(); ++it)
+    {
+        if (it->matchId == matchId)
+            it->viewerCount = viewerCount;
+    }
     emit broadcastViewerCount(matchId, viewerCount);
 }
 
@@ -2288,6 +2297,7 @@ void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
 bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot,
                                        quint64 hostUserId, const QString& romFile, QString& error)
 {
+    m_prematchManifest.clear();
     error.clear();
     if (m_selfUserId == 0 || localSlot < 1)
     {
@@ -2402,6 +2412,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
             error = QString::fromStdString(CoreGetError());
             return false;
         }
+        m_prematchManifest = QByteArray::fromStdString(manifest);
         qInfo() << "Rollback lobby ICE prematch host complete"
                 << "hash" << static_cast<qulonglong>(manifestHash)
                 << "cheats" << static_cast<qulonglong>(cheatCount);
@@ -3243,11 +3254,29 @@ void LobbyClient::reportMatchFinished(quint64 matchId)
     sendEnvelope("MATCH_FINISHED", d);
 }
 
-void LobbyClient::sendBroadcastBegin(quint64 matchId)
+bool LobbyClient::sendBroadcastBegin(quint64 matchId)
 {
+    // Leave room for base64 and the JSON envelope under the server's 1 MiB limit.
+    if (m_prematchManifest.isEmpty() || m_prematchManifest.size() > 512 * 1024)
+        return false;
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
+    d["manifest"] = QString::fromLatin1(m_prematchManifest.toBase64());
     sendEnvelope("BROADCAST_BEGIN", d);
+    return true;
+}
+
+bool LobbyClient::applySpectateManifest(const QByteArray& manifest)
+{
+    uint64_t manifestHash = 0;
+    size_t cheatCount = 0;
+    if (manifest.isEmpty() || manifest.size() > 512 * 1024 ||
+        !applyPrematchManifest(manifest.toStdString(), manifestHash, cheatCount))
+        return false;
+    qInfo() << "Rollback lobby spectator prematch complete"
+            << "hash" << static_cast<qulonglong>(manifestHash)
+            << "cheats" << static_cast<qulonglong>(cheatCount);
+    return true;
 }
 
 void LobbyClient::sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame)

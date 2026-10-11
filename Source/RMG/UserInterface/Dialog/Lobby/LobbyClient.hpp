@@ -86,6 +86,7 @@ public:
         qint64 startedAtMs = 0;    // match start, unix ms (0 until in-game)
         bool    broadcasting = false; // a player is streaming this match for spectators
         quint64 matchId = 0;          // current match id (set only while broadcasting)
+        int viewerCount = 0;
     };
 
     struct LobbyMatchPeer
@@ -193,7 +194,7 @@ public:
     void reportMatchFinished(quint64 matchId);
 
     // Broadcast (one player streams the live match's .krec up to the server).
-    void sendBroadcastBegin(quint64 matchId);
+    bool sendBroadcastBegin(quint64 matchId);
     void sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame); // raw krec bytes (base64'd) + broadcaster's live frame
     // Compress and upload a savestate keyframe plus the first krec record
     // index to consume after restore. Split it so each message stays under the limit.
@@ -206,6 +207,7 @@ public:
     // Spectate (pull a broadcast match's krec stream back down).
     void startSpectate(quint64 matchId);
     void stopSpectate(quint64 matchId);
+    bool applySpectateManifest(const QByteArray& manifest);
 
     // Moderation. sendAdminAuth claims the moderator role with a password;
     // sendModAction issues a command once authenticated. action is one of
@@ -296,7 +298,7 @@ signals:
     void quickMatchStatus(bool searching, int queueSize);
 
     // Spectate stream (server → spectator). data carries decoded krec bytes.
-    void spectateBegan(quint64 matchId);
+    void spectateBegan(quint64 matchId, const QByteArray& manifest);
     // offset is the logical byte position in this spectator's krec stream, or
     // -1 when talking to a legacy server that does not provide offsets.
     void spectateData(quint64 matchId, const QByteArray& data, int liveFrame, qint64 offset);
@@ -419,6 +421,9 @@ private:
     QTimer* m_anchorRetryTimer = nullptr;
     qint64  m_anchorRetryDeadlineMs = 0;
     bool m_inPrematchSync = false;
+
+    // Exact host manifest from the successful player sync, reused by live replay.
+    QByteArray m_prematchManifest;
 
     // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
     int        m_kfRecvFrame = -1;

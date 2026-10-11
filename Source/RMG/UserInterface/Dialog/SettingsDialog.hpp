@@ -77,6 +77,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     QCheckBox* rollbackVerboseGlideInputLoggingCheckBox = nullptr;
     QCheckBox* rollbackPingDiagnosticsCheckBox = nullptr;
     QCheckBox* rollbackHideLocationCheckBox = nullptr;
+    QCheckBox* rollbackRememberInputDelayCheckBox = nullptr;
 
     std::vector<CorePlugin> pluginList;
 

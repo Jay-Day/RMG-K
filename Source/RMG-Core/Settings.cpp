@@ -365,6 +365,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_HideLocation:
         setting = {SETTING_SECTION_ROLLBACK, "HideLocation", false};
         break;
+    case SettingsID::Rollback_RememberInputDelay:
+        setting = {SETTING_SECTION_ROLLBACK, "RememberInputDelay", false};
+        break;
     case SettingsID::Rollback_PacingTrace:
         setting = {SETTING_SECTION_ROLLBACK, "PacingTrace", false};
         break;
