@@ -4522,6 +4522,7 @@ void MainWindow::cleanupLobbySpectateSession()
         return;
     }
     this->ui_SpectateCleanupPending = false;
+    CoreSetNetplayCheats({}); // also clear a manifest staged before the ROM opened
 
     if (this->kailleraSessionManager != nullptr)
     {

@@ -148,7 +148,7 @@ private slots:
     void onBroadcastDrainTick();
 
     // Spectator: server stream callbacks.
-    void onSpectateBegan(quint64 matchId);
+    void onSpectateBegan(quint64 matchId, const QByteArray& manifest);
     void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset);
     void onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
     void onSpectateEnded(quint64 matchId, const QString& reason);
@@ -478,6 +478,7 @@ private:
     bool    m_delayAuto = true;
     bool    m_predictionAuto = true;
     bool    m_localDelayPublished = false;
+    bool    m_liveReplayPreferencePublished = false;
 
     bool m_awaitingEmulationStart = false;
     bool m_emulationActive        = false;

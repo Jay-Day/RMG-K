@@ -262,12 +262,18 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
             "debugging connection problems. Applies the next time you connect to the lobby."));
     this->rollbackHideLocationCheckBox = new QCheckBox(tr("Hide my location from other players"), rollbackTab);
     this->rollbackHideLocationCheckBox->setToolTip(
-        tr("Your row in the netplay lobby shows no country flag, and no country in its\n"
-            "hover tooltip, for everyone on the server. Region-based ping estimates still\n"
-            "work. Players you actually play with still exchange connection addresses —\n"
-            "this hides the flag, not your traffic. Applies the next time you connect."));
+        "Your row in the netplay lobby shows no country flag, and no country in its\n"
+        "hover tooltip, for everyone on the server. Region-based ping estimates still\n"
+        "work. Players you actually play with still exchange connection addresses —\n"
+        "this hides the flag, not your traffic. Applies the next time you connect.");
+    this->rollbackRememberInputDelayCheckBox = new QCheckBox("Remember my last input delay", rollbackTab);
+    this->rollbackRememberInputDelayCheckBox->setToolTip(
+        "Reuse your last frame delay choice when hosting or joining a rollback lobby room,\n"
+        "including Quick Match. Choosing Auto remembers Auto instead of its calculated value.\n"
+        "When disabled, each new room starts on Auto. Applies the next time you enter a room.");
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
     rollbackLayout->addWidget(this->rollbackHideLocationCheckBox);
+    rollbackLayout->addWidget(this->rollbackRememberInputDelayCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackPacingTraceCheckBox);
@@ -1023,6 +1029,7 @@ void SettingsDialog::loadRollbackSettings(void)
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
     this->rollbackPingDiagnosticsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_PingDiagnostics));
     this->rollbackHideLocationCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_HideLocation));
+    this->rollbackRememberInputDelayCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_RememberInputDelay));
 }
 
 void SettingsDialog::loadDefaultCoreSettings(void)
@@ -1245,6 +1252,7 @@ void SettingsDialog::loadDefaultRollbackSettings(void)
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
     this->rollbackPingDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_PingDiagnostics));
     this->rollbackHideLocationCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_HideLocation));
+    this->rollbackRememberInputDelayCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_RememberInputDelay));
 }
 
 void SettingsDialog::saveSettings(void)
@@ -1525,6 +1533,7 @@ void SettingsDialog::saveRollbackSettings(void)
     CoreSettingsSetValue(SettingsID::Rollback_VerboseGlideInputLogging, this->rollbackVerboseGlideInputLoggingCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_PingDiagnostics, this->rollbackPingDiagnosticsCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_HideLocation, this->rollbackHideLocationCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_RememberInputDelay, this->rollbackRememberInputDelayCheckBox->isChecked());
 }
 
 void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)
