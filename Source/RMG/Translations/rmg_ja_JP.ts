@@ -1981,4 +1981,161 @@ Use Default mode anyway?</source>
             <translation>更新</translation>
         </message>
     </context>
+    <context>
+        <name>UserInterface::RomBrowserLoadingWidget</name>
+        <message>
+            <source>Loading</source>
+            <translation>読み込み中</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::RomBrowserSearchWidget</name>
+        <message>
+            <source>Search games...</source>
+            <translation>ゲームを検索...</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>閉じる</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Widget::RomBrowserWidget</name>
+        <message>
+            <source>Open Cover Image</source>
+            <translation>カバー画像を選択</translation>
+        </message>
+        <message>
+            <source>Cover Image (*.png *.jpeg *.jpg)</source>
+            <translation>カバー画像 (*.png *.jpeg *.jpg)</translation>
+        </message>
+        <message>
+            <source>Name</source>
+            <translation>名前</translation>
+        </message>
+        <message>
+            <source>Internal Name</source>
+            <translation>内部名</translation>
+        </message>
+        <message>
+            <source>MD5</source>
+            <translation>MD5</translation>
+        </message>
+        <message>
+            <source>Format</source>
+            <translation>形式</translation>
+        </message>
+        <message>
+            <source>File Name</source>
+            <translation>ファイル名</translation>
+        </message>
+        <message>
+            <source>File Ext.</source>
+            <translation>拡張子</translation>
+        </message>
+        <message>
+            <source>File Size</source>
+            <translation>ファイルサイズ</translation>
+        </message>
+        <message>
+            <source>I.D.</source>
+            <translation>ID</translation>
+        </message>
+        <message>
+            <source>Region</source>
+            <translation>地域</translation>
+        </message>
+        <message>
+            <source>Game Format</source>
+            <translation>ゲーム形式</translation>
+        </message>
+        <message>
+            <source>File Extension</source>
+            <translation>ファイル拡張子</translation>
+        </message>
+        <message>
+            <source>Game I.D.</source>
+            <translation>ゲームID</translation>
+        </message>
+        <message>
+            <source>Game Region</source>
+            <translation>ゲームの地域</translation>
+        </message>
+        <message>
+            <source>Play Game</source>
+            <translation>ゲームを起動</translation>
+        </message>
+        <message>
+            <source>Play Game with Disk</source>
+            <translation>ディスクと組み合わせて起動</translation>
+        </message>
+        <message>
+            <source>Play Game with Cartridge...</source>
+            <translation>カートリッジを選んで起動...</translation>
+        </message>
+        <message>
+            <source>Play Game with Disk...</source>
+            <translation>ディスクを選んで起動...</translation>
+        </message>
+        <message>
+            <source>Play Game with State</source>
+            <translation>セーブステートから起動</translation>
+        </message>
+        <message>
+            <source>Refresh ROM List</source>
+            <translation>ROM一覧を更新</translation>
+        </message>
+        <message>
+            <source>Open ROM Directory</source>
+            <translation>ROMフォルダーを開く</translation>
+        </message>
+        <message>
+            <source>Change ROM Directory...</source>
+            <translation>ROMフォルダーを変更...</translation>
+        </message>
+        <message>
+            <source>ROM Information</source>
+            <translation>ROM情報</translation>
+        </message>
+        <message>
+            <source>Edit Game Settings</source>
+            <translation>ゲーム設定を編集</translation>
+        </message>
+        <message>
+            <source>Edit Game Input Settings</source>
+            <translation>ゲーム入力設定を編集</translation>
+        </message>
+        <message>
+            <source>Edit Cheats</source>
+            <translation>チートを編集</translation>
+        </message>
+        <message>
+            <source>Reset Column Sizes</source>
+            <translation>列幅をリセット</translation>
+        </message>
+        <message>
+            <source>Show/Hide Columns</source>
+            <translation>列の表示/非表示</translation>
+        </message>
+        <message>
+            <source>Set Cover Image...</source>
+            <translation>カバー画像を設定...</translation>
+        </message>
+        <message>
+            <source>Change Cover Image...</source>
+            <translation>カバー画像を変更...</translation>
+        </message>
+        <message>
+            <source>Remove Cover Image</source>
+            <translation>カバー画像を削除</translation>
+        </message>
+        <message>
+            <source>Browse...</source>
+            <translation>参照...</translation>
+        </message>
+        <message>
+            <source>Slot %1 - %2</source>
+            <translation>スロット%1 - %2</translation>
+        </message>
+    </context>
 </TS>
