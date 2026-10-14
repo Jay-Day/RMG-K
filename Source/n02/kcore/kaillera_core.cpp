@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -78,6 +79,28 @@ static void SendPong() {
 	while(x < 4)
 		pong.store_int(x++);
 	KAILLERAC.connection->send_instruction(&pong);
+}
+
+static std::string normalizeKailleraWireText(const char* text)
+{
+	return n02::encoding::encodeKailleraText(text ? text : "");
+}
+
+static std::string normalizeKailleraUsernameForCompare(const char* text)
+{
+	const std::string encoded = normalizeKailleraWireText(text);
+	const std::size_t length = n02::encoding::safeCp932PrefixLength(encoded, 31);
+	return encoded.substr(0, length);
+}
+
+static bool kailleraWireEquals(const char* received, const char* local)
+{
+	return std::string(received ? received : "") == normalizeKailleraWireText(local);
+}
+
+static bool kailleraUsernameEquals(const char* received, const char* local)
+{
+	return std::string(received ? received : "") == normalizeKailleraUsernameForCompare(local);
 }
 
 void kaillera_print_core_status(){
@@ -360,8 +383,10 @@ void kaillera_ProcessGeneralInstruction(k_instruction * ki) {
 			kaillera_game_create_callback(gname, id, emulator, ki->user);
 			
 			if (KAILLERAC.game_id_requested) {
-				KAILLERAC.game_id = id;
-				if (strcmp(gname, KAILLERAC.GAME)==0 && strcmp(emulator, KAILLERAC.APP)==0 && strcmp(ki->user, KAILLERAC.USERNAME)==0) {
+				if (kailleraWireEquals(gname, KAILLERAC.GAME) &&
+					kailleraWireEquals(emulator, KAILLERAC.APP) &&
+					kailleraUsernameEquals(ki->user, KAILLERAC.USERNAME)) {
+					KAILLERAC.game_id = id;
 					KAILLERAC.game_id_requested = false;
 					KAILLERAC.user_id_requested = true;
 					
@@ -459,8 +484,8 @@ void kaillera_ProcessGeneralInstruction(k_instruction * ki) {
 			kaillera_player_joined_callback(username, ping, uid, connset);
 
 			if (KAILLERAC.user_id_requested) {
-				KAILLERAC.user_id = uid;
-				if (KAILLERAC.conset == connset && strcmp(username, KAILLERAC.USERNAME)==0) {
+				if (KAILLERAC.conset == connset && kailleraUsernameEquals(username, KAILLERAC.USERNAME)) {
+					KAILLERAC.user_id = uid;
 					KAILLERAC.user_id_requested = false;
 					KAILLERAC.USERSTAT = 3;
 					KAILLERAC.PLAYERSTAT = 0;
