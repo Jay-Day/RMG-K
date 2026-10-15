@@ -226,6 +226,8 @@ static void close_recording() {
 // the emulation thread before an input frame, so RecordingBuffer keeps a single
 // writer. Each record is flushed on its own; lines are length-bounded at enqueue
 // time so a record always fits RecordingBuffer's 500-byte buffer.
+// Chat goes to the saved file only, never the live stream: the players' room
+// chat isn't shared with spectators (they have their own lobby channel).
 static void drain_recording_chat() {
     std::vector<std::pair<std::string, std::string>> pending;
     {
@@ -234,11 +236,15 @@ static void drain_recording_chat() {
             return;
         pending.swap(recording_chat_queue);
     }
+    if (!recording_file.is_open())
+        return;
     for (auto& c : pending) {
         RecordingBuffer.put_char(8);
         RecordingBuffer.put_bytes(const_cast<char*>(c.first.c_str()),  (int)c.first.size()  + 1);
         RecordingBuffer.put_bytes(const_cast<char*>(c.second.c_str()), (int)c.second.size() + 1);
-        RecordingBuffer.write();
+        recording_file.write(RecordingBuffer.buffer, RecordingBuffer.len());
+        recording_file.flush();
+        RecordingBuffer.reset();
     }
 }
 
@@ -710,7 +716,9 @@ static int player_MPV(void* values, int size) {
             char msg[500];
             pb.load_str(nick, 100);
             pb.load_str(msg, 500);
-            if (infos.chatReceivedCallback)
+            // Spectators of a live stream don't see the players' chat. Newer
+            // broadcasters leave it out; this drops it from older ones.
+            if (!pb.streaming && infos.chatReceivedCallback)
                 infos.chatReceivedCallback(nick, msg);
             continue;
         }
