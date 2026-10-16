@@ -1398,8 +1398,23 @@ bool save_gekko_state(const PendingGekkoSave& save)
     // live rollback. Core mallocs the buffer; we copy it out and free it. HOLD the snapshot —
     // it's only committed once the recording flushes this frame to the krec without an
     // intervening rollback, so the bytes match the confirmed krec a spectator replays.
-    if (g_GekkoKeyframeRequested.load(std::memory_order_relaxed) && !g_GekkoKeyframePending &&
-        save.frame >= 0 && state.len > 0 && save.state != nullptr)
+    bool captureKeyframe = g_GekkoKeyframeRequested.load(std::memory_order_relaxed) &&
+                           !g_GekkoKeyframePending;
+    // Confirmation below requires this exact frame's input to reach the krec.
+    // Boot and other frames without a controller read have no recording entry:
+    // holding their snapshot would block every later capture forever. Leave the
+    // request armed until a save follows an actual controller read instead.
+    if (captureKeyframe && g_GekkoFrameInputBuffer.find(save.frame) == g_GekkoFrameInputBuffer.end())
+    {
+        captureKeyframe = false;
+        if (g_GekkoLogEnabled)
+        {
+            std::ostringstream stream;
+            stream << "keyframe deferred reason=no_controller_read frame=" << save.frame;
+            write_gekko_log(stream.str());
+        }
+    }
+    if (captureKeyframe && save.frame >= 0 && state.len > 0 && save.state != nullptr)
     {
         CoreRollbackState fullState{};
         if (CoreRollbackSaveFullStateInto(fullState, nullptr, 0, save.frame) &&
@@ -3527,6 +3542,12 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
         if (g_GekkoLatchedFrame >= 0 && !g_GekkoLatchedRunningAhead)
         {
             const int frame = g_GekkoLatchedFrame;
+            if (g_GekkoMaxObservedFrame < 0 && g_GekkoLogEnabled)
+            {
+                std::ostringstream stream;
+                stream << "recording first_controller_read frame=" << frame;
+                write_gekko_log(stream.str());
+            }
             g_GekkoFrameInputBuffer[frame] = g_GekkoLatchedInput;
             if (frame > g_GekkoMaxObservedFrame)
             {
