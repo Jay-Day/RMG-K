@@ -1666,10 +1666,10 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GCA, "Map_DpadRight", 11};
         break;
     case SettingsID::GCAInput_Map_CUp:
-        setting = {SETTING_SECTION_GCA, "Map_CUp", -1};
+        setting = {SETTING_SECTION_GCA, "Map_CUp", 16};
         break;
     case SettingsID::GCAInput_Map_CDown:
-        setting = {SETTING_SECTION_GCA, "Map_CDown", -1};
+        setting = {SETTING_SECTION_GCA, "Map_CDown", 17};
         break;
     case SettingsID::GCAInput_Map_CLeft:
         setting = {SETTING_SECTION_GCA, "Map_CLeft", 3};
