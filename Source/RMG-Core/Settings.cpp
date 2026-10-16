@@ -1669,7 +1669,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GCA, "Map_CUp", 16};
         break;
     case SettingsID::GCAInput_Map_CDown:
-        setting = {SETTING_SECTION_GCA, "Map_CDown", 17};
+        setting = {SETTING_SECTION_GCA, "Map_CDown", 15};
         break;
     case SettingsID::GCAInput_Map_CLeft:
         setting = {SETTING_SECTION_GCA, "Map_CLeft", 3};
