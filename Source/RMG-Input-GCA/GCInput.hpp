@@ -56,13 +56,13 @@ struct GCButtonMapping
     GCInput Start   = GCInput::Start;
     GCInput Z       = GCInput::LeftTrigger;
     GCInput Z2      = GCInput::RightTrigger;
-    GCInput L       = GCInput::CStickUp;
+    GCInput L       = GCInput::CStickLeft;
     GCInput R       = GCInput::Z;
     GCInput DpadUp    = GCInput::DpadUp;
     GCInput DpadDown  = GCInput::DpadDown;
     GCInput DpadLeft  = GCInput::DpadLeft;
     GCInput DpadRight = GCInput::DpadRight;
-    GCInput CUp     = GCInput::CStickLeft;
+    GCInput CUp     = GCInput::CStickUp;
     GCInput CDown   = GCInput::CStickDown;
     GCInput CLeft   = GCInput::Y;
     GCInput CRight  = GCInput::X;
