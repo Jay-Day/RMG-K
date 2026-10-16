@@ -1398,8 +1398,15 @@ bool save_gekko_state(const PendingGekkoSave& save)
     // live rollback. Core mallocs the buffer; we copy it out and free it. HOLD the snapshot —
     // it's only committed once the recording flushes this frame to the krec without an
     // intervening rollback, so the bytes match the confirmed krec a spectator replays.
-    if (g_GekkoKeyframeRequested.load(std::memory_order_relaxed) && !g_GekkoKeyframePending &&
-        save.frame >= 0 && state.len > 0 && save.state != nullptr)
+    bool captureKeyframe = g_GekkoKeyframeRequested.load(std::memory_order_relaxed) &&
+                           !g_GekkoKeyframePending;
+    // Wait for a frame where the game read controller input, so the snapshot
+    // has a matching replay entry to confirm before sharing it.
+    if (captureKeyframe && g_GekkoFrameInputBuffer.find(save.frame) == g_GekkoFrameInputBuffer.end())
+    {
+        captureKeyframe = false;
+    }
+    if (captureKeyframe && save.frame >= 0 && state.len > 0 && save.state != nullptr)
     {
         CoreRollbackState fullState{};
         if (CoreRollbackSaveFullStateInto(fullState, nullptr, 0, save.frame) &&
@@ -2110,10 +2117,13 @@ int rollback_execute_begin_frame(void* userData)
                 // A rollback to frame <= a held keyframe means that frame may be
                 // re-simulated differently than we snapshotted — discard the pending
                 // keyframe so we never commit a state that diverges from the krec.
+                // Re-arm the request so the next polled frame is captured instead of
+                // waiting for the UI's next periodic request.
                 if (g_GekkoKeyframePending &&
                     event->data.load.frame <= g_GekkoKeyframePendingLiveFrame)
                 {
                     g_GekkoKeyframePending = false;
+                    g_GekkoKeyframeRequested.store(true, std::memory_order_relaxed);
                     write_gekko_log("keyframe discarded reason=rollback");
                 }
                 if (!load_gekko_state(event))
