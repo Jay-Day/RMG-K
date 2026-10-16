@@ -1642,13 +1642,13 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GCA, "Map_Start", 5};
         break;
     case SettingsID::GCAInput_Map_Z:
-        setting = {SETTING_SECTION_GCA, "Map_Z", 13};
+        setting = {SETTING_SECTION_GCA, "Map_Z", 12};
         break;
     case SettingsID::GCAInput_Map_Z2:
-        setting = {SETTING_SECTION_GCA, "Map_Z2", -1};
+        setting = {SETTING_SECTION_GCA, "Map_Z2", 13};
         break;
     case SettingsID::GCAInput_Map_L:
-        setting = {SETTING_SECTION_GCA, "Map_L", 12};
+        setting = {SETTING_SECTION_GCA, "Map_L", 14};
         break;
     case SettingsID::GCAInput_Map_R:
         setting = {SETTING_SECTION_GCA, "Map_R", 4};
