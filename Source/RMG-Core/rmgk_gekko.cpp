@@ -1400,10 +1400,8 @@ bool save_gekko_state(const PendingGekkoSave& save)
     // intervening rollback, so the bytes match the confirmed krec a spectator replays.
     bool captureKeyframe = g_GekkoKeyframeRequested.load(std::memory_order_relaxed) &&
                            !g_GekkoKeyframePending;
-    // Confirmation below requires this exact frame's input to reach the krec.
-    // Boot and other frames without a controller read have no recording entry:
-    // holding their snapshot would block every later capture forever. Leave the
-    // request armed until a save follows an actual controller read instead.
+    // Wait for a frame where the game read controller input, so the snapshot
+    // has a matching replay entry to confirm before sharing it.
     if (captureKeyframe && g_GekkoFrameInputBuffer.find(save.frame) == g_GekkoFrameInputBuffer.end())
     {
         captureKeyframe = false;
