@@ -1407,12 +1407,6 @@ bool save_gekko_state(const PendingGekkoSave& save)
     if (captureKeyframe && g_GekkoFrameInputBuffer.find(save.frame) == g_GekkoFrameInputBuffer.end())
     {
         captureKeyframe = false;
-        if (g_GekkoLogEnabled)
-        {
-            std::ostringstream stream;
-            stream << "keyframe deferred reason=no_controller_read frame=" << save.frame;
-            write_gekko_log(stream.str());
-        }
     }
     if (captureKeyframe && save.frame >= 0 && state.len > 0 && save.state != nullptr)
     {
@@ -3542,12 +3536,6 @@ CORE_EXPORT bool rmgk_gekko::synchronize_input(void* values, int size, int playe
         if (g_GekkoLatchedFrame >= 0 && !g_GekkoLatchedRunningAhead)
         {
             const int frame = g_GekkoLatchedFrame;
-            if (g_GekkoMaxObservedFrame < 0 && g_GekkoLogEnabled)
-            {
-                std::ostringstream stream;
-                stream << "recording first_controller_read frame=" << frame;
-                write_gekko_log(stream.str());
-            }
             g_GekkoFrameInputBuffer[frame] = g_GekkoLatchedInput;
             if (frame > g_GekkoMaxObservedFrame)
             {
