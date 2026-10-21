@@ -4467,6 +4467,7 @@ void RollbackLobbyDialog::startBroadcast(quint64 matchId)
     m_broadcasting = true;
     m_broadcastMatchId = matchId;
     m_lastKeyframeRequestMs = 0; // request the first keyframe on the next drain tick
+    m_lastBroadcastViewerCount = 0;
     {
         QMutexLocker lock(&m_broadcastMutex);
         m_broadcastBuf.clear();
@@ -4492,6 +4493,7 @@ void RollbackLobbyDialog::stopBroadcast()
     if (m_broadcastMatchId != 0)
         m_client->sendBroadcastEnd(m_broadcastMatchId);
     m_broadcastMatchId = 0;
+    m_lastBroadcastViewerCount = 0;
     emit liveReplayViewerCountCleared();
     QMutexLocker lock(&m_broadcastMutex);
     m_broadcastBuf.clear();
@@ -4642,6 +4644,23 @@ void RollbackLobbyDialog::onBroadcastViewerCount(quint64 matchId, int viewerCoun
     if (m_broadcasting && matchId == m_broadcastMatchId)
     {
         emit liveReplayViewerCountChanged(viewerCount, false);
+
+        // When a new viewer arrives, request an on-demand keyframe immediately
+        // if at least 5 seconds have elapsed since the last request. This lets
+        // late-joining spectators fast-forward to the live edge almost instantly
+        // instead of waiting for the periodic 30-second keyframe window.
+        if (viewerCount > m_lastBroadcastViewerCount)
+        {
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            constexpr qint64 kMinOnDemandKeyframeIntervalMs = 5'000;
+            if (!m_client->broadcastKeyframeUploadBusy() &&
+                (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= kMinOnDemandKeyframeIntervalMs))
+            {
+                rmgk_gekko::request_keyframe();
+                m_lastKeyframeRequestMs = nowMs;
+            }
+        }
+        m_lastBroadcastViewerCount = viewerCount;
     }
     else if (matchId == m_spectatingMatchId)
     {
