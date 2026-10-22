@@ -45,6 +45,11 @@
 #endif // UPDATER
 #ifdef NETPLAY
 #include <QWebSocket>
+#include <QFile>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include "Utilities/ReplayLink.hpp"
 #endif // NETPLAY
 #include <QApplication>
 #include <QCoreApplication>
@@ -168,6 +173,7 @@ public:
 #include <RMG-Core/SpeedFactor.hpp>
 #include <RMG-Core/Screenshot.hpp>
 #include <RMG-Core/Emulation.hpp>
+#include <RMG-Core/Ranked.hpp>
 #include <RMG-Core/RollbackNetcode.hpp>
 #include <RMG-Core/rmgk_gekko.hpp>
 #include <RMG-Core/SaveState.hpp>
@@ -1665,6 +1671,23 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->configureUI(app, showUI);
 #ifdef NETPLAY
     this->refreshKailleraRecordingStorageStatus(true);
+
+    // rmgk:// replay links: this executable handles them, and later
+    // launches with a link hand it to this window
+    ReplayLink::RegisterHandler();
+    auto* replayLinkServer = new ReplayLink::Server(this);
+    connect(replayLinkServer, &ReplayLink::Server::linkReceived, this, [this](QString link)
+    {
+        this->showNormal();
+        this->raise();
+        this->activateWindow();
+        this->OpenReplayLink(link);
+    });
+    if (!replayLinkServer->Listen())
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning,
+            "Replay links: another RMG-K already receives rmgk:// links");
+    }
 #endif // NETPLAY
 
     this->connectActionSignals();
@@ -2666,6 +2689,12 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
 
     this->ui_CheckVideoSizeTimerId = this->startTimer(2000);
 
+    this->ui_RankedStopPending = false;
+    if (this->ui_RankedTimerId == 0)
+    {
+        this->ui_RankedTimerId = this->startTimer(250);
+    }
+
     this->ui_HideCursorInEmulation = CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInEmulation);
     this->ui_HideCursorInFullscreenEmulation = CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation);
 #ifdef _WIN32
@@ -2716,6 +2745,8 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_System_Shutdown->setShortcut(QKeySequence(keyBinding));
 #ifdef NETPLAY
     this->action_System_Shutdown->setEnabled(inEmulation && !CoreHasInitNetplay());
+    // while watching a live replay, shutting down stops watching
+    this->action_System_Shutdown->setText(this->ui_SpectateActive ? tr("Stop &Watching") : tr("S&hutdown"));
 #else
     this->action_System_Shutdown->setEnabled(inEmulation && !CoreHasInitNetplay());
 #endif
@@ -3400,6 +3431,10 @@ void MainWindow::timerEvent(QTimerEvent *event)
         this->killTimer(timerId);
         this->ui_UpdateSaveStateSlotTimerId = 0;
     }
+    else if (timerId == this->ui_RankedTimerId)
+    {
+        this->processRankedEvents();
+    }
     else if (timerId == this->ui_CheckVideoSizeTimerId)
     {
 #ifdef NETPLAY
@@ -3505,9 +3540,7 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 }
                 this->ui_SpectateFastForward = false;
                 this->ui_SpectateBannerPending = false;
-                CoreSetFrameOutput(CoreFrameOutput_All);
-                if (CoreGetSpeedFactor() != 100)
-                    CoreSetSpeedFactor(100);
+                CoreStopPlaybackSeek();
 
                 constexpr int barW = 18;
                 int pct = 100 * behind / n02::LIVE_REPLAY_BUFFER_FRAMES;
@@ -3539,43 +3572,47 @@ void MainWindow::timerEvent(QTimerEvent *event)
             const int settle   = n02::LIVE_REPLAY_BUFFER_FRAMES;     // stay ~2 s behind
             const int reengage = n02::LIVE_REPLAY_BUFFER_FRAMES * 2; // re-catch at ~4 s
 
-            // Hysteresis: engage catch-up only when we're well behind, then run
-            // until we're close. Without the gap, normal live-stream jitter near
-            // the edge would flip the headless toggle on/off and flicker the
-            // screen. The initial join (behind = whole backlog) always engages.
-            const bool wantFastForward = this->ui_SpectateFastForward
-                ? (behind > settle)
-                : (behind > reengage);
-
-            if (wantFastForward)
+            // Catch-up is a playback seek to `settle` records before the buffered
+            // edge: headless, unthrottled, and stopped by the core on that record.
+            // Hysteresis: engage only when well behind, and end when the core
+            // arrives. Without the gap, normal live-stream jitter near the edge
+            // would flip the headless toggle on/off and flicker the screen. The
+            // initial join (behind = whole backlog) always engages.
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            if (!this->ui_SpectateFastForward && behind > reengage &&
+                CoreStartPlaybackSeek(n02::playbackGetTotalFrames() - settle))
             {
-                // Fully headless catch-up (video off) — max speed, and headless boot-replay
-                // stays in sync. The OSD can't paint without a presented frame, so the
-                // loading bar lives in the WINDOW TITLE instead (set on the UI thread below,
-                // which runs regardless of whether the emulator presents anything).
-                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-                if (!this->ui_SpectateFastForward)
-                {
-                    this->ui_SpectateFastForward = true;
-                    this->ui_SpectateBannerPending = false;
-                    // Arm the loading-bar estimator + remember the title to restore.
-                    this->ui_SpectateInitialBehind  = behind > 1 ? behind : 1;
-                    this->ui_SpectateCatchupRate    = 0.0;
-                    this->ui_SpectateRateLastBehind = behind;
-                    this->ui_SpectateRateLastMs     = nowMs;
-                    this->ui_SpectateSavedTitle     = this->windowTitle();
-                }
-                CoreSetFrameOutput(CoreFrameOutput_Pacing | CoreFrameOutput_Input); // headless (no Video)
-                // Flat-out until caught up — no taper near the edge. A spectator is
-                // data-bound: it can't pass the live edge (it idles once the buffer
-                // runs dry), so there's nothing to overshoot.
-                if (CoreGetSpeedFactor() != 1000)
-                    CoreSetSpeedFactor(1000);
+                this->ui_SpectateFastForward = true;
+                this->ui_SpectateBannerPending = false;
+                // Arm the loading-bar estimator + remember the title to restore.
+                this->ui_SpectateInitialBehind  = behind > 1 ? behind : 1;
+                this->ui_SpectateCatchupRate    = 0.0;
+                this->ui_SpectateRateLastBehind = behind;
+                this->ui_SpectateRateLastMs     = nowMs;
+                this->ui_SpectateSavedTitle     = this->windowTitle();
+            }
+            else if (this->ui_SpectateFastForward && !CoreIsPlaybackSeeking())
+            {
+                // Reached the settle point — restore the title; the core already
+                // resumed rendering at realtime, so the next presented frame is live.
+                OnScreenDisplaySetCenterMessage("");
+                this->setWindowTitle(this->ui_SpectateSavedTitle);
+                this->ui_SpectateFastForward = false;
+                this->ui_SpectateBannerPending = false;
+            }
 
-                // Loading bar + ETA. The live edge grows while we catch up, so we
-                // estimate from how fast "behind" is actually shrinking (sampled ~10/s
-                // so the per-sample frame delta is meaningful), not an assumed speed
-                // multiplier. Progress is against the backlog we started this run with.
+            if (this->ui_SpectateFastForward)
+            {
+                // The edge keeps growing while we catch up: follow it.
+                CoreStartPlaybackSeek(n02::playbackGetTotalFrames() - settle);
+
+                // Loading bar + ETA. The OSD can't paint without a presented frame, so
+                // the bar lives in the WINDOW TITLE instead (set on the UI thread, which
+                // runs regardless of whether the emulator presents anything). The live
+                // edge grows while we catch up, so we estimate from how fast "behind" is
+                // actually shrinking (sampled ~10/s so the per-sample frame delta is
+                // meaningful), not an assumed speed multiplier. Progress is against the
+                // backlog we started this run with.
                 if (nowMs - this->ui_SpectateRateLastMs >= 100)
                 {
                     const double dtSec  = (nowMs - this->ui_SpectateRateLastMs) / 1000.0;
@@ -3607,17 +3644,6 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 }
                 // Bar goes in the title (UI thread) so it updates even with zero presents.
                 this->setWindowTitle(QString::fromStdString(msg));
-            }
-            else if (this->ui_SpectateFastForward)
-            {
-                // Reached the live edge — restore the title, resume rendering at realtime;
-                // the next presented frame goes live.
-                OnScreenDisplaySetCenterMessage("");
-                this->setWindowTitle(this->ui_SpectateSavedTitle);
-                CoreSetFrameOutput(CoreFrameOutput_All);
-                CoreSetSpeedFactor(100);
-                this->ui_SpectateFastForward = false;
-                this->ui_SpectateBannerPending = false;
             }
         }
     }
@@ -3974,6 +4000,14 @@ void MainWindow::on_Action_System_Shutdown(void)
     {
         this->on_Action_System_Pause();
     }
+
+#ifdef NETPLAY
+    if (this->ui_SpectateActive)
+    {
+        this->stopLobbySpectate();
+        return;
+    }
+#endif
 
     if (!CoreIsEmulationRunning())
     {
@@ -4398,7 +4432,11 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
     this->ui_SpectateNamesShown = false; // set once the krec header arrives
     this->ui_SpectateExpectedOffset = 0;
+    this->ui_SpectateJournalSeq = 0;
     CoreClearSpectateKeyframe(); // drop any stale keyframe from a previous spectate
+    // a ranked match's module wrote game memory: apply its write journal as
+    // it streams in (nothing to apply for unranked matches)
+    CoreRankedStageSpectatorJournal();
 
     // ~60 Hz: drive the playback state machine + fast-forward.
     if (this->ui_SpectateTimerId == 0)
@@ -4462,6 +4500,22 @@ void MainWindow::on_Lobby_SpectateKeyframe(int frame, QByteArray savestate)
                               static_cast<int>(savestate.size()), frame);
 }
 
+void MainWindow::on_Lobby_SpectateJournal(int seq, QByteArray journal)
+{
+    if (!this->ui_SpectateActive)
+    {
+        return;
+    }
+    if (seq != this->ui_SpectateJournalSeq)
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning,
+            ("Live replay: ranked journal chunk " + std::to_string(seq) + " arrived, expected " +
+             std::to_string(this->ui_SpectateJournalSeq) + "; the replay may drift").c_str());
+    }
+    this->ui_SpectateJournalSeq = seq + 1;
+    CoreRankedAppendReplayJournal(journal.toStdString());
+}
+
 void MainWindow::on_Lobby_SpectateClosed(QString reason)
 {
     (void)reason;
@@ -4484,6 +4538,7 @@ void MainWindow::stopLobbySpectate()
     this->ui_SpectateActive  = false; // set first so re-entry (via stop→finish) bails
     this->ui_SpectateMatchId = 0;
     this->ui_SpectateExpectedOffset = 0;
+    CoreRankedClearStagedSession(); // in case emulation never started
     if (this->ui_SpectateTimerId != 0)
     {
         this->killTimer(this->ui_SpectateTimerId);
@@ -4497,8 +4552,7 @@ void MainWindow::stopLobbySpectate()
     CoreClearSpectateKeyframe(); // drop any staged keyframe
     OnScreenDisplaySetCenterMessage(""); // clear the buffering banner if we stop mid-catch-up
     OnScreenDisplaySetLiveReplayStatus("");
-    CoreSetSpeedFactor(100);
-    CoreSetFrameOutput(CoreFrameOutput_All); // undo any headless catch-up state
+    CoreStopPlaybackSeek(); // undo any headless catch-up state
     n02::playbackStopStream();
     if (this->emulationThread->isRunning())
     {
@@ -4548,6 +4602,114 @@ void MainWindow::cleanupLobbySpectateSession()
     // also end before its header launches emulation, so refresh that case here.
     if (!this->emulationThread->isRunning())
         this->updateUI(false, false);
+}
+
+void MainWindow::OpenReplayLink(QString link)
+{
+    // started for a replay: don't also open the lobby, whose name prompt
+    // would hold up this one's
+    this->ui_AutoStartNetplayOnStartupPending = false;
+
+    QUrl replayUrl;
+    qint64 setId = 0;
+    int record = 0;
+    QString error;
+    if (!ReplayLink::Parse(link, replayUrl, setId, record, error))
+    {
+        this->showErrorMessage(tr("Replay Link"), error);
+        return;
+    }
+    if (this->ui_ReplayLinkDownloading)
+    {
+        return;
+    }
+
+    // kept with the other recordings, so it's in the Playback list later
+    const QString host = replayUrl.host();
+    QString safeHost = host;
+    safeHost.replace(QRegularExpression("[^A-Za-z0-9.-]"), "_");
+    const QString path = QDir(QString::fromStdString(CoreGetKailleraRecordsDirectory()))
+        .filePath(QString("ranked-set-%1-%2.krec").arg(setId).arg(safeHost));
+
+    // another game of the replay being watched: just jump there
+    if (auto* dialog = this->findChild<KailleraPlaybackDialog*>(); dialog != nullptr && dialog->isPlaying(path))
+    {
+        dialog->raise();
+        dialog->activateWindow();
+        dialog->seekTo(record);
+        return;
+    }
+    if (this->emulationThread->isRunning())
+    {
+        this->showErrorMessage(tr("Replay Link"), tr("Stop the running game first, then open the replay link again."));
+        return;
+    }
+
+    const int seconds = record / 60; // one record per 60 Hz frame
+    const QString from = record > 0
+        ? tr(" from %1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0')) : QString();
+    const QString question = QFile::exists(path)
+        ? tr("Play the replay of ranked set #%1%2?").arg(setId).arg(from)
+        : tr("Download and play the replay of ranked set #%1 from %2%3?").arg(setId).arg(host)
+              .arg(record > 0 ? tr(", starting at %1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0')) : QString());
+    if (QMessageBox::question(this, tr("Watch Ranked Replay"), question, QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    auto play = [this, path, record]()
+    {
+        this->on_Action_Playback();
+        if (auto* dialog = this->findChild<KailleraPlaybackDialog*>())
+        {
+            dialog->playRecording(path, record);
+        }
+    };
+    if (QFile::exists(path))
+    {
+        play(); // replays never change
+        return;
+    }
+
+    constexpr qint64 kMaxReplayBytes = 16 << 20;
+    auto* network = new QNetworkAccessManager(this);
+    QNetworkRequest request(replayUrl);
+    request.setTransferTimeout(30000);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    QNetworkReply* reply = network->get(request);
+    this->ui_ReplayLinkDownloading = true;
+    OnScreenDisplaySetMessage(tr("Downloading ranked replay...").toStdString());
+    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64)
+    {
+        if (received > kMaxReplayBytes)
+        {
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, network, path, play]()
+    {
+        reply->deleteLater();
+        network->deleteLater();
+        this->ui_ReplayLinkDownloading = false;
+        const QByteArray data = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError || data.size() > kMaxReplayBytes || !data.startsWith("KRC1"))
+        {
+            this->showErrorMessage(tr("Replay Link"), tr("The replay couldn't be downloaded: %1").arg(
+                reply->error() != QNetworkReply::NoError ? reply->errorString() : tr("not a replay file")));
+            return;
+        }
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile file(path + ".part");
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(data) != data.size())
+        {
+            this->showErrorMessage(tr("Replay Link"), tr("The replay couldn't be saved to %1").arg(path));
+            return;
+        }
+        file.close();
+        QFile::remove(path);
+        QFile::rename(path + ".part", path);
+        play();
+    });
 }
 #endif // NETPLAY
 
@@ -4982,6 +5144,8 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_SpectateData);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamKeyframe,
             this, &MainWindow::on_Lobby_SpectateKeyframe);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamJournal,
+            this, &MainWindow::on_Lobby_SpectateJournal);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamClosed,
             this, &MainWindow::on_Lobby_SpectateClosed);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountChanged,
@@ -5780,6 +5944,14 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
         this->ui_CheckVideoSizeTimerId = 0;
     }
 
+    if (this->ui_RankedTimerId != 0)
+    {
+        this->killTimer(this->ui_RankedTimerId);
+        this->ui_RankedTimerId = 0;
+        // drain events of a set that ended with emulation
+        this->processRankedEvents();
+    }
+
     if (this->ui_QuitAfterEmulation)
     {
         // show error message when
@@ -6290,6 +6462,137 @@ void MainWindow::on_VidExt_ToggleFS(bool fullscreen)
         if (this->ui_ShowUI)
         {
             this->removeActions();
+        }
+    }
+}
+
+// The ranked module reports its status and reasons in English; translate the
+// phrases it uses (other text passes through unchanged).
+QString MainWindow::localizeRankedText(const QString& text)
+{
+    struct Pattern
+    {
+        QRegularExpression regex;
+        QString translated; // %1.. = captures
+    };
+    static const QList<Pattern> patterns = {
+        {QRegularExpression("^Ranked 2v2 Bo(\\d+) - Game (\\d+) - pick two teams of two$"),
+            tr("Ranked 2v2 Bo%1 - Game %2 - pick two teams of two")},
+        {QRegularExpression("^Ranked 2v2 Bo(\\d+) - (.+) - team (\\d) wins (\\d+)-(\\d+)$"),
+            tr("Ranked 2v2 Bo%1 - %2 - team %3 wins %4-%5")},
+        {QRegularExpression("^Ranked 2v2 Bo(\\d+) - Game (\\d+) - (.+) - (\\d+) : (\\d+)$"),
+            tr("Ranked 2v2 Bo%1 - Game %2 - %3 - %4 : %5")},
+        {QRegularExpression("^Ranked Bo(\\d+) - P(\\d) wins the set (\\d+)-(\\d+)$"),
+            tr("Ranked Bo%1 - P%2 wins the set %3-%4")},
+        {QRegularExpression("^Ranked Bo(\\d+) - Game (\\d+) - P(\\d) (\\d+) : (\\d+) P(\\d)$"),
+            tr("Ranked Bo%1 - Game %2 - P%3 %4 : %5 P%6")},
+        {QRegularExpression("^P(\\d)'s character \\(id (0x[0-9A-Fa-f]+)\\) isn't in the (\\w+) roster$"),
+            tr("P%1's character (id %2) isn't in the %3 roster")},
+        {QRegularExpression("^rules differ: (.*)$"), tr("rules differ: %1")},
+        {QRegularExpression("^not two teams of two$"), tr("not two teams of two")},
+        {QRegularExpression("^the teams changed partners \\(the set keeps game 1's teams\\)$"),
+            tr("the teams changed partners (the set keeps game 1's teams)")},
+        {QRegularExpression("^no single winner$"), tr("no single winner")},
+        {QRegularExpression("^match was reset$"), tr("match was reset")},
+    };
+    for (const Pattern& pattern : patterns)
+    {
+        const QRegularExpressionMatch match = pattern.regex.match(text);
+        if (!match.hasMatch())
+        {
+            continue;
+        }
+        QString out = pattern.translated;
+        for (int i = 1; i <= match.lastCapturedIndex(); i++)
+        {
+            out = out.arg(match.captured(i));
+        }
+        return out;
+    }
+    return text;
+}
+
+void MainWindow::processRankedEvents(void)
+{
+    for (const CoreRankedEvent& event : CoreRankedTakeEvents())
+    {
+        // who won: a port in 1v1, a team (its ports, e.g. P1+P3) in team sets
+        auto winner = [&event]() {
+            if (event.WinnerTeam > 0)
+            {
+                QStringList ports;
+                for (size_t i = 0; i < event.Teams.size(); i++)
+                {
+                    if (event.Teams[i] == event.WinnerTeam)
+                    {
+                        ports << QString("P%1").arg(int(i + 1));
+                    }
+                }
+                return ports.isEmpty() ? tr("Team %1").arg(event.WinnerTeam) : ports.join("+");
+            }
+            return QString("P%1").arg(event.WinnerPort);
+        };
+        const QString detail = localizeRankedText(QString::fromStdString(event.Detail));
+        QString message;
+        switch (event.Type)
+        {
+        case CoreRankedEventType::GameStarted:
+            message = tr("Ranked: game %1 started").arg(event.GameNumber);
+            if (!detail.isEmpty())
+            {
+                message += tr(" - won't count: %1").arg(detail);
+            }
+            break;
+        case CoreRankedEventType::GameEnded:
+            message = tr("Ranked: %1 wins game %2").arg(winner()).arg(event.GameNumber);
+            break;
+        case CoreRankedEventType::GameVoided:
+            message = tr("Ranked: game %1 doesn't count (%2), replay it").arg(event.GameNumber).arg(detail);
+            break;
+        case CoreRankedEventType::SetEnded:
+            message = tr("Ranked: %1 wins the set").arg(winner());
+            break;
+        case CoreRankedEventType::ReplayMismatch:
+            message = tr("Replay out of sync: %1").arg(detail);
+            break;
+        }
+
+        const QString status = localizeRankedText(QString::fromStdString(CoreRankedGetStatusText()));
+        if (!status.isEmpty() && event.Type != CoreRankedEventType::SetEnded)
+        {
+            message += "  |  " + status;
+        }
+        OnScreenDisplaySetMessage(message.toStdString());
+
+        // replays only show the set's progress
+        if (CoreRankedIsReplay())
+        {
+            continue;
+        }
+
+#ifdef NETPLAY
+        // lobby ranked sets: report this player's result right away, the
+        // server rates the set once both players' reports agree
+        if (event.Type == CoreRankedEventType::SetEnded && this->rollbackLobbyDialog != nullptr &&
+            this->ui_LobbyNetplaySession)
+        {
+            this->rollbackLobbyDialog->reportRankedSetEnded();
+        }
+#endif // NETPLAY
+
+        // the set is decided on every peer at the same confirmed
+        // frame; leave the result on screen briefly, then end it
+        if (event.Type == CoreRankedEventType::SetEnded && !this->ui_RankedStopPending)
+        {
+            this->ui_RankedStopPending = true;
+            QTimer::singleShot(5000, this, [this]()
+            {
+                if (this->ui_RankedStopPending && CoreIsEmulationRunning())
+                {
+                    this->on_Action_System_Shutdown();
+                }
+                this->ui_RankedStopPending = false;
+            });
         }
     }
 }

@@ -123,8 +123,15 @@ if (NETPLAY)
         UserInterface/Dialog/Kaillera/KailleraWaitingGamesDialog.cpp
         UserInterface/Dialog/Lobby/LobbyClient.cpp
         UserInterface/Dialog/Lobby/LobbyConnectDialog.cpp
+        UserInterface/Dialog/Lobby/AccountEmailDialog.cpp
         UserInterface/Dialog/Lobby/CreateRoomDialog.cpp
+        UserInterface/Dialog/Lobby/QuickRankedMatchDialog.cpp
         UserInterface/Dialog/Lobby/RollbackLobbyDialog.cpp
+        UserInterface/Dialog/Lobby/PlayerRatings.cpp
+        Utilities/KailleraExport/KrecParser.cpp
+        Utilities/ReplayLink.cpp
+        Utilities/DiscordLogin.cpp
+        Utilities/PasswordResetEmail.cpp
         UserInterface/Dialog/Netplay/NetplayCommon.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.ui
@@ -145,7 +152,6 @@ if (NETPLAY)
     if (WIN32)
         list(APPEND RMG_SOURCES
             Utilities/KailleraExport/KrecMp4Export.cpp
-            Utilities/KailleraExport/KrecParser.cpp
             Utilities/KailleraExport/EmulatorProxy.cpp
             Utilities/KailleraExport/PifReplay.cpp
             Utilities/KailleraExport/FrameCapture.cpp

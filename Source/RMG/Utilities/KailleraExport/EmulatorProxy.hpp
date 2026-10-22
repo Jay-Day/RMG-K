@@ -234,6 +234,8 @@ public:
     void readScreen(void* destination, int* width, int* height);
     void shutdown();
     m64p_dynlib_handle getAudioPluginHandle() const;
+    // an export of the loaded core, nullptr when missing
+    void* getCoreSymbol(const char* name) const;
 
     using CoreDoCommandFn = m64p_error (*)(m64p_command, int, void*);
     CoreDoCommandFn coreDoCommand = nullptr;

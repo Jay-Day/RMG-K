@@ -2,6 +2,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 
 namespace KailleraExport
 {
@@ -24,6 +26,88 @@ static bool fail(std::string* errorMessage, const std::string& message)
         *errorMessage = message;
     }
     return false;
+}
+
+static constexpr char kMetaBegin[] = "RMGKMETA";
+static constexpr char kMetaEnd[]    = "RMGKEND1";
+static constexpr size_t kMarkerSize = 8;
+static constexpr size_t kDropRecordSize = 6; // 0x14, empty nick, int32 player
+
+bool FindKrecMetadata(const std::string& krec, size_t& trailerStart, std::string* json)
+{
+    const size_t footer = 4 + kMarkerSize;
+    if (krec.size() < 400 + kDropRecordSize + kMarkerSize + footer ||
+        std::memcmp(krec.data() + krec.size() - kMarkerSize, kMetaEnd, kMarkerSize) != 0)
+    {
+        return false;
+    }
+    uint32_t length = 0;
+    std::memcpy(&length, krec.data() + krec.size() - footer, sizeof(length));
+    if (length > krec.size() - 400 - kDropRecordSize - kMarkerSize - footer)
+    {
+        return false;
+    }
+    const size_t jsonStart = krec.size() - footer - length;
+    trailerStart = jsonStart - kMarkerSize - kDropRecordSize;
+    if (static_cast<uint8_t>(krec[trailerStart]) != 0x14 || krec[trailerStart + 1] != 0 ||
+        std::memcmp(krec.data() + jsonStart - kMarkerSize, kMetaBegin, kMarkerSize) != 0)
+    {
+        return false;
+    }
+    if (json != nullptr)
+    {
+        json->assign(krec, jsonStart, length);
+    }
+    return true;
+}
+
+static bool readWholeFile(const std::filesystem::path& path, std::string& out)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open())
+    {
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    return true;
+}
+
+bool ReadKrecMetadata(const std::filesystem::path& path, std::string& json)
+{
+    std::string krec;
+    size_t trailerStart = 0;
+    return readWholeFile(path, krec) && FindKrecMetadata(krec, trailerStart, &json);
+}
+
+bool AppendKrecMetadata(const std::filesystem::path& path, const std::string& json, std::string* errorMessage)
+{
+    std::string krec;
+    if (!readWholeFile(path, krec) || krec.size() < 400 || krec.compare(0, 4, "KRC1") != 0)
+    {
+        return fail(errorMessage, "Cannot read the recording");
+    }
+    size_t trailerStart = 0;
+    if (FindKrecMetadata(krec, trailerStart, nullptr))
+    {
+        return fail(errorMessage, "The recording already has metadata");
+    }
+
+    std::string trailer;
+    trailer.push_back(static_cast<char>(0x14));
+    trailer.push_back('\0');
+    trailer.append(krec, 264, 4); // the recording's local player
+    trailer.append(kMetaBegin, kMarkerSize);
+    trailer.append(json);
+    const uint32_t length = static_cast<uint32_t>(json.size());
+    trailer.append(reinterpret_cast<const char*>(&length), sizeof(length));
+    trailer.append(kMetaEnd, kMarkerSize);
+
+    std::ofstream file(path, std::ios::binary | std::ios::app);
+    if (!file.is_open() || !file.write(trailer.data(), static_cast<std::streamsize>(trailer.size())))
+    {
+        return fail(errorMessage, "Cannot write the recording");
+    }
+    return true;
 }
 
 bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::string* errorMessage)

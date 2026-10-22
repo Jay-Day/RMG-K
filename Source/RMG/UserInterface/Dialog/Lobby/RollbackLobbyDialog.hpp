@@ -20,11 +20,15 @@
 #include <QMutex>
 #include <QPoint>
 #include <QVariant>
+#include <QPointer>
 
 #include <RMG-Core/RomSettings.hpp>
 
 class QFrame;
 class QLabel;
+class QToolButton;
+class QAction;
+class QMessageBox;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTextEdit;
@@ -36,10 +40,25 @@ class QTabBar;
 class QComboBox;
 class QCheckBox;
 
+namespace Utilities
+{
+class DiscordLogin;
+}
+
 namespace UserInterface
 {
 namespace Dialog
 {
+class PlayerRatings;
+}
+}
+
+namespace UserInterface
+{
+namespace Dialog
+{
+
+struct CreateRoomRankedOptions;
 
 // Top-level rollback lobby UI. Owns a LobbyClient and renders presence /
 // rooms / chat. Modeless — opened from the main window menu.
@@ -77,6 +96,10 @@ public:
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
 
+    // MainWindow calls this when the ranked module decided the set, so this
+    // player's MATCH_RESULT reaches the server before emulation stops.
+    void reportRankedSetEnded();
+
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
     // is pre-formatted as "<slot>,<ip>,<port>" — matches the LOBBY| address
@@ -110,6 +133,8 @@ signals:
     // A savestate keyframe (raw bytes) plus the first krec record index to consume
     // after restoring it, so catch-up is bounded regardless of match length.
     void spectateStreamKeyframe(int frame, QByteArray savestate);
+    // A ranked match's write journal chunk (seq contiguous from 0).
+    void spectateStreamJournal(int seq, QByteArray journal);
     void spectateStreamClosed(QString reason);
     // Persistent OSD audience badge. isSpectator selects the role-specific text.
     void liveReplayViewerCountChanged(int viewerCount, bool isSpectator);
@@ -125,6 +150,17 @@ protected:
 private slots:
     void onClientStateChanged(LobbyClient::ConnectionState s);
     void onHelloFailed(const QString& reason);
+    void onAccountUpdated();
+    void onRankedResult(const QJsonObject& result);
+    void onChangePassword();
+    void onPasswordChangeResult(bool ok, const QString& message);
+    void onEmailAction();
+    void onEmailUpdated(const QString& address);
+    void onDiscordButton();
+    void onDiscordLinkResult(bool ok, const QString& message);
+    void onReplayAccepted(qint64 setId, int chunkSize);
+    void onReplayDeclined(qint64 setId, const QString& reason);
+    void onReplayStored(qint64 setId);
     void onConnectError(const QString& msg);
 
     void onPresenceFull();
@@ -145,7 +181,12 @@ private slots:
     void onRoomStateChanged(const QJsonObject& roomState);
 
     void onQuickMatchClicked();
-    void onQuickMatchStatusChanged(bool searching, int queueSize);
+    void onQuickRankedMatchClicked();
+    void onQuickMatchStatusChanged(bool searching, int queueSize, bool ranked, bool continuous,
+                                   bool keepTeammate, const QString& teammate, const QString& waitingFor);
+    void onQuickMatchRematchOffered(const QStringList& opponents);
+    void onStopSessionClicked();
+    void onKeepTeammateToggled(bool keep);
 
     void onLeaveRoomClicked();
     void onDropGameClicked();
@@ -160,6 +201,7 @@ private slots:
     void onSpectateBegan(quint64 matchId, const QByteArray& manifest);
     void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset);
     void onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
+    void onSpectateJournal(quint64 matchId, int seq, const QByteArray& journal);
     void onSpectateEnded(quint64 matchId, const QString& reason);
     void onSpectateFailed(quint64 matchId, const QString& reason);
     void onBroadcastViewerCount(quint64 matchId, int viewerCount);
@@ -358,7 +400,7 @@ private:
     QLabel*  m_statusLed   = nullptr;
     QLabel*  m_statusText  = nullptr;
     QLabel*  m_serverMeta  = nullptr;
-    QLabel*  m_userLabel   = nullptr;
+    QToolButton* m_userButton = nullptr; // our name; hover: ratings, click: account menu
 
     // ── Main panels ──
     QSplitter*   m_splitter      = nullptr;
@@ -402,6 +444,69 @@ private:
     QComboBox* m_delayCombo      = nullptr;
     QComboBox* m_predictionCombo = nullptr;
     bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setCurrentIndex echo
+
+    // Ranked
+    QCheckBox*  m_rankedCheck = nullptr;     // host toggle in the room view
+    QJsonObject m_currentRoomRanked;         // ROOM_STATE "ranked", empty when unranked
+    quint64     m_rankedMatchId = 0;         // match running as a ranked set
+    bool        m_rankedResultSent = false;
+
+    // Ranked replay upload. The set id arrives with RANKED_RESULT and the .krec
+    // is complete once emulation stops; whichever comes last starts the offer.
+    void captureRankedReplay();
+    void tryOfferRankedReplay();
+    quint64     m_replayMatchId = 0;         // ranked match whose .krec we hold
+    qint64      m_replaySetId = 0;           // server set id from RANKED_RESULT
+    QString     m_replayKrecPath;            // finished .krec of m_replayMatchId
+    QJsonArray  m_replayBookmarks;
+    qint64      m_replayUploadSetId = 0;     // offer in flight
+    QByteArray  m_replayUploadBytes;
+    bool        m_rememberLogin = true;      // keep the session token after HELLO_OK
+    QAction*    m_changePasswordAction = nullptr; // account menu, logged in only
+    QAction*    m_emailAction = nullptr; // account menu, when the lobby can send email
+    QString     m_lastAuthMode;              // auth mode of the last connect attempt
+    bool        m_authAttempted = false;     // m_lastAuthMode is from a real attempt
+    QString     m_welcomeLine;               // lobby chat line once that attempt succeeds
+    // Discord sign-in: Link Discord... / Unlink Discord, shown while logged in
+    // when the lobby supports it
+    QAction*    m_discordAction = nullptr;
+    // ranked standings for hover cards (players list, seats, our name)
+    PlayerRatings* m_ratings = nullptr;
+    QString     m_ratingsTipName;           // player whose card is showing
+    QPoint      m_ratingsTipPos;
+    QWidget*    m_ratingsTipWidget = nullptr;
+    QString     m_ratingsTipBase;           // the hovered widget's own tooltip
+    // Shows a player's hover card: base text plus their ranked standings.
+    void showRatingsTip(const QString& username, const QString& base, const QPoint& globalPos, QWidget* widget);
+    QString ratingsText(const QString& username);
+    Utilities::DiscordLogin* m_discordLogin = nullptr;
+    QString     m_discordCheckedUrl;         // lobby whose Discord support is known
+    bool        m_discordAvailable = false;
+    // discord_unlinked: link the Discord account at the next password login
+    QString     m_discordLinkTicket;
+    QString     m_discordLinkName;
+    // the link attempt in flight: kept for a retry if it fails
+    QString     m_linkRetryTicket;
+    QString     m_linkRetryName;
+    void updateDiscordButton();
+    void updateEmailAction();
+    // "✓ Gold 1532" style suffix for a verified player's standing.
+    static QString standingText(const LobbyClient::LadderStanding& standing);
+    // translated tier name (the server sends English band names)
+    static QString tierName(const QString& tier);
+    // Ranked formats the selected game offers, with the player's standings
+    // (shared by Create Room and Quick Ranked Match).
+    CreateRoomRankedOptions rankedOptionsFor(const QString& romMd5) const;
+    // Resets both quick-match buttons to their idle labels.
+    void resetQuickMatchButtons();
+    // Enables the hero buttons for the current connection, room and search.
+    void updateHeroButtons();
+    // Shows the session line and the in-room "Stop After This Set/Match" and
+    // (2v2) "Keep Teammate".
+    void updateSessionUi();
+    // In a ranked 2v2 session's room, where "Keep Teammate" applies.
+    bool keepTeammateApplies() const;
+    void closeRematchPrompt();
 
     // Per-player local toggle: when checked, this client writes a .krec of the
     // match (the player who checks it records, same as the p2p/kaillera lobbies).
@@ -458,6 +563,12 @@ private:
 
     // Hero / browse-view action buttons
     QPushButton* m_quickMatchBtn = nullptr;   // primary CTA (blue)
+    QPushButton* m_quickRankedBtn = nullptr;  // Quick Ranked Match (gold)
+    QLabel*      m_sessionLabel   = nullptr;  // session: sets/matches, record, rating
+    QCheckBox*   m_keepSearchingCheck = nullptr; // casual Quick Match: keep searching after each match
+    QPushButton* m_stopSessionBtn = nullptr;  // in room: stop after this set
+    QCheckBox*   m_keepTeammateCheck = nullptr; // in a 2v2 session's room: keep this set's teammate
+    QPointer<QMessageBox> m_rematchPrompt;
     QPushButton* m_createRoomBtn = nullptr;
     QComboBox*   m_browseRomCombo = nullptr;   // library game picker (feeds Create Room)
     QCheckBox*   m_sameGameFilterCheck = nullptr;
@@ -500,6 +611,26 @@ private:
     bool m_awaitingEmulationStart = false;
     bool m_emulationActive        = false;
     bool m_quickMatchActive       = false;
+    bool m_quickMatchRanked       = false; // the active search is a ranked one
+    // Quick match session (continuous search) and its running tally.
+    // m_sessionCasual says which kind the current or last session is.
+    bool m_rankedSession          = false;
+    bool m_casualSession          = false;
+    bool m_sessionCasual          = false;
+    int  m_sessionMatches         = 0;
+    // last ping reported to the lobby per room member (see reportRoomPeerPing)
+    QHash<quint64, int> m_reportedPeerPings;
+    int  m_sessionSets            = 0;
+    int  m_sessionWins            = 0;
+    int  m_sessionLosses          = 0;
+    int  m_sessionRatingDelta     = 0;
+    QString m_sessionStanding;
+    // 2v2 session: keep the teammate after each set, and the kept teammate
+    // the current search goes with (empty = on your own)
+    bool    m_sessionKeepTeammate = false;
+    QString m_sessionTeammate;
+    // the chosen teammate who hasn't searched with us as theirs yet
+    QString m_sessionWaitingFor;
 
     QMap<QString, CoreRomSettings> m_roms;
 };

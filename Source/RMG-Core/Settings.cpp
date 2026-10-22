@@ -72,6 +72,7 @@ static std::vector<std::string> l_keyList;
 #define SETTING_SECTION_GCA             SETTING_SECTION_GUI  " - GameCube Adapter Input Plugin"
 #define SETTING_SECTION_KAILLERA        SETTING_SECTION_GUI  " Kaillera"
 #define SETTING_SECTION_ROLLBACK        SETTING_SECTION_GUI  " Rollback"
+#define SETTING_SECTION_RANKED          SETTING_SECTION_GUI  " Ranked"
 #define SETTING_SECTION_RAPHNET_INPUT   "Input-RaphnetRaw"
 #define SETTING_SECTION_RSP             "Rsp-HLE"
 
@@ -367,6 +368,18 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::Rollback_RememberInputDelay:
         setting = {SETTING_SECTION_ROLLBACK, "RememberInputDelay", false};
+        break;
+    case SettingsID::Ranked_DevModuleId:
+        setting = {SETTING_SECTION_RANKED, "DevModuleId", std::string("")};
+        break;
+    case SettingsID::Ranked_DevRulesetId:
+        setting = {SETTING_SECTION_RANKED, "DevRulesetId", std::string("")};
+        break;
+    case SettingsID::Ranked_DevBestOf:
+        setting = {SETTING_SECTION_RANKED, "DevBestOf", 3};
+        break;
+    case SettingsID::Ranked_DevPorts:
+        setting = {SETTING_SECTION_RANKED, "DevPorts", std::string("1;2")};
         break;
     case SettingsID::Rollback_PacingTrace:
         setting = {SETTING_SECTION_ROLLBACK, "PacingTrace", false};

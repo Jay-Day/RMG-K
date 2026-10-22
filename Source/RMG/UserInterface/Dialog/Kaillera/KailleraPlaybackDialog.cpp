@@ -23,12 +23,14 @@
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Emulation.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/Ranked.hpp>
 
 #include "n02_client.h"
 
 #include <QApplication>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QLocale>
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QDesktopServices>
@@ -54,6 +56,8 @@
 #include <QComboBox>
 #include <QListView>
 #include <QStringList>
+#include <QJsonArray>
+#include <QJsonDocument>
 
 #include <algorithm>
 #include <climits>
@@ -250,6 +254,18 @@ static QString buildPlaybackStyleSheet()
     }
 
     return style;
+}
+
+// m:ss (h:mm:ss past an hour) for a count of .krec records, one per 60 Hz frame
+static QString playbackTime(int records)
+{
+    const int seconds = std::max(0, records) / 60;
+    if (seconds >= 3600)
+    {
+        return QString("%1:%2:%3").arg(seconds / 3600).arg(seconds / 60 % 60, 2, 10, QChar('0'))
+            .arg(seconds % 60, 2, 10, QChar('0'));
+    }
+    return QString("%1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0'));
 }
 
 static void configurePlaybackButton(QPushButton* button, const QString& objectName)
@@ -545,6 +561,7 @@ void KailleraPlaybackDialog::setupUI()
     applyNoAccentStyle(m_playbackTable);
     installHeaderDoubleClickSortToggle(m_playbackTable);
     connect(m_playbackTable, &QTableWidget::cellDoubleClicked, this, &KailleraPlaybackDialog::onPlaybackDoubleClicked);
+    connect(m_playbackTable, &QTableWidget::itemSelectionChanged, this, &KailleraPlaybackDialog::onPlaybackSelectionChanged);
     if (tablePaneLayout != nullptr)
     {
         tablePaneLayout->addWidget(m_playbackTable);
@@ -611,6 +628,16 @@ void KailleraPlaybackDialog::setupUI()
     btnLayout->addStretch();
     mainLayout->addLayout(btnLayout);
 
+    // Bookmarks of a ranked replay (the start of each game): one button
+    // each, shown when the selected recording has them.
+    m_modernButtons = modern;
+    m_bookmarkRow = new QWidget(this);
+    m_bookmarkLayout = new QHBoxLayout(m_bookmarkRow);
+    m_bookmarkLayout->setContentsMargins(0, 0, 0, 0);
+    m_bookmarkLayout->setSpacing(6);
+    m_bookmarkRow->hide();
+    mainLayout->addWidget(m_bookmarkRow);
+
     // Frame counter
     m_frameLabel = new QLabel("", this);
     if (modern)
@@ -653,12 +680,41 @@ void KailleraPlaybackDialog::onPlaybackTimer()
     // which ultimately starts emulation.
     n02::processStateMachineStep();
 
+    // A backwards jump restarts the playback once the old session is gone.
+    if (m_restartSeekTarget >= 0 && !m_playbackWasActive && !n02::isPlaybackActive() &&
+        !CoreIsEmulationRunning())
+    {
+        const int target = m_restartSeekTarget;
+        m_restartSeekTarget = -1;
+        startPlayback(m_activeRecordingPath);
+        if (m_playbackWasActive)
+        {
+            m_seekTarget = target;
+        }
+    }
+
+    // Seeking: the core fast-forwards to the target record and stops there; a
+    // seek it no longer runs either arrived or can't start
+    if (m_seekTarget >= 0 && n02::isPlaybackActive() && CoreIsEmulationRunning() &&
+        !CoreIsPlaybackSeeking() && !CoreStartPlaybackSeek(m_seekTarget))
+    {
+        m_seekTarget = -1;
+    }
+
     // Update frame counter display
     if (n02::isPlaybackActive() && m_frameLabel)
     {
         int cur = n02::playbackGetCurrentFrame();
         int total = n02::playbackGetTotalFrames();
-        m_frameLabel->setText(QString("Frame: %1 / %2").arg(cur).arg(total));
+        // time first, the frames it comes from in parentheses
+        QString text = tr("%1 / %2  (frame %3 / %4)").arg(playbackTime(cur), playbackTime(total))
+            .arg(QLocale().toString(cur), QLocale().toString(total));
+        if (m_seekTarget >= 0)
+        {
+            text += tr("  —  jumping (%1%)").arg(
+                m_seekTarget > 0 ? std::min(100, cur * 100 / m_seekTarget) : 100);
+        }
+        m_frameLabel->setText(text);
     }
     else if (m_frameLabel)
     {
@@ -673,6 +729,7 @@ void KailleraPlaybackDialog::onPlaybackTimer()
     // Detect playback ending naturally (recording ran out).
     if (m_playbackWasActive && !n02::isPlaybackActive())
     {
+        finishSeek();
         m_playbackWasActive = false;
         m_isPaused = false;
         CoreMarkKailleraGameInactive();
@@ -1390,7 +1447,6 @@ void KailleraPlaybackDialog::resetExportUi()
     m_exportPendingOutput.clear();
     m_exportStatusLine.clear();
     m_exportVideoEncoder.clear();
-    m_exportTargetSpeed.clear();
     m_exportCapturedFrames = 0;
     m_exportTotalFrames = 0;
     m_exportCaptureCompleteElapsedMs = -1;
@@ -1429,7 +1485,6 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
     m_exportPendingOutput.clear();
     m_exportStatusLine = "Starting export...";
     m_exportVideoEncoder.clear();
-    m_exportTargetSpeed.clear();
     m_exportCapturedFrames = 0;
     m_exportTotalFrames = std::max(0, totalFrames);
     m_exportCaptureCompleteElapsedMs = -1;
@@ -1525,37 +1580,266 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
     m_exportProgressDialog->show();
 }
 
+void KailleraPlaybackDialog::playRecording(const QString& path, int record)
+{
+    if (isPlaying(path))
+    {
+        seekTo(record); // already watching it: just jump
+        return;
+    }
+    populatePlaybackList();
+    const QString fileName = QFileInfo(path).fileName();
+    for (int row = 0; m_playbackTable != nullptr && row < m_playbackTable->rowCount(); row++)
+    {
+        QTableWidgetItem* item = m_playbackTable->item(row, 5);
+        if (item != nullptr && item->text() == fileName)
+        {
+            m_playbackTable->selectRow(row);
+            m_playbackTable->scrollToItem(item);
+            break;
+        }
+    }
+    if (n02::isPlaybackActive() || m_playbackWasActive)
+    {
+        QMessageBox::information(this, tr("Playback"), tr("Stop the current playback to watch %1.").arg(fileName));
+        return;
+    }
+    m_seekTarget = -1;
+    m_restartSeekTarget = -1;
+    startPlayback(path);
+    if (m_playbackWasActive && record > 0)
+    {
+        m_seekTarget = record;
+    }
+}
+
 void KailleraPlaybackDialog::onPlaybackPlay()
 {
     if (!m_playbackTable) return;
     if (n02::isPlaybackActive()) return;
 
-    int row = m_playbackTable->currentRow();
-    if (row < 0) return;
+    const QString filename = getSelectedRecordingPath();
+    if (filename.isEmpty()) return;
 
-    QTableWidgetItem* fnItem = m_playbackTable->item(row, 5);
-    if (!fnItem) return;
+    m_seekTarget = -1;
+    m_restartSeekTarget = -1;
+    startPlayback(filename);
+}
 
-    QString filename = QDir(getKailleraRecordsDirectory()).filePath(fnItem->text());
-    QByteArray pathBytes = filename.toUtf8();
+void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
+{
+    if (!stageRankedReplay(krecPath))
+    {
+        return;
+    }
+
+    QByteArray pathBytes = krecPath.toUtf8();
 
     // Ensure playback mode is active
     n02::activateMode(2);
 
     if (n02::playbackLoad(pathBytes.constData()))
     {
+        m_activeRecordingPath = krecPath;
         m_playbackWasActive = true;
         m_isPaused = false;
         updatePlaybackControls();
     }
     else
     {
-        QMessageBox::warning(this, "Playback", "Failed to load recording: " + fnItem->text());
+        CoreRankedClearStagedSession();
+        QMessageBox::warning(this, tr("Playback"), tr("Failed to load recording: %1").arg(QFileInfo(krecPath).fileName()));
     }
+}
+
+bool KailleraPlaybackDialog::loadReplayMetadata(const QString& krecPath, QJsonObject& metadata)
+{
+    std::string json;
+    if (!KailleraExport::ReadKrecMetadata(std::filesystem::path(krecPath.toStdWString()), json))
+    {
+        return false;
+    }
+    metadata = QJsonDocument::fromJson(QByteArray::fromStdString(json)).object();
+    return metadata.value("schema").toInt() == 1;
+}
+
+bool KailleraPlaybackDialog::stageRankedReplay(const QString& krecPath)
+{
+    CoreRankedClearStagedSession();
+
+    QJsonObject metadata;
+    if (!loadReplayMetadata(krecPath, metadata) || !metadata.contains("journal"))
+    {
+        return true; // a plain recording
+    }
+
+    // The ranked module rewrote game memory during the match; the recorded
+    // write journal reproduces that without needing the module itself.
+    const QJsonObject module = metadata.value("module").toObject();
+    CoreRankedSessionSettings settings;
+    settings.ModuleId      = module.value("id").toString().toStdString();
+    settings.ModuleVersion = module.value("version").toString().toStdString();
+    settings.RulesetId     = metadata.value("ruleset").toObject().value("id").toString().toStdString();
+    settings.BestOf        = metadata.value("bestOf").toInt(3);
+    for (const QJsonValue& port : metadata.value("ports").toArray())
+    {
+        settings.Ports.push_back(port.toInt());
+    }
+    for (const QJsonValue& team : metadata.value("teams").toArray())
+    {
+        settings.Teams.push_back(team.toInt());
+    }
+    settings.Replay  = true;
+    settings.Journal = QByteArray::fromBase64(
+        metadata.value("journal").toObject().value("data").toString().toLatin1()).toStdString();
+    settings.ExpectedRulesetHash = metadata.value("ruleset").toObject().value("hash").toString().toStdString();
+    for (const QJsonValue& value : metadata.value("games").toArray())
+    {
+        const QJsonObject game = value.toObject();
+        const int index = game.value("game").toInt() - 1;
+        if (index < 0 || index > 99)
+        {
+            continue;
+        }
+        if (static_cast<size_t>(index) >= settings.ExpectedWinners.size())
+        {
+            settings.ExpectedWinners.resize(static_cast<size_t>(index) + 1, 0);
+        }
+        settings.ExpectedWinners[static_cast<size_t>(index)] = game.value("winnerPort").toInt();
+    }
+    if (!CoreRankedStageSession(settings))
+    {
+        QMessageBox::warning(this, tr("Ranked Replay"),
+            tr("This ranked replay can't be played: %1").arg(QString::fromStdString(CoreGetError())));
+        return false;
+    }
+    return true;
+}
+
+void KailleraPlaybackDialog::onPlaybackSelectionChanged()
+{
+    if (m_bookmarkLayout == nullptr || m_bookmarkRow == nullptr)
+    {
+        return;
+    }
+
+    // while playing, the list belongs to the recording being played
+    const QString path = (m_playbackWasActive && !m_activeRecordingPath.isEmpty())
+        ? m_activeRecordingPath : getSelectedRecordingPath();
+    while (QLayoutItem* item = m_bookmarkLayout->takeAt(0))
+    {
+        delete item->widget();
+        delete item;
+    }
+    auto addButton = [this](const QString& text, const QString& tip, int record)
+    {
+        auto* button = new QPushButton(text, m_bookmarkRow);
+        button->setToolTip(tip);
+        if (m_modernButtons)
+        {
+            configurePlaybackButton(button, "KailleraSecondaryButton");
+        }
+        connect(button, &QPushButton::clicked, this, [this, record]() { seekTo(record); });
+        m_bookmarkLayout->addWidget(button);
+    };
+
+    int marks = 0;
+    QJsonObject metadata;
+    if (!path.isEmpty() && loadReplayMetadata(path, metadata))
+    {
+        m_bookmarkLayout->addWidget(new QLabel(tr("Jump to:"), m_bookmarkRow));
+        addButton(tr("Start"), tr("Watch from the beginning"), 0);
+        for (const QJsonValue& value : metadata.value("bookmarks").toArray())
+        {
+            const QJsonObject mark = value.toObject();
+            const int record = mark.value("record").toInt(-1);
+            // a game's end is the next one's start
+            if (record < 0 || mark.value("kind").toString() == "game_end" || marks >= 12)
+            {
+                continue;
+            }
+            const QString time = playbackTime(record);
+            // game starts are labelled here (translated); other bookmarks keep the recorded label
+            QString label = mark.value("game").toInt() > 0 && mark.value("kind").toString() == "game_start"
+                ? tr("Game %1").arg(mark.value("game").toInt()) : mark.value("label").toString();
+            if (label.isEmpty())
+            {
+                label = tr("Bookmark");
+            }
+            addButton(label + "  " + time, tr("Watch from %1 (%2)").arg(label, time), record);
+            marks++;
+        }
+        m_bookmarkLayout->addStretch();
+    }
+    m_bookmarkRow->setVisible(marks > 0);
+}
+
+bool KailleraPlaybackDialog::isPlaying(const QString& path) const
+{
+    return (n02::isPlaybackActive() || m_playbackWasActive) && !m_activeRecordingPath.isEmpty() &&
+        QFileInfo(m_activeRecordingPath).canonicalFilePath() == QFileInfo(path).canonicalFilePath();
+}
+
+void KailleraPlaybackDialog::seekTo(int record)
+{
+    const int target = std::max(0, record);
+
+    if (m_playbackWasActive && !n02::isPlaybackActive())
+    {
+        m_seekTarget = target; // still starting up
+        return;
+    }
+    if (!n02::isPlaybackActive())
+    {
+        // not playing yet: start the selected recording, then seek
+        onPlaybackPlay();
+        if (m_playbackWasActive && target > 0)
+        {
+            m_seekTarget = target;
+        }
+        return;
+    }
+
+    if (m_isPaused)
+    {
+        CoreResumeEmulation();
+        m_isPaused = false;
+        updatePlaybackControls();
+    }
+
+    if (target >= n02::playbackGetCurrentFrame())
+    {
+        m_seekTarget = target;
+        // already jumping: retarget, or stop when already there
+        if (CoreIsPlaybackSeeking() && !CoreStartPlaybackSeek(target))
+        {
+            finishSeek();
+        }
+        return;
+    }
+
+    // Inputs can only be replayed forwards: restart from the beginning and
+    // fast-forward (onPlaybackTimer starts the new session).
+    const QString path = m_activeRecordingPath;
+    onPlaybackStop();
+    m_activeRecordingPath = path;
+    m_restartSeekTarget = target;
+}
+
+void KailleraPlaybackDialog::finishSeek()
+{
+    if (m_seekTarget < 0)
+    {
+        return;
+    }
+    m_seekTarget = -1;
+    CoreStopPlaybackSeek();
 }
 
 void KailleraPlaybackDialog::onPlaybackStop()
 {
+    finishSeek();
+    m_restartSeekTarget = -1;
     // Resume first if paused, so emulation can shut down cleanly
     if (m_isPaused)
     {
@@ -1836,12 +2120,6 @@ void KailleraPlaybackDialog::processExportOutputLine(const QString& rawLine)
         return;
     }
 
-    if (line.startsWith("Using replay export speed target: "))
-    {
-        m_exportTargetSpeed = normalizeStatusLine(line.mid(QString("Using replay export speed target: ").size()));
-        return;
-    }
-
     if (line.startsWith("Replay export finished: "))
     {
         m_exportStatusLine = "Finalizing MP4...";
@@ -1981,11 +2259,6 @@ QString KailleraPlaybackDialog::buildExportProgressSummary() const
     if (!m_exportVideoEncoder.isEmpty())
     {
         lines << "Encoder: " + m_exportVideoEncoder;
-    }
-
-    if (!m_exportTargetSpeed.isEmpty())
-    {
-        lines << "Target emu speed: " + m_exportTargetSpeed;
     }
 
     QString statusLine = m_exportStatusLine;
