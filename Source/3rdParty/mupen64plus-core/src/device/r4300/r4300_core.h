@@ -205,6 +205,21 @@ struct r4300_core
 #define R4300_KSEG0 UINT32_C(0x80000000)
 #define R4300_KSEG1 UINT32_C(0xa0000000)
 
+/* Map a 64-bit virtual address to the 32-bit one the memory system uses.
+ * XKPHYS (0x8000000000000000-0xbfffffffffffffff) reaches physical memory
+ * directly; libdragon uses it (0x9000000010000000 and up) for PI reads and
+ * writes. Physical addresses below 512 MB are folded into KSEG0/KSEG1
+ * (uncached when the cache attribute is 2), everything else is truncated. */
+static osal_inline uint32_t r4300_address(int64_t vaddr)
+{
+    uint64_t addr = (uint64_t)vaddr;
+    if ((addr >> 62) == 2 && ((addr >> 32) & UINT32_C(0x07ffffff)) == 0
+        && (uint32_t)addr < UINT32_C(0x20000000)) {
+        return (((addr >> 59) & 7) == 2 ? R4300_KSEG1 : R4300_KSEG0) | (uint32_t)addr;
+    }
+    return (uint32_t)addr;
+}
+
 #ifndef NEW_DYNAREC
 #define R4300_REGS_OFFSET \
     offsetof(struct r4300_core, regs)

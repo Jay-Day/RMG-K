@@ -1864,6 +1864,14 @@ static void remove_hash(u_int vaddr)
   state->cycle_count += count; \
   state->pending_exception = 0;
 
+/* Memory handlers: apply the upper half of a 64-bit base register that the
+ * stub stored in address_hi (see emit_base_hi) */
+#define UPDATE_ADDRESS \
+  if (state->address_hi) { \
+    state->address = r4300_address(((uint64_t)state->address_hi << 32) | state->address); \
+    state->address_hi = 0; \
+  }
+
 #define UPDATE_COUNT_OUT \
   state->cycle_count -= !state->pending_exception * count;
 
@@ -2081,8 +2089,11 @@ static void MFC0_new(int copr, int count)
 static void MTC0_new(int copr, int count, int pcaddr)
 {
   UPDATE_COUNT_IN
-  state->pcaddr = pcaddr;
-  r4300->delay_slot = 0;
+  // Like the memory stubs, the low bit flags a delay slot so an interrupt
+  // raised by the write resumes at the branch (libdragon toggles the timer
+  // mask with a Status write in a jr delay slot)
+  state->pcaddr = pcaddr&~1;
+  r4300->delay_slot = pcaddr&1;
   state->fake_pc.f.r.nrd = copr;
   cached_interp_MTC0();
   UPDATE_COUNT_OUT
@@ -2108,6 +2119,7 @@ static void read_byte_new(int pcaddr, int count)
 {
   uint32_t value;
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   unsigned int shift = bshift(state->address);
@@ -2121,6 +2133,7 @@ static void read_hword_new(int pcaddr, int count)
 {
   uint32_t value;
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   unsigned int shift = hshift(state->address);
@@ -2134,6 +2147,7 @@ static void read_word_new(int pcaddr, int count)
 {
   uint32_t value;
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   if (r4300_read_aligned_word(r4300, state->address, &value)) {
@@ -2145,6 +2159,7 @@ static void read_word_new(int pcaddr, int count)
 static void read_dword_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   r4300_read_aligned_dword(r4300, state->address, (uint64_t*)&state->rdword);
@@ -2154,6 +2169,7 @@ static void read_dword_new(int pcaddr, int count)
 static void write_byte_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   unsigned int shift = bshift(state->address);
@@ -2165,6 +2181,7 @@ static void write_byte_new(int pcaddr, int count)
 static void write_hword_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   unsigned int shift = hshift(state->address);
@@ -2176,6 +2193,7 @@ static void write_hword_new(int pcaddr, int count)
 static void write_word_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   r4300_write_aligned_word(r4300, state->address, state->wword, UINT32_C(0xffffffff));
@@ -2185,6 +2203,7 @@ static void write_word_new(int pcaddr, int count)
 static void write_dword_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   /* NOTE: in dynarec, we only need an all-one mask */
@@ -2195,6 +2214,7 @@ static void write_dword_new(int pcaddr, int count)
 static void LWL_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   uint32_t value;
@@ -2210,6 +2230,7 @@ static void LWL_new(int pcaddr, int count)
 static void LWR_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   uint32_t value;
@@ -2225,6 +2246,7 @@ static void LWR_new(int pcaddr, int count)
 static void LDL_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   uint64_t value;
@@ -2240,6 +2262,7 @@ static void LDL_new(int pcaddr, int count)
 static void LDR_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   uint64_t value;
@@ -2255,6 +2278,7 @@ static void LDR_new(int pcaddr, int count)
 static void SWL_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   unsigned int n = (state->address & 3);
@@ -2267,6 +2291,7 @@ static void SWL_new(int pcaddr, int count)
 static void SWR_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   unsigned int n = (state->address & 3);
@@ -2279,6 +2304,7 @@ static void SWR_new(int pcaddr, int count)
 static void SDL_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   unsigned int n = (state->address & 7);
@@ -2291,6 +2317,7 @@ static void SDL_new(int pcaddr, int count)
 static void SDR_new(int pcaddr, int count)
 {
   UPDATE_COUNT_IN
+  UPDATE_ADDRESS
   state->pcaddr = pcaddr&~1;
   r4300->delay_slot = pcaddr & 1;
   unsigned int n = (state->address & 7);
@@ -2357,6 +2384,19 @@ static void tlb_speed_hacks()
   }
 }
 
+// Code executed directly from cartridge ROM (libdragon's IPL3 runs its
+// final boot stage from 0xB0000000).  Returns NULL outside the ROM.
+static u_int *cart_rom_source(u_int vaddr,u_int *limit)
+{
+  u_int base;
+  if(vaddr>=0x90000000&&vaddr<0x9fc00000) base=0x90000000;
+  else if(vaddr>=0xb0000000&&vaddr<0xbfc00000) base=0xb0000000;
+  else return NULL;
+  if(vaddr-base>=g_dev.cart.cart_rom.rom_size) return NULL;
+  if(limit) *limit=base+(u_int)g_dev.cart.cart_rom.rom_size;
+  return (u_int *)((uintptr_t)g_dev.cart.cart_rom.rom+vaddr-base);
+}
+
 /**** Linker ****/
 u_int verify_dirty(struct ll_entry * head)
 {
@@ -2387,6 +2427,9 @@ u_int verify_dirty(struct ll_entry * head)
       }
     }
     source=(void*)(head->start+(map_value<<2));
+  }
+  else if(cart_rom_source(head->start,NULL)) {
+    source=cart_rom_source(head->start,NULL);
   }
   else
     assert(0);
@@ -3446,6 +3489,11 @@ static void store_alloc(struct regstat *current,int i)
   if(!(rs2[i])) current->u&=~1LL; // Allow allocating r0 if necessary
   if(needed_again(rs1[i],i)) alloc_reg(current,i,rs1[i]);
   alloc_reg(current,i,rs2[i]);
+  if(rt1[i]) { // SC/SCD
+    clear_const(current,rt1[i]);
+    dirty_reg(current,rt1[i]);
+    current->is32|=1LL<<rt1[i];
+  }
   if(opcode[i]==0x2c||opcode[i]==0x2d||opcode[i]==0x3f) { // 64-bit SDL/SDR/SD
     alloc_reg64(current,i,rs2[i]);
     if(rs2[i]) alloc_reg(current,i,FTEMP);
@@ -3744,7 +3792,7 @@ static void pagespan_alloc(struct regstat *current,int i)
   alloc_all(current,i);
   alloc_cc(current,i);
   dirty_reg(current,CCREG);
-  if(opcode[i]==3) // JAL
+  if(opcode[i]==3||(opcode[i]==1&&(opcode2[i]&0x10))) // JAL/BxxZAL
   {
     alloc_reg(current,i,31);
     dirty_reg(current,31);
@@ -4846,6 +4894,23 @@ static void do_cop1stub(int n)
   emit_jmp((intptr_t)fp_exception);
 }
 
+// libdragon reaches the PI bus through 64-bit XKPHYS pointers
+// (0x9000000010000000 and up). Hand the upper half of a 64-bit base register
+// to the memory handlers (see UPDATE_ADDRESS). The upper half is either in a
+// host register or, since it is marked needed by us1/us2, written back to the
+// register file. Must be emitted after save_regs: host register 0 is used as
+// scratch.
+static void emit_base_hi(int i,struct regstat *i_regs)
+{
+  if(!rs1[i]||((regs[i].was32>>rs1[i])&1)) return;
+  int s1h=get_reg(i_regs->regmap,rs1[i]|64);
+  if(s1h<0) {
+    s1h=0;
+    emit_readword(((intptr_t)&g_dev.r4300.new_dynarec_hot_state.regs[rs1[i]])+4,s1h);
+  }
+  emit_writeword(s1h,(intptr_t)&g_dev.r4300.new_dynarec_hot_state.address_hi);
+}
+
 static void do_readstub(int n)
 {
   assem_debug("do_readstub %x",start+stubs[n][3]*4);
@@ -4914,6 +4979,7 @@ static void do_readstub(int n)
   }
 
   save_regs(reglist);
+  emit_base_hi(i,i_regs);
   int ds=i_regs!=&regs[i];
 
 #if NEW_DYNAREC == NEW_DYNAREC_X86
@@ -5020,6 +5086,7 @@ static void inline_readstub(int type, int i, u_int addr_const, char addr, struct
   }
 
   save_regs(reglist);
+  emit_base_hi(i,i_regs);
   int ds=i_regs!=&regs[i];
 
 #if NEW_DYNAREC == NEW_DYNAREC_X86
@@ -5138,6 +5205,7 @@ static void do_writestub(int n)
   }
 
   save_regs(reglist);
+  emit_base_hi(i,i_regs);
   int ds=i_regs!=&regs[i];
 
 #if NEW_DYNAREC == NEW_DYNAREC_X86
@@ -5229,6 +5297,7 @@ static void inline_writestub(int type, int i, u_int addr_const, char addr, struc
   }
 
   save_regs(reglist);
+  emit_base_hi(i,i_regs);
   int ds=i_regs!=&regs[i];
 
 #if NEW_DYNAREC == NEW_DYNAREC_X86
@@ -5323,7 +5392,7 @@ static void cop0_assemble(int i,struct regstat *i_regs)
     // Always update the count even if it's only necessary when (copr==CP0_COUNT_REG||copr==CP0_COMPARE_REG||copr==CP0_STATUS_REG)
     // Always update the pcaddr even if it's only necessary when (copr==CP0_COUNT_REG||copr==CP0_STATUS_REG)
 #if NEW_DYNAREC == NEW_DYNAREC_X86
-    emit_pushimm(start+i*4);
+    emit_pushimm(start+i*4+is_delayslot);
     emit_pushimm(CLOCK_DIVIDER*(ccadj[i]+(copr==CP0_STATUS_REG)));
     emit_pushimm(copr);
     emit_call((intptr_t)MTC0_new);
@@ -5331,18 +5400,18 @@ static void cop0_assemble(int i,struct regstat *i_regs)
 #else
     emit_movimm(copr,ARG1_REG);
     emit_movimm(CLOCK_DIVIDER*(ccadj[i]+(copr==CP0_STATUS_REG)),ARG2_REG);
-    emit_movimm(start+i*4,ARG3_REG);
+    emit_movimm(start+i*4+is_delayslot,ARG3_REG);
     emit_call((intptr_t)MTC0_new);
 #endif
 
     restore_regs(reglist);
 
     if(copr==CP0_COUNT_REG||copr==CP0_STATUS_REG) {
-      assert(!is_delayslot);
       emit_cmpmem_imm((intptr_t)&g_dev.r4300.new_dynarec_hot_state.pending_exception,0);
       intptr_t jaddr=(intptr_t)out;
       emit_jeq(0);
-      load_all_consts(regs[i].regmap_entry,regs[i].was32,regs[i].wasdirty,regs[i].wasconst,i);
+      // In a delay slot i_regs is the branch's state, same as the memory stubs
+      if(!is_delayslot) load_all_consts(regs[i].regmap_entry,regs[i].was32,regs[i].wasdirty,regs[i].wasconst,i);
       wb_dirtys(i_regs->regmap_entry,i_regs->was32,i_regs->wasdirty);
       emit_jmp((intptr_t)&do_interrupt);
       set_jump_target(jaddr,(intptr_t)out);
@@ -6487,6 +6556,10 @@ static void store_assemble(int i,struct regstat *i_regs)
 #else
   inline_writestub(type,i,c?(constmap[i][s]+offset):0,real_addr,i_regs,rs2[i],ccadj[i],reglist);
 #endif
+  if(rt1[i]) { // SC/SCD succeeded
+    emit_movimm(1,tl);
+    if(th>=0) emit_zeroreg(th);
+  }
 }
 
 static void storelr_assemble(int i,struct regstat *i_regs)
@@ -7742,8 +7815,6 @@ static void sjump_assemble(int i,struct regstat *i_regs)
   if(i>(ba[i]-start)>>2) invert=1;
   #endif
 
-  //if(opcode2[i]>=0x10) return; // FIXME (BxxZAL)
-  assert(opcode2[i]<0x10||rs1[i]==0); // FIXME (BxxZAL)
 
   if(ooo[i]) {
     s1l=get_reg(branch_regs[i].regmap,rs1[i]);
@@ -7837,7 +7908,7 @@ static void sjump_assemble(int i,struct regstat *i_regs)
       if(!only32)
       {
         assert(s1h>=0);
-        if(opcode2[i]==0) // BLTZ
+        if((opcode2[i]&0xf)==0) // BLTZ/BLTZAL
         {
           emit_test(s1h,s1h);
           if(invert){
@@ -7848,7 +7919,7 @@ static void sjump_assemble(int i,struct regstat *i_regs)
             emit_js(0);
           }
         }
-        if(opcode2[i]==1) // BGEZ
+        if((opcode2[i]&0xf)==1) // BGEZ/BGEZAL
         {
           emit_test(s1h,s1h);
           if(invert){
@@ -7863,7 +7934,7 @@ static void sjump_assemble(int i,struct regstat *i_regs)
       else
       {
         assert(s1l>=0);
-        if(opcode2[i]==0) // BLTZ
+        if((opcode2[i]&0xf)==0) // BLTZ/BLTZAL
         {
           emit_test(s1l,s1l);
           if(invert){
@@ -7874,7 +7945,7 @@ static void sjump_assemble(int i,struct regstat *i_regs)
             emit_js(0);
           }
         }
-        if(opcode2[i]==1) // BGEZ
+        if((opcode2[i]&0xf)==1) // BGEZ/BGEZAL
         {
           emit_test(s1l,s1l);
           if(invert){
@@ -7929,17 +8000,22 @@ static void sjump_assemble(int i,struct regstat *i_regs)
     // In-order execution (branch first)
     //DebugMessage(M64MSG_VERBOSE, "IOE");
     intptr_t nottaken=0;
+    if(rt1[i]==31) {
+      // BxxZAL writes the link register whether or not the branch is taken
+      int rt=get_reg(i_regmap,31);
+      if(rt>=0) emit_movimm(start+i*4+8,rt); // PC into link register
+    }
     if(!unconditional) {
       if(!only32)
       {
         assert(s1h>=0);
-        if((opcode2[i]&0x1d)==0) // BLTZ/BLTZL
+        if((opcode2[i]&0x0d)==0) // BLTZ/BLTZL/BLTZAL/BLTZALL
         {
           emit_test(s1h,s1h);
           nottaken=(intptr_t)out;
           emit_jns(1);
         }
-        if((opcode2[i]&0x1d)==1) // BGEZ/BGEZL
+        if((opcode2[i]&0x0d)==1) // BGEZ/BGEZL/BGEZAL/BGEZALL
         {
           emit_test(s1h,s1h);
           nottaken=(intptr_t)out;
@@ -7949,13 +8025,13 @@ static void sjump_assemble(int i,struct regstat *i_regs)
       else
       {
         assert(s1l>=0);
-        if((opcode2[i]&0x1d)==0) // BLTZ/BLTZL
+        if((opcode2[i]&0x0d)==0) // BLTZ/BLTZL/BLTZAL/BLTZALL
         {
           emit_test(s1l,s1l);
           nottaken=(intptr_t)out;
           emit_jns(1);
         }
-        if((opcode2[i]&0x1d)==1) // BGEZ/BGEZL
+        if((opcode2[i]&0x0d)==1) // BGEZ/BGEZL/BGEZAL/BGEZALL
         {
           emit_test(s1l,s1l);
           nottaken=(intptr_t)out;
@@ -8278,7 +8354,8 @@ static void pagespan_assemble(int i,struct regstat *i_regs)
     {
       if(hr!=EXCLUDE_REG && hr!=HOST_CCREG &&
          (i_regs->regmap[hr]&63)!=rs1[i] &&
-         (i_regs->regmap[hr]&63)!=rs2[i] )
+         (i_regs->regmap[hr]&63)!=rs2[i] &&
+         (rt1[i]!=31||(i_regs->regmap[hr]&63)!=31) )
       {
         addr=hr++;break;
       }
@@ -8289,7 +8366,8 @@ static void pagespan_assemble(int i,struct regstat *i_regs)
   {
     if(hr!=EXCLUDE_REG && hr!=HOST_CCREG && hr!=HOST_BTREG &&
        (i_regs->regmap[hr]&63)!=rs1[i] &&
-       (i_regs->regmap[hr]&63)!=rs2[i] )
+       (i_regs->regmap[hr]&63)!=rs2[i] &&
+       (rt1[i]!=31||(i_regs->regmap[hr]&63)!=31) )
     {
       alt=hr++;break;
     }
@@ -8322,6 +8400,11 @@ static void pagespan_assemble(int i,struct regstat *i_regs)
     int rt=get_reg(i_regs->regmap,31);
     emit_movimm(start+i*4+8,rt);
     unconditional=1;
+  }
+  if(opcode[i]==1&&(opcode2[i]&0x10)) // BxxZAL
+  {
+    int rt=get_reg(i_regs->regmap,31);
+    emit_movimm(start+i*4+8,rt);
   }
   if(opcode[i]==0&&(opcode2[i]&0x3E)==8) // JR/JALR
   {
@@ -8464,28 +8547,28 @@ static void pagespan_assemble(int i,struct regstat *i_regs)
     else emit_jl(0);
     if(taken) set_jump_target(taken,(intptr_t)out);
   }
-  if((opcode[i]==1)&&(opcode2[i]==0)) // BLTZ
+  if((opcode[i]==1)&&((opcode2[i]&0xf)==0)) // BLTZ/BLTZAL
   {
     emit_mov2imm_compact(ba[i],alt,start+i*4+8,addr);
     if(s1h>=0) emit_test(s1h,s1h);
     else emit_test(s1l,s1l);
     emit_cmovs_reg(alt,addr);
   }
-  if((opcode[i]==1)&&(opcode2[i]==1)) // BGEZ
+  if((opcode[i]==1)&&((opcode2[i]&0xf)==1)) // BGEZ/BGEZAL
   {
     emit_mov2imm_compact(ba[i],addr,start+i*4+8,alt);
     if(s1h>=0) emit_test(s1h,s1h);
     else emit_test(s1l,s1l);
     emit_cmovs_reg(alt,addr);
   }
-  if((opcode[i]==1)&&(opcode2[i]==2)) // BLTZL
+  if((opcode[i]==1)&&((opcode2[i]&0xf)==2)) // BLTZL/BLTZALL
   {
     if(s1h>=0) emit_test(s1h,s1h);
     else emit_test(s1l,s1l);
     nottaken=(intptr_t)out;
     emit_jns(0);
   }
-  if((opcode[i]==1)&&(opcode2[i]==3)) // BGEZL
+  if((opcode[i]==1)&&((opcode2[i]&0xf)==3)) // BGEZL/BGEZALL
   {
     if(s1h>=0) emit_test(s1h,s1h);
     else emit_test(s1l,s1l);
@@ -8877,6 +8960,9 @@ int new_recompile_block(int addr)
     }
     //DebugMessage(M64MSG_VERBOSE, "source= %x",(intptr_t)source);
   }
+  else if (cart_rom_source(start,NULL)) {
+    source = cart_rom_source(start,&pagelimit);
+  }
   else {
     //DebugMessage(M64MSG_VERBOSE, "Compile at bogus memory address: %x ", (int)addr);
     DebugMessage(M64MSG_ERROR, "Compile at bogus memory address: %x", (int)addr);
@@ -9156,20 +9242,26 @@ int new_recompile_block(int addr)
       case 0x2D: assem_strcpy(insn[i],"SDR"); type=STORELR; break;
       case 0x2E: assem_strcpy(insn[i],"SWR"); type=STORELR; break;
       case 0x2F: assem_strcpy(insn[i],"CACHE"); type=NOP; break;
-      case 0x30: assem_strcpy(insn[i],"LL"); type=NI; break;
+      case 0x30: assem_strcpy(insn[i],"LL"); type=LOAD; break;
       case 0x31: assem_strcpy(insn[i],"LWC1"); type=C1LS; break;
-      case 0x34: assem_strcpy(insn[i],"LLD"); type=NI; break;
+      case 0x34: assem_strcpy(insn[i],"LLD"); type=LOAD; break;
       case 0x35: assem_strcpy(insn[i],"LDC1"); type=C1LS; break;
       case 0x37: assem_strcpy(insn[i],"LD"); type=LOAD; break;
-      case 0x38: assem_strcpy(insn[i],"SC"); type=NI; break;
+      case 0x38: assem_strcpy(insn[i],"SC"); type=STORE; break;
       case 0x39: assem_strcpy(insn[i],"SWC1"); type=C1LS; break;
-      case 0x3C: assem_strcpy(insn[i],"SCD"); type=NI; break;
+      case 0x3C: assem_strcpy(insn[i],"SCD"); type=STORE; break;
       case 0x3D: assem_strcpy(insn[i],"SDC1"); type=C1LS; break;
       case 0x3F: assem_strcpy(insn[i],"SD"); type=STORE; break;
       default: assem_strcpy(insn[i],"???"); type=NI; break;
     }
     itype[i]=type;
     opcode2[i]=op2;
+    // There is a single CPU, so LL/LLD/SC/SCD are compiled as LW/LD/SW/SD,
+    // and SC/SCD always succeed (they set rt to 1, see store_assemble)
+    if(op==0x30) opcode[i]=0x23;
+    if(op==0x34) opcode[i]=0x37;
+    if(op==0x38) opcode[i]=0x2B;
+    if(op==0x3C) opcode[i]=0x3F;
     /* Get registers/immediates */
     lt1[i]=0;
     us1[i]=0;
@@ -9183,6 +9275,7 @@ int new_recompile_block(int addr)
         rt1[i]=(source[i]>>16)&0x1f;
         rt2[i]=0;
         imm[i]=(short)source[i];
+        us1[i]=rs1[i]; // 64-bit base (XKPHYS)
         break;
       case STORE:
       case STORELR:
@@ -9191,7 +9284,9 @@ int new_recompile_block(int addr)
         rt1[i]=0;
         rt2[i]=0;
         imm[i]=(short)source[i];
-        if(op==0x2c||op==0x2d||op==0x3f) us1[i]=rs2[i]; // 64-bit SDL/SDR/SD
+        if(op==0x2c||op==0x2d||op==0x3f||op==0x3c) us1[i]=rs2[i]; // 64-bit SDL/SDR/SD/SCD
+        if(op==0x38||op==0x3c) rt1[i]=rs2[i]; // SC/SCD
+        us2[i]=rs1[i]; // 64-bit base (XKPHYS)
         break;
       case LOADLR:
         // LWL/LWR only load part of the register,
@@ -9203,6 +9298,7 @@ int new_recompile_block(int addr)
         imm[i]=(short)source[i];
         if(op==0x1a||op==0x1b) us1[i]=rs2[i]; // LDR/LDL
         if(op==0x26) dep1[i]=rt1[i]; // LWR
+        us2[i]=rs1[i]; // 64-bit base (XKPHYS)
         break;
       case IMM16:
         if (op==0x0f) rs1[i]=0; // LUI instruction has no source register
@@ -9354,6 +9450,7 @@ int new_recompile_block(int addr)
         rt1[i]=0;
         rt2[i]=0;
         imm[i]=(short)source[i];
+        us1[i]=rs1[i]; // 64-bit base (XKPHYS)
         break;
       case FLOAT:
       case FCONV:
@@ -9917,7 +10014,7 @@ int new_recompile_block(int addr)
           }
           else
           // Don't alloc the delay slot yet because we might not execute it
-          if((opcode2[i]&0x1E)==0x2) // BLTZL/BGEZL
+          if((opcode2[i]&0x0E)==0x2) // BLTZL/BGEZL/BLTZALL/BGEZALL
           {
             current.isconst=0;
             current.wasconst=0;
@@ -9928,6 +10025,10 @@ int new_recompile_block(int addr)
             if(!(current.is32>>rs1[i]&1))
             {
               alloc_reg64(&current,i,rs1[i]);
+            }
+            if (rt1[i]==31) { // BLTZALL/BGEZALL
+              alloc_reg(&current,i,31);
+              dirty_reg(&current,31);
             }
           }
           ds=1;
@@ -10299,7 +10400,7 @@ int new_recompile_block(int addr)
           }
           else
           // Alloc the delay slot in case the branch is taken
-          if((opcode2[i-1]&0x1E)==2) // BLTZL/BGEZL
+          if((opcode2[i-1]&0x0E)==2) // BLTZL/BGEZL/BLTZALL/BGEZALL
           {
             memcpy(&branch_regs[i-1],&current,sizeof(current));
             branch_regs[i-1].u=(branch_unneeded_reg[i-1]&~((1LL<<rs1[i])|(1LL<<rs2[i])|(1LL<<rt1[i])|(1LL<<rt2[i])))|1;
@@ -10313,7 +10414,6 @@ int new_recompile_block(int addr)
             dirty_reg(&current,CCREG);
             memcpy(&branch_regs[i-1].regmap_entry,&branch_regs[i-1].regmap,sizeof(current.regmap));
           }
-          // FIXME: BLTZAL/BGEZAL
           if(opcode2[i-1]&0x10) { // BxxZAL
             alloc_reg(&branch_regs[i-1],i-1,31);
             dirty_reg(&branch_regs[i-1],31);

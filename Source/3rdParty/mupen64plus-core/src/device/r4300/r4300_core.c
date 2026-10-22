@@ -25,6 +25,8 @@
 #include "instr_counters.h"
 #endif
 #include "new_dynarec/new_dynarec.h"
+#include "device/rcp/mi/mi_controller.h"
+#include "device/rdram/rdram.h"
 #include "pure_interp.h"
 #include "recomp.h"
 
@@ -437,8 +439,54 @@ int r4300_read_aligned_dword(struct r4300_core* r4300, uint32_t address, uint64_
  * address may not be word-aligned for byte or hword accesses.
  * Alignment is taken care of when calling mem handler.
  */
+/* MI repeat mode (MI_MODE bit 8): the next uncached CPU write to RDRAM is
+ * repeated to fill MI_MODE[6:0]+1 bytes, staying within the 2 KB RDRAM row.
+ * libdragon's hardware memset (sys_hw_memset) relies on it. Returns 1 if the
+ * write was consumed. Behaviour follows ares (n64/mi/bus.hpp). */
+static int r4300_mi_repeat_write(struct r4300_core* r4300, uint32_t vaddr, uint32_t address, uint64_t pattern, uint32_t start)
+{
+    uint32_t* mode = &r4300->mi->regs[MI_INIT_MODE_REG];
+    if (!(*mode & 0x80)) {
+        return 0;
+    }
+    if ((vaddr & UINT32_C(0xe0000000)) != UINT32_C(0xa0000000)) {
+        return 0;
+    }
+    *mode &= ~UINT32_C(0x80);
+
+    address &= UINT32_C(0x1fffffff);
+    if (address >= r4300->rdram->dram_size) {
+        return 0;
+    }
+
+    uint32_t end = (address & ~UINT32_C(7)) + (*mode & 0x7f) + 1;
+    if (end > r4300->rdram->dram_size) {
+        end = (uint32_t)r4300->rdram->dram_size;
+    }
+    address = (address & ~UINT32_C(7)) | start;
+    if (end <= address) {
+        return 1;
+    }
+
+    uint32_t length = end - address;
+    const struct mem_handler* handler = mem_get_handler(r4300->mem, address);
+    while (length--) {
+        unsigned int lane = address & 3;
+        uint32_t byte = (uint32_t)(pattern >> (56 - 8 * (address & 7))) & 0xff;
+        uint32_t shift = 8 * (3 - lane);
+        invalidate_r4300_cached_code(r4300, R4300_KSEG0 | address, 1);
+        invalidate_r4300_cached_code(r4300, R4300_KSEG1 | address, 1);
+        mem_write32(handler, address & ~UINT32_C(3), byte << shift, UINT32_C(0xff) << shift);
+        address = (address & ~UINT32_C(0x7ff)) | ((address + 1) & UINT32_C(0x7ff));
+    }
+
+    return 1;
+}
+
 int r4300_write_aligned_word(struct r4300_core* r4300, uint32_t address, uint32_t value, uint32_t mask)
 {
+    const uint32_t vaddr = address;
+
     if ((address & UINT32_C(0xc0000000)) != UINT32_C(0x80000000)) {
 
         invalidate_r4300_cached_code(r4300, address, 4);
@@ -446,6 +494,17 @@ int r4300_write_aligned_word(struct r4300_core* r4300, uint32_t address, uint32_
         address = virtual_to_physical_address(r4300, address, 1);
         if (address == 0) {
             return 0;
+        }
+    }
+
+    if (r4300->mi->regs[MI_INIT_MODE_REG] & 0x80) {
+        uint32_t start = address & 4;
+        if (mask != UINT32_C(0xffffffff)) {
+            /* byte/halfword store: the repeat starts at its first lane */
+            while (!(mask & (UINT32_C(0xff000000) >> (8 * (start & 3))))) start++;
+        }
+        if (r4300_mi_repeat_write(r4300, vaddr, address, ((uint64_t)value << 32) | value, start)) {
+            return 1;
         }
     }
 
@@ -462,6 +521,7 @@ int r4300_write_aligned_word(struct r4300_core* r4300, uint32_t address, uint32_
 /* Write aligned dword to memory */
 int r4300_write_aligned_dword(struct r4300_core* r4300, uint32_t address, uint64_t value, uint64_t mask)
 {
+    const uint32_t vaddr = address;
     /* XXX: unaligned dword accesses should trigger a address error,
      * but inaccurate timing of the core can lead to unaligned address on reset
      * so just emit a warning and keep going */
@@ -476,6 +536,12 @@ int r4300_write_aligned_dword(struct r4300_core* r4300, uint32_t address, uint64
         address = virtual_to_physical_address(r4300, address, 1);
         if (address == 0) {
             return 0;
+        }
+    }
+
+    if (r4300->mi->regs[MI_INIT_MODE_REG] & 0x80) {
+        if (r4300_mi_repeat_write(r4300, vaddr, address, value, address & 4)) {
+            return 1;
         }
     }
 

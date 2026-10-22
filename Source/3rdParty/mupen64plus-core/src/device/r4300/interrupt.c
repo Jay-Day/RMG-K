@@ -497,7 +497,7 @@ void r4300_check_interrupt(struct r4300_core* r4300, uint32_t cause_ip, int set_
     int* cp0_cycle_count = r4300_cp0_cycle_count(&r4300->cp0);
 
     if (set_cause) {
-        cp0_regs[CP0_CAUSE_REG] = (cp0_regs[CP0_CAUSE_REG] | cause_ip) & ~CP0_CAUSE_EXCCODE_MASK;
+        cp0_regs[CP0_CAUSE_REG] |= cause_ip;
     }
     else {
         cp0_regs[CP0_CAUSE_REG] &= ~cause_ip;
@@ -537,7 +537,7 @@ void r4300_check_interrupt(struct r4300_core* r4300, uint32_t cause_ip, int set_
 void raise_maskable_interrupt(struct r4300_core* r4300, uint32_t cause_ip)
 {
     uint32_t* cp0_regs = r4300_cp0_regs(&r4300->cp0);
-    cp0_regs[CP0_CAUSE_REG] = (cp0_regs[CP0_CAUSE_REG] | cause_ip) & ~CP0_CAUSE_EXCCODE_MASK;
+    cp0_regs[CP0_CAUSE_REG] |= cause_ip;
 
     if (!(cp0_regs[CP0_STATUS_REG] & cp0_regs[CP0_CAUSE_REG] & UINT32_C(0xff00))) {
         return;
@@ -547,6 +547,9 @@ void raise_maskable_interrupt(struct r4300_core* r4300, uint32_t cause_ip)
         return;
     }
 
+    /* ExcCode is only cleared when the interrupt is actually taken, a pending
+     * interrupt must not clobber the code of an exception being handled */
+    cp0_regs[CP0_CAUSE_REG] &= ~CP0_CAUSE_EXCCODE_MASK;
     exception_general(r4300);
 }
 
@@ -570,7 +573,9 @@ void compare_int_handler(void* opaque)
 
 void check_int_handler(void* opaque)
 {
-    exception_general((struct r4300_core*)opaque);
+    struct r4300_core* r4300 = (struct r4300_core*)opaque;
+    r4300_cp0_regs(&r4300->cp0)[CP0_CAUSE_REG] &= ~CP0_CAUSE_EXCCODE_MASK;
+    exception_general(r4300);
 }
 
 /* Special interrupt is a fake interrupt which porpose is
