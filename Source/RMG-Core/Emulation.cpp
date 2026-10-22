@@ -18,10 +18,13 @@
 #include "Netplay.hpp"
 #include "Kaillera.hpp"
 #include "Plugins.hpp"
+#include "Ranked.hpp"
 #include "Cheats.hpp"
 #include "Error.hpp"
 #include "File.hpp"
 #include "Rom.hpp"
+#include "SpeedLimiter.hpp"
+#include "Callback.hpp"
 #include "rmgk_gekko.hpp"
 #ifdef RMGK_HAVE_P2P_TRANSPORT
 #include "n02_client.h"
@@ -29,9 +32,12 @@
 
 #include "m64p/Api.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
+#include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <vector>
@@ -287,6 +293,7 @@ static bool pif_channel_has_command(const pif_channel& channel)
 static void FrameCallback(unsigned int frameIndex)
 {
     s_CurrentFrame = frameIndex;
+    CoreRankedOnCoreFrame(frameIndex);
 #ifdef NETPLAY
     // Reset sync flag at the start of each new frame
     // This ensures we sync exactly once per frame regardless of PIF polling timing
@@ -325,6 +332,83 @@ static uint64_t            s_SpectatePreJumpHash = 0;
 // misalignment (inputs differ / are shifted) or hidden state (inputs identical but the
 // state still forks). -1 = inactive; 0..N = frames applied since load.
 static int                 s_SpectateInputProbeCount = -1;
+
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+// Playback seeking. The UI starts a seek; the emulation thread ends it in the PIF
+// sync right after the record before the target was played, so a jump lands on
+// its record instead of wherever a UI timer next looks. Seeks run without the
+// speed limiter and, when the graphics plugin can, without rendering. Rendering
+// resumes a few records early so the first frame shown is a drawn one.
+static constexpr int       kPlaybackSeekRenderLead = 5;
+static std::mutex          s_PlaybackSeekMutex;
+static std::atomic<int>    s_PlaybackSeekTarget{-1};
+static std::atomic<bool>   s_PlaybackSeekSkipping{false};
+static bool                s_PlaybackSeekLimiter = true; // speed limiter state to restore
+static int                 s_PlaybackSeekStartRecord = 0;
+static std::chrono::steady_clock::time_point s_PlaybackSeekStartTime;
+static unsigned int        s_PlaybackSeekSkipped = 0;
+static unsigned int        s_PlaybackSeekRendered = 0;
+
+// renders again, adding up what the plugin skipped. Needs s_PlaybackSeekMutex.
+static void stop_playback_seek_skipping(void)
+{
+    if (s_PlaybackSeekSkipping.exchange(false))
+    {
+        unsigned int skipped = 0;
+        unsigned int rendered = 0;
+        CorePluginsSetGfxSkipRendering(false, &skipped, &rendered);
+        s_PlaybackSeekSkipped += skipped;
+        s_PlaybackSeekRendered += rendered;
+    }
+}
+
+static void finish_playback_seek(bool arrived)
+{
+    std::lock_guard<std::mutex> lock(s_PlaybackSeekMutex);
+    if (s_PlaybackSeekTarget.exchange(-1) < 0)
+    {
+        return;
+    }
+
+    stop_playback_seek_skipping();
+    CoreSetFrameOutput(CoreFrameOutput_All);
+    CoreSetSpeedLimiterState(s_PlaybackSeekLimiter);
+
+    if (arrived)
+    {
+        const int records = n02::playbackGetCurrentFrame() - s_PlaybackSeekStartRecord;
+        const double seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - s_PlaybackSeekStartTime).count();
+        std::ostringstream stream;
+        stream << "Playback jump: " << records << " records in " << std::fixed << std::setprecision(2)
+               << seconds << " s (" << static_cast<int>(seconds > 0 ? records / seconds : 0)
+               << " records/s), rendering skipped for " << s_PlaybackSeekSkipped << " of "
+               << (s_PlaybackSeekSkipped + s_PlaybackSeekRendered) << " display lists";
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, stream.str());
+    }
+}
+
+// emulation thread, after each record played
+static void playback_seek_step(void)
+{
+    const int target = s_PlaybackSeekTarget.load();
+    if (target < 0)
+    {
+        return;
+    }
+
+    const int played = n02::playbackGetCurrentFrame();
+    if (played >= target)
+    {
+        finish_playback_seek(true);
+    }
+    else if (played >= target - kPlaybackSeekRenderLead && s_PlaybackSeekSkipping.load())
+    {
+        std::lock_guard<std::mutex> lock(s_PlaybackSeekMutex);
+        stop_playback_seek_skipping();
+    }
+}
+#endif // RMGK_HAVE_P2P_TRANSPORT
 
 // Kaillera PIF sync callback (called from mupen64plus-core after netplay sync)
 static void KailleraPifSyncCallback(struct pif* pif)
@@ -388,6 +472,8 @@ static void KailleraPifSyncCallback(struct pif* pif)
                 kfState.len    = static_cast<int>(s_SpectateKeyframeBuf.size());
                 kfState.frame  = s_SpectateKeyframeFrame;
                 const bool deferOk = CoreRollbackLoadGameStateDeferred(kfState);
+                // a ranked write journal continues from the keyframe's record
+                CoreRankedReplayRebase(s_SpectateKeyframeFrame);
 
                 // Realign the krec reader to the first record after the snapshot. ROM boot
                 // may poll controllers before the deferred load lands; seeking to zero
@@ -502,7 +588,7 @@ static void KailleraPifSyncCallback(struct pif* pif)
         }
 
         // Synchronize with Kaillera - this must be called exactly ONCE per emulator frame
-        int ret = CoreModifyKailleraPlayValues(sync_buffer, sizeof(uint32_t));
+        int ret = CoreModifyKailleraPlayValues(sync_buffer, sizeof(uint32_t), sizeof(sync_buffer));
 
         if (ret < 0) {
             // Game ended or network error. For live netplay we keep emulation
@@ -557,6 +643,12 @@ static void KailleraPifSyncCallback(struct pif* pif)
                 rmgk_gekko::write_spectate_probe(istream.str());
                 s_SpectateInputProbeCount++;
             }
+
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+            if (inPlayback) {
+                playback_seek_step();
+            }
+#endif
         }
     }
 
@@ -616,6 +708,12 @@ static void KailleraPifSyncCallback(struct pif* pif)
 #endif // NETPLAY
 }
 
+bool CoreSpectateKeyframeAwaitingLoad(void)
+{
+    std::lock_guard<std::mutex> lock(s_SpectateKeyframeMutex);
+    return s_SpectateKeyframeStaged && !s_SpectateKeyframeLoaded;
+}
+
 CORE_EXPORT void CoreStageSpectateKeyframe(const unsigned char* data, int len, int frame)
 {
     // UI thread: stage a savestate for the spectator's emulation to restore on its
@@ -629,6 +727,63 @@ CORE_EXPORT void CoreStageSpectateKeyframe(const unsigned char* data, int len, i
     s_SpectateKeyframeFrame  = frame;
     s_SpectateKeyframeStaged = (data != nullptr && len > 0);
     s_SpectateKeyframeLoaded = false;
+}
+
+CORE_EXPORT bool CoreStartPlaybackSeek(int record)
+{
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    std::lock_guard<std::mutex> lock(s_PlaybackSeekMutex);
+    const int played = n02::playbackGetCurrentFrame();
+    if (!n02::isPlaybackActive() || record <= played)
+    {
+        return false;
+    }
+
+    if (s_PlaybackSeekTarget.load() < 0)
+    {
+        s_PlaybackSeekLimiter     = CoreIsSpeedLimiterEnabled();
+        s_PlaybackSeekStartRecord = played;
+        s_PlaybackSeekStartTime   = std::chrono::steady_clock::now();
+        s_PlaybackSeekSkipped     = 0;
+        s_PlaybackSeekRendered    = 0;
+        // pacing stays on, it also runs the pause loop
+        CoreSetFrameOutput(CoreFrameOutput_Pacing | CoreFrameOutput_Input);
+        CoreSetSpeedLimiterState(false);
+    }
+
+    // RMGK_SEEK_RENDER=1 keeps rendering during seeks, to compare
+    static const bool keepRendering = []()
+    {
+        const char* value = std::getenv("RMGK_SEEK_RENDER");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (!keepRendering && record - played > kPlaybackSeekRenderLead && !s_PlaybackSeekSkipping.load())
+    {
+        s_PlaybackSeekSkipping = CorePluginsSetGfxSkipRendering(true);
+    }
+
+    s_PlaybackSeekTarget = record;
+    return true;
+#else
+    (void)record;
+    return false;
+#endif
+}
+
+CORE_EXPORT void CoreStopPlaybackSeek(void)
+{
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    finish_playback_seek(false);
+#endif
+}
+
+CORE_EXPORT bool CoreIsPlaybackSeeking(void)
+{
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    return s_PlaybackSeekTarget.load() >= 0;
+#else
+    return false;
+#endif
 }
 
 CORE_EXPORT void CoreClearSpectateKeyframe(void)
@@ -1056,9 +1211,21 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     }
 #endif
 
+    // ranked sets need their module loaded before the first frame
+    bool rankedReady = true;
+    if ((!netplay && (!localRollbackEnabled || rollbackExecute)) || (netplay && netplay_ret))
+    {
+        rankedReady = CoreRankedBeginEmulation(netplay, rollbackExecute);
+        if (!rankedReady)
+        {
+            error = CoreGetError();
+            m64p_ret = M64ERR_SYSTEM_FAIL;
+        }
+    }
+
     // only start emulation when initializing netplay/local rollback
     // is successful or if there's legacy netplay requested
-    if ((!netplay && (!localRollbackEnabled || rollbackExecute)) || (netplay && netplay_ret))
+    if (rankedReady && ((!netplay && (!localRollbackEnabled || rollbackExecute)) || (netplay && netplay_ret)))
     {
         // Register frame callback for frame counter (used by Kaillera)
         s_CurrentFrame = 0;
@@ -1091,6 +1258,23 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             if (set_callback)
             {
                 set_callback(address == "KAILLERA" ? KailleraPifSyncCallback : nullptr);
+            }
+
+            // A recording being played back drives its players' controllers
+            // through that callback, so a raw input plugin (e.g. raphnet) isn't
+            // polled for them: it would cap jumps at the adapter's polling rate.
+            typedef void (*set_pif_sync_replay_players_t)(int);
+#ifdef _WIN32
+            set_pif_sync_replay_players_t set_replay_players =
+                (set_pif_sync_replay_players_t)GetProcAddress((HMODULE)coreHandle, "set_pif_sync_replay_players");
+#else
+            set_pif_sync_replay_players_t set_replay_players =
+                (set_pif_sync_replay_players_t)dlsym(coreHandle, "set_pif_sync_replay_players");
+#endif
+            if (set_replay_players)
+            {
+                set_replay_players(address == "KAILLERA" && CoreIsKailleraPlaybackMode() ?
+                    CoreGetKailleraNumPlayers() : 0);
             }
         }
 #endif
@@ -1132,6 +1316,10 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             }
         }
     }
+
+    // a seek cut short by the end of emulation still restores normal output
+    CoreStopPlaybackSeek();
+    CoreRankedEndEmulation();
 
     if (!netplay && rollbackExecute)
     {

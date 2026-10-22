@@ -1034,6 +1034,10 @@
             <source>Client Record/Replay 600 Inputs</source>
             <translation>クライアントの入力600回分を記録・再生</translation>
         </message>
+        <message>
+            <source>Stop &amp;Watching</source>
+            <translation>観戦をやめる(&amp;W)</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::MainWindow</name>
@@ -1200,6 +1204,126 @@ Try connecting the adapter to a different USB port, preferably directly on your 
         <message>
             <source>Input Settings</source>
             <translation>入力設定</translation>
+        </message>
+        <message>
+            <source>Replay Link</source>
+            <translation>リプレイリンク</translation>
+        </message>
+        <message>
+            <source>Stop the running game first, then open the replay link again.</source>
+            <translation>実行中のゲームを停止してから、もう一度リプレイリンクを開いてください。</translation>
+        </message>
+        <message>
+            <source> from %1:%2</source>
+            <translation> (%1:%2 から)</translation>
+        </message>
+        <message>
+            <source>Play the replay of ranked set #%1%2?</source>
+            <translation>ランクセット #%1 のリプレイを再生しますか？%2</translation>
+        </message>
+        <message>
+            <source>Download and play the replay of ranked set #%1 from %2%3?</source>
+            <translation>%2 からランクセット #%1 のリプレイをダウンロードして再生しますか？%3</translation>
+        </message>
+        <message>
+            <source>, starting at %1:%2</source>
+            <translation> (%1:%2 から開始)</translation>
+        </message>
+        <message>
+            <source>Watch Ranked Replay</source>
+            <translation>ランクリプレイを見る</translation>
+        </message>
+        <message>
+            <source>Downloading ranked replay...</source>
+            <translation>ランクリプレイをダウンロード中...</translation>
+        </message>
+        <message>
+            <source>The replay couldn't be downloaded: %1</source>
+            <translation>リプレイをダウンロードできませんでした: %1</translation>
+        </message>
+        <message>
+            <source>not a replay file</source>
+            <translation>リプレイファイルではありません</translation>
+        </message>
+        <message>
+            <source>The replay couldn't be saved to %1</source>
+            <translation>リプレイを %1 に保存できませんでした</translation>
+        </message>
+        <message>
+            <source>Select ROM Directory</source>
+            <translation>ROMディレクトリを選択</translation>
+        </message>
+        <message>
+            <source>Ranked 2v2 Bo%1 - Game %2 - pick two teams of two</source>
+            <translation>ランク 2v2 Bo%1 - 第%2ゲーム - 2人1組のチームを2つ作ってください</translation>
+        </message>
+        <message>
+            <source>Ranked 2v2 Bo%1 - %2 - team %3 wins %4-%5</source>
+            <translation>ランク 2v2 Bo%1 - %2 - チーム%3の勝利 %4-%5</translation>
+        </message>
+        <message>
+            <source>Ranked 2v2 Bo%1 - Game %2 - %3 - %4 : %5</source>
+            <translation>ランク 2v2 Bo%1 - 第%2ゲーム - %3 - %4 : %5</translation>
+        </message>
+        <message>
+            <source>Ranked Bo%1 - P%2 wins the set %3-%4</source>
+            <translation>ランク Bo%1 - P%2 がセットに勝利 %3-%4</translation>
+        </message>
+        <message>
+            <source>Ranked Bo%1 - Game %2 - P%3 %4 : %5 P%6</source>
+            <translation>ランク Bo%1 - 第%2ゲーム - P%3 %4 : %5 P%6</translation>
+        </message>
+        <message>
+            <source>P%1's character (id %2) isn't in the %3 roster</source>
+            <translation>P%1 のキャラクター (ID %2) は %3 ロスターにいません</translation>
+        </message>
+        <message>
+            <source>rules differ: %1</source>
+            <translation>ルールが違います: %1</translation>
+        </message>
+        <message>
+            <source>not two teams of two</source>
+            <translation>2人1組のチームが2つではありません</translation>
+        </message>
+        <message>
+            <source>the teams changed partners (the set keeps game 1's teams)</source>
+            <translation>チームの組み合わせが変わりました (セットは第1ゲームのチームのままです)</translation>
+        </message>
+        <message>
+            <source>no single winner</source>
+            <translation>勝者が1人に決まりませんでした</translation>
+        </message>
+        <message>
+            <source>match was reset</source>
+            <translation>マッチがリセットされました</translation>
+        </message>
+        <message>
+            <source>Team %1</source>
+            <translation>チーム%1</translation>
+        </message>
+        <message>
+            <source>Ranked: game %1 started</source>
+            <translation>ランク: 第%1ゲーム開始</translation>
+        </message>
+        <message>
+            <source> - won't count: %1</source>
+            <translation> - カウントされません: %1</translation>
+        </message>
+        <message>
+            <source>Ranked: %1 wins game %2</source>
+            <translation>ランク: %1 が第%2ゲームに勝利</translation>
+        </message>
+        <message>
+            <source>Ranked: game %1 doesn't count (%2), replay it</source>
+            <translation>ランク: 第%1ゲームはカウントされません (%2)。もう一度遊んでください</translation>
+        </message>
+        <message>
+            <source>Ranked: %1 wins the set</source>
+            <translation>ランク: %1 がセットに勝利</translation>
+        </message>
+        <message>
+            <source>Replay out of sync: %1</source>
+            <translation>リプレイの同期がずれました: %1</translation>
         </message>
     </context>
     <context>
@@ -2290,6 +2414,228 @@ Use Default mode anyway?</source>
             <source>Connect</source>
             <translation>接続</translation>
         </message>
+        <message>
+            <source>OR</source>
+            <translation>または</translation>
+        </message>
+        <message>
+            <source>Optional — needed for ranked</source>
+            <translation>任意 — ランク戦に必要</translation>
+        </message>
+        <message>
+            <source>Password:</source>
+            <translation>パスワード:</translation>
+        </message>
+        <message>
+            <source>Confirm password:</source>
+            <translation>パスワード (確認):</translation>
+        </message>
+        <message>
+            <source>Reset code:</source>
+            <translation>リセットコード:</translation>
+        </message>
+        <message>
+            <source>Create a new account with this name</source>
+            <translation>この名前で新しいアカウントを作成</translation>
+        </message>
+        <message>
+            <source>Forgot password? I have a reset code from a moderator</source>
+            <translation>パスワードを忘れた場合: モデレーターからリセットコードをもらっています</translation>
+        </message>
+        <message>
+            <source>Keep me logged in</source>
+            <translation>ログインしたままにする</translation>
+        </message>
+        <message>
+            <source>Log out</source>
+            <translation>ログアウト</translation>
+        </message>
+        <message>
+            <source>New password:</source>
+            <translation>新しいパスワード:</translation>
+        </message>
+        <message>
+            <source>At least 8 characters</source>
+            <translation>8文字以上</translation>
+        </message>
+        <message>
+            <source>Logged in as %1 (saved).</source>
+            <translation>%1 としてログイン中 (保存済み)。</translation>
+        </message>
+        <message>
+            <source>Enter the reset code a moderator gave you.</source>
+            <translation>モデレーターから受け取ったリセットコードを入力してください。</translation>
+        </message>
+        <message>
+            <source>Choose a password of at least %1 characters.</source>
+            <translation>%1文字以上のパスワードを設定してください。</translation>
+        </message>
+        <message>
+            <source>Passwords don't match.</source>
+            <translation>パスワードが一致しません。</translation>
+        </message>
+        <message>
+            <source>No password: you'll join as a guest (unranked only).</source>
+            <translation>パスワードなし: ゲストとして参加します (ランク戦は不可)。</translation>
+        </message>
+        <message>
+            <source>Don't link</source>
+            <translation>リンクしない</translation>
+        </message>
+        <message>
+            <source>Log in with Discord</source>
+            <translation>Discordでログイン</translation>
+        </message>
+        <message>
+            <source>Sign in with your linked Discord account instead of typing your password.
+Not linked yet? Sign in with Discord, then enter your password once to link it.</source>
+            <translation>パスワードを入力する代わりに、リンク済みのDiscordアカウントでログインします。
+まだリンクしていない場合は、Discordでログインしてから一度だけパスワードを入力するとリンクされます。</translation>
+        </message>
+        <message>
+            <source>Waiting for Discord in your browser... (Cancel)</source>
+            <translation>ブラウザでDiscordの操作を待っています... (キャンセル)</translation>
+        </message>
+        <message>
+            <source>Finish signing in to Discord in your browser.</source>
+            <translation>ブラウザでDiscordへのログインを完了してください。</translation>
+        </message>
+        <message>
+            <source>Signed in to Discord as &lt;b&gt;%1&lt;/b&gt;, which isn't linked to an account yet. Log in with your username and password once to link it; after that, Log in with Discord is enough.&lt;br&gt;New player? Create an account first, then use Link Discord in the lobby.</source>
+            <translation>Discordに &lt;b&gt;%1&lt;/b&gt; としてログインしましたが、まだアカウントにリンクされていません。ユーザー名とパスワードで一度ログインするとリンクされ、以降は「Discordでログイン」だけで入れます。&lt;br&gt;初めての方は、先にアカウントを作成してから、ロビーの「Discordをリンク」を使ってください。</translation>
+        </message>
+        <message>
+            <source>Required to link Discord</source>
+            <translation>Discordのリンクに必要</translation>
+        </message>
+        <message>
+            <source>Log in and link</source>
+            <translation>ログインしてリンク</translation>
+        </message>
+        <message>
+            <source>Enter your password to link Discord.</source>
+            <translation>Discordをリンクするにはパスワードを入力してください。</translation>
+        </message>
+        <message>
+            <source>Username:</source>
+            <translation>ユーザー名:</translation>
+        </message>
+        <message>
+            <source>Show password</source>
+            <translation>パスワードを表示</translation>
+        </message>
+        <message>
+            <source>Forgot password?</source>
+            <translation>パスワードを忘れた場合</translation>
+        </message>
+        <message>
+            <source>Back to log in</source>
+            <translation>ログインに戻る</translation>
+        </message>
+        <message>
+            <source>Caps Lock is on</source>
+            <translation>Caps Lock がオンです</translation>
+        </message>
+        <message>
+            <source>An account keeps your name and can play ranked. There's no email: if you forget your password, a moderator can give you a reset code.</source>
+            <translation>アカウントがあれば名前が予約され、ランク戦をプレイできます。メールは使いません。パスワードを忘れた場合は、モデレーターからリセットコードを受け取れます。</translation>
+        </message>
+        <message>
+            <source>Guests play unranked, and the name isn't reserved: someone with an account can take it.</source>
+            <translation>ゲストはランク戦をプレイできず、名前も予約されません。アカウントを持つ人がその名前を使う場合があります。</translation>
+        </message>
+        <message>
+            <source>Join as guest</source>
+            <translation>ゲストで参加</translation>
+        </message>
+        <message>
+            <source>Enter the one-time code a moderator gave you, then choose a new password. Ask in the lobby chat or on Discord if you need one.</source>
+            <translation>モデレーターから受け取った1回限りのコードを入力し、新しいパスワードを決めてください。コードが必要な場合は、ロビーのチャットかDiscordで聞いてください。</translation>
+        </message>
+        <message>
+            <source>Reset password</source>
+            <translation>パスワードをリセット</translation>
+        </message>
+        <message>
+            <source>Logged in as %1 (saved): no password needed.</source>
+            <translation>%1 としてログイン済み (保存済み): パスワードは不要です。</translation>
+        </message>
+        <message>
+            <source>Enter a username of at least 2 characters.</source>
+            <translation>2文字以上のユーザー名を入力してください。</translation>
+        </message>
+        <message>
+            <source>The passwords don't match.</source>
+            <translation>パスワードが一致しません。</translation>
+        </message>
+        <message>
+            <source>Enter your password.</source>
+            <translation>パスワードを入力してください。</translation>
+        </message>
+        <message>
+            <source>Log in</source>
+            <translation>ログイン</translation>
+        </message>
+        <message>
+            <source>Create account</source>
+            <translation>アカウント作成</translation>
+        </message>
+        <message>
+            <source>Play as guest</source>
+            <translation>ゲストでプレイ</translation>
+        </message>
+        <message>
+            <source>Signed into Discord as &lt;b&gt;%1&lt;/b&gt;, which isn't linked to an account yet. Log in or create a new user to link it.</source>
+            <translation>Discordに &lt;b&gt;%1&lt;/b&gt; としてログインしましたが、まだアカウントにリンクされていません。ログインするか新しいユーザーを作成してリンクしてください。</translation>
+        </message>
+        <message>
+            <source>Create account and link</source>
+            <translation>アカウントを作成してリンク</translation>
+        </message>
+        <message>
+            <source>Log in or create an account without linking this Discord account.</source>
+            <translation>このDiscordアカウントをリンクせずに、ログインまたはアカウント作成をします。</translation>
+        </message>
+        <message>
+            <source>Email me a code</source>
+            <translation>コードをメールで受け取る</translation>
+        </message>
+        <message>
+            <source>Emails a reset code if this is the address confirmed on your account.</source>
+            <translation>このアドレスがアカウントで確認済みのものであれば、リセットコードを送信します。</translation>
+        </message>
+        <message>
+            <source>If that's the confirmed email address of %1, a code is on its way. It works once, for %2 minutes.</source>
+            <translation>%1 の確認済みメールアドレスと一致すれば、コードを送信しました。コードは1回だけ、%2分間使えます。</translation>
+        </message>
+        <message>
+            <source>Sending...</source>
+            <translation>送信中...</translation>
+        </message>
+        <message>
+            <source>An account keeps your name and can play ranked. Add an email address from the account menu to reset a forgotten password yourself.</source>
+            <translation>アカウントを作ると名前が保持され、ランクマッチをプレイできます。アカウントメニューからメールアドレスを登録すると、パスワードを忘れたときに自分でリセットできます。</translation>
+        </message>
+        <message>
+            <source>Enter your username and the email address confirmed on your account to get a one-time code, or ask a moderator for one. Then choose a new password.</source>
+            <translation>ユーザー名とアカウントで確認済みのメールアドレスを入力してワンタイムコードを受け取るか、モデレーターにコードをもらってください。その後、新しいパスワードを設定します。</translation>
+        </message>
+        <message>
+            <source>Enter the reset code from your email or a moderator.</source>
+            <translation>メールまたはモデレーターから受け取ったリセットコードを入力してください。</translation>
+        </message>
+        <message>
+            <source>The address confirmed on your account</source>
+            <translation>アカウントで確認済みのアドレス</translation>
+        </message>
+        <message>
+            <source>Email:</source>
+            <translation>メール:</translation>
+        </message>
+        <message>
+            <source>Enter the email address confirmed on your account.</source>
+            <translation>アカウントで確認済みのメールアドレスを入力してください。</translation>
+        </message>
     </context>
     <context><name>UserInterface::Dialog::CreateRoomDialog</name>
         <message>
@@ -2359,6 +2705,90 @@ Use Default mode anyway?</source>
         <message>
             <source>Couldn't create room: %1</source>
             <translation>ルームを作成できませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Ranked set (1v1 or 2v2, counts toward ratings)</source>
+            <translation>ランクセット (1v1 または 2v2、レートに反映)</translation>
+        </message>
+        <message>
+            <source>Ranked set (1v1, counts toward ratings)</source>
+            <translation>ランクセット (1v1、レートに反映)</translation>
+        </message>
+        <message>
+            <source>%1v%1 team battle (4 players, team attack on)</source>
+            <translation>%1v%1 チーム戦 (4人、チームアタックあり)</translation>
+        </message>
+        <message>
+            <source>Each format has its own rankings. 2v2: pick teams on character select, any ports.</source>
+            <translation>形式ごとに別のランキングです。2v2: チームはキャラクター選択で決めます。ポートは自由です。</translation>
+        </message>
+        <message>
+            <source>Format:</source>
+            <translation>形式:</translation>
+        </message>
+        <message>
+            <source>Set length:</source>
+            <translation>セットの長さ:</translation>
+        </message>
+        <message>
+            <source>Which characters are legal. Games with other characters don't count.</source>
+            <translation>使えるキャラクターです。ほかのキャラクターを使ったゲームはカウントされません。</translation>
+        </message>
+        <message>
+            <source>Roster:</source>
+            <translation>ロスター:</translation>
+        </message>
+        <message>
+            <source>Anyone</source>
+            <translation>誰でも</translation>
+        </message>
+        <message>
+            <source>Within 1 tier of me</source>
+            <translation>自分の1ティア以内</translation>
+        </message>
+        <message>
+            <source>Within 2 tiers of me</source>
+            <translation>自分の2ティア以内</translation>
+        </message>
+        <message>
+            <source>Within 3 tiers of me</source>
+            <translation>自分の3ティア以内</translation>
+        </message>
+        <message>
+            <source>Opponents:</source>
+            <translation>対戦相手:</translation>
+        </message>
+        <message>
+            <source>Any</source>
+            <translation>制限なし</translation>
+        </message>
+        <message>
+            <source>The highest ping you'll play a ranked set at. Players are matched by their regions' usual ping first; if the measured ping is higher, the set doesn't start.</source>
+            <translation>ランクセットを遊ぶ最大のPingです。まず地域どうしの一般的なPingで相手を探し、実測のPingがこれより高いとセットは始まりません。</translation>
+        </message>
+        <message>
+            <source>Max ping:</source>
+            <translation>最大Ping:</translation>
+        </message>
+        <message>
+            <source>Allow players still in placement</source>
+            <translation>認定中のプレイヤーも許可</translation>
+        </message>
+        <message>
+            <source>New players have no reliable tier yet; let them join regardless of the range.</source>
+            <translation>新しいプレイヤーはまだティアが定まっていません。範囲に関係なく参加を許可します。</translation>
+        </message>
+        <message>
+            <source>Plays on the %1 ladder.</source>
+            <translation>%1 ラダーで遊びます。</translation>
+        </message>
+        <message>
+            <source>Ranked set — %1</source>
+            <translation>ランクセット — %1</translation>
+        </message>
+        <message>
+            <source>Best of %1</source>
+            <translation>Bo%1</translation>
         </message>
     </context>
     <context><name>UserInterface::Dialog::RollbackLobbyDialog</name>
@@ -3332,5 +3762,943 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <source>something went wrong (%1)</source>
             <translation>問題が発生しました（%1）</translation>
         </message>
+        <message>
+            <source>Change password…</source>
+            <translation>パスワードを変更…</translation>
+        </message>
+        <message>
+            <source>Quick Match</source>
+            <translation>クイックマッチ</translation>
+        </message>
+        <message>
+            <source>Quick Ranked Match</source>
+            <translation>クイックランクマッチ</translation>
+        </message>
+        <message>
+            <source>Search for a ranked set on the selected game: pick the format, roster, set length
+and which opponents you accept. You're matched with players who chose the same set
+and whose opponent range includes you. Needs a logged-in account.</source>
+            <translation>選択中のゲームでランクセットの相手を探します。形式、ロスター、セットの長さ、
+受け入れる対戦相手を選びます。同じセットを選び、対戦相手の範囲に
+あなたが含まれるプレイヤーとマッチします。ログインしたアカウントが必要です。</translation>
+        </message>
+        <message>
+            <source>Keep searching after each match (Quick Match)</source>
+            <translation>マッチごとに続けて検索 (クイックマッチ)</translation>
+        </message>
+        <message>
+            <source>When a Quick Match ends (a player closes the game), the room closes after a few seconds and
+the next search starts. Your last opponent is skipped; if nobody else turns up within
+2 minutes, you're asked whether to play them again. Quick Ranked Match has its own setting.</source>
+            <translation>クイックマッチが終わる (プレイヤーがゲームを閉じる) と、数秒後にルームが閉じて
+次の検索が始まります。直前の相手はスキップされ、2分以内にほかの相手が見つからない場合は、
+もう一度対戦するか確認します。クイックランクマッチには別の設定があります。</translation>
+        </message>
+        <message>
+            <source>Ranked</source>
+            <translation>ランク</translation>
+        </message>
+        <message>
+            <source>Stop After This Set</source>
+            <translation>このセットで終了</translation>
+        </message>
+        <message>
+            <source>End your ranked session: finish this set, then return to the lobby instead of searching for the next match.</source>
+            <translation>ランクセッションを終了します: このセットを最後まで遊び、次のマッチを探さずにロビーに戻ります。</translation>
+        </message>
+        <message>
+            <source>Keep Teammate</source>
+            <translation>チームメイトを維持</translation>
+        </message>
+        <message>
+            <source>When this set ends and your teammate keeps you too, the two of you search for the next set as a team.</source>
+            <translation>このセットが終わったときにチームメイトもあなたを維持していれば、2人はチームとして次のセットを検索します。</translation>
+        </message>
+        <message>
+            <source>Your saved login expired. Enter your password to log in again.</source>
+            <translation>保存されたログインの期限が切れました。パスワードを入力してもう一度ログインしてください。</translation>
+        </message>
+        <message>
+            <source>[Ranked]</source>
+            <translation>[ランク]</translation>
+        </message>
+        <message>
+            <source>End match &amp;&amp; close room  (moderator)</source>
+            <translation>マッチを終了してルームを閉じる  (モデレーター)</translation>
+        </message>
+        <message>
+            <source>Close room  (moderator)</source>
+            <translation>ルームを閉じる  (モデレーター)</translation>
+        </message>
+        <message>
+            <source>Close room</source>
+            <translation>ルームを閉じる</translation>
+        </message>
+        <message>
+            <source>Close "%1" for everyone?</source>
+            <translation>「%1」を全員に対して閉じますか？</translation>
+        </message>
+        <message>
+            <source>this game has no ranked ladder</source>
+            <translation>このゲームにはランクのラダーがありません</translation>
+        </message>
+        <message>
+            <source>log into an account to play ranked</source>
+            <translation>ランク戦をするにはアカウントにログインしてください</translation>
+        </message>
+        <message>
+            <source>the %1 ranked module isn't installed</source>
+            <translation>%1 のランクモジュールがインストールされていません</translation>
+        </message>
+        <message>
+            <source>This is a ranked room. Log into an account to join it.</source>
+            <translation>これはランクルームです。参加するにはアカウントにログインしてください。</translation>
+        </message>
+        <message>
+            <source>Your rating is outside this ranked room's skill range.</source>
+            <translation>あなたのレートはこのランクルームのスキル範囲外です。</translation>
+        </message>
+        <message>
+            <source>You're too far from this ranked room's host for its max ping.</source>
+            <translation>このランクルームのホストとの距離が遠く、最大Pingを超えています。</translation>
+        </message>
+        <message>
+            <source>Ranked play is temporarily unavailable.</source>
+            <translation>ランク戦は一時的に利用できません。</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Ranked:&lt;/b&gt; Bo%1 · %2</source>
+            <translation>&lt;b&gt;ランク:&lt;/b&gt; Bo%1 · %2</translation>
+        </message>
+        <message>
+            <source> · within 1 tier</source>
+            <translation> · 1ティア以内</translation>
+        </message>
+        <message>
+            <source> · within %1 tiers</source>
+            <translation> · %1ティア以内</translation>
+        </message>
+        <message>
+            <source> · max %1 ms</source>
+            <translation> · 最大 %1 ms</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Region:&lt;/b&gt; %1</source>
+            <translation>&lt;b&gt;地域:&lt;/b&gt; %1</translation>
+        </message>
+        <message>
+            <source>This room plays ranked sets.</source>
+            <translation>このルームではランクセットを遊びます。</translation>
+        </message>
+        <message>
+            <source>The host can make this room ranked.</source>
+            <translation>ホストはこのルームをランクにできます。</translation>
+        </message>
+        <message>
+            <source>Log into an account to play ranked.</source>
+            <translation>ランク戦をするにはアカウントにログインしてください。</translation>
+        </message>
+        <message>
+            <source>Ranked can only be changed between games.</source>
+            <translation>ランクはゲームの合間にのみ変更できます。</translation>
+        </message>
+        <message>
+            <source>Sets that count toward ratings. Every player needs an account.</source>
+            <translation>レートに反映されるセットです。全員がアカウントを持っている必要があります。</translation>
+        </message>
+        <message>
+            <source>Bronze</source>
+            <translation>ブロンズ</translation>
+        </message>
+        <message>
+            <source>Silver</source>
+            <translation>シルバー</translation>
+        </message>
+        <message>
+            <source>Gold</source>
+            <translation>ゴールド</translation>
+        </message>
+        <message>
+            <source>Platinum</source>
+            <translation>プラチナ</translation>
+        </message>
+        <message>
+            <source>Diamond</source>
+            <translation>ダイヤモンド</translation>
+        </message>
+        <message>
+            <source>Master</source>
+            <translation>マスター</translation>
+        </message>
+        <message>
+            <source>Grandmaster</source>
+            <translation>グランドマスター</translation>
+        </message>
+        <message>
+            <source>✓ %1 (in placement · 1 set)</source>
+            <translation>✓ %1 (認定中 · 1セット)</translation>
+        </message>
+        <message>
+            <source>✓ %1 (in placement · %2 sets)</source>
+            <translation>✓ %1 (認定中 · %2セット)</translation>
+        </message>
+        <message>
+            <source>not played yet</source>
+            <translation>未プレイ</translation>
+        </message>
+        <message>
+            <source>%1 ±%2, %3 sets</source>
+            <translation>%1 ±%2、%3セット</translation>
+        </message>
+        <message>
+            <source> (guest)</source>
+            <translation> (ゲスト)</translation>
+        </message>
+        <message>
+            <source>Change Password</source>
+            <translation>パスワードの変更</translation>
+        </message>
+        <message>
+            <source>Current password:</source>
+            <translation>現在のパスワード:</translation>
+        </message>
+        <message>
+            <source>New password:</source>
+            <translation>新しいパスワード:</translation>
+        </message>
+        <message>
+            <source>Confirm new password:</source>
+            <translation>新しいパスワード (確認):</translation>
+        </message>
+        <message>
+            <source>You'll stay logged in here; other saved logins are signed out.</source>
+            <translation>このパソコンではログインしたままです。ほかの保存されたログインはログアウトされます。</translation>
+        </message>
+        <message>
+            <source>Choose a new password of at least 8 characters.</source>
+            <translation>8文字以上の新しいパスワードを設定してください。</translation>
+        </message>
+        <message>
+            <source>The new passwords don't match.</source>
+            <translation>新しいパスワードが一致しません。</translation>
+        </message>
+        <message>
+            <source>Password changed. Other saved logins were signed out.</source>
+            <translation>パスワードを変更しました。ほかの保存されたログインはログアウトされました。</translation>
+        </message>
+        <message>
+            <source>Your password couldn't be changed.</source>
+            <translation>パスワードを変更できませんでした。</translation>
+        </message>
+        <message>
+            <source>Ranked set finished — result sent.</source>
+            <translation>ランクセット終了 — 結果を送信しました。</translation>
+        </message>
+        <message>
+            <source>, now %1</source>
+            <translation>、現在 %1</translation>
+        </message>
+        <message>
+            <source>Ranked set rated: %1</source>
+            <translation>ランクセットを評価しました: %1</translation>
+        </message>
+        <message>
+            <source>Ranked set disputed (%1) — ratings unchanged, flagged for review.</source>
+            <translation>ランクセットに異議あり (%1) — レートは変わらず、確認待ちです。</translation>
+        </message>
+        <message>
+            <source>a player left before the set finished</source>
+            <translation>セットが終わる前にプレイヤーが退出しました</translation>
+        </message>
+        <message>
+            <source>a result report never arrived</source>
+            <translation>結果の報告が届きませんでした</translation>
+        </message>
+        <message>
+            <source>a server error</source>
+            <translation>サーバーエラー</translation>
+        </message>
+        <message>
+            <source>Ranked set voided: %1. Ratings unchanged.</source>
+            <translation>ランクセットは無効になりました: %1。レートは変わりません。</translation>
+        </message>
+        <message>
+            <source>Replay of set #%1 uploaded to the rankings site.</source>
+            <translation>セット #%1 のリプレイをランキングサイトにアップロードしました。</translation>
+        </message>
+        <message>
+            <source>Set over — searching for your next ranked match.</source>
+            <translation>セット終了 — 次のランクマッチを探しています。</translation>
+        </message>
+        <message>
+            <source>Match over — searching for your next match.</source>
+            <translation>マッチ終了 — 次のマッチを探しています。</translation>
+        </message>
+        <message>
+            <source>The match is over and the room closed.</source>
+            <translation>マッチが終わり、ルームが閉じました。</translation>
+        </message>
+        <message>
+            <source>Moderator Login</source>
+            <translation>モデレーターログイン</translation>
+        </message>
+        <message>
+            <source>Password:</source>
+            <translation>パスワード:</translation>
+        </message>
+        <message>
+            <source>Authenticating…</source>
+            <translation>認証中…</translation>
+        </message>
+        <message>
+            <source>You are not a moderator. Use /login first.</source>
+            <translation>あなたはモデレーターではありません。先に /login を使ってください。</translation>
+        </message>
+        <message>
+            <source>Usage: /resolve &amp;lt;setId&amp;gt; &amp;lt;winner username|void&amp;gt; [note]</source>
+            <translation>使い方: /resolve &amp;lt;setId&amp;gt; &amp;lt;勝者のユーザー名|void&amp;gt; [メモ]</translation>
+        </message>
+        <message>
+            <source>Usage: /pwreset &amp;lt;username&amp;gt;</source>
+            <translation>使い方: /pwreset &amp;lt;ユーザー名&amp;gt;</translation>
+        </message>
+        <message>
+            <source>Usage: /%1 &amp;lt;ip&amp;gt;</source>
+            <translation>使い方: /%1 &amp;lt;ip&amp;gt;</translation>
+        </message>
+        <message>
+            <source>Usage: /%1 &amp;lt;username&amp;gt; …</source>
+            <translation>使い方: /%1 &amp;lt;ユーザー名&amp;gt; …</translation>
+        </message>
+        <message>
+            <source>Usage: /timeout &amp;lt;username&amp;gt; &amp;lt;duration&amp;gt; [reason]</source>
+            <translation>使い方: /timeout &amp;lt;ユーザー名&amp;gt; &amp;lt;期間&amp;gt; [理由]</translation>
+        </message>
+        <message>
+            <source>✓ Moderator access granted (%1). Type /modhelp for commands.</source>
+            <translation>✓ モデレーター権限が付与されました (%1)。コマンドは /modhelp で確認できます。</translation>
+        </message>
+        <message>
+            <source>Admin login failed: %1</source>
+            <translation>管理者ログインに失敗しました: %1</translation>
+        </message>
+        <message>
+            <source>Active sanctions:</source>
+            <translation>有効な制裁:</translation>
+        </message>
+        <message>
+            <source>&amp;nbsp;&amp;nbsp;(none)</source>
+            <translation>&amp;nbsp;&amp;nbsp;(なし)</translation>
+        </message>
+        <message>
+            <source>Pick a game from the dropdown before searching for a ranked match.</source>
+            <translation>ランクマッチを探す前に、ドロップダウンからゲームを選んでください。</translation>
+        </message>
+        <message>
+            <source>this server doesn't run ranked play</source>
+            <translation>このサーバーではランク戦を行っていません</translation>
+        </message>
+        <message>
+            <source>Ranked unavailable</source>
+            <translation>ランク戦は利用できません</translation>
+        </message>
+        <message>
+            <source>Can't search for a ranked match: %1.</source>
+            <translation>ランクマッチを探せません: %1。</translation>
+        </message>
+        <message>
+            <source>Your ranked session ends after this set.</source>
+            <translation>ランクセッションはこのセットで終了します。</translation>
+        </message>
+        <message>
+            <source>Your quick match session ends after this match.</source>
+            <translation>クイックマッチのセッションはこのマッチで終了します。</translation>
+        </message>
+        <message>
+            <source>Cancel Ranked Search</source>
+            <translation>ランク検索をキャンセル</translation>
+        </message>
+        <message>
+            <source>Cancel Quick Match</source>
+            <translation>クイックマッチをキャンセル</translation>
+        </message>
+        <message>
+            <source>Stop Ranked Session</source>
+            <translation>ランクセッションを終了</translation>
+        </message>
+        <message>
+            <source>Stop Quick Match Session</source>
+            <translation>クイックマッチのセッションを終了</translation>
+        </message>
+        <message>
+            <source>Rematch?</source>
+            <translation>再戦しますか？</translation>
+        </message>
+        <message>
+            <source>No other players except your previous opponent, %1, are available.</source>
+            <translation>直前の対戦相手 %1 以外に、対戦できるプレイヤーがいません。</translation>
+        </message>
+        <message>
+            <source>No other players except your previous opponents, %1, are available.</source>
+            <translation>直前の対戦相手 %1 以外に、対戦できるプレイヤーがいません。</translation>
+        </message>
+        <message>
+            <source>Play %1</source>
+            <translation>%1 と対戦</translation>
+        </message>
+        <message>
+            <source>Keep Searching</source>
+            <translation>検索を続ける</translation>
+        </message>
+        <message>
+            <source>Quick match session</source>
+            <translation>クイックマッチのセッション</translation>
+        </message>
+        <message>
+            <source>Last quick match session</source>
+            <translation>前回のクイックマッチのセッション</translation>
+        </message>
+        <message>
+            <source> · searching for your first match</source>
+            <translation> · 最初のマッチを検索中</translation>
+        </message>
+        <message>
+            <source> · 1 match</source>
+            <translation> · 1マッチ</translation>
+        </message>
+        <message>
+            <source> · %1 matches</source>
+            <translation> · %1マッチ</translation>
+        </message>
+        <message>
+            <source>Ranked session</source>
+            <translation>ランクセッション</translation>
+        </message>
+        <message>
+            <source> with %1</source>
+            <translation> (%1 とチーム)</translation>
+        </message>
+        <message>
+            <source> · waiting for %1 to pick you as their teammate</source>
+            <translation> · %1 があなたをチームメイトに指定するのを待っています</translation>
+        </message>
+        <message>
+            <source> (waiting for %1)</source>
+            <translation> (%1 を待っています)</translation>
+        </message>
+        <message>
+            <source>Last ranked session</source>
+            <translation>前回のランクセッション</translation>
+        </message>
+        <message>
+            <source> · 1 set</source>
+            <translation> · 1セット</translation>
+        </message>
+        <message>
+            <source> · %1 sets</source>
+            <translation> · %1セット</translation>
+        </message>
+        <message>
+            <source> · searching for your first set</source>
+            <translation> · 最初のセットを検索中</translation>
+        </message>
+        <message>
+            <source>Stop After This Match</source>
+            <translation>このマッチで終了</translation>
+        </message>
+        <message>
+            <source>Ranked set: best of %1, %2.</source>
+            <translation>ランクセット: Bo%1、%2。</translation>
+        </message>
+        <message>
+            <source>Link Discord…</source>
+            <translation>Discordをリンク…</translation>
+        </message>
+        <message>
+            <source>Link Discord</source>
+            <translation>Discordをリンク</translation>
+        </message>
+        <message>
+            <source>To link Discord, use Log in with Discord again.</source>
+            <translation>Discordをリンクするには、もう一度「Discordでログイン」を使ってください。</translation>
+        </message>
+        <message>
+            <source>Discord sign-in didn't work. Try again, or log in with your password.</source>
+            <translation>Discordでのログインに失敗しました。もう一度試すか、パスワードでログインしてください。</translation>
+        </message>
+        <message>
+            <source>Waiting for Discord… (Cancel)</source>
+            <translation>Discordを待っています… (キャンセル)</translation>
+        </message>
+        <message>
+            <source>Finish signing in to Discord in your browser.</source>
+            <translation>ブラウザでDiscordへのログインを完了してください。</translation>
+        </message>
+        <message>
+            <source>Unlink Discord</source>
+            <translation>Discordのリンクを解除</translation>
+        </message>
+        <message>
+            <source>You can log in with the Discord account %1. Only you and moderators see this.</source>
+            <translation>Discordアカウント %1 でログインできます。これはあなたとモデレーターにしか表示されません。</translation>
+        </message>
+        <message>
+            <source>Link a Discord account to log in without typing your password.</source>
+            <translation>Discordアカウントをリンクすると、パスワードを入力せずにログインできます。</translation>
+        </message>
+        <message>
+            <source>Stop logging in with the Discord account %1? Your password keeps working.</source>
+            <translation>Discordアカウント %1 でのログインをやめますか？パスワードは引き続き使えます。</translation>
+        </message>
+        <message>
+            <source>Discord linked: you can now use Log in with Discord.</source>
+            <translation>Discordをリンクしました。「Discordでログイン」が使えるようになりました。</translation>
+        </message>
+        <message>
+            <source>Discord unlinked. Use your password next time.</source>
+            <translation>Discordのリンクを解除しました。次回からはパスワードでログインしてください。</translation>
+        </message>
+        <message>
+            <source>Discord couldn't be linked.</source>
+            <translation>Discordをリンクできませんでした。</translation>
+        </message>
+        <message>
+            <source>Guest: log in to an account to play ranked.</source>
+            <translation>ゲスト: ランク戦をプレイするにはアカウントにログインしてください。</translation>
+        </message>
+        <message>
+            <source>Ranked: loading…</source>
+            <translation>ランク戦: 読み込み中…</translation>
+        </message>
+        <message>
+            <source>Ranked: no rated sets yet</source>
+            <translation>ランク戦: まだレート対象のセットがありません</translation>
+        </message>
+        <message>
+            <source>%1: %2, in placement (1 set)</source>
+            <translation>%1: %2、プレースメント中 (1セット)</translation>
+        </message>
+        <message>
+            <source>%1: %2, in placement (%3 sets)</source>
+            <translation>%1: %2、プレースメント中 (%3セット)</translation>
+        </message>
+        <message>
+            <source>%1: %2 %3 · #%4</source>
+            <translation>%1: %2 %3 · %4位</translation>
+        </message>
+        <message>
+            <source> (%1 #%2)</source>
+            <translation> (%1 %2位)</translation>
+        </message>
+        <message>
+            <source> · %1–%2</source>
+            <translation> · %1勝%2敗</translation>
+        </message>
+        <message>
+            <source>Account created. Welcome, %1! You can play ranked now.</source>
+            <translation>アカウントを作成しました。ようこそ、%1さん！ランク戦をプレイできます。</translation>
+        </message>
+        <message>
+            <source>Password reset. You're logged in, and other saved logins were signed out.</source>
+            <translation>パスワードをリセットしました。ログイン済みです。他の保存済みログインはログアウトされました。</translation>
+        </message>
+        <message>
+            <source>Discord linked: next time, Log in with Discord is enough.</source>
+            <translation>Discordをリンクしました。次回からは「Discordでログイン」だけで入れます。</translation>
+        </message>
+        <message>
+            <source>That username and password don't match. Check Caps Lock, or use Forgot password? if you need a reset code.</source>
+            <translation>ユーザー名とパスワードが一致しません。Caps Lock を確認するか、リセットコードが必要な場合は「パスワードを忘れた場合」を使ってください。</translation>
+        </message>
+        <message>
+            <source>Too many failed logins from your network. Try again in 1 minute.</source>
+            <translation>このネットワークからのログイン失敗が多すぎます。1分後にもう一度試してください。</translation>
+        </message>
+        <message>
+            <source>Too many failed logins from your network. Try again in %1 minutes.</source>
+            <translation>このネットワークからのログイン失敗が多すぎます。%1分後にもう一度試してください。</translation>
+        </message>
+        <message>
+            <source>Account created and Discord linked. Welcome, %1! Next time, Log in with Discord is enough.</source>
+            <translation>アカウントを作成し、Discordをリンクしました。ようこそ、%1さん！次回からは「Discordでログイン」だけで入れます。</translation>
+        </message>
+        <message>
+            <source>That username and password don't match. Check Caps Lock and try again.</source>
+            <translation>ユーザー名とパスワードが一致しません。Caps Lock を確認して、もう一度試してください。</translation>
+        </message>
+        <message>
+            <source>Add email address…</source>
+            <translation>メールアドレスを追加…</translation>
+        </message>
+        <message>
+            <source>Email address…</source>
+            <translation>メールアドレス…</translation>
+        </message>
+        <message>
+            <source>Lets you email yourself a reset code if you forget your password.</source>
+            <translation>パスワードを忘れたときに、リセットコードをメールで受け取れるようにします。</translation>
+        </message>
+        <message>
+            <source>Reset codes go to %1.</source>
+            <translation>リセットコードの送信先: %1</translation>
+        </message>
+        <message>
+            <source>Email address removed.</source>
+            <translation>メールアドレスを削除しました。</translation>
+        </message>
+        <message>
+            <source>Email address confirmed: %1. If you forget your password, you can email yourself a reset code.</source>
+            <translation>メールアドレスを確認しました: %1。パスワードを忘れたときは、リセットコードをメールで受け取れます。</translation>
+        </message>
     </context>
-    </TS>
+        <context>
+        <name>KailleraPlaybackDialog</name>
+        <message>
+            <source>%1 / %2  (frame %3 / %4)</source>
+            <translation>%1 / %2  (フレーム %3 / %4)</translation>
+        </message>
+        <message>
+            <source>  —  jumping (%1%)</source>
+            <translation>  —  移動中 (%1%)</translation>
+        </message>
+        <message>
+            <source>Playback</source>
+            <translation>再生</translation>
+        </message>
+        <message>
+            <source>Stop the current playback to watch %1.</source>
+            <translation>%1 を見るには、再生中のリプレイを停止してください。</translation>
+        </message>
+        <message>
+            <source>Failed to load recording: %1</source>
+            <translation>録画を読み込めませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Ranked Replay</source>
+            <translation>ランクリプレイ</translation>
+        </message>
+        <message>
+            <source>This ranked replay can't be played: %1</source>
+            <translation>このランクリプレイは再生できません: %1</translation>
+        </message>
+        <message>
+            <source>Jump to:</source>
+            <translation>ジャンプ:</translation>
+        </message>
+        <message>
+            <source>Start</source>
+            <translation>最初</translation>
+        </message>
+        <message>
+            <source>Watch from the beginning</source>
+            <translation>最初から見る</translation>
+        </message>
+        <message>
+            <source>Game %1</source>
+            <translation>第%1ゲーム</translation>
+        </message>
+        <message>
+            <source>Bookmark</source>
+            <translation>ブックマーク</translation>
+        </message>
+        <message>
+            <source>Watch from %1 (%2)</source>
+            <translation>%1 から見る (%2)</translation>
+        </message>
+    </context>
+    <context>
+        <name>ReplayLink</name>
+        <message>
+            <source>This isn't an RMG-K replay link.</source>
+            <translation>RMG-K のリプレイリンクではありません。</translation>
+        </message>
+        <message>
+            <source>The replay link's start position isn't valid.</source>
+            <translation>リプレイリンクの開始位置が正しくありません。</translation>
+        </message>
+        <message>
+            <source>The replay link doesn't point at a ranked replay.</source>
+            <translation>リプレイリンクがランク戦のリプレイを指していません。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::QuickRankedMatchDialog</name>
+        <message>
+            <source>Quick Ranked Match</source>
+            <translation>クイックランクマッチ</translation>
+        </message>
+        <message>
+            <source>Search for a ranked set. You're matched with players who pick the same set and whose opponent range includes you.</source>
+            <translation>ランクセットの相手を探します。同じセットを選び、対戦相手の範囲にあなたが含まれるプレイヤーとマッチします。</translation>
+        </message>
+        <message>
+            <source>Game:</source>
+            <translation>ゲーム:</translation>
+        </message>
+        <message>
+            <source>%1v%1 team battle (4 players, team attack on)</source>
+            <translation>%1v%1 チーム戦 (4人、チームアタックあり)</translation>
+        </message>
+        <message>
+            <source>Each format has its own rankings. 2v2: teams are picked on character select, and a match starts once four players are found.</source>
+            <translation>形式ごとに別のランキングです。2v2: チームはキャラクター選択で決め、4人そろうとマッチが始まります。</translation>
+        </message>
+        <message>
+            <source>Format:</source>
+            <translation>形式:</translation>
+        </message>
+        <message>
+            <source>Set length:</source>
+            <translation>セットの長さ:</translation>
+        </message>
+        <message>
+            <source>Which characters are legal. Games with other characters don't count.</source>
+            <translation>使えるキャラクターです。ほかのキャラクターを使ったゲームはカウントされません。</translation>
+        </message>
+        <message>
+            <source>Roster:</source>
+            <translation>ロスター:</translation>
+        </message>
+        <message>
+            <source>You:</source>
+            <translation>あなた:</translation>
+        </message>
+        <message>
+            <source>Anyone</source>
+            <translation>誰でも</translation>
+        </message>
+        <message>
+            <source>Within 1 tier of me</source>
+            <translation>自分の1ティア以内</translation>
+        </message>
+        <message>
+            <source>Within 2 tiers of me</source>
+            <translation>自分の2ティア以内</translation>
+        </message>
+        <message>
+            <source>Within 3 tiers of me</source>
+            <translation>自分の3ティア以内</translation>
+        </message>
+        <message>
+            <source>Tiers on the chosen format and roster. Your opponents' ranges must include you too.</source>
+            <translation>選んだ形式とロスターでのティアです。相手の範囲にもあなたが含まれる必要があります。</translation>
+        </message>
+        <message>
+            <source>Opponents:</source>
+            <translation>対戦相手:</translation>
+        </message>
+        <message>
+            <source>Any</source>
+            <translation>制限なし</translation>
+        </message>
+        <message>
+            <source>The highest ping you'll play a ranked set at. Players are matched by their regions' usual ping first; if the measured ping is higher, the set doesn't start.</source>
+            <translation>ランクセットを遊ぶ最大のPingです。まず地域どうしの一般的なPingで相手を探し、実測のPingがこれより高いとセットは始まりません。</translation>
+        </message>
+        <message>
+            <source>Max ping:</source>
+            <translation>最大Ping:</translation>
+        </message>
+        <message>
+            <source>Allow players still in placement</source>
+            <translation>認定中のプレイヤーも許可</translation>
+        </message>
+        <message>
+            <source>New players have no reliable tier yet; match them regardless of the range.</source>
+            <translation>新しいプレイヤーはまだティアが定まっていません。範囲に関係なくマッチします。</translation>
+        </message>
+        <message>
+            <source>Keep searching after each set (a new opponent each time)</source>
+            <translation>セットごとに続けて検索 (毎回新しい相手)</translation>
+        </message>
+        <message>
+            <source>When a set ends, the room closes after a few seconds and the next search starts with the same settings. Your last opponent is skipped; if nobody else turns up within 2 minutes, you're asked whether to play them again.</source>
+            <translation>セットが終わると数秒後にルームが閉じ、同じ設定で次の検索が始まります。直前の相手はスキップされ、2分以内にほかの相手が見つからない場合は、もう一度対戦するか確認します。</translation>
+        </message>
+        <message>
+            <source>Keep my teammate after each set (when they keep me too)</source>
+            <translation>セットごとにチームメイトを維持 (相手も維持する場合)</translation>
+        </message>
+        <message>
+            <source>2v2, with a chosen teammate: when a set ends and your teammate keeps you too, the two of you search again as a team. With a random teammate you can turn this on in the room.</source>
+            <translation>2v2 (チームメイトを指定した場合): セットが終わったときにチームメイトもあなたを維持していれば、2人はチームとして再び検索します。ランダムなチームメイトの場合は、ルーム内でオンにできます。</translation>
+        </message>
+        <message>
+            <source>Teammate:</source>
+            <translation>チームメイト:</translation>
+        </message>
+        <message>
+            <source>Random (or a player's name)</source>
+            <translation>ランダム (またはプレイヤー名)</translation>
+        </message>
+        <message>
+            <source>2v2: the player you want as your teammate. You're matched only once they search with you as their teammate too. Leave it empty for a random teammate.</source>
+            <translation>2v2: チームメイトにしたいプレイヤーです。相手もあなたをチームメイトに指定して検索したときだけマッチします。空欄にするとチームメイトはランダムになります。</translation>
+        </message>
+        <message>
+            <source>Search</source>
+            <translation>検索</translation>
+        </message>
+        <message>
+            <source>Best of %1</source>
+            <translation>Bo%1</translation>
+        </message>
+        <message>
+            <source>not rated yet</source>
+            <translation>未評価</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+    </context>
+    <context>
+        <name>Utilities::DiscordLogin</name>
+        <message>
+            <source>Discord sign-in timed out. Try again.</source>
+            <translation>Discordでのログインがタイムアウトしました。もう一度試してください。</translation>
+        </message>
+        <message>
+            <source>This lobby doesn't support Discord sign-in.</source>
+            <translation>このロビーはDiscordでのログインに対応していません。</translation>
+        </message>
+        <message>
+            <source>Discord sign-in couldn't start: its local ports are in use.</source>
+            <translation>Discordでのログインを開始できません: ローカルのポートが使用中です。</translation>
+        </message>
+        <message>
+            <source>Couldn't open your browser for Discord sign-in.</source>
+            <translation>Discordでのログイン用にブラウザを開けませんでした。</translation>
+        </message>
+        <message>
+            <source>Not found</source>
+            <translation>見つかりません</translation>
+        </message>
+        <message>
+            <source>Sign-in failed</source>
+            <translation>ログインに失敗しました</translation>
+        </message>
+        <message>
+            <source>This sign-in doesn't match the one RMG-K started. Try again from RMG-K.</source>
+            <translation>このログインはRMG-Kが開始したものと一致しません。RMG-Kからもう一度試してください。</translation>
+        </message>
+        <message>
+            <source>Sign-in cancelled</source>
+            <translation>ログインがキャンセルされました</translation>
+        </message>
+        <message>
+            <source>Discord sign-in was cancelled. You can close this tab.</source>
+            <translation>Discordでのログインはキャンセルされました。このタブは閉じてかまいません。</translation>
+        </message>
+        <message>
+            <source>Discord sign-in was cancelled.</source>
+            <translation>Discordでのログインはキャンセルされました。</translation>
+        </message>
+        <message>
+            <source>Signed in with Discord</source>
+            <translation>Discordでログインしました</translation>
+        </message>
+        <message>
+            <source>You can close this tab and return to RMG-K.</source>
+            <translation>このタブを閉じてRMG-Kに戻ってください。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::AccountEmailDialog</name>
+        <message>
+            <source>Email Address</source>
+            <translation>メールアドレス</translation>
+        </message>
+        <message>
+            <source>If you forget your password, the lobby can email a reset code to this address. Other players don't see it.</source>
+            <translation>パスワードを忘れたとき、ロビーがこのアドレスにリセットコードを送信できます。他のプレイヤーには表示されません。</translation>
+        </message>
+        <message>
+            <source>Remove</source>
+            <translation>削除</translation>
+        </message>
+        <message>
+            <source>name@example.com</source>
+            <translation>name@example.com</translation>
+        </message>
+        <message>
+            <source>Send code</source>
+            <translation>コードを送信</translation>
+        </message>
+        <message>
+            <source>Confirm</source>
+            <translation>確認</translation>
+        </message>
+        <message>
+            <source>Code:</source>
+            <translation>コード:</translation>
+        </message>
+        <message>
+            <source>Send again</source>
+            <translation>再送信</translation>
+        </message>
+        <message>
+            <source>We sent a code to &lt;b&gt;%1&lt;/b&gt;. Enter it here to use that address. Check your spam folder if it doesn't arrive.</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt; にコードを送信しました。ここに入力すると、そのアドレスが使えるようになります。届かない場合は迷惑メールフォルダを確認してください。</translation>
+        </message>
+        <message>
+            <source>That didn't work. Try again.</source>
+            <translation>うまくいきませんでした。もう一度お試しください。</translation>
+        </message>
+        <message>
+            <source>No email address yet.</source>
+            <translation>メールアドレスはまだ登録されていません。</translation>
+        </message>
+        <message>
+            <source>Email address:</source>
+            <translation>メールアドレス:</translation>
+        </message>
+        <message>
+            <source>Current address: &lt;b&gt;%1&lt;/b&gt;</source>
+            <translation>現在のアドレス: &lt;b&gt;%1&lt;/b&gt;</translation>
+        </message>
+        <message>
+            <source>New address:</source>
+            <translation>新しいアドレス:</translation>
+        </message>
+        <message>
+            <source>Enter an email address like name@example.com.</source>
+            <translation>name@example.com のような形式でメールアドレスを入力してください。</translation>
+        </message>
+        <message>
+            <source>Enter the code from the email.</source>
+            <translation>メールに記載されたコードを入力してください。</translation>
+        </message>
+        <message>
+            <source>Remove Email Address</source>
+            <translation>メールアドレスを削除</translation>
+        </message>
+        <message>
+            <source>Remove %1? You won't be able to email yourself a reset code until you add an address again.</source>
+            <translation>%1 を削除しますか？ アドレスを再登録するまで、リセットコードをメールで受け取れなくなります。</translation>
+        </message>
+    </context>
+    <context>
+        <name>Utilities::PasswordResetEmail</name>
+        <message>
+            <source>Too many reset requests from your network. Try again in 1 minute.</source>
+            <translation>お使いのネットワークからのリセット要求が多すぎます。1分後にもう一度お試しください。</translation>
+        </message>
+        <message>
+            <source>Too many reset requests from your network. Try again in %1 minutes.</source>
+            <translation>お使いのネットワークからのリセット要求が多すぎます。%1分後にもう一度お試しください。</translation>
+        </message>
+        <message>
+            <source>This lobby can't send email. Ask a moderator for a reset code.</source>
+            <translation>このロビーはメールを送信できません。モデレーターにリセットコードを依頼してください。</translation>
+        </message>
+        <message>
+            <source>Couldn't reach the lobby: %1</source>
+            <translation>ロビーに接続できませんでした: %1</translation>
+        </message>
+        <message>
+            <source>The lobby couldn't send a reset code.</source>
+            <translation>ロビーがリセットコードを送信できませんでした。</translation>
+        </message>
+    </context>
+</TS>

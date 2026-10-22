@@ -32,8 +32,10 @@ void selectServerDialog(void* parent);
 // Per-frame input synchronization
 // values: input buffer (modified in place with synced data from all players)
 // size: size of local input in bytes
+// capacity: size of the values buffer in bytes
 // Returns: number of bytes of synced data, 0 during delay frames, -1 on error
-int modifyPlayValues(void *values, int size);
+// (including synced data that doesn't fit in capacity)
+int modifyPlayValues(void *values, int size, int capacity);
 
 // Append synchronized inputs (0x12 marker + size + bytes) to the active replay
 // capture. The GekkoNet rollback path calls this outside n02's frame loop.
@@ -57,6 +59,10 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
 
 // Flush and end replay capture, closing the local file if one was opened.
 void recordingClose();
+
+// Path of the most recently saved .krec (still valid after it closes), or
+// empty when the last capture saved no local file.
+std::string recordingLastPath();
 
 // Register a sink for replay bytes (header + every flushed record), independent
 // of local file saving. Pass nullptr to clear. Set/clear only while emulation

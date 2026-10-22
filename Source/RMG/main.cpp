@@ -9,6 +9,9 @@
  */
 #include <UserInterface/MainWindow.hpp>
 #include <Utilities/Translation.hpp>
+#ifdef NETPLAY
+#include <Utilities/ReplayLink.hpp>
+#endif
 #if defined(_WIN32) && defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
 #endif
@@ -36,6 +39,16 @@
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
+
+#ifdef _WIN32
+// Laptops with two GPUs run apps they don't know on the integrated one: ask
+// the NVIDIA (Optimus) and AMD (PowerXpress) drivers for the discrete GPU.
+extern "C"
+{
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
 
 //
 // Local Functions
@@ -297,6 +310,20 @@ int main(int argc, char **argv)
     }
 #endif // PORTABLE_INSTALL
 
+    // rmgk:// replay link (the rankings site's "Watch in RMG-K"): a running
+    // RMG-K opens it, otherwise this one does once it has started
+    QString replayLink;
+#ifdef NETPLAY
+    if (!parser.positionalArguments().isEmpty() && ReplayLink::IsLink(parser.positionalArguments().at(0)))
+    {
+        replayLink = parser.positionalArguments().at(0);
+        if (ReplayLink::ForwardToRunningInstance(replayLink))
+        {
+            return 0;
+        }
+    }
+#endif // NETPLAY
+
     if (parser.isSet(exportKrecOption))
     {
 #if defined(_WIN32) && defined(NETPLAY)
@@ -327,6 +354,10 @@ int main(int argc, char **argv)
 
         // specified ROM path to launch
         QStringList args = parser.positionalArguments();
+        if (!replayLink.isEmpty())
+        {
+            args.clear(); // a link, not a ROM
+        }
 
         CoreAddCallbackMessage(CoreDebugMessageType::Info,
                 "Initializing on " + QGuiApplication::platformName().toStdString());
@@ -351,6 +382,13 @@ int main(int argc, char **argv)
 
             // show window
             window.show();
+
+#ifdef NETPLAY
+            if (!replayLink.isEmpty())
+            {
+                window.OpenReplayLink(replayLink);
+            }
+#endif // NETPLAY
 
             exitCode = app.exec();
         }

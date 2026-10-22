@@ -350,9 +350,12 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
     securityAttributes.nLength = sizeof(securityAttributes);
     securityAttributes.bInheritHandle = TRUE;
 
+    // Room for several frames, so writing one rarely waits for FFmpeg to read.
+    constexpr DWORD stdinPipeSize = 16 << 20;
+
     HANDLE readHandle = nullptr;
     HANDLE writeHandle = nullptr;
-    if (!CreatePipe(&readHandle, &writeHandle, &securityAttributes, 0))
+    if (!CreatePipe(&readHandle, &writeHandle, &securityAttributes, stdinPipeSize))
     {
         return fail(errorMessage, "Failed to create FFmpeg stdin pipe");
     }

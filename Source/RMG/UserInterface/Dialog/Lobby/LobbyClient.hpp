@@ -68,6 +68,61 @@ public:
         quint64 currentRoomId = 0;
         QString currentRoomName;
         QString searchingRom;    // ROM the user is queued for while state == searching
+        quint64 watchingMatchId = 0; // live replay the user watches while state == spectating
+        bool verified = false;   // logged into a registered account
+    };
+
+    // Optional account authentication sent with HELLO. An empty mode
+    // connects as a guest.
+    struct LobbyAuth
+    {
+        QString mode;      // "login", "register", "token", "reset", "discord" or "discord_link"
+        QString password;  // login/register/discord_link, reset: the new password
+        QString token;     // token: remember-me token from a previous HELLO_OK
+        QString resetCode; // reset: code from a moderator
+        // discord: the authorization code from Discord's redirect (PKCE)
+        QString code;
+        QString codeVerifier;
+        QString redirectUri;
+        QString ticket;    // discord_link: from a discord_unlinked HELLO_FAIL
+    };
+
+    // The account's linked Discord account (sign-in only, never shown to
+    // other players).
+    struct DiscordLink
+    {
+        bool linked = false;
+        QString username;
+        QString name;
+    };
+
+    // An account's standing on one roster (ruleset) of a ranked ladder: each
+    // roster is rated separately. ruleset is empty from servers that rate the
+    // whole ladder.
+    struct LadderStanding
+    {
+        QString ladder;
+        QString ruleset;
+        int rating = 0;
+        int deviation = 0;
+        QString tier;
+        int tierIndex = 0;
+        bool provisional = true;
+        int setsPlayed = 0;
+    };
+
+    // A ranked ladder the server runs (from HELLO_OK).
+    struct LadderInfo
+    {
+        QString id;
+        QString name;
+        QString moduleId;
+        QStringList rulesets;
+        QHash<QString, QString> rulesetNames; // display names, may be empty
+        QList<int> bestOf;
+        QStringList romMd5s;
+        QStringList tiers;
+        int teamSize = 1; // 2 = 2v2 team battles
     };
 
     struct LobbyRoomSummary
@@ -88,6 +143,8 @@ public:
         quint64 matchId = 0;          // current match id (set only while broadcasting)
         int viewerCount = 0;
         bool lateJoin = false;        // in game with a free seat a late joiner may take
+        bool    ranked = false;
+        QString ladder;               // ladder id while ranked
     };
 
     struct LobbyMatchPeer
@@ -120,7 +177,8 @@ public:
     // udpAddr is the server's UDP anchor host:port (often the same hostname
     // as wsUrl, port 6364). If empty, derived from wsUrl host + default 6364.
     void connectToServer(const QString& wsUrl, const QString& username,
-                         const QStringList& romHashes, const QString& udpAddr = QString());
+                         const QStringList& romHashes, const QString& udpAddr = QString(),
+                         const LobbyAuth& auth = LobbyAuth());
     void disconnectFromServer();
 
     // App-wide input watcher feeding the away detection: any key/mouse/touch
@@ -133,6 +191,40 @@ public:
     const QHash<quint64, LobbyUser>& users() const { return m_users; }
     const QHash<quint64, LobbyRoomSummary>& rooms() const { return m_rooms; }
 
+    // Account (valid after HELLO_OK). selfUsername is the server's canonical
+    // spelling; isVerified is false for guests.
+    QString selfUsername() const { return m_selfUsername; }
+    bool isVerified() const { return m_accountId != 0; }
+    QString sessionToken() const { return m_sessionToken; }
+    // Reason code of the last HELLO_FAIL (e.g. "auth_failed").
+    QString lastHelloFailReason() const { return m_lastHelloFailReason; }
+    // discord_unlinked: the ticket for a mode "discord_link" login and the
+    // Discord account it links.
+    QString discordLinkTicket() const { return m_discordLinkTicket; }
+    QString discordLinkName() const { return m_discordLinkName; }
+    // too_many_attempts: seconds until the lobby accepts a login again (0 if unknown)
+    int lastHelloRetryAfter() const { return m_lastHelloRetryAfter; }
+    // The account's Discord link (HELLO_OK, ACCOUNT_DISCORD).
+    const DiscordLink& discordLink() const { return m_discordLink; }
+    // Whether the lobby can email the account (HELLO_OK), and the account's
+    // confirmed email address ("" when none).
+    bool emailAvailable() const { return m_emailAvailable; }
+    QString accountEmail() const { return m_accountEmail; }
+    const QList<LadderInfo>& ladders() const { return m_ladders; }
+    // The ladder a ROM can be played ranked on, or nullptr.
+    const LadderInfo* ladderForRomMd5(const QString& md5) const;
+    // every ladder a ROM is on (one per format), 1v1 first
+    QList<const LadderInfo*> laddersForRomMd5(const QString& md5) const;
+    // Our standing on one roster of a ladder, or nullptr (guest / unknown).
+    const LadderStanding* standing(const QString& ladderId, const QString& rulesetId) const;
+    static LadderStanding parseStanding(const QJsonObject& obj);
+    // The "ranked" block of the last MATCH_BEGIN if it was for matchId,
+    // otherwise empty (unranked match).
+    QJsonObject matchRankedInfo(quint64 matchId) const
+    {
+        return matchId == m_lastMatchRankedId ? m_lastMatchRanked : QJsonObject();
+    }
+
     // Chat
     void sendChat(const QString& channel, const QString& message);
     void requestChatHistory(const QString& channel);
@@ -140,11 +232,14 @@ public:
     // Rooms
     void createRoom(const QString& name, const QString& romName, const QString& romMd5,
                     const QString& romRegion, int maxPlayers, int delay, int prediction,
-                    int pacing, const QString& password = QString());
+                    int pacing, const QString& password = QString(),
+                    const QJsonObject& ranked = QJsonObject());
     void joinRoom(quint64 roomId, const QString& password = QString());
     void leaveRoom();
     void startRoom();
     void updateRoomLiveReplay(bool enabled);
+    // Host-only, waiting room: turn ranked on/off ({enabled, bestOf, ...}).
+    void updateRoomRanked(const QJsonObject& ranked);
     void kickFromRoom(quint64 userId);
 
     // Host-only: swap two seats (P1-P4) to re-order players before the match.
@@ -186,13 +281,49 @@ public:
     // Quick match queue. The ROM (name + md5) scopes the search so the server
     // only pairs players queued for the same game; the name lets the matched
     // room resolve to a local ROM by name on both clients.
-    void quickMatchJoin(const QString& romName, const QString& romMd5);
+    // ranked: a RankedRoomRequest object (enabled, ladderId, bestOf, ...) to
+    // search for a ranked set; empty for a casual match.
+    // continuous (ranked only): search again after each set.
+    // keepTeammate (2v2 sessions with a teammate): search with the set's
+    // teammate again when they keep the team too.
+    // teammate (2v2): the player wanted as teammate; the search waits until
+    // they search with this player as theirs. Empty = a random teammate.
+    void quickMatchJoin(const QString& romName, const QString& romMd5, const QJsonObject& ranked = QJsonObject(),
+                        bool continuous = false, bool keepTeammate = false, const QString& teammate = QString());
     void quickMatchCancel();
+    // Answer a rematch offer: play the previous opponent, or keep searching.
+    void quickMatchRematch(bool accept);
+    // Turn a ranked session's "keep searching" on or off (off = stop after this set).
+    void quickMatchSetContinuous(bool continuous);
+    // Turn a 2v2 session's "keep my teammate" on or off.
+    void quickMatchSetKeepTeammate(bool keep);
+    // Tell the lobby our measured ping to another player in the room (ranked
+    // rooms check it against their max ping).
+    void reportRoomPeerPing(quint64 userId, int rttMs);
 
     // Match lifecycle reports back to server (called from emulation hookup).
     void reportMatchConnected(quint64 matchId, quint64 peerUserId);
     void reportMatchPunchFailed(quint64 matchId, quint64 peerUserId);
     void reportMatchFinished(quint64 matchId);
+    // Ranked: this player's report of the finished set (MATCH_RESULT payload).
+    void reportMatchResult(const QJsonObject& result);
+    // Changes the account's password; every saved login is revoked and this
+    // connection gets a new session token (passwordChangeResult follows).
+    void changePassword(const QString& currentPassword, const QString& newPassword);
+    // Links or unlinks Discord sign-in for the account (discordLinkResult follows).
+    void linkDiscord(const QString& code, const QString& codeVerifier, const QString& redirectUri);
+    void unlinkDiscord();
+    // Account email: emails a confirmation code to a new address
+    // (emailCodeSent), makes it the account's address with that code, or
+    // removes it (emailUpdated). emailFailed answers any of them.
+    void setAccountEmail(const QString& email);
+    void confirmAccountEmail(const QString& code);
+    void removeAccountEmail();
+    // Ranked replays: offer the set's .krec (size + sha256 + bookmarks). The
+    // server accepts only the first offer per set; its bytes then follow as
+    // REPLAY_CHUNKs of the accepted chunk size.
+    void offerReplay(qint64 setId, int size, const QString& sha256, const QJsonArray& bookmarks);
+    void sendReplayChunk(qint64 setId, int index, int count, const QByteArray& data);
 
     // Broadcast (one player streams the live match's .krec up to the server).
     bool sendBroadcastBegin(quint64 matchId);
@@ -206,6 +337,8 @@ public:
     // How often to upload a keyframe, from the lobby's last MATCH_BEGIN.
     qint64 broadcastKeyframeIntervalMs() const { return m_broadcastKeyframeIntervalMs; }
     void sendBroadcastEnd(quint64 matchId);
+    // Ranked matches: the next chunk of the game module's write journal.
+    void sendBroadcastJournal(quint64 matchId, const QByteArray& journal);
 
     // Spectate (pull a broadcast match's krec stream back down).
     void startSpectate(quint64 matchId);
@@ -274,6 +407,18 @@ public:
 signals:
     void stateChanged(LobbyClient::ConnectionState newState);
     void helloFailed(const QString& reason);
+    // Account or standings changed (HELLO_OK, after a rated set).
+    void accountUpdated();
+    // RANKED_RESULT: how a ranked set was recorded.
+    void rankedResult(const QJsonObject& result);
+    void passwordChangeResult(bool ok, const QString& message);
+    void discordLinkResult(bool ok, const QString& message);
+    void emailCodeSent(const QString& address);
+    void emailUpdated(const QString& address);
+    void emailFailed(const QString& message);
+    void replayAccepted(qint64 setId, int chunkSize);
+    void replayDeclined(qint64 setId, const QString& reason);
+    void replayStored(qint64 setId);
     void connectError(const QString& humanMessage);
 
     void presenceFull();                       // full user list available via users()
@@ -327,7 +472,14 @@ signals:
     void matchAdmitFailed(quint64 matchId, quint64 userId, const QString& reason);
     void matchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
 
-    void quickMatchStatus(bool searching, int queueSize);
+    // continuous: a ranked session is on (it stays on in the match's room).
+    // keepTeammate: the 2v2 session keeps its teammate; teammate: the
+    // teammate this search goes with (empty = on your own); waitingFor: the
+    // wanted teammate who hasn't searched with this player as theirs yet.
+    void quickMatchStatus(bool searching, int queueSize, bool ranked, bool continuous,
+                          bool keepTeammate, const QString& teammate, const QString& waitingFor);
+    // A ranked session waited 2 minutes and only previous opponents are left.
+    void quickMatchRematchOffered(const QStringList& opponents);
 
     // Spectate stream (server → spectator). data carries decoded krec bytes.
     void spectateBegan(quint64 matchId, const QByteArray& manifest);
@@ -337,6 +489,8 @@ signals:
     // A reassembled savestate keyframe (still compressed) plus the first krec record
     // index to consume after restoring it.
     void spectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
+    // Write journal chunk seq (contiguous from 0) of a ranked match.
+    void spectateJournal(quint64 matchId, int seq, const QByteArray& journal);
     void spectateEnded(quint64 matchId, const QString& reason);
     void spectateFailed(quint64 matchId, const QString& reason);
     // Authoritative audience size, sent to the broadcaster and active spectators.
@@ -369,6 +523,7 @@ private:
     // Specific message handlers
     void handleHelloOk(const QJsonObject& data);
     void handleHelloFail(const QJsonObject& data);
+    void handleRankedResult(const QJsonObject& data);
     void handleHeartbeatAck(const QJsonObject& data);
     void handlePresenceFull(const QJsonObject& data);
     void handlePresenceDelta(const QJsonObject& data);
@@ -491,6 +646,7 @@ private:
 
     // Pending HELLO context
     QString m_pendingUsername;
+    LobbyAuth m_pendingAuth;
     QStringList m_pendingRomHashes;
     QString m_pendingLocalIp;
     QString m_udpAnchorHost;
@@ -512,6 +668,20 @@ private:
     QString m_region;
     bool    m_isModerator = false; // set once ADMIN_AUTH_OK is received
     qint64  m_broadcastKeyframeIntervalMs = 30'000;
+    QString m_selfUsername;
+    qint64  m_accountId = 0;
+    QString m_sessionToken;
+    QString m_lastHelloFailReason;
+    QString m_discordLinkTicket;
+    QString m_discordLinkName;
+    int     m_lastHelloRetryAfter = 0;
+    DiscordLink m_discordLink;
+    bool    m_emailAvailable = false;
+    QString m_accountEmail;
+    QList<LadderStanding> m_standings;
+    QList<LadderInfo> m_ladders;
+    quint64 m_lastMatchRankedId = 0;
+    QJsonObject m_lastMatchRanked;
     quint64 m_currentIceRoomId = 0;
     quint64 m_currentIceHostUserId = 0;
     QSet<quint64> m_icePeerIds;

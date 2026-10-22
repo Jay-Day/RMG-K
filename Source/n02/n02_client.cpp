@@ -108,6 +108,7 @@ char * gamelist = 0;
 ///////////////////////////////////////////////////////////////////////////////
 
 static std::ofstream recording_file;
+static std::string recording_last_path;
 static std::filesystem::path recording_directory_path = std::filesystem::path("records");
 
 // Optional sink that receives replay bytes independently of local file saving
@@ -255,6 +256,7 @@ static void openRecordingFile(const char* appName, const char* game, int player,
                               int numplayers_arg, bool saveLocally = true) {
     RecordingBuffer.reset();
     recording_frame_count.store(0, std::memory_order_relaxed);
+    recording_last_path.clear();
 
     if (saveLocally) {
         // A local filesystem error must not prevent an otherwise valid stream.
@@ -356,6 +358,8 @@ static void openRecordingFile(const char* appName, const char* game, int player,
         if (!recording_file.is_open()) {
             std::string pathString = recordingPath.string();
             kprintf("recording %s failed", pathString.c_str());
+        } else {
+            recording_last_path = recordingPath.string();
         }
     }
 
@@ -1030,9 +1034,22 @@ bool processStateMachineStep() {
     return (KSSDFA.state != 3);
 }
 
-int modifyPlayValues(void *values, int size) {
+int modifyPlayValues(void *values, int size, int capacity) {
     if (KSSDFA.state == 2) {
-        short siz = active_mod.MPV(values, size);
+        // The modules copy as many bytes as a recording, live stream or server
+        // says a record holds (up to 64 KB), so they write into a scratch buffer
+        // and only data that fits the caller's buffer is copied back.
+        static thread_local std::vector<char> scratch(0x10000 + 16);
+        if (size < 0 || size > capacity)
+            return -1;
+        memcpy(scratch.data(), values, size);
+        int siz = active_mod.MPV(scratch.data(), size);
+        if (siz > capacity) {
+            n02_TRACE();
+            return -1;
+        }
+        if (siz > 0)
+            memcpy(values, scratch.data(), siz);
 
         if (recording_file.is_open()) {
             RecordingBuffer.put_char(0x12);
@@ -1092,6 +1109,10 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
 
 void recordingClose() {
     close_recording();
+}
+
+std::string recordingLastPath() {
+    return recording_last_path;
 }
 
 void setRecordingStreamSink(std::function<void(const void*, int)> sink) {
