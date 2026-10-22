@@ -32,6 +32,7 @@ class QLineEdit;
 class QPushButton;
 class QSplitter;
 class QStackedWidget;
+class QTabBar;
 class QComboBox;
 class QCheckBox;
 
@@ -68,6 +69,10 @@ public:
     // typed messages reach the room while a match is running.
     void sendRoomChat(const QString& message);
 
+    // Sends a chat line to the other viewers of the live replay being watched.
+    // The match's players never receive it. No-op unless spectating.
+    void sendSpectatorChat(const QString& message);
+
     // MainWindow calls this when a spectate playback session ends (emulation
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
@@ -93,6 +98,10 @@ signals:
     // filtered out — the overlay echoes those locally). MainWindow routes this
     // to the in-game chat overlay.
     void roomChatReceived(QString nickname, QString message);
+
+    // Chat from viewers of the live replay being watched (own lines included —
+    // the server echoes them). MainWindow routes this to the in-game overlay.
+    void spectatorChatReceived(QString nickname, QString message);
 
     // Spectating: ask MainWindow to launch a streaming-playback session for a
     // broadcast match, feed it krec bytes as they arrive, and tear it down.
@@ -268,6 +277,10 @@ private:
     // launch a streaming-playback session.
     void beginSpectate(quint64 matchId, const QString& gameName);
 
+    // Shows the Spectators chat tab (and selects it) while watching a live
+    // replay; hiding it returns the column to lobby chat.
+    void setSpectatorChatVisible(bool visible);
+
     // Seat row API — 4 fixed slots rendered as a vertical player list.
     // Empty rows show a ○ dot + "Waiting…"; filled rows show ● + name + meta.
     // Only rows 1..maxPlayers are visible (others hidden via setVisible).
@@ -361,7 +374,11 @@ private:
     QTimer*      m_matchDurationTimer = nullptr;
     QTextEdit*   m_chatViewLobby = nullptr;
     QTextEdit*   m_chatViewRoom  = nullptr; // room chat, shown in the in-room view
-    QLineEdit*   m_chatInput     = nullptr; // lobby chat input (middle column)
+    QTextEdit*   m_chatViewSpectate = nullptr; // spectators' chat while watching
+    QLabel*      m_chatHeader    = nullptr; // "LOBBY CHAT", or "CHAT" with tabs
+    QTabBar*     m_chatTabs      = nullptr; // Lobby | Spectators, only while watching
+    QStackedWidget* m_chatStack  = nullptr; // lobby / spectator views, per tab
+    QLineEdit*   m_chatInput     = nullptr; // chat input for the selected tab (middle column)
     QLineEdit*   m_roomChatInput = nullptr; // room chat input (below the seats)
 
     // ── Stacked browse / in-room view ──

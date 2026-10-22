@@ -2117,10 +2117,13 @@ int rollback_execute_begin_frame(void* userData)
                 // A rollback to frame <= a held keyframe means that frame may be
                 // re-simulated differently than we snapshotted — discard the pending
                 // keyframe so we never commit a state that diverges from the krec.
+                // Re-arm the request so the next polled frame is captured instead of
+                // waiting for the UI's next periodic request.
                 if (g_GekkoKeyframePending &&
                     event->data.load.frame <= g_GekkoKeyframePendingLiveFrame)
                 {
                     g_GekkoKeyframePending = false;
+                    g_GekkoKeyframeRequested.store(true, std::memory_order_relaxed);
                     write_gekko_log("keyframe discarded reason=rollback");
                 }
                 if (!load_gekko_state(event))

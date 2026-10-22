@@ -47,6 +47,7 @@
 #include <QHBoxLayout>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QTabBar>
 #include <QTreeWidget>
 #include <QHeaderView>
 #include <QTextEdit>
@@ -133,6 +134,12 @@ namespace
 {
     const char* const CHANNEL_LOBBY = "lobby";
     const char* const CHANNEL_ROOM  = "room";
+    // Viewers of one live replay; the server never relays it to the players.
+    const char* const CHANNEL_SPECTATE = "spectate";
+
+    // Chat column tabs (the bar is only shown while watching a live replay).
+    constexpr int kChatTabLobby      = 0;
+    constexpr int kChatTabSpectators = 1;
 
     // MIME type carrying the dragged seat's slot during a host reorder drag.
     const char* const kSeatMime = "application/x-rmgk-seat-slot";
@@ -1591,17 +1598,19 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
 
 QWidget* RollbackLobbyDialog::buildChatColumn()
 {
-    // Lobby chat only — room chat lives below the seats in the in-room view.
-    // A bold header labels the column (it used to be a tab) and the chat sits
-    // in the same rounded card as the players list.
+    // Lobby chat — room chat lives below the seats in the in-room view.
+    // A bold header labels the column and the chat sits in the same rounded
+    // card as the players list. While watching a live replay a tab bar adds a
+    // Spectators tab: chat among that match's viewers, which its players never
+    // see.
     auto* col = new QWidget(this);
     auto* lay = new QVBoxLayout(col);
     lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
 
-    auto* header = new QLabel("LOBBY CHAT", this);
-    header->setProperty("class", "SectionHeader");
-    lay->addWidget(header);
+    m_chatHeader = new QLabel("LOBBY CHAT", this);
+    m_chatHeader->setProperty("class", "SectionHeader");
+    lay->addWidget(m_chatHeader);
 
     auto* card = new QFrame(col);
     card->setObjectName("LobbyCard");
@@ -1609,11 +1618,45 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
     cardLay->setContentsMargins(SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT, SPACING_DEFAULT);
     cardLay->setSpacing(SPACING_DEFAULT);
 
-    m_chatViewLobby = new QTextEdit(card);
-    m_chatViewLobby->setReadOnly(true);
-    m_chatViewLobby->setLineWrapMode(QTextEdit::WidgetWidth);
-    m_chatViewLobby->setFrameShape(QFrame::NoFrame);
-    cardLay->addWidget(m_chatViewLobby, 1);
+    m_chatTabs = new QTabBar(card);
+    m_chatTabs->setObjectName("ChatTabs");
+    m_chatTabs->setDocumentMode(true);
+    m_chatTabs->setDrawBase(false);
+    m_chatTabs->setExpanding(false);
+    m_chatTabs->addTab("Lobby");
+    m_chatTabs->addTab("Spectators");
+    m_chatTabs->setTabToolTip(kChatTabLobby, "Everyone in the lobby.");
+    m_chatTabs->setTabToolTip(kChatTabSpectators,
+        "Everyone watching this match. The players can't see it.");
+    m_chatTabs->setVisible(false);
+    cardLay->addWidget(m_chatTabs);
+
+    auto makeChatView = [](QWidget* parent) {
+        auto* view = new QTextEdit(parent);
+        view->setReadOnly(true);
+        view->setLineWrapMode(QTextEdit::WidgetWidth);
+        view->setFrameShape(QFrame::NoFrame);
+        return view;
+    };
+    m_chatStack = new QStackedWidget(card);
+    m_chatViewLobby = makeChatView(m_chatStack);
+    m_chatViewSpectate = makeChatView(m_chatStack);
+    m_chatStack->insertWidget(kChatTabLobby, m_chatViewLobby);
+    m_chatStack->insertWidget(kChatTabSpectators, m_chatViewSpectate);
+    cardLay->addWidget(m_chatStack, 1);
+
+    connect(m_chatTabs, &QTabBar::currentChanged, this, [this](int index) {
+        m_chatStack->setCurrentIndex(index);
+        if (index == kChatTabSpectators)
+        {
+            m_chatTabs->setTabText(kChatTabSpectators, "Spectators"); // clear the unread mark
+            m_chatInput->setPlaceholderText("Message the other spectators…");
+        }
+        else
+        {
+            m_chatInput->setPlaceholderText("Message the lobby…");
+        }
+    });
 
     m_chatInput = new QLineEdit(card);
     m_chatInput->setPlaceholderText("Message the lobby…");
@@ -4137,8 +4180,11 @@ void RollbackLobbyDialog::onChatSendClicked()
 {
     const QString text = m_chatInput->text().trimmed();
     if (text.isEmpty()) return;
-    if (handleSlashCommand(CHANNEL_LOBBY, text)) { m_chatInput->clear(); return; }
-    m_client->sendChat(CHANNEL_LOBBY, text);
+    const bool toSpectators = m_spectatingMatchId != 0 &&
+                              m_chatTabs->currentIndex() == kChatTabSpectators;
+    const char* const channel = toSpectators ? CHANNEL_SPECTATE : CHANNEL_LOBBY;
+    if (handleSlashCommand(channel, text)) { m_chatInput->clear(); return; }
+    m_client->sendChat(channel, text);
     m_chatInput->clear();
 }
 
@@ -4154,6 +4200,22 @@ void RollbackLobbyDialog::onRoomChatSendClicked()
 
 void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& msg)
 {
+    if (msg.channel == CHANNEL_SPECTATE)
+    {
+        // Chat among the viewers of the live replay we're watching, shown in
+        // the Spectators tab. Lines that arrive after we stopped watching are
+        // dropped.
+        if (m_spectatingMatchId == 0)
+            return;
+        const auto ts = QDateTime::fromMSecsSinceEpoch(msg.serverTimeMs).toString("hh:mm");
+        appendChatLine(CHANNEL_SPECTATE, QString("[%1] <b>%2:</b> %3")
+            .arg(ts, msg.fromUsername.toHtmlEscaped(), msg.message.toHtmlEscaped()));
+        if (m_chatTabs->currentIndex() != kChatTabSpectators)
+            m_chatTabs->setTabText(kChatTabSpectators, "Spectators •");
+        emit spectatorChatReceived(msg.fromUsername, msg.message);
+        return;
+    }
+
     // Discord-style @notify ping: a moderator's live message containing
     // "@notify" is highlighted, plays the system alert sound, and flashes the
     // lobby window. Trust comes from the server's admin stamp on the message,
@@ -4220,11 +4282,25 @@ void RollbackLobbyDialog::sendRoomChat(const QString& message)
     m_client->sendChat(CHANNEL_ROOM, text);
 }
 
+void RollbackLobbyDialog::sendSpectatorChat(const QString& message)
+{
+    if (!m_client || m_spectatingMatchId == 0)
+        return;
+
+    const QString text = message.trimmed();
+    if (text.isEmpty())
+        return;
+
+    m_client->sendChat(CHANNEL_SPECTATE, text);
+}
+
 void RollbackLobbyDialog::appendChatLine(const QString& channel, const QString& text)
 {
     QTextEdit* target = m_chatViewLobby;
     if (channel == CHANNEL_ROOM && m_chatViewRoom)
         target = m_chatViewRoom;
+    else if (channel == CHANNEL_SPECTATE && m_chatViewSpectate)
+        target = m_chatViewSpectate;
     if (target) target->append(text);
 }
 
@@ -4556,8 +4632,10 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
     m_spectatingMatchId = matchId;
     m_spectateStreamArmed = false; // wait for this subscribe's SPECTATE_BEGIN before accepting data
     m_client->startSpectate(matchId);
+    m_chatViewSpectate->clear();
+    setSpectatorChatVisible(true);
     emit spectateLaunch(matchId, gameName);
-    appendChatSystemLine(CHANNEL_LOBBY, "Connecting to live replay…");
+    appendChatSystemLine(CHANNEL_SPECTATE, "Connecting to live replay…");
 }
 
 void RollbackLobbyDialog::stopSpectating()
@@ -4566,7 +4644,16 @@ void RollbackLobbyDialog::stopSpectating()
     m_client->stopSpectate(m_spectatingMatchId);
     m_spectatingMatchId = 0;
     m_spectateStreamArmed = false;
+    setSpectatorChatVisible(false);
     emit liveReplayViewerCountCleared();
+}
+
+void RollbackLobbyDialog::setSpectatorChatVisible(bool visible)
+{
+    m_chatHeader->setText(visible ? "CHAT" : "LOBBY CHAT");
+    m_chatTabs->setTabText(kChatTabSpectators, "Spectators");
+    m_chatTabs->setCurrentIndex(visible ? kChatTabSpectators : kChatTabLobby);
+    m_chatTabs->setVisible(visible);
 }
 
 void RollbackLobbyDialog::onSpectateBegan(quint64 matchId, const QByteArray& manifest)
@@ -4585,7 +4672,7 @@ void RollbackLobbyDialog::onSpectateBegan(quint64 matchId, const QByteArray& man
     // The session boundary: everything on the wire before this is leftover from a
     // prior watch of this same match. Arm the stream now; keyframe + tail follow.
     m_spectateStreamArmed = true;
-    appendChatSystemLine(CHANNEL_LOBBY, "Watching — buffering the match…");
+    appendChatSystemLine(CHANNEL_SPECTATE, "Watching — buffering the match…");
 }
 
 void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset)
@@ -4606,6 +4693,7 @@ void RollbackLobbyDialog::onSpectateEnded(quint64 matchId, const QString& reason
 {
     if (matchId != m_spectatingMatchId) return;
     m_spectatingMatchId = 0; // server already ended it; don't echo SPECTATE_STOP
+    setSpectatorChatVisible(false);
     emit liveReplayViewerCountCleared();
     emit spectateStreamClosed(reason);
 }
@@ -4614,6 +4702,7 @@ void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reaso
 {
     if (matchId != m_spectatingMatchId) return;
     m_spectatingMatchId = 0;
+    setSpectatorChatVisible(false);
     emit liveReplayViewerCountCleared();
     const QString human =
         reason == "not_broadcasting" ? QStringLiteral("That live replay isn't available anymore.") :
