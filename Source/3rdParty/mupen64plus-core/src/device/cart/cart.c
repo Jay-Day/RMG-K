@@ -59,6 +59,12 @@ static void process_cart_command(void* jbd,
     } break;
 
     case JCMD_EEPROM_READ: {
+        /* libdragon requests 8 data bytes plus a trailing status byte */
+        if (*tx == 2 && *rx == 9) {
+            eeprom_read_block(&cart->eeprom, tx_buf[1], &rx_buf[0]);
+            rx_buf[8] = 0x00;
+            break;
+        }
         JOYBUS_CHECK_COMMAND_FORMAT(2, 8)
         eeprom_read_block(&cart->eeprom, tx_buf[1], &rx_buf[0]);
     } break;

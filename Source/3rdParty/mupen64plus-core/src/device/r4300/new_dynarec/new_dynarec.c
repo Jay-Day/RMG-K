@@ -3863,22 +3863,47 @@ static void wb_invalidate(signed char pre[],signed char entry[],uint64_t dirty,u
     }
   }
   // Move from one register to another (no writeback)
+  // The moves must be ordered so that a host register is never overwritten
+  // while another pending move still reads it (e.g. v0.lo ebp->edi and
+  // v0.hi edi->ebx must move edi first).  A cycle is broken by spilling one
+  // value to its slot in the register file and reloading it at the end.
+  int msrc[HOST_REGS],mdst[HOST_REGS],nmoves=0;
+  int spilled[HOST_REGS],sdst[HOST_REGS],nspilled=0;
   for(hr=0;hr<HOST_REGS;hr++) {
     if(hr!=EXCLUDE_REG) {
       if(pre[hr]!=entry[hr]) {
         if(pre[hr]>=0&&(pre[hr]&63)<TEMPREG) {
           int nr;
-          if((nr=get_reg(entry,pre[hr]))>=0) {
-            #ifdef NATIVE_64
-            if(pre[hr]>=INVCP) emit_mov64(hr,nr);
-            else
-            #endif
-            emit_mov(hr,nr);
+          if((nr=get_reg(entry,pre[hr]))>=0&&nr!=hr) {
+            msrc[nmoves]=hr;mdst[nmoves]=nr;nmoves++;
           }
         }
       }
     }
   }
+  while(nmoves>0) {
+    int k,m;
+    for(k=0;k<nmoves;k++) {
+      for(m=0;m<nmoves;m++) if(m!=k&&msrc[m]==mdst[k]) break;
+      if(m==nmoves) break; // destination is not read by a pending move
+    }
+    if(k<nmoves) {
+      #ifdef NATIVE_64
+      if(pre[msrc[k]]>=INVCP) emit_mov64(msrc[k],mdst[k]);
+      else
+      #endif
+      emit_mov(msrc[k],mdst[k]);
+    }
+    else {
+      // Every destination is still a source: spill the first one
+      k=0;
+      if((pre[msrc[k]]&63)<=CCREG&&(pre[msrc[k]]&63)!=CSREG) emit_storereg(pre[msrc[k]],msrc[k]);
+      spilled[nspilled]=pre[msrc[k]];sdst[nspilled]=mdst[k];nspilled++;
+    }
+    nmoves--;
+    msrc[k]=msrc[nmoves];mdst[k]=mdst[nmoves];
+  }
+  for(hr=0;hr<nspilled;hr++) emit_loadreg(spilled[hr],sdst[hr]);
 }
 
 // Write out all dirty registers (except cycle count)
