@@ -252,6 +252,7 @@ class UnifiedInputDialog : public QDialog
     void openUsbOptions(int player);
     void openUsbHotkeys(int player);
     void assignUsbBinding(int player, int binding, const BindingValue& value);
+    void assignGamecubeBinding(int player, int binding, int input);
     std::map<std::string, ProfileState> usbProfileEdits;
     std::map<std::string, ProfileState> gamecubeProfileEdits;
     QStringList usbProfileNames;

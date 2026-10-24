@@ -300,7 +300,7 @@ enum class SettingsID
     Input_Pak,
     Input_GameboyRom,
     Input_GameboySave,
-    Input_RemoveDuplicateMappings,
+    Input_RemoveDuplicateMappings, // Retired; reserve the ID for plugin compatibility.
     Input_FilterEventsForButtons,
     Input_FilterEventsForAxis,
     Input_A_InputType,
