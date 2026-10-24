@@ -10,6 +10,9 @@
 #include <cstring>
 #include <climits>
 #include <algorithm>
+#include <string>
+
+#include "../common/kaillera_encoding.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 enum INSTRUCTION{
@@ -89,9 +92,11 @@ public:
     }
 
     void set_username(char * arg_0){
-        int p;
-        strncpy(user, arg_0, (p=std::min((int)strlen(arg_0), 31)));
-        user[p] = 0x00;
+        const std::string encoded = n02::encoding::encodeKailleraText(arg_0 ? arg_0 : "");
+        const std::size_t length = n02::encoding::safeCp932PrefixLength(encoded, 31);
+        if (length > 0)
+            memcpy(user, encoded.data(), length);
+        user[length] = 0x00;
     }
 
     void store_bytes(const void * arg_0, int arg_4){
@@ -110,7 +115,8 @@ public:
     }
 
     void store_string(const char * arg_0){
-        store_bytes(arg_0, (int)strlen(arg_0)+1);
+        const std::string encoded = n02::encoding::encodeKailleraText(arg_0 ? arg_0 : "");
+        store_bytes(encoded.c_str(), (int)encoded.size()+1);
     }
 
 	    void load_str(char * arg_0, unsigned int arg_4){
