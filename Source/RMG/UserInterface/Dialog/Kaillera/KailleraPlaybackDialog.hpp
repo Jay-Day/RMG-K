@@ -20,6 +20,9 @@
 #include <QProcess>
 #include <QProgressDialog>
 #include <QElapsedTimer>
+#include <QComboBox>
+#include <QHBoxLayout>
+#include <QJsonObject>
 
 class KailleraPlaybackDialog : public QDialog
 {
@@ -28,6 +31,16 @@ class KailleraPlaybackDialog : public QDialog
 public:
     explicit KailleraPlaybackDialog(QWidget* parent = nullptr);
     ~KailleraPlaybackDialog() override;
+
+    // selects a recording in the records directory and plays it, from
+    // `record` (a .krec input record, e.g. a game's bookmark) when > 0
+    void playRecording(const QString& path, int record = 0);
+
+    // whether `path` is the recording being played
+    bool isPlaying(const QString& path) const;
+
+    // jumps the playback to a .krec record (starts it when stopped)
+    void seekTo(int record);
 
 private slots:
     void onPlaybackPlay();
@@ -42,6 +55,7 @@ private slots:
     void onPlaybackTimer();
     void onExportProcessOutput();
     void onExportProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
+    void onPlaybackSelectionChanged();
 
 private:
     struct ExportSettings
@@ -54,6 +68,13 @@ private:
     };
 
     void setupUI();
+    // Ranked replays: metadata appended to the .krec (module, ruleset,
+    // bookmarks, write journal). Returns false when the recording has none.
+    static bool loadReplayMetadata(const QString& krecPath, QJsonObject& metadata);
+    // stages the recording's ranked module in replay mode; false = cancelled
+    bool stageRankedReplay(const QString& krecPath);
+    void startPlayback(const QString& krecPath);
+    void finishSeek();
     void updatePlaybackControls();
     void populatePlaybackList();
     QString getSelectedRecordingPath() const;
@@ -92,6 +113,12 @@ private:
     QPushButton* m_btnExport = nullptr;
     QPushButton* m_btnOpenFolder = nullptr;
     QLabel* m_frameLabel = nullptr;
+    QWidget* m_bookmarkRow = nullptr;      // one button per bookmark
+    QHBoxLayout* m_bookmarkLayout = nullptr;
+    bool m_modernButtons = false;
+    QString m_activeRecordingPath;   // recording being played
+    int m_seekTarget = -1;           // fast-forwarding to this record
+    int m_restartSeekTarget = -1;    // seek after restarting the playback
     bool m_playbackWasActive = false;
     bool m_isPaused = false;
     bool m_exportCanceled = false;
@@ -100,7 +127,6 @@ private:
     QString m_exportPendingOutput;
     QString m_exportStatusLine;
     QString m_exportVideoEncoder;
-    QString m_exportTargetSpeed;
     int m_exportCapturedFrames = 0;
     int m_exportTotalFrames = 0;
     qint64 m_exportCaptureCompleteElapsedMs = -1;

@@ -451,6 +451,11 @@ void EmulatorProxy::setPifCallback(pif_sync_callback_t callback)
     }
 }
 
+void* EmulatorProxy::getCoreSymbol(const char* name) const
+{
+    return m_CoreHandle != nullptr ? reinterpret_cast<void*>(GET_PROC(m_CoreHandle, name)) : nullptr;
+}
+
 void EmulatorProxy::setFrameCallback(m64p_frame_callback callback)
 {
     coreDoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(callback));

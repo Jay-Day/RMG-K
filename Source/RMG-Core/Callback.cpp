@@ -10,6 +10,7 @@
 #define CORE_INTERNAL
 #include "ConvertStringEncoding.hpp"
 #include "Callback.hpp"
+#include "Ranked.hpp"
 #include "Library.hpp"
 
 #include <iostream>
@@ -71,6 +72,12 @@ void CoreDebugCallback(void* context, int level, const char* message)
 
 void CoreStateCallback(void*, m64p_core_param param, int value)
 {
+    // emulation thread, right after a savestate load (spectator keyframes)
+    if (param == M64CORE_STATE_LOADCOMPLETE && value)
+    {
+        CoreRankedOnStateLoaded();
+    }
+
     if (!l_SetupCallbacks)
     {
         return;

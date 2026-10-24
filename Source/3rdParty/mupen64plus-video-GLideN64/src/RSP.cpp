@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include "DebugDump.h"
 #include "RSP.h"
@@ -25,6 +26,100 @@ using namespace std;
 #define SP_STATUS_TASKDONE 0x0200
 
 RSPInfo		RSP;
+
+// RMG-K: skipping display lists while a recording fast-forwards. What the game
+// sees of a display list is gDPFullSync's effect on the registers, so a task is
+// skipped only when its display list certainly ends with that sync (see
+// _canSkipDList). Anything less certain is rendered.
+static std::atomic<bool> s_skipRendering(false);
+static std::atomic<u32> s_skippedDLists(0);
+static std::atomic<u32> s_renderedDLists(0);
+
+void RSP_SetSkipRendering(bool _skip, u32 * _skipped, u32 * _rendered)
+{
+	s_skipRendering = _skip;
+	if (_skipped != nullptr)
+		*_skipped = s_skippedDLists.exchange(0);
+	if (_rendered != nullptr)
+		*_rendered = s_renderedDLists.exchange(0);
+}
+
+// Walks the task's display list the way _ProcessDList does, without drawing,
+// and reports whether its top level ends with gDPFullSync. Calls are followed
+// for the segments they set (_segments is updated); a conditional inside a call
+// can only cut that call short, but one at the top level could end the task
+// before the sync.
+static
+bool _canSkipDList(u32 * _segments)
+{
+	bool f3dex2;
+	switch (GBI.getMicrocodeType()) {
+	case F3D:
+	case F3DEX:
+	case F3DEX095:
+	case L3D:
+	case L3DEX:
+	case S2DEX_1_03:
+	case S2DEX_1_05:
+	case S2DEX_1_07:
+		f3dex2 = false;
+		break;
+	case F3DEX2:
+	case L3DEX2:
+	case S2DEX2:
+	case F3DZEX2OOT:
+	case F3DZEX2MM:
+		f3dex2 = true;
+		break;
+	default:
+		return false;
+	}
+
+	u32 pc[sizeof(RSP.PC) / sizeof(RSP.PC[0])];
+	u32 depth = 0;
+	pc[0] = RSP.PC[0];
+	u32 previous = 0x100; // the top level's last command
+	for (u32 i = 0; i < 0x40000; ++i) {
+		if ((pc[depth] + 8) > RDRAMSize)
+			return false;
+		const u32 w0 = *(u32*)&RDRAM[pc[depth]];
+		const u32 w1 = *(u32*)&RDRAM[pc[depth] + 4];
+		const u32 cmd = _SHIFTR(w0, 24, 8);
+		pc[depth] += 8;
+
+		if (cmd == G_ENDDL) {
+			if (depth == 0)
+				return previous == G_RDPFULLSYNC;
+			--depth;
+			continue;
+		}
+		if (cmd == G_DL) {
+			const u32 address = (_segments[(w1 >> 24) & 0x0F] + (w1 & RDRAMSize)) & RDRAMSize;
+			if ((address + 8) <= RDRAMSize) {
+				if (_SHIFTR(w0, 16, 8) == G_DL_PUSH) {
+					if (depth < GBI.PCStackSize - 1)
+						pc[++depth] = address;
+				} else if (_SHIFTR(w0, 16, 8) == G_DL_NOPUSH) {
+					if (address == pc[depth] - 8)
+						return false; // a branch to itself: RSP.infloop
+					pc[depth] = address;
+				}
+			}
+		} else if (cmd == G_MOVEWORD) {
+			if (f3dex2 && _SHIFTR(w0, 16, 8) == G_MW_SEGMENT)
+				_segments[_SHIFTR(w0, 2, 4)] = w1 & 0x00FFFFFF;
+			else if (!f3dex2 && _SHIFTR(w0, 0, 8) == G_MW_SEGMENT)
+				_segments[_SHIFTR(w0, 10, 4)] = w1 & 0x00FFFFFF;
+		} else if (cmd == G_LOAD_UCODE || cmd == G_SELECT_DL) {
+			return false;
+		} else if (depth == 0 && (cmd == G_BRANCH_Z || cmd == G_BRANCH_W || cmd == G_CULLDL)) {
+			return false;
+		}
+		if (depth == 0)
+			previous = cmd;
+	}
+	return false;
+}
 
 static
 void _ProcessDList()
@@ -166,6 +261,23 @@ void RSP_ProcessDList()
 			RSP.PC[1] = *(u32*)&DMEM[0xff8];
 			*REG.SP_STATUS &= ~0x300;  // clear sig1 | sig2
 			*REG.SP_STATUS |= 0x800;   // set sig4
+		}
+
+		if (s_skipRendering) {
+			u32 segments[16];
+			memcpy(segments, gSP.segment, sizeof(segments));
+			if (_canSkipDList(segments)) {
+				// keep the segments the list set, for the next one
+				memcpy(gSP.segment, segments, sizeof(segments));
+				// what gDPFullSync does to the registers
+				*REG.MI_INTR |= MI_INTR_DP;
+				*REG.DPC_STATUS &= ~(0x020 | 0x040 | 0x008); // pipe busy | cmd busy | start gclk
+				CheckInterrupts();
+				RSP.busy = false;
+				++s_skippedDLists;
+				return;
+			}
+			++s_renderedDLists;
 		}
 	}
 

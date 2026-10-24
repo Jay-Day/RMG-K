@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Rosalie's Mupen GUI (replay links)
+Comment=Opens rmgk:// ranked replay links from the rankings site
+Exec=RMG %u
+TryExec=RMG
+Icon=com.github.Rosalie241.RMG
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/rmgk;

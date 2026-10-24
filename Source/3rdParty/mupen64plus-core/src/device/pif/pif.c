@@ -704,6 +704,14 @@ void update_pif_ram(struct pif* pif)
             rollback_log_pif_channel("skip-after", k, &pif->channels[k]);
             continue;
         }
+        /* A recording being played back drives this channel through the sync
+         * callback, which overwrites it anyway: don't make a raw input plugin
+         * talk to its hardware for it (that would cap fast-forwarding at the
+         * adapter's polling rate). */
+        if (pif_sync_drives_channel(k) && k < NUM_CONTROLLER && Controls[k].RawData) {
+            rollback_force_controller_present(&pif->channels[k]);
+            continue;
+        }
         rollback_log_pif_channel("native-before", k, &pif->channels[k]);
         process_channel(&pif->channels[k]);
         rollback_log_pif_channel("native-after", k, &pif->channels[k]);

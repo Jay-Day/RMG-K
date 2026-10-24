@@ -42,6 +42,8 @@ set(RMG_CORE_SOURCES
     Netplay.cpp
     Kaillera.cpp
     Plugins.cpp
+    Ranked.cpp
+    RankedJournal.cpp
     Version.cpp
     Cheats.cpp
     String.cpp
