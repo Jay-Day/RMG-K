@@ -165,6 +165,7 @@ private slots:
     void onAccountUpdated();
     void onRankedResult(const QJsonObject& result);
     void onChangePassword();
+    void onLogOut();
     void onPasswordChangeResult(bool ok, const QString& message);
     void onEmailAction();
     void onEmailUpdated(const QString& address);
@@ -282,8 +283,11 @@ private:
     void refreshSameGameFilter();
 
     // Show the disconnected lobby behind a compact modal username prompt.
-    // No server connection is attempted until the prompt is accepted.
+    // No server connection is attempted until the prompt is accepted, except
+    // with a saved login when the window opens (see m_useSavedLogin).
     void     promptForUsername(const QString& statusMessage = QString());
+    // Connect as m_username to m_serverUrl with the given auth.
+    void     connectToLobby(const LobbyClient::LobbyAuth& auth, const QString& discordLinkName = QString());
     QString  prefillUsername() const;
     bool     matchTransportInProgress() const;
     void     showMatchConnectionLostNotice();
@@ -418,6 +422,9 @@ private:
 
     bool    m_connectPromptOpen = false;
     QString m_connectPromptMessage;
+    // A saved login connects without the prompt once each time the window
+    // opens; when that fails, or after a disconnect, the prompt shows.
+    bool    m_useSavedLogin = true;
     bool    m_matchConnectionLostNoticeShown = false;
 
     // ── Marquee bar ──
@@ -490,6 +497,7 @@ private:
     QByteArray  m_replayUploadBytes;
     bool        m_rememberLogin = true;      // keep the session token after HELLO_OK
     QAction*    m_changePasswordAction = nullptr; // account menu, logged in only
+    QAction*    m_logOutAction = nullptr;    // account menu, logged in only
     QAction*    m_emailAction = nullptr; // account menu, when the lobby can send email
     QString     m_lastAuthMode;              // auth mode of the last connect attempt
     bool        m_authAttempted = false;     // m_lastAuthMode is from a real attempt
@@ -592,7 +600,6 @@ private:
     QPushButton* m_quickMatchBtn = nullptr;   // primary CTA (blue)
     QPushButton* m_quickRankedBtn = nullptr;  // Quick Ranked Match (gold)
     QLabel*      m_sessionLabel   = nullptr;  // session: sets/matches, record, rating
-    QCheckBox*   m_keepSearchingCheck = nullptr; // casual Quick Match: keep searching after each match
     QPushButton* m_stopSessionBtn = nullptr;  // in room: stop after this set
     QCheckBox*   m_keepTeammateCheck = nullptr; // in a 2v2 session's room: keep this set's teammate
     QPointer<QMessageBox> m_rematchPrompt;

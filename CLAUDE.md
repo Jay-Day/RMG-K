@@ -162,7 +162,40 @@ Kaillera Server ↔ kailleraclient.dll ↔ RMG-Core (Kaillera.cpp) ↔ KailleraS
 - Connection persistence: Keeps alive after emulation ends for quick restarts
 - Thread safety: Kaillera callbacks run on Kaillera thread, marshaled via Qt signals
 
-#### 4. Threading Model
+#### 4. Ranked Sets (Game Modules)
+
+Ranked play loads a per-game module (e.g. `Ranked/SmashRemix.dll`, source in `Source/RMG-Ranked-SmashRemix/`) through the C ABI in `Source/RMG-Core/Ranked/RankedModuleApi.h`. `Source/RMG-Core/Ranked.cpp` hosts it:
+
+- `OnFrame(frame)` runs at the boundary before every emulated frame, including rollback resimulations (hooked from the GekkoNet advance events in `rmgk_gekko.cpp`, or the core frame callback without rollback). It enforces the ruleset and records a small observation. It must be deterministic and idempotent: it may depend only on game memory.
+  - Enforce by removing the game's ways of changing a setting: patch code with `WriteCode32` (e.g. make a menu handler return immediately). Then only check values each frame and write when one differs. Re-writing values every frame costs journal entries and hides missed code paths. The Smash Remix module logs any correction after boot as a warning.
+- `OnConfirmedFrame(frame)` receives each observation once, in order, after the frame is past the rollback horizon. Game/set tracking and events live only here, so every peer reaches the same result.
+- The UI stages a session with `CoreRankedStageSession()` before starting emulation and polls `CoreRankedTakeEvents()` (MainWindow). Set results are written to `<user data>/Ranked/Results/*.json`.
+- Each roster (ruleset) of a ladder is rated separately by the lobby: standings carry `ladder` and `ruleset`, and `LobbyClient::standing(ladder, ruleset)` looks one up.
+- 2v2 team battles: a ladder with `teamSize` 2 (rated with OpenSkill on the lobby, every game). The Smash Remix module's `remix-2v2-*` rulesets force team battle and team attack, need 4 ports in two teams of two, fix the pairing from game 1 (or from `RankedSessionConfig.teams` when the lobby matched teammates; appended, `RANKED_SESSION_CONFIG_SIZE_V1` is the older size), and report `teams[]` / `winnerTeam` in `RankedEvent` (fields appended after `detail`; the host accepts events of `RANKED_EVENT_SIZE_V1` from older modules). Design and simulation results: `docs/ranked-teams.md`.
+- Stages: each ruleset has a list of the stages its games may be on, each with the hazard mode its games get. In `SmashRemix.cpp`, `kVanillaStages` is Dream Land and `kRemixStages` is Dream Land, Goomba Road, Pokémon Stadium 2 and Pokémon Stadium, all with hazards and movement on.
+  - One stage: stage select stays off and Random (Remix's random stage toggles) picks only it.
+  - More than one: stage select is on, on Remix's tournament layout (no variants or hazard toggle). The module rewrites that layout's table to show only the allowed stages plus Random, and Random picks among them. Each stage's hazard mode goes into Remix's tournament hazard table, which hovering and Random apply. Remix's per-page exceptions (Dream Land, Yoshi's Island DL, Saffron City DL) are patched out of `Stages.get_stage_id_`, so the list decides every stage's mode.
+  - A stage's random toggle is found by decoding Remix's random stage list code (`Stages.swap_stage_`), since custom stages' toggles are named by sort order. Games on other stages, or with another hazard mode, are voided.
+  - The list is part of the ruleset hash: changing it needs a new `kModuleVersion`, and the lobby's `ranked.json` `rulesetStages` (shown on the Rulesets page) should match.
+- For offline testing, set `DevModuleId = "smashremix"` in the `[Rosalie's Mupen GUI Ranked]` config section; combine with Rollback `EnableLocalTesting` to exercise the rollback path.
+- The Smash Remix module needs `Ranked/SmashRemix/<ROM MD5>.sym`, generated from bass' `logfile.log` by `Source/Script/GenerateRankedRemixSymbols.sh`. Since module 0.8.0 it needs `Stages.*` symbols too; regenerate older files.
+- Replays: lobby ranked sets are always recorded.
+  - Write journal: each frame's net effect on memory during `OnFrame` is kept per 32-bit word, together with the word's previous value. A module that sets and then overrides a value in one frame costs nothing. Frames are committed when confirmed. Writes made outside `OnFrame` aren't journaled and will break replays.
+  - Replays compare memory against each write's previous value, so a desync or a misplaced frame is reported as `ReplayMismatch`. When a replay ends, it logs how many journal frames it applied.
+  - Journal frames and bookmarks carry the number of .krec records before their frame. `CoreRankedOnRecordWritten()`, called from the `rmgk_gekko` flush, resolves them. Empty checkpoint frames every 600 frames let playback verify that it is aligned.
+  - `CoreRankedGetLastReplayJson()` returns the metadata (bookmarks plus base64 journal). It is appended to the .krec as a trailer by `KailleraExport::AppendKrecMetadata`. The trailer starts with a drop record so old players stop there, and the file remains a valid krec.
+  - RollbackLobbyDialog uploads the file with chat records stripped once `RANKED_RESULT` carries a `setId`.
+  - Playback stages `Replay = true` with the journal and applies it in the core frame callback. It needs no module, so replays don't depend on the module version. The module is loaded read-only only when the recorded version is installed, to show progress and check winners. Misalignment and winner differences raise `ReplayMismatch`.
+  - KailleraPlaybackDialog shows a "Jump to" button per bookmark (game starts) and seeks by fast-forwarding (`seekTo`); jumping backwards restarts the recording first.
+    - `CoreStartPlaybackSeek` (Emulation.cpp) runs the jump without video, audio or the speed limiter. The emulation thread ends it in the PIF sync, on the exact record.
+    - GLideN64 skips drawing display lists that certainly end with gDPFullSync (`RmgkSetSkipRendering`) and applies only the sync's register effects. `RMGK_SEEK_RENDER=1` keeps rendering, for comparison.
+    - Live spectators catch up with the same seek (MainWindow's spectate timer). It targets `LIVE_REPLAY_BUFFER_FRAMES` records before the buffered edge and follows the edge as the stream grows.
+    - During playback the PIF sync callback drives the recording's players' controllers, so raw input plugins (raphnet) aren't polled for those channels (`set_pif_sync_replay_players` in the core). Polling the adapter every frame capped jumps at ~600 records/s.
+  - `RankedJournal.hpp` is the shared journal code: encode/decode and a player that applies frames by input position. Ranked.cpp, the MP4 exporter (`KrecMp4Export.cpp`) and future exporters use it.
+  - Live spectators get the journal as `SPECTATE_JOURNAL` chunks. A keyframe join re-syncs in `CoreRankedOnStateLoaded`, which runs on the core's load-complete state callback.
+  - `rmgk://replay?url=<lobby>/api/ranked/sets/<id>/replay` links (the site's "Watch in RMG-K") are handled by `Utilities/ReplayLink`. An optional `&record=<n>` starts at that .krec record (the set page links each game this way); a link for the replay already playing just seeks. RMG-K registers the scheme for the current user on Windows, a running instance receives links over a local socket, and the replay is saved into the records directory and played.
+
+#### 5. Threading Model
 
 - **Main Thread**: Qt event loop, UI interactions
 - **EmulationThread**: mupen64plus-core execution

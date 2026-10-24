@@ -4350,6 +4350,26 @@ the next search starts. Your last opponent is skipped; if nobody else turns up w
             <source>Email address confirmed: %1. If you forget your password, you can email yourself a reset code.</source>
             <translation>メールアドレスを確認しました: %1。パスワードを忘れたときは、リセットコードをメールで受け取れます。</translation>
         </message>
+        <message>
+            <source>Search for a ranked set on the selected game against anyone looking for the same
+format and roster. After each set it searches again, with a new opponent, until you
+stop the session. Needs a logged-in account.</source>
+            <translation>選択中のゲームで、同じ形式とロスターで探しているプレイヤーとランクセットの相手を探します。
+セットが終わるたびに、セッションを止めるまで新しい相手で再び検索します。
+ログインしたアカウントが必要です。</translation>
+        </message>
+        <message>
+            <source>Log out</source>
+            <translation>ログアウト</translation>
+        </message>
+        <message>
+            <source>Forget the saved login on this computer and return to the login screen.</source>
+            <translation>このコンピューターに保存されたログインを削除して、ログイン画面に戻ります。</translation>
+        </message>
+        <message>
+            <source>Finish the match before logging out.</source>
+            <translation>ログアウトする前にマッチを終えてください。</translation>
+        </message>
     </context>
         <context>
         <name>KailleraPlaybackDialog</name>
@@ -4550,6 +4570,10 @@ the next search starts. Your last opponent is skipped; if nobody else turns up w
         <message>
             <source>Cancel</source>
             <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>Search for a ranked set against anyone looking for the same format and roster. After each set the next search starts by itself, with a new opponent, until you stop the session.</source>
+            <translation>同じ形式とロスターで探しているプレイヤーとランクセットの相手を探します。セットが終わるたびに、セッションを止めるまで新しい相手で次の検索が自動で始まります。</translation>
         </message>
     </context>
     <context>

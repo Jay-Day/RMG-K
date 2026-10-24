@@ -923,6 +923,10 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     m_discordAction = accountMenu->addAction(tr("Link Discord…"));
     m_discordAction->setVisible(false);
     connect(m_discordAction, &QAction::triggered, this, &RollbackLobbyDialog::onDiscordButton);
+    accountMenu->addSeparator();
+    m_logOutAction = accountMenu->addAction(tr("Log out"));
+    m_logOutAction->setToolTip(tr("Forget the saved login on this computer and return to the login screen."));
+    connect(m_logOutAction, &QAction::triggered, this, &RollbackLobbyDialog::onLogOut);
     h->addWidget(m_userButton);
 
     m_ratings = new PlayerRatings(this);
@@ -1002,6 +1006,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_quickMatchBtn->setCursor(Qt::PointingHandCursor);
     m_quickMatchBtn->setToolTip(
         tr("Auto-match with another player searching for the selected game.\n"
+           "After each match it searches again, with a new opponent, until you stop the session.\n"
            "Uses Auto frame delay unless remembering your last choice is enabled.\n"
            "Your frame delay can be changed during the warmup. Prediction defaults to 7 frames."));
 
@@ -1013,9 +1018,9 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_quickRankedBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
     m_quickRankedBtn->setCursor(Qt::PointingHandCursor);
     m_quickRankedBtn->setToolTip(tr(
-        "Search for a ranked set on the selected game: pick the format, roster, set length\n"
-        "and which opponents you accept. You're matched with players who chose the same set\n"
-        "and whose opponent range includes you. Needs a logged-in account."));
+        "Search for a ranked set on the selected game against anyone looking for the same\n"
+        "format and roster. After each set it searches again, with a new opponent, until you\n"
+        "stop the session. Needs a logged-in account."));
 
     m_createRoomBtn = new QPushButton(tr("Create Room…"), this);
     m_createRoomBtn->setObjectName("CreateRoomBtn");
@@ -1032,25 +1037,6 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     heroRow->addWidget(m_quickRankedBtn, 1);
     heroRow->addWidget(m_createRoomBtn, 0);
     lay->addLayout(heroRow);
-
-    m_keepSearchingCheck = new QCheckBox(tr("Keep searching after each match (Quick Match)"), this);
-    m_keepSearchingCheck->setObjectName("QuickMatchContinuous");
-    m_keepSearchingCheck->setToolTip(tr(
-        "When a Quick Match ends (a player closes the game), the room closes after a few seconds and\n"
-        "the next search starts. Your last opponent is skipped; if nobody else turns up within\n"
-        "2 minutes, you're asked whether to play them again. Quick Ranked Match has its own setting."));
-    {
-        QSettings settings("RMG-K", "n02");
-        m_keepSearchingCheck->setChecked(settings.value("Lobby/QuickMatch/Continuous", false).toBool());
-    }
-    connect(m_keepSearchingCheck, &QCheckBox::toggled, this, [this](bool on) {
-        QSettings settings("RMG-K", "n02");
-        settings.setValue("Lobby/QuickMatch/Continuous", on);
-        // applies to a casual search already running too
-        if (m_quickMatchActive && !m_quickMatchRanked)
-            m_client->quickMatchSetContinuous(on);
-    });
-    lay->addWidget(m_keepSearchingCheck);
 
     m_sessionLabel = new QLabel(this);
     m_sessionLabel->setObjectName("RankedSessionLabel");
@@ -1395,19 +1381,17 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     });
     toggleRow->addWidget(m_broadcastCheck);
 
-    // Ranked: host-only, between games. The server validates the ladder,
-    // the seated players and the skill range; ROOM_STATE echoes the result.
+    // Ranked: host-only, between games. The server validates the ladder and
+    // the seated players; ROOM_STATE echoes the result.
     m_rankedCheck = new QCheckBox(tr("Ranked"), this);
     m_rankedCheck->setVisible(false);
     connect(m_rankedCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (m_suppressSettingsSignal || m_currentRoomId == 0 || !m_client) return;
         QJsonObject ranked;
         ranked["enabled"] = checked;
-        // Keep the room's previous format, set length and roster when switching back on.
+        // Keep the room's previous format and roster when switching back on.
         if (checked && m_currentRoomRanked.contains("ladder"))
             ranked["ladderId"] = m_currentRoomRanked.value("ladder").toString();
-        if (checked && m_currentRoomRanked.contains("bestOf"))
-            ranked["bestOf"] = m_currentRoomRanked.value("bestOf").toInt();
         if (checked && m_currentRoomRanked.contains("rulesetId"))
             ranked["rulesetId"] = m_currentRoomRanked.value("rulesetId").toString();
         if (checked && m_currentRoomRanked.contains("maxPing"))
@@ -2345,6 +2329,8 @@ void RollbackLobbyDialog::refreshSameGameFilter()
 void RollbackLobbyDialog::showEvent(QShowEvent* event)
 {
     QDialog::showEvent(event);
+    if (!event->spontaneous())
+        m_useSavedLogin = true;
     if (!matchTransportInProgress() &&
         (m_client->state() == LobbyClient::ConnectionState::Disconnected ||
          m_client->state() == LobbyClient::ConnectionState::Failed))
@@ -2697,6 +2683,24 @@ void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
         m_client->state() == LobbyClient::ConnectionState::Connected)
         return;
 
+    // Already logged in: connect with the saved login instead of asking. If
+    // it's rejected (expired) or the lobby can't be reached, the prompt
+    // opens with the reason.
+    const bool useSavedLogin = m_useSavedLogin;
+    m_useSavedLogin = false;
+    const QString savedUser = LobbyConnectDialog::savedLoginUser();
+    if (useSavedLogin && statusMessage.isEmpty() && m_discordLinkTicket.isEmpty() && !savedUser.isEmpty())
+    {
+        m_username      = savedUser;
+        m_serverUrl     = LobbyConnectDialog::defaultServerUrl();
+        m_rememberLogin = true;
+        LobbyClient::LobbyAuth auth;
+        auth.mode  = "token";
+        auth.token = LobbyConnectDialog::savedSessionToken(savedUser);
+        connectToLobby(auth);
+        return;
+    }
+
     m_connectPromptOpen = true;
     LobbyConnectDialog prompt(this);
     // after a failed attempt, reopen where it was made (Create account, reset...)
@@ -2721,21 +2725,25 @@ void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
     m_username  = prompt.username();
     m_serverUrl = prompt.serverUrl();
     m_rememberLogin = prompt.rememberLogin();
-    const LobbyClient::LobbyAuth auth = prompt.auth();
+    connectToLobby(prompt.auth(), linkName);
+}
+
+void RollbackLobbyDialog::connectToLobby(const LobbyClient::LobbyAuth& auth, const QString& discordLinkName)
+{
     m_lastAuthMode = auth.mode;
     m_authAttempted = true;
     m_welcomeLine.clear();
     m_linkRetryTicket = auth.ticket;
-    m_linkRetryName   = auth.ticket.isEmpty() ? QString() : linkName;
+    m_linkRetryName   = auth.ticket.isEmpty() ? QString() : discordLinkName;
     if (auth.mode == "register")
-        m_welcomeLine = tr("Account created. Welcome, %1! You can play ranked now.").arg(prompt.username());
+        m_welcomeLine = tr("Account created. Welcome, %1! You can play ranked now.").arg(m_username);
     else if (auth.mode == "reset")
         m_welcomeLine = tr("Password reset. You're logged in, and other saved logins were signed out.");
     else if (auth.mode == "discord_link")
         m_welcomeLine = tr("Discord linked: next time, Log in with Discord is enough.");
     else if (auth.mode == "discord_register")
         m_welcomeLine = tr("Account created and Discord linked. Welcome, %1! Next time, Log in with Discord is enough.")
-                            .arg(prompt.username());
+                            .arg(m_username);
     if (m_userButton)
         m_userButton->setText(tr("User: %1").arg(m_username));
 
@@ -3640,11 +3648,8 @@ void RollbackLobbyDialog::onRoomCreateRequested()
             ranked["enabled"]          = true;
             if (!m_createRoomDialog->ladderId().isEmpty())
                 ranked["ladderId"]     = m_createRoomDialog->ladderId();
-            ranked["bestOf"]           = m_createRoomDialog->bestOf();
             ranked["rulesetId"]        = m_createRoomDialog->rulesetId();
-            ranked["maxTierGap"]       = m_createRoomDialog->maxTierGap();
             ranked["maxPing"]          = m_createRoomDialog->maxPing();
-            ranked["allowProvisional"] = m_createRoomDialog->allowProvisional();
             return ranked;
         }());
 }
@@ -3963,9 +3968,6 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const QString rulesetName = m_currentRoomRanked.value("rulesetName").toString();
         if (!rulesetName.isEmpty())
             rankedPart += QString(" · %1").arg(rulesetName.toHtmlEscaped());
-        const int gap = m_currentRoomRanked.value("maxTierGap").toInt();
-        if (gap > 0)
-            rankedPart += gap == 1 ? tr(" · within 1 tier") : tr(" · within %1 tiers").arg(gap);
         if (const int maxPing = m_currentRoomRanked.value("maxPing").toInt(); maxPing > 0)
             rankedPart += tr(" · max %1 ms").arg(maxPing);
         metaParts << rankedPart;
@@ -4695,6 +4697,24 @@ void RollbackLobbyDialog::onChangePassword()
     if (dialog.exec() != QDialog::Accepted)
         return;
     m_client->changePassword(current->text(), next->text());
+}
+
+void RollbackLobbyDialog::onLogOut()
+{
+    if (!m_client || !m_client->isVerified())
+        return;
+    if (matchTransportInProgress())
+    {
+        QMessageBox::information(this, tr("Log out"), tr("Finish the match before logging out."));
+        return;
+    }
+    // The lobby revokes the saved login; disconnecting returns to the login
+    // screen, which now asks for the password.
+    m_client->logout();
+    LobbyConnectDialog::clearSessionToken();
+    m_connectPromptMessage.clear();
+    m_useSavedLogin = false;
+    m_client->disconnectFromServer();
 }
 
 void RollbackLobbyDialog::updateEmailAction()
@@ -5853,8 +5873,7 @@ void RollbackLobbyDialog::onQuickMatchClicked()
             return;
         }
         qInfo() << "lobby: quick match search" << "game" << romName << "md5" << romMd5;
-        m_client->quickMatchJoin(romName, romMd5, QJsonObject(),
-                                 m_keepSearchingCheck && m_keepSearchingCheck->isChecked());
+        m_client->quickMatchJoin(romName, romMd5);
     }
 }
 
@@ -5911,15 +5930,11 @@ void RollbackLobbyDialog::onQuickRankedMatchClicked()
         QJsonObject ranked;
         ranked["enabled"]          = true;
         ranked["ladderId"]         = dialog->ladderId();
-        ranked["bestOf"]           = dialog->bestOf();
         ranked["rulesetId"]        = dialog->rulesetId();
-        ranked["maxTierGap"]       = dialog->maxTierGap();
         ranked["maxPing"]          = dialog->maxPing();
-        ranked["allowProvisional"] = dialog->allowProvisional();
         qInfo() << "lobby: ranked quick match search" << "game" << romName << "ladder" << dialog->ladderId()
-                << "ruleset" << dialog->rulesetId() << "bestOf" << dialog->bestOf() << "maxTierGap" << dialog->maxTierGap();
-        m_client->quickMatchJoin(romName, romMd5, ranked, dialog->continuous(), dialog->keepTeammate(),
-                                 dialog->teammate());
+                << "ruleset" << dialog->rulesetId() << "maxPing" << dialog->maxPing();
+        m_client->quickMatchJoin(romName, romMd5, ranked, dialog->keepTeammate(), dialog->teammate());
     });
     dialog->open();
 }

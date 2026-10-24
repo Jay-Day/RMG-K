@@ -138,6 +138,14 @@ void LobbyConnectDialog::clearSessionToken()
     s.remove("Lobby/SessionToken");
 }
 
+QString LobbyConnectDialog::savedLoginUser()
+{
+    QSettings s("RMG-K", "n02");
+    if (s.value("Lobby/ConnectMode").toString() == "guest" || s.value("Lobby/SessionToken").toString().isEmpty())
+        return QString();
+    return s.value("Lobby/SessionUser").toString();
+}
+
 LobbyConnectDialog::Mode LobbyConnectDialog::modeForAuth(const QString& authMode)
 {
     if (authMode.isEmpty())        return Mode::Guest;

@@ -119,7 +119,7 @@ public:
         QString moduleId;
         QStringList rulesets;
         QHash<QString, QString> rulesetNames; // display names, may be empty
-        QList<int> bestOf;
+        int bestOf = 3; // every set's length
         QStringList romMd5s;
         QStringList tiers;
         int teamSize = 1; // 2 = 2v2 team battles
@@ -238,7 +238,7 @@ public:
     void leaveRoom();
     void startRoom();
     void updateRoomLiveReplay(bool enabled);
-    // Host-only, waiting room: turn ranked on/off ({enabled, bestOf, ...}).
+    // Host-only, waiting room: turn ranked on/off ({enabled, rulesetId, ...}).
     void updateRoomRanked(const QJsonObject& ranked);
     void kickFromRoom(quint64 userId);
 
@@ -281,19 +281,20 @@ public:
     // Quick match queue. The ROM (name + md5) scopes the search so the server
     // only pairs players queued for the same game; the name lets the matched
     // room resolve to a local ROM by name on both clients.
-    // ranked: a RankedRoomRequest object (enabled, ladderId, bestOf, ...) to
-    // search for a ranked set; empty for a casual match.
-    // continuous (ranked only): search again after each set.
+    // ranked: a RankedRoomRequest object (enabled, ladderId, rulesetId,
+    // maxPing) to search for a ranked set; empty for a casual match.
+    // The search is a session: after each match or set it searches again,
+    // with a new opponent, until stopped.
     // keepTeammate (2v2 sessions with a teammate): search with the set's
     // teammate again when they keep the team too.
     // teammate (2v2): the player wanted as teammate; the search waits until
     // they search with this player as theirs. Empty = a random teammate.
     void quickMatchJoin(const QString& romName, const QString& romMd5, const QJsonObject& ranked = QJsonObject(),
-                        bool continuous = false, bool keepTeammate = false, const QString& teammate = QString());
+                        bool keepTeammate = false, const QString& teammate = QString());
     void quickMatchCancel();
     // Answer a rematch offer: play the previous opponent, or keep searching.
     void quickMatchRematch(bool accept);
-    // Turn a ranked session's "keep searching" on or off (off = stop after this set).
+    // Turn a session's "keep searching" on or off (off = stop after this match or set).
     void quickMatchSetContinuous(bool continuous);
     // Turn a 2v2 session's "keep my teammate" on or off.
     void quickMatchSetKeepTeammate(bool keep);
@@ -310,6 +311,8 @@ public:
     // Changes the account's password; every saved login is revoked and this
     // connection gets a new session token (passwordChangeResult follows).
     void changePassword(const QString& currentPassword, const QString& newPassword);
+    // Revokes this connection's saved login (remember-me token) on the lobby.
+    void logout();
     // Links or unlinks Discord sign-in for the account (discordLinkResult follows).
     void linkDiscord(const QString& code, const QString& codeVerifier, const QString& redirectUri);
     void unlinkDiscord();
