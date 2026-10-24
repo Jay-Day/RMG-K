@@ -4973,6 +4973,8 @@ void MainWindow::ensureRollbackLobbyDialog()
     // Remote room chat → in-game chat overlay (mirrors the P2P chat overlay).
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::roomChatReceived,
             this, &MainWindow::on_Lobby_RoomChatReceived);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectatorChatReceived,
+            this, &MainWindow::on_Lobby_SpectatorChatReceived);
     // Spectating a broadcast match (streaming krec playback).
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateLaunch,
             this, &MainWindow::on_Lobby_SpectateLaunch);
@@ -5301,10 +5303,24 @@ void MainWindow::on_Lobby_RoomChatReceived(QString nickname, QString message)
     nickname = nickname.trimmed();
     message = NormalizeOsdKailleraChatMessage(message);
 
-    // Carry room chat into the krec so broadcast spectators (and saved replays)
-    // see it too — a no-op unless a recording is open. The spectator's playback
-    // routes the embedded 0x08 record to its OSD like any other chat line.
+    // Carry room chat into the saved krec — a no-op unless a recording is open.
+    // It stays out of the live stream: spectators don't see the players' chat.
     n02::recordingQueueChat(nickname.toUtf8().constData(), message.toUtf8().constData());
+
+    const std::string chatLine = "<" + nickname.toStdString() + "> " + message.toStdString();
+    OnScreenDisplaySetKailleraChatMessage(chatLine);
+}
+
+void MainWindow::on_Lobby_SpectatorChatReceived(QString nickname, QString message)
+{
+    // Chat among the viewers of the live replay we're watching.
+    if (!this->ui_SpectateActive || this->emulationThread == nullptr || !this->emulationThread->isRunning())
+    {
+        return;
+    }
+
+    nickname = nickname.trimmed();
+    message = NormalizeOsdKailleraChatMessage(message);
 
     const std::string chatLine = "<" + nickname.toStdString() + "> " + message.toStdString();
     OnScreenDisplaySetKailleraChatMessage(chatLine);
@@ -5386,7 +5402,17 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
             if (!message.isEmpty())
             {
                 const QString normalizedMessage = NormalizeOsdKailleraChatMessage(message);
-                if (lobbySession)
+                if (this->ui_SpectateActive)
+                {
+                    // Live replay viewers chat only among themselves; the
+                    // match's players never see it. The server echoes our own
+                    // line back, so no local echo here either.
+                    if (this->rollbackLobbyDialog != nullptr)
+                    {
+                        this->rollbackLobbyDialog->sendSpectatorChat(normalizedMessage);
+                    }
+                }
+                else if (lobbySession)
                 {
                     // Lobby room chat: just send over the lobby socket. The
                     // server relays room chat back to every member (including
