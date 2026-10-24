@@ -2247,26 +2247,6 @@ Use Default mode anyway?</source>
             <translation>ロスター:</translation>
         </message>
         <message>
-            <source>Anyone</source>
-            <translation>誰でも</translation>
-        </message>
-        <message>
-            <source>Within 1 tier of me</source>
-            <translation>自分の1ティア以内</translation>
-        </message>
-        <message>
-            <source>Within 2 tiers of me</source>
-            <translation>自分の2ティア以内</translation>
-        </message>
-        <message>
-            <source>Within 3 tiers of me</source>
-            <translation>自分の3ティア以内</translation>
-        </message>
-        <message>
-            <source>Opponents:</source>
-            <translation>対戦相手:</translation>
-        </message>
-        <message>
             <source>Any</source>
             <translation>制限なし</translation>
         </message>
@@ -2277,14 +2257,6 @@ Use Default mode anyway?</source>
         <message>
             <source>Max ping:</source>
             <translation>最大Ping:</translation>
-        </message>
-        <message>
-            <source>Allow players still in placement</source>
-            <translation>認定中のプレイヤーも許可</translation>
-        </message>
-        <message>
-            <source>New players have no reliable tier yet; let them join regardless of the range.</source>
-            <translation>新しいプレイヤーはまだティアが定まっていません。範囲に関係なく参加を許可します。</translation>
         </message>
         <message>
             <source>Plays on the %1 ladder.</source>
@@ -2539,8 +2511,8 @@ Not linked yet? Sign in with Discord, then enter your password once to link it.<
             <translation>クイックランクマッチ</translation>
         </message>
         <message>
-            <source>Search for a ranked set. You're matched with players who pick the same set and whose opponent range includes you.</source>
-            <translation>ランクセットの相手を探します。同じセットを選び、対戦相手の範囲にあなたが含まれるプレイヤーとマッチします。</translation>
+            <source>Search for a ranked set against anyone looking for the same format and roster. After each set the next search starts by itself, with a new opponent, until you stop the session.</source>
+            <translation>同じ形式とロスターで探しているプレイヤーとランクセットの相手を探します。セットが終わるたびに、セッションを止めるまで新しい相手で次の検索が自動で始まります。</translation>
         </message>
         <message>
             <source>Game:</source>
@@ -2575,30 +2547,6 @@ Not linked yet? Sign in with Discord, then enter your password once to link it.<
             <translation>あなた:</translation>
         </message>
         <message>
-            <source>Anyone</source>
-            <translation>誰でも</translation>
-        </message>
-        <message>
-            <source>Within 1 tier of me</source>
-            <translation>自分の1ティア以内</translation>
-        </message>
-        <message>
-            <source>Within 2 tiers of me</source>
-            <translation>自分の2ティア以内</translation>
-        </message>
-        <message>
-            <source>Within 3 tiers of me</source>
-            <translation>自分の3ティア以内</translation>
-        </message>
-        <message>
-            <source>Tiers on the chosen format and roster. Your opponents' ranges must include you too.</source>
-            <translation>選んだ形式とロスターでのティアです。相手の範囲にもあなたが含まれる必要があります。</translation>
-        </message>
-        <message>
-            <source>Opponents:</source>
-            <translation>対戦相手:</translation>
-        </message>
-        <message>
             <source>Any</source>
             <translation>制限なし</translation>
         </message>
@@ -2609,22 +2557,6 @@ Not linked yet? Sign in with Discord, then enter your password once to link it.<
         <message>
             <source>Max ping:</source>
             <translation>最大Ping:</translation>
-        </message>
-        <message>
-            <source>Allow players still in placement</source>
-            <translation>認定中のプレイヤーも許可</translation>
-        </message>
-        <message>
-            <source>New players have no reliable tier yet; match them regardless of the range.</source>
-            <translation>新しいプレイヤーはまだティアが定まっていません。範囲に関係なくマッチします。</translation>
-        </message>
-        <message>
-            <source>Keep searching after each set (a new opponent each time)</source>
-            <translation>セットごとに続けて検索 (毎回新しい相手)</translation>
-        </message>
-        <message>
-            <source>When a set ends, the room closes after a few seconds and the next search starts with the same settings. Your last opponent is skipped; if nobody else turns up within 2 minutes, you're asked whether to play them again.</source>
-            <translation>セットが終わると数秒後にルームが閉じ、同じ設定で次の検索が始まります。直前の相手はスキップされ、2分以内にほかの相手が見つからない場合は、もう一度対戦するか確認します。</translation>
         </message>
         <message>
             <source>Keep my teammate after each set (when they keep me too)</source>
@@ -2678,24 +2610,12 @@ Not linked yet? Sign in with Discord, then enter your password once to link it.<
             <translation>クイックランクマッチ</translation>
         </message>
         <message>
-            <source>Search for a ranked set on the selected game: pick the format, roster, set length
-and which opponents you accept. You're matched with players who chose the same set
-and whose opponent range includes you. Needs a logged-in account.</source>
-            <translation>選択中のゲームでランクセットの相手を探します。形式、ロスター、セットの長さ、
-受け入れる対戦相手を選びます。同じセットを選び、対戦相手の範囲に
-あなたが含まれるプレイヤーとマッチします。ログインしたアカウントが必要です。</translation>
-        </message>
-        <message>
-            <source>Keep searching after each match (Quick Match)</source>
-            <translation>マッチごとに続けて検索 (クイックマッチ)</translation>
-        </message>
-        <message>
-            <source>When a Quick Match ends (a player closes the game), the room closes after a few seconds and
-the next search starts. Your last opponent is skipped; if nobody else turns up within
-2 minutes, you're asked whether to play them again. Quick Ranked Match has its own setting.</source>
-            <translation>クイックマッチが終わる (プレイヤーがゲームを閉じる) と、数秒後にルームが閉じて
-次の検索が始まります。直前の相手はスキップされ、2分以内にほかの相手が見つからない場合は、
-もう一度対戦するか確認します。クイックランクマッチには別の設定があります。</translation>
+            <source>Search for a ranked set on the selected game against anyone looking for the same
+format and roster. After each set it searches again, with a new opponent, until you
+stop the session. Needs a logged-in account.</source>
+            <translation>選択中のゲームで、同じ形式とロスターで探しているプレイヤーとランクセットの相手を探します。
+セットが終わるたびに、セッションを止めるまで新しい相手で再び検索します。
+ログインしたアカウントが必要です。</translation>
         </message>
         <message>
             <source>Ranked</source>
@@ -2776,14 +2696,6 @@ the next search starts. Your last opponent is skipped; if nobody else turns up w
         <message>
             <source>&lt;b&gt;Ranked:&lt;/b&gt; Bo%1 · %2</source>
             <translation>&lt;b&gt;ランク:&lt;/b&gt; Bo%1 · %2</translation>
-        </message>
-        <message>
-            <source> · within 1 tier</source>
-            <translation> · 1ティア以内</translation>
-        </message>
-        <message>
-            <source> · within %1 tiers</source>
-            <translation> · %1ティア以内</translation>
         </message>
         <message>
             <source> · max %1 ms</source>
@@ -3284,6 +3196,18 @@ the next search starts. Your last opponent is skipped; if nobody else turns up w
         <message>
             <source>Email address confirmed: %1. If you forget your password, you can email yourself a reset code.</source>
             <translation>メールアドレスを確認しました: %1。パスワードを忘れたときは、リセットコードをメールで受け取れます。</translation>
+        </message>
+        <message>
+            <source>Log out</source>
+            <translation>ログアウト</translation>
+        </message>
+        <message>
+            <source>Forget the saved login on this computer and return to the login screen.</source>
+            <translation>このコンピューターに保存されたログインを削除して、ログイン画面に戻ります。</translation>
+        </message>
+        <message>
+            <source>Finish the match before logging out.</source>
+            <translation>ログアウトする前にマッチを終えてください。</translation>
         </message>
     </context>
     <context>

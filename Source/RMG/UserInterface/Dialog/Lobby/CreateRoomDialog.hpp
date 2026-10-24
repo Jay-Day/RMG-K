@@ -40,7 +40,7 @@ struct CreateRoomRankedOptions
         QString ladderId;
         QString ladderName;
         int teamSize = 1;
-        QList<int> bestOf; // allowed set lengths, first = default
+        int bestOf = 3; // every set's length
         // allowed rulesets (e.g. rosters) as id + display name, first = default
         QList<QPair<QString, QString>> rulesets;
         // the player's standing per roster, e.g. "✓ Gold 1532"
@@ -74,13 +74,10 @@ public:
     int     prediction() const { return m_prediction; }
     QString password()   const { return m_password; }
     bool    ranked()           const { return m_isRanked; }
-    int     bestOf()           const { return m_bestOf; }
     QString rulesetId()        const { return m_rulesetId; }
     QString ladderId()         const { return m_ladderId; }
     int teamSize()             const { return m_teamSize; }
-    int     maxTierGap()       const { return m_maxTierGap; }
     int     maxPing()          const { return m_maxPing; }
-    bool    allowProvisional() const { return m_allowProvisional; }
 
     // Called by the lobby when the server replies ROOM_CREATE_FAIL.
     // Re-enables the form so the user can edit and retry.
@@ -100,7 +97,7 @@ private slots:
     void onCreateClicked();
     void onPasswordToggled(bool enabled);
     void onRankedToggled(bool enabled);
-    // fills set length and roster for the chosen format
+    // shows the set length and fills the rosters for the chosen format
     void onFormatChanged();
     void validateInput();
 
@@ -121,12 +118,10 @@ private:
     QLabel*      m_statusLabel    = nullptr;
     QCheckBox*   m_rankedCheck    = nullptr;
     QWidget*     m_rankedOptions  = nullptr;
-    QComboBox*   m_bestOfCombo    = nullptr;
+    QLabel*      m_bestOfLabel    = nullptr;
     QComboBox*   m_rulesetCombo   = nullptr;
     QComboBox*   m_formatCombo    = nullptr;
-    QComboBox*   m_skillCombo     = nullptr;
     QComboBox*   m_pingCombo      = nullptr;
-    QCheckBox*   m_provisionalCheck = nullptr;
     CreateRoomRankedOptions m_rankedInfo;
 
     // Accessor backing
@@ -139,13 +134,10 @@ private:
     int     m_prediction = 7;
     QString m_password;
     bool    m_isRanked = false;
-    int     m_bestOf = 0;
     QString m_rulesetId;
     QString m_ladderId;
     int m_teamSize = 1;
-    int     m_maxTierGap = 0;
     int     m_maxPing = 120;
-    bool    m_allowProvisional = true;
 };
 
 } // namespace Dialog

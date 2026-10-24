@@ -78,6 +78,9 @@ public:
     static QString savedSessionToken(const QString& username);
     static void saveSessionToken(const QString& username, const QString& token);
     static void clearSessionToken();
+    // The account a saved login connects to without this dialog, or empty:
+    // none is saved, or the player last joined as a guest.
+    static QString savedLoginUser();
     // After a successful connection: open the Log in tab next time for an
     // account, Play as guest for a guest.
     static void saveConnectedMode(bool account);

@@ -32,8 +32,9 @@ QuickRankedMatchDialog::QuickRankedMatchDialog(const QString& gameName, const Cr
     setModal(true);
 
     auto* root = new QVBoxLayout(this);
-    auto* intro = new QLabel(tr("Search for a ranked set. You're matched with players who pick the same "
-                                "set and whose opponent range includes you."), this);
+    auto* intro = new QLabel(tr("Search for a ranked set against anyone looking for the same format and roster. "
+                                "After each set the next search starts by itself, with a new opponent, until you "
+                                "stop the session."), this);
     intro->setWordWrap(true);
     root->addWidget(intro);
 
@@ -64,9 +65,9 @@ QuickRankedMatchDialog::QuickRankedMatchDialog(const QString& gameName, const Cr
                                   "search with you as their teammate too. Leave it empty for a random teammate."));
     form->addRow(tr("Teammate:"), m_teammateEdit);
 
-    m_bestOfCombo = new QComboBox(this);
-    m_bestOfCombo->setObjectName("QuickRankedBestOf");
-    form->addRow(tr("Set length:"), m_bestOfCombo);
+    m_bestOfLabel = new QLabel(this);
+    m_bestOfLabel->setObjectName("QuickRankedBestOf");
+    form->addRow(tr("Set length:"), m_bestOfLabel);
 
     m_rulesetCombo = new QComboBox(this);
     m_rulesetCombo->setObjectName("QuickRankedRoster");
@@ -76,15 +77,6 @@ QuickRankedMatchDialog::QuickRankedMatchDialog(const QString& gameName, const Cr
     m_standingLabel = new QLabel(this);
     m_standingLabel->setObjectName("QuickRankedStanding");
     form->addRow(tr("You:"), m_standingLabel);
-
-    m_skillCombo = new QComboBox(this);
-    m_skillCombo->setObjectName("QuickRankedOpponents");
-    m_skillCombo->addItem(tr("Anyone"), 0);
-    m_skillCombo->addItem(tr("Within 1 tier of me"), 1);
-    m_skillCombo->addItem(tr("Within 2 tiers of me"), 2);
-    m_skillCombo->addItem(tr("Within 3 tiers of me"), 3);
-    m_skillCombo->setToolTip(tr("Tiers on the chosen format and roster. Your opponents' ranges must include you too."));
-    form->addRow(tr("Opponents:"), m_skillCombo);
 
     m_pingCombo = new QComboBox(this);
     m_pingCombo->setObjectName("QuickRankedMaxPing");
@@ -97,20 +89,7 @@ QuickRankedMatchDialog::QuickRankedMatchDialog(const QString& gameName, const Cr
     m_pingCombo->setToolTip(tr("The highest ping you'll play a ranked set at. Players are matched by their regions' "
                                "usual ping first; if the measured ping is higher, the set doesn't start."));
     form->addRow(tr("Max ping:"), m_pingCombo);
-
-    m_provisionalCheck = new QCheckBox(tr("Allow players still in placement"), this);
-    m_provisionalCheck->setChecked(true);
-    m_provisionalCheck->setToolTip(tr("New players have no reliable tier yet; match them regardless of the range."));
-    form->addRow(QString(), m_provisionalCheck);
     root->addLayout(form);
-
-    m_continuousCheck = new QCheckBox(tr("Keep searching after each set (a new opponent each time)"), this);
-    m_continuousCheck->setObjectName("QuickRankedContinuous");
-    m_continuousCheck->setChecked(true);
-    m_continuousCheck->setToolTip(tr("When a set ends, the room closes after a few seconds and the next search starts "
-                                     "with the same settings. Your last opponent is skipped; if nobody else turns up "
-                                     "within 2 minutes, you're asked whether to play them again."));
-    root->addWidget(m_continuousCheck);
 
     m_keepTeammateCheck = new QCheckBox(tr("Keep my teammate after each set (when they keep me too)"), this);
     m_keepTeammateCheck->setObjectName("QuickRankedKeepTeammate");
@@ -135,7 +114,6 @@ QuickRankedMatchDialog::QuickRankedMatchDialog(const QString& gameName, const Cr
 
     connect(m_formatCombo, &QComboBox::currentIndexChanged, this, &QuickRankedMatchDialog::onFormatChanged);
     connect(m_rulesetCombo, &QComboBox::currentIndexChanged, this, &QuickRankedMatchDialog::updateStanding);
-    connect(m_continuousCheck, &QCheckBox::toggled, this, &QuickRankedMatchDialog::updateKeepTeammate);
     connect(m_teammateEdit, &QLineEdit::textChanged, this, &QuickRankedMatchDialog::updateKeepTeammate);
     onFormatChanged();
     loadDefaults();
@@ -150,14 +128,14 @@ void QuickRankedMatchDialog::setTeammateSuggestions(const QStringList& names)
 }
 
 // A teammate is chosen only in 2v2, and keeping one from the start needs a
-// chosen teammate and a session.
+// chosen teammate.
 void QuickRankedMatchDialog::updateKeepTeammate()
 {
     const auto* format = currentFormat();
     const bool teams = format != nullptr && format->teamSize > 1;
     m_form->setRowVisible(m_teammateEdit, teams);
     m_keepTeammateCheck->setVisible(teams);
-    const bool keepable = m_continuousCheck->isChecked() && !m_teammateEdit->text().trimmed().isEmpty();
+    const bool keepable = !m_teammateEdit->text().trimmed().isEmpty();
     m_keepTeammateCheck->setEnabled(keepable);
     const QSignalBlocker blocker(m_keepTeammateCheck);
     m_keepTeammateCheck->setChecked(keepable && m_keepTeammateChoice);
@@ -174,12 +152,7 @@ void QuickRankedMatchDialog::onFormatChanged()
     const auto* format = currentFormat();
     if (format == nullptr)
         return;
-    const int bestOf = m_bestOfCombo->currentData().toInt();
-    m_bestOfCombo->clear();
-    for (int n : format->bestOf)
-        m_bestOfCombo->addItem(tr("Best of %1").arg(n), n);
-    if (m_bestOfCombo->findData(bestOf) >= 0)
-        m_bestOfCombo->setCurrentIndex(m_bestOfCombo->findData(bestOf));
+    m_bestOfLabel->setText(tr("Best of %1").arg(format->bestOf));
     // keep the roster's place (Vanilla stays Vanilla)
     const int roster = qMax(0, m_rulesetCombo->currentIndex());
     m_rulesetCombo->blockSignals(true);
@@ -206,13 +179,9 @@ void QuickRankedMatchDialog::onSearchClicked()
         return;
     m_ladderId         = format->ladderId;
     m_teamSize         = format->teamSize;
-    m_bestOf           = m_bestOfCombo->currentData().toInt();
     m_rulesetId        = m_rulesetCombo->currentData().toString();
-    m_maxTierGap       = m_skillCombo->currentData().toInt();
-    m_allowProvisional = m_provisionalCheck->isChecked();
-    m_continuous       = m_continuousCheck->isChecked();
     m_teammate         = m_teamSize > 1 ? m_teammateEdit->text().trimmed() : QString();
-    m_keepTeammate     = m_continuous && !m_teammate.isEmpty() && m_keepTeammateCheck->isChecked();
+    m_keepTeammate     = !m_teammate.isEmpty() && m_keepTeammateCheck->isChecked();
     m_maxPing          = m_pingCombo->currentData().toInt();
     saveDefaults();
     accept();
@@ -228,19 +197,11 @@ void QuickRankedMatchDialog::loadDefaults()
         if (m_rankedInfo.formats[i].ladderId == ladder)
             m_formatCombo->setCurrentIndex(m_formatCombo->findData(i));
     }
-    const int bestOf = m_bestOfCombo->findData(s.value("BestOf").toInt());
-    if (bestOf >= 0)
-        m_bestOfCombo->setCurrentIndex(bestOf);
     const int roster = m_rulesetCombo->findData(s.value("Ruleset").toString());
     if (roster >= 0)
         m_rulesetCombo->setCurrentIndex(roster);
-    const int gap = m_skillCombo->findData(s.value("MaxTierGap", 0).toInt());
-    if (gap >= 0)
-        m_skillCombo->setCurrentIndex(gap);
-    m_provisionalCheck->setChecked(s.value("AllowProvisional", true).toBool());
     if (const int ping = m_pingCombo->findData(s.value("MaxPing", 120).toInt()); ping >= 0)
         m_pingCombo->setCurrentIndex(ping);
-    m_continuousCheck->setChecked(s.value("Continuous", true).toBool());
     m_keepTeammateChoice = s.value("KeepTeammate", false).toBool();
     s.endGroup();
     updateStanding();
@@ -252,12 +213,8 @@ void QuickRankedMatchDialog::saveDefaults()
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/QuickRanked");
     s.setValue("Ladder", m_ladderId);
-    s.setValue("BestOf", m_bestOf);
     s.setValue("Ruleset", m_rulesetId);
-    s.setValue("MaxTierGap", m_maxTierGap);
-    s.setValue("AllowProvisional", m_allowProvisional);
     s.setValue("MaxPing", m_maxPing);
-    s.setValue("Continuous", m_continuous);
     // the box's choice, so a search without a chosen teammate keeps it
     s.setValue("KeepTeammate", m_keepTeammateChoice);
     s.endGroup();

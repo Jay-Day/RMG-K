@@ -1046,7 +1046,10 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
         const QJsonObject rulesetNames = object.value("rulesetNames").toObject();
         for (auto it = rulesetNames.constBegin(); it != rulesetNames.constEnd(); ++it)
             ladder.rulesetNames.insert(it.key(), it.value().toString());
-        for (const QJsonValue& v : object.value("bestOf").toArray())   ladder.bestOf << v.toInt();
+        // older lobbies send the set lengths a host could pick; the first
+        // was the default
+        const QJsonValue bestOf = object.value("bestOf");
+        ladder.bestOf = bestOf.isArray() ? bestOf.toArray().at(0).toInt(3) : bestOf.toInt(3);
         for (const QJsonValue& v : object.value("romMd5s").toArray())  ladder.romMd5s << v.toString();
         for (const QJsonValue& v : object.value("tiers").toArray())    ladder.tiers << v.toString();
         ladder.teamSize = qMax(1, object.value("teamSize").toInt(1));
@@ -3417,6 +3420,11 @@ void LobbyClient::changePassword(const QString& currentPassword, const QString& 
     sendEnvelope("ACCOUNT_CHANGE_PASSWORD", d);
 }
 
+void LobbyClient::logout()
+{
+    sendEnvelope("ACCOUNT_LOGOUT");
+}
+
 void LobbyClient::linkDiscord(const QString& code, const QString& codeVerifier, const QString& redirectUri)
 {
     QJsonObject d;
@@ -3641,17 +3649,17 @@ void LobbyClient::stopSpectate(quint64 matchId)
 }
 
 void LobbyClient::quickMatchJoin(const QString& romName, const QString& romMd5, const QJsonObject& ranked,
-                                 bool continuous, bool keepTeammate, const QString& teammate)
+                                 bool keepTeammate, const QString& teammate)
 {
     QJsonObject rom;
     rom["name"]   = romName;
     rom["md5"]    = romMd5;
     rom["region"] = QString();
-    QJsonObject data{ {"rom", rom} };
+    // every search is a session: it searches again after each match until
+    // stopped (quickMatchSetContinuous(false))
+    QJsonObject data{ {"rom", rom}, {"continuous", true} };
     if (!ranked.isEmpty())
         data["ranked"] = ranked;
-    if (continuous)
-        data["continuous"] = true;
     if (keepTeammate)
         data["keepTeammate"] = true;
     if (!teammate.isEmpty())

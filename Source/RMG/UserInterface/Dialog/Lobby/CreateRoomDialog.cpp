@@ -110,19 +110,13 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     m_formatCombo->setToolTip(tr("Each format has its own rankings. 2v2: pick teams on character select, any ports."));
     rankedForm->addRow(tr("Format:"), m_formatCombo);
     rankedForm->setRowVisible(m_formatCombo, m_rankedInfo.formats.size() > 1);
-    m_bestOfCombo = new QComboBox(m_rankedOptions);
-    rankedForm->addRow(tr("Set length:"), m_bestOfCombo);
+    m_bestOfLabel = new QLabel(m_rankedOptions);
+    rankedForm->addRow(tr("Set length:"), m_bestOfLabel);
     m_rulesetCombo = new QComboBox(m_rankedOptions);
     m_rulesetCombo->setToolTip(tr("Which characters are legal. Games with other characters don't count."));
     rankedForm->addRow(tr("Roster:"), m_rulesetCombo);
     connect(m_formatCombo, &QComboBox::currentIndexChanged, this, &CreateRoomDialog::onFormatChanged);
     onFormatChanged();
-    m_skillCombo = new QComboBox(m_rankedOptions);
-    m_skillCombo->addItem(tr("Anyone"), 0);
-    m_skillCombo->addItem(tr("Within 1 tier of me"), 1);
-    m_skillCombo->addItem(tr("Within 2 tiers of me"), 2);
-    m_skillCombo->addItem(tr("Within 3 tiers of me"), 3);
-    rankedForm->addRow(tr("Opponents:"), m_skillCombo);
     m_pingCombo = new QComboBox(m_rankedOptions);
     m_pingCombo->addItem(tr("Any"), 0);
     m_pingCombo->addItem("60 ms", 60);
@@ -133,10 +127,6 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     m_pingCombo->setToolTip(tr("The highest ping you'll play a ranked set at. Players are matched by their regions' "
                                "usual ping first; if the measured ping is higher, the set doesn't start."));
     rankedForm->addRow(tr("Max ping:"), m_pingCombo);
-    m_provisionalCheck = new QCheckBox(tr("Allow players still in placement"), m_rankedOptions);
-    m_provisionalCheck->setChecked(true);
-    m_provisionalCheck->setToolTip(tr("New players have no reliable tier yet; let them join regardless of the range."));
-    rankedForm->addRow(QString(), m_provisionalCheck);
     root->addWidget(m_rankedOptions);
     m_rankedOptions->setVisible(false);
 
@@ -204,12 +194,7 @@ void CreateRoomDialog::onFormatChanged()
     if (index < 0 || index >= m_rankedInfo.formats.size())
         return;
     const auto& format = m_rankedInfo.formats[index];
-    const int bestOf = m_bestOfCombo->currentData().toInt();
-    m_bestOfCombo->clear();
-    for (int n : format.bestOf)
-        m_bestOfCombo->addItem(tr("Best of %1").arg(n), n);
-    if (m_bestOfCombo->findData(bestOf) >= 0)
-        m_bestOfCombo->setCurrentIndex(m_bestOfCombo->findData(bestOf));
+    m_bestOfLabel->setText(tr("Best of %1").arg(format.bestOf));
     // keep the roster's place (Vanilla stays Vanilla)
     const int roster = qMax(0, m_rulesetCombo->currentIndex());
     m_rulesetCombo->clear();
@@ -263,7 +248,6 @@ void CreateRoomDialog::onCreateClicked()
     m_maxPlayers = m_maxPlayersSpin->value();
     m_password   = m_passwordCheck->isChecked() ? m_passwordEdit->text() : QString();
     m_isRanked   = m_rankedCheck->isEnabled() && m_rankedCheck->isChecked();
-    m_bestOf     = m_bestOfCombo->currentData().toInt();
     m_rulesetId  = m_rulesetCombo->currentData().toString();
     {
         const int index = m_formatCombo->currentData().toInt();
@@ -271,9 +255,7 @@ void CreateRoomDialog::onCreateClicked()
         m_ladderId = known ? m_rankedInfo.formats[index].ladderId : QString();
         m_teamSize = known ? m_rankedInfo.formats[index].teamSize : 1;
     }
-    m_maxTierGap = m_skillCombo->currentData().toInt();
     m_maxPing    = m_pingCombo->currentData().toInt();
-    m_allowProvisional = m_provisionalCheck->isChecked();
 
     saveDefaults();
     setFormEnabled(false);
