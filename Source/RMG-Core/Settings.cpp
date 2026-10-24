@@ -1648,13 +1648,13 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GCA, "Map_Z2", 13};
         break;
     case SettingsID::GCAInput_Map_L:
-        setting = {SETTING_SECTION_GCA, "Map_L", 16};
+        setting = {SETTING_SECTION_GCA, "Map_L", 8};
         break;
     case SettingsID::GCAInput_Map_R:
         setting = {SETTING_SECTION_GCA, "Map_R", 4};
         break;
     case SettingsID::GCAInput_Map_DpadUp:
-        setting = {SETTING_SECTION_GCA, "Map_DpadUp", 8};
+        setting = {SETTING_SECTION_GCA, "Map_DpadUp", 14};
         break;
     case SettingsID::GCAInput_Map_DpadDown:
         setting = {SETTING_SECTION_GCA, "Map_DpadDown", 9};
@@ -1666,7 +1666,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GCA, "Map_DpadRight", 11};
         break;
     case SettingsID::GCAInput_Map_CUp:
-        setting = {SETTING_SECTION_GCA, "Map_CUp", 14};
+        setting = {SETTING_SECTION_GCA, "Map_CUp", 16};
         break;
     case SettingsID::GCAInput_Map_CDown:
         setting = {SETTING_SECTION_GCA, "Map_CDown", 15};

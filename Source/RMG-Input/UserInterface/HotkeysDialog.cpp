@@ -17,7 +17,7 @@ using namespace UserInterface;
 
 HotkeysDialog::HotkeysDialog(QWidget* parent, QList<HotkeySettingMapping> hotkeySettingMappings, 
     SDL_JoystickID joystickId, SDL_Gamepad* gamepad,
-    bool filterEvents, bool removeDuplicates) : QDialog(parent, Qt::WindowSystemMenuHint | Qt::WindowTitleHint)
+    bool filterEvents) : QDialog(parent, Qt::WindowSystemMenuHint | Qt::WindowTitleHint)
 {
     this->setupUi(this);
 
@@ -25,7 +25,6 @@ HotkeysDialog::HotkeysDialog(QWidget* parent, QList<HotkeySettingMapping> hotkey
     this->currentGamepad           = gamepad;
     this->isCurrentJoystickGamepad = (gamepad != nullptr);
     this->filterEventsForButtons   = filterEvents;
-    this->removeDuplicates         = removeDuplicates;
 
     this->hotkeySettingMappings.append(
     {
@@ -312,14 +311,6 @@ void HotkeysDialog::on_HotkeyButton_TimerFinished(Widget::HotkeyButton* button)
 
 void HotkeysDialog::on_HotkeyButton_StateFinished(Widget::HotkeyButton* button)
 {
-    // do nothing when the user
-    // doesn't want us to remove 
-    // duplicates
-    if (!this->removeDuplicates)
-    {
-        return;
-    }
-
     std::vector<int> inputType = button->GetInputType();
     std::vector<int> inputData = button->GetInputData();
     std::vector<int> extraInputData = button->GetExtraInputData();

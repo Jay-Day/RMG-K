@@ -229,13 +229,6 @@
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_3">
        <item>
-        <widget class="QCheckBox" name="removeDuplicateMappingsCheckbox">
-         <property name="text">
-          <string>Remove duplicate mappings</string>
-         </property>
-        </widget>
-       </item>
-       <item>
         <widget class="QCheckBox" name="filterEventsForButtonsCheckBox">
          <property name="text">
           <string>Filter events based on joystick type for buttons</string>

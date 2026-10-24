@@ -31,7 +31,6 @@ OptionsDialog::OptionsDialog(QWidget* parent, OptionsDialogSettings settings,
     this->controllerPakComboBox->setCurrentIndex(settings.ControllerPak);
     this->gameboyRomLineEdit->setText(QString::fromStdString(settings.GameboyRom));
     this->gameboySaveLineEdit->setText(QString::fromStdString(settings.GameboySave));
-    this->removeDuplicateMappingsCheckbox->setChecked(settings.RemoveDuplicateMappings);
     this->filterEventsForButtonsCheckBox->setChecked(settings.FilterEventsForButtons);
     this->filterEventsForAxisCheckBox->setChecked(settings.FilterEventsForAxis);
 
@@ -90,7 +89,6 @@ void OptionsDialog::accept()
     this->settings.ControllerPak = this->controllerPakComboBox->currentIndex();
     this->settings.GameboyRom = this->gameboyRomLineEdit->text().toStdString();
     this->settings.GameboySave = this->gameboySaveLineEdit->text().toStdString();
-    this->settings.RemoveDuplicateMappings = this->removeDuplicateMappingsCheckbox->isChecked();
     this->settings.FilterEventsForButtons = this->filterEventsForButtonsCheckBox->isChecked();
     this->settings.FilterEventsForAxis = this->filterEventsForAxisCheckBox->isChecked();
 

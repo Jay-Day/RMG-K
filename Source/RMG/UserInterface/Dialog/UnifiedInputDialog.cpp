@@ -1930,7 +1930,6 @@ UnifiedInputDialog::ProfileState UnifiedInputDialog::readProfile(bool usb, const
         state.options.ControllerPak = exists ? CoreSettingsGetIntValue(SettingsID::Input_Pak, section) : int(N64ControllerPak::MemoryPak);
         state.options.GameboyRom = exists ? CoreSettingsGetStringValue(SettingsID::Input_GameboyRom, section) : "";
         state.options.GameboySave = exists ? CoreSettingsGetStringValue(SettingsID::Input_GameboySave, section) : "";
-        state.options.RemoveDuplicateMappings = exists && CoreSettingsGetBoolValue(SettingsID::Input_RemoveDuplicateMappings, section);
         state.options.FilterEventsForButtons = !exists || CoreSettingsGetBoolValue(SettingsID::Input_FilterEventsForButtons, section);
         state.options.FilterEventsForAxis = !exists || CoreSettingsGetBoolValue(SettingsID::Input_FilterEventsForAxis, section);
         for (const auto& target : kBindingTargets)
@@ -2064,7 +2063,6 @@ void UnifiedInputDialog::writeProfile(bool usb, const std::string& section, cons
         CoreSettingsSetValue(SettingsID::Input_Pak, section, state.options.ControllerPak);
         CoreSettingsSetValue(SettingsID::Input_GameboyRom, section, state.options.GameboyRom);
         CoreSettingsSetValue(SettingsID::Input_GameboySave, section, state.options.GameboySave);
-        CoreSettingsSetValue(SettingsID::Input_RemoveDuplicateMappings, section, state.options.RemoveDuplicateMappings);
         CoreSettingsSetValue(SettingsID::Input_FilterEventsForButtons, section, state.options.FilterEventsForButtons);
         CoreSettingsSetValue(SettingsID::Input_FilterEventsForAxis, section, state.options.FilterEventsForAxis);
         for (int i = 0; i < state.bindings.size(); ++i)
@@ -2236,7 +2234,7 @@ void UnifiedInputDialog::openUsbHotkeys(int player)
     auto* page = this->controllerPages[player];
     this->deviceTimer->stop();
     UserInterface::HotkeysDialog dialog(this, page->usbHotkeys, this->sdlJoystick ? SDL_GetJoystickID(this->sdlJoystick) : 0,
-        this->sdlGamepad, page->usbFilterButtons, page->usbOptions.RemoveDuplicateMappings);
+        this->sdlGamepad, page->usbFilterButtons);
     dialog.setObjectName("usbHotkeysDialog");
     this->currentHotkeysDialog = &dialog;
     if (dialog.exec() == QDialog::Accepted)
@@ -2251,18 +2249,43 @@ void UnifiedInputDialog::openUsbHotkeys(int player)
 void UnifiedInputDialog::assignUsbBinding(int player, int bindingIndex, const BindingValue& value)
 {
     auto* page = this->controllerPages[player];
-    if (page->usbOptions.RemoveDuplicateMappings)
-        for (int i = 0; i < page->usbBindings.size(); ++i)
+    for (int i = 0; i < page->usbBindings.size(); ++i)
+    {
+        if (i == bindingIndex)
         {
-            if (i == bindingIndex) continue;
-            auto& binding = page->usbBindings[i];
-            for (int j = binding.types.size() - 1; j >= 0; --j)
-                for (int k = 0; k < value.types.size(); ++k)
-                    if (binding.types[j] == value.types[k] && binding.data[j] == value.data[k] && binding.extraData[j] == value.extraData[k])
-                    { binding.types.removeAt(j); binding.data.removeAt(j); binding.extraData.removeAt(j); binding.text.removeAt(j); break; }
+            continue;
         }
+        auto& binding = page->usbBindings[i];
+        for (int j = binding.types.size() - 1; j >= 0; --j)
+        {
+            for (int k = 0; k < value.types.size(); ++k)
+            {
+                if (binding.types[j] == value.types[k] && binding.data[j] == value.data[k] && binding.extraData[j] == value.extraData[k])
+                {
+                    binding.types.removeAt(j);
+                    binding.data.removeAt(j);
+                    binding.extraData.removeAt(j);
+                    binding.text.removeAt(j);
+                    break;
+                }
+            }
+        }
+    }
     page->usbBindings[bindingIndex] = value;
     page->usbDirty = true;
+}
+
+void UnifiedInputDialog::assignGamecubeBinding(int player, int bindingIndex, int input)
+{
+    auto* page = this->controllerPages[player];
+    for (int i = 0; i < page->gamecubeBindings.size(); ++i)
+    {
+        if (i != bindingIndex && page->gamecubeBindings[i] == input)
+        {
+            page->gamecubeBindings[i] = static_cast<int>(GCInput::None);
+        }
+    }
+    page->gamecubeBindings[bindingIndex] = input;
 }
 
 void UnifiedInputDialog::loadPageSettings(int pageIndex)
@@ -3125,7 +3148,7 @@ bool UnifiedInputDialog::pollGamecubePreview(void)
         if (detected == GCInput::None) this->listeningArmed = true;
         if (detected != GCInput::None && this->listeningArmed)
         {
-            settingsPage->gamecubeBindings[this->listeningBindingIndex] = static_cast<int>(detected);
+            this->assignGamecubeBinding(pageIndex, this->listeningBindingIndex, static_cast<int>(detected));
             this->manualInputChoice = true;
             const int oldPageIndex = this->listeningPageIndex;
             this->stopListeningForBinding(false);

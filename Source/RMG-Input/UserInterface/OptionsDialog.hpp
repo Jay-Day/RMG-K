@@ -25,7 +25,6 @@ struct OptionsDialogSettings
     std::string GameboySave;
 
     // UI settings
-    bool RemoveDuplicateMappings = false;
     bool FilterEventsForButtons  = true;
     bool FilterEventsForAxis     = true;
     int ControllerMode = -1;
