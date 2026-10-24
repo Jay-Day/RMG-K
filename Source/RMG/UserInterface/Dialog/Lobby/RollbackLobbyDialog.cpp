@@ -4793,7 +4793,7 @@ void RollbackLobbyDialog::captureRankedReplay()
     // The metadata (bookmarks + the module's write journal) goes inside the
     // .krec itself, so the file plays back on its own, here or downloaded.
     std::string error;
-    if (!KailleraExport::AppendKrecMetadata(std::filesystem::path(krecPath.toStdWString()), metaJson, &error))
+    if (!KailleraExport::AppendKrecMetadata(std::filesystem::path(krecPath.toStdU32String()), metaJson, &error))
         CoreAddCallbackMessage(CoreDebugMessageType::Warning,
             ("Ranked: failed to add replay data to " + krecPath + ": " +
              QString::fromStdString(error)).toUtf8().constData());
