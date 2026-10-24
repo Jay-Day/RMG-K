@@ -421,6 +421,7 @@ private:
     // Wall-clock of the last savestate-keyframe request (0 = request one now). The
     // drain tick requests a keyframe at a fixed interval and polls for the result.
     qint64     m_lastKeyframeRequestMs = 0;
+    int        m_lastBroadcastViewerCount = 0;
 
     // Non-zero while this client is spectating a broadcast match (the match id
     // we asked the server to stream). Cleared when the spectate session ends.

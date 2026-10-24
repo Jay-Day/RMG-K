@@ -749,13 +749,22 @@ void OnScreenDisplayRender(void)
         // ordinary notification/chat anchor.
         ImGui::SetNextWindowPos(ImVec2(l_MessagePaddingX, l_MessagePaddingY),
                                 ImGuiCond_Always, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.12f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.25f, 0.25f, 0.35f, 0.65f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
         ImGui::Begin("OSD Live Replay", nullptr,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration |
             ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing);
+        // Red bullet indicator for active live netplay status
+        ImGui::TextColored(ImVec4(0.92f, 0.25f, 0.25f, 1.0f), "●");
+        ImGui::SameLine();
         ImGui::Text("%s", liveReplayStatus.c_str());
         const ImVec2 windowSize = ImGui::GetWindowSize();
         ImGui::End();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
         // Stack ordinary top-left messages beneath the persistent badge. Other
         // configured anchors have their own space and need no offset.
         if (l_MessagePosition == 1)

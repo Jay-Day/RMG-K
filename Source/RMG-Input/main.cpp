@@ -985,6 +985,43 @@ static int scale_axis(const double input, const double deadzone, const double n6
     return (input >= 0) ? result : -result;
 }
 
+// Scale 2D analog stick coordinates with authentic N64 octagonal gate compensation
+// Maps modern circular joysticks (Xbox, PS4/PS5, Switch Pro) to the N64 octagonal notch profile:
+// Cardinals reach n64Max (~80), diagonals reach authentic notch range (~70, 70) for precise tilts & recovery angles.
+static void scale_stick_axes(const double inputX, const double inputY, const double deadzone, const double n64Max, int& outX, int& outY)
+{
+    const double len = std::hypot(inputX, inputY);
+    if (len <= deadzone || len < 1e-6)
+    {
+        outX = 0;
+        outY = 0;
+        return;
+    }
+
+    // Normalized magnitude [0.0, 1.0] after deadzone
+    const double normLen = std::min(1.0, (len - deadzone) / (1.0 - deadzone));
+
+    const double angle = std::atan2(inputY, inputX);
+    constexpr double kPi = 3.14159265358979323846;
+    constexpr double kQuarterPi = kPi / 4.0;
+    constexpr double kHalfPi = kPi / 2.0;
+
+    // Angle relative to nearest cardinal direction [0, PI/4]
+    const double absAngle = std::abs(angle);
+    const double sectorAngle = std::abs(std::fmod(absAngle + kQuarterPi, kHalfPi) - kQuarterPi);
+
+    // Diagonal scaling ratio: allows circular sticks to cleanly hit the authentic N64 diagonal notch (~70 at ~80 cardinal)
+    constexpr double kDiagRatio = (70.0 / 80.0) / 0.7071067811865475; // ~1.2374
+    const double gateScale = 1.0 + (kDiagRatio - 1.0) * (sectorAngle / kQuarterPi);
+
+    const double scaledR = normLen * n64Max * gateScale;
+    const double targetX = scaledR * std::cos(angle);
+    const double targetY = scaledR * std::sin(angle);
+
+    outX = static_cast<int>(std::clamp(std::round(targetX), -127.0, 127.0));
+    outY = static_cast<int>(std::clamp(std::round(targetY), -127.0, 127.0));
+}
+
 static unsigned char data_crc(unsigned char *data, int length)
 {
     unsigned char remainder = data[0];
@@ -1426,8 +1463,18 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
     const double deadzone = profile->DeadzoneValue;
     const double n64Max = get_n64_max(profile->RangeValue);
 
-    Keys->X_AXIS = scale_axis(inputX, deadzone, n64Max);
-    Keys->Y_AXIS = scale_axis(inputY, deadzone, n64Max);
+    if (useButtonMapping)
+    {
+        Keys->X_AXIS = scale_axis(inputX, deadzone, n64Max);
+        Keys->Y_AXIS = scale_axis(inputY, deadzone, n64Max);
+    }
+    else
+    {
+        int stickX = 0, stickY = 0;
+        scale_stick_axes(inputX, inputY, deadzone, n64Max, stickX, stickY);
+        Keys->X_AXIS = stickX;
+        Keys->Y_AXIS = stickY;
+    }
 
     // NOTE: Kaillera netplay synchronization moved to PIF RAM level
     // (See kaillera_update_input() in mupen64plus-core/src/main/kaillera.c)
