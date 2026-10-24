@@ -10,9 +10,9 @@
 #include "KailleraPlaybackDialog.hpp"
 #include "KailleraTableStyle.hpp"
 #include "UserInterface/MainWindow.hpp"
+#include "Utilities/KailleraExport/KrecParser.hpp"
 #ifdef _WIN32
 #include "Utilities/KailleraExport/FfmpegEncoder.hpp"
-#include "Utilities/KailleraExport/KrecParser.hpp"
 #endif
 
 #ifdef NETPLAY
@@ -1655,7 +1655,7 @@ void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
 bool KailleraPlaybackDialog::loadReplayMetadata(const QString& krecPath, QJsonObject& metadata)
 {
     std::string json;
-    if (!KailleraExport::ReadKrecMetadata(std::filesystem::path(krecPath.toStdWString()), json))
+    if (!KailleraExport::ReadKrecMetadata(std::filesystem::path(krecPath.toStdU32String()), json))
     {
         return false;
     }
