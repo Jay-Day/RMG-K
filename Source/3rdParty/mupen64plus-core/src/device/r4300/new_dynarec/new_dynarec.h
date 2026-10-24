@@ -78,6 +78,7 @@ struct new_dynarec_hot_state
     int stop;
     char* invc_ptr;
     uint32_t address;
+    uint32_t address_hi;
     uint64_t rdword;
     uint64_t wdword;
     uint32_t wword;
