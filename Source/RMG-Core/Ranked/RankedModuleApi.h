@@ -186,6 +186,25 @@ typedef struct
 /* size of a RankedSessionConfig from hosts that predate the team field */
 #define RANKED_SESSION_CONFIG_SIZE_V1 offsetof(RankedSessionConfig, teams)
 
+/* The set as of the last confirmed frame (see RankedModule_GetLiveState). */
+typedef struct
+{
+    uint32_t size; /* sizeof(RankedLiveState), set by the host */
+    /* 1-based number of the game being played, or the next one between games */
+    int32_t gameNumber;
+    /* 1 while a game that counts is under way (from its countdown until it's
+       counted), 0 between games or when the current game won't count */
+    int32_t inGame;
+    /* games won per port (index 0 = port 1); team sets: the port's team's */
+    int32_t score[RANKED_MAX_PLAYERS];
+    /* team sets: each port's team (1 or 2), 0 until the teams are fixed and
+       in 1v1 */
+    int32_t teams[RANKED_MAX_PLAYERS];
+    /* per port, while inGame: stocksLeft (the stocks the player still has,
+       0 when out) and extra (damage percent); -1 otherwise */
+    RankedPlayerStats players[RANKED_MAX_PLAYERS];
+} RankedLiveState;
+
 typedef struct RankedModuleInstance RankedModuleInstance;
 
 /*
@@ -223,6 +242,16 @@ typedef uint32_t (*ptr_RankedModule_GetStatusText)(RankedModuleInstance* instanc
     char* out, uint32_t outSize);
 
 typedef void (*ptr_RankedModule_Destroy)(RankedModuleInstance* instance);
+
+/*
+ * Optional exports (the host checks for them):
+ */
+
+/* fills out (out->size set by the host) with the set as of the last
+   OnConfirmedFrame; returns 0 when it can't. The host calls it when a player
+   leaves mid-set, to judge who was ahead. Called on the emulation thread
+   between frames; the module must guard its own state. */
+typedef int (*ptr_RankedModule_GetLiveState)(RankedModuleInstance* instance, RankedLiveState* out);
 
 #ifdef __cplusplus
 }

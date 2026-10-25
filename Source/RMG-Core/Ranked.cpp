@@ -58,6 +58,8 @@ struct l_RankedModule
     ptr_RankedModule_OnConfirmedFrame      OnConfirmedFrame      = nullptr;
     ptr_RankedModule_GetStatusText         GetStatusText         = nullptr;
     ptr_RankedModule_Destroy               Destroy               = nullptr;
+    // optional
+    ptr_RankedModule_GetLiveState          GetLiveState          = nullptr;
 };
 
 using l_JournalWrite = CoreRankedJournalWrite;
@@ -115,6 +117,14 @@ static int l_VoidedGames = 0;
 static std::mutex                   l_EventMutex;
 static std::vector<CoreRankedEvent> l_Events;
 static std::string                  l_LastResultJson;
+static std::string                  l_ProgressJson; // the running set's games so far
+static std::string                  l_LeftJson;     // the set as of a player leaving it
+
+// A ranked player left mid-set at frame l_LeftFrame: once that frame is
+// confirmed the set is captured (l_LeftJson) and frozen, so nothing played
+// against the idle input that replaces theirs counts.
+static int     l_LeftPort = 0;
+static int64_t l_LeftFrame = -1;
 
 // .krec bookmarks. Game events are confirmed at a rollback frame, but the
 // frame's input record is written later (once past the rollback horizon), so
@@ -246,6 +256,7 @@ static bool open_module(const std::filesystem::path& path, l_RankedModule& modul
     module.OnConfirmedFrame      = (ptr_RankedModule_OnConfirmedFrame)CoreGetLibrarySymbol(module.Handle, "RankedModule_OnConfirmedFrame");
     module.GetStatusText         = (ptr_RankedModule_GetStatusText)CoreGetLibrarySymbol(module.Handle, "RankedModule_GetStatusText");
     module.Destroy               = (ptr_RankedModule_Destroy)CoreGetLibrarySymbol(module.Handle, "RankedModule_Destroy");
+    module.GetLiveState          = (ptr_RankedModule_GetLiveState)CoreGetLibrarySymbol(module.Handle, "RankedModule_GetLiveState");
 
     if (module.GetInfo == nullptr || module.Create == nullptr ||
         module.GetRulesetDescription == nullptr || module.OnFrame == nullptr ||
@@ -499,6 +510,84 @@ static std::string build_result_json(const RankedEvent& setEvent)
     json << "  \"integrity\": \"" << (l_IntegrityIssue.empty() ? "ok" : json_escape(l_IntegrityIssue)) << "\",\n";
     json << "  \"finishedAtUtc\": \"" << timestamp << "\"\n";
     json << "}\n";
+    return json.str();
+}
+
+// the counted games' winners and characters, in order
+static std::string games_json(void)
+{
+    std::ostringstream json;
+    json << "[";
+    for (size_t i = 0; i < l_Games.size(); i++)
+    {
+        const RankedEvent& game = l_Games[i];
+        json << (i ? ", " : "") << "{\"game\": " << game.gameNumber
+             << ", \"winnerPort\": " << game.winnerPort
+             << ", \"winnerTeam\": " << game.winnerTeam
+             << ", \"stage\": " << game.stage << ", \"players\": [";
+        bool first = true;
+        for (int port : l_Session.Ports)
+        {
+            if (port >= 1 && port <= RANKED_MAX_PLAYERS)
+            {
+                json << (first ? "" : ", ") << "{\"port\": " << port
+                     << ", \"character\": " << game.players[port - 1].character
+                     << ", \"stocksLeft\": " << game.players[port - 1].stocksLeft << "}";
+                first = false;
+            }
+        }
+        json << "]}";
+    }
+    json << "]";
+    return json.str();
+}
+
+static std::string build_progress_json(void)
+{
+    return "{\"games\": " + games_json() + "}";
+}
+
+// the set as of a player leaving it; live is null when the module can't tell
+static std::string build_left_json(const RankedLiveState* live)
+{
+    char hash[17];
+    std::snprintf(hash, sizeof(hash), "%016llx",
+        static_cast<unsigned long long>(l_RulesetHash.load()));
+
+    std::ostringstream json;
+    json << "{\"schema\": 1, \"leftPort\": " << l_LeftPort << ", \"frame\": " << l_LeftFrame
+         << ", \"module\": {\"id\": \"" << json_escape(l_Module.Info.Id)
+         << "\", \"version\": \"" << json_escape(l_Module.Info.Version) << "\"}"
+         << ", \"ruleset\": {\"id\": \"" << json_escape(l_RulesetId) << "\", \"hash\": \"" << hash << "\"}"
+         << ", \"romMd5\": \"" << json_escape(l_RomMd5) << "\""
+         << ", \"games\": " << games_json() << ", \"voidedGames\": " << l_VoidedGames
+         << ", \"integrity\": \"" << (l_IntegrityIssue.empty() ? "ok" : json_escape(l_IntegrityIssue)) << "\""
+         << ", \"live\": ";
+    if (live == nullptr)
+    {
+        json << "null}";
+        return json.str();
+    }
+    json << "{\"game\": " << live->gameNumber << ", \"inGame\": " << (live->inGame ? "true" : "false")
+         << ", \"teams\": [";
+    for (int i = 0; i < RANKED_MAX_PLAYERS; i++)
+    {
+        json << (i ? ", " : "") << live->teams[i];
+    }
+    json << "], \"players\": [";
+    bool first = true;
+    for (int port : l_Session.Ports)
+    {
+        if (port < 1 || port > RANKED_MAX_PLAYERS)
+        {
+            continue;
+        }
+        const RankedPlayerStats& stats = live->players[port - 1];
+        json << (first ? "" : ", ") << "{\"port\": " << port << ", \"stocksLeft\": " << stats.stocksLeft
+             << ", \"percent\": " << stats.extra << "}";
+        first = false;
+    }
+    json << "]}}";
     return json.str();
 }
 
@@ -801,6 +890,10 @@ static void host_emit_event(void*, const RankedEvent* moduleEvent)
     }
 
     std::lock_guard<std::mutex> lock(l_EventMutex);
+    if (event->type == RankedEvent_GameEnded)
+    {
+        l_ProgressJson = build_progress_json();
+    }
     l_Events.push_back(std::move(coreEvent));
 }
 
@@ -840,7 +933,58 @@ static void reset_session_state(void)
     l_IntegrityIssue.clear();
     l_Games.clear();
     l_VoidedGames = 0;
+    l_LeftPort = 0;
+    l_LeftFrame = -1;
     l_Rdram = nullptr;
+}
+
+// A player left and their last frame is confirmed: keep the set as it was
+// then for the lobby and end it, so the module counts nothing after it.
+static void capture_left_set(void)
+{
+    RankedLiveState live{};
+    live.size = sizeof(live);
+    const bool haveLive = l_Instance != nullptr && l_Module.GetLiveState != nullptr &&
+                          l_Module.GetLiveState(l_Instance, &live) != 0;
+    std::string json = build_left_json(haveLive ? &live : nullptr);
+    l_SetEnded = true;
+
+    std::ostringstream message;
+    message << "frame " << l_LeftFrame << ": P" << l_LeftPort << " left the set after " << l_Games.size()
+            << (l_Games.size() == 1 ? " game" : " games");
+    if (haveLive && live.inGame)
+    {
+        message << ", during game " << live.gameNumber << " (";
+        bool first = true;
+        for (int port : l_Session.Ports)
+        {
+            if (port >= 1 && port <= RANKED_MAX_PLAYERS)
+            {
+                message << (first ? "" : ", ") << "P" << port << " " << live.players[port - 1].stocksLeft
+                        << " stocks " << live.players[port - 1].extra << "%";
+                first = false;
+            }
+        }
+        message << ")";
+    }
+    else if (!haveLive)
+    {
+        message << " (the module doesn't report the game under way)";
+    }
+    ranked_log(CoreDebugMessageType::Info, message.str());
+
+    CoreRankedEvent event;
+    event.Type       = CoreRankedEventType::PlayerLeft;
+    event.Frame      = static_cast<uint32_t>(std::max<int64_t>(l_LeftFrame, 0));
+    event.GameNumber = static_cast<int>(l_Games.size()) + 1;
+    event.WinnerPort = l_LeftPort;
+    if (haveLive)
+    {
+        event.Score.assign(live.score, live.score + RANKED_MAX_PLAYERS);
+    }
+    std::lock_guard<std::mutex> lock(l_EventMutex);
+    l_LeftJson = std::move(json);
+    l_Events.push_back(std::move(event));
 }
 
 // rewinds the replay to the start of its journal (the journal itself stays:
@@ -1092,6 +1236,18 @@ CORE_EXPORT std::string CoreRankedGetLastResultJson(void)
     return l_LastResultJson;
 }
 
+CORE_EXPORT std::string CoreRankedGetProgressJson(void)
+{
+    std::lock_guard<std::mutex> lock(l_EventMutex);
+    return l_ProgressJson;
+}
+
+CORE_EXPORT std::string CoreRankedGetLeftJson(void)
+{
+    std::lock_guard<std::mutex> lock(l_EventMutex);
+    return l_LeftJson;
+}
+
 //
 // Internal Functions (emulation thread)
 //
@@ -1271,6 +1427,8 @@ bool CoreRankedBeginEmulation(bool netplay, bool rollbackDriven)
     {
         std::lock_guard<std::mutex> lock(l_EventMutex);
         l_Events.clear();
+        l_ProgressJson.clear();
+        l_LeftJson.clear();
     }
 
     l_Session        = settings;
@@ -1422,6 +1580,10 @@ void CoreRankedConfirmThrough(int64_t frame)
         if (!l_SetEnded)
         {
             confirm_frame(l_NextConfirmFrame);
+            if (l_LeftPort != 0 && l_NextConfirmFrame >= l_LeftFrame && !l_SetEnded)
+            {
+                capture_left_set();
+            }
         }
         if (!l_Replay.load())
         {
@@ -1535,5 +1697,24 @@ void CoreRankedReportDesync(const std::string& detail)
     if (l_Active.load())
     {
         flag_integrity_issue("desync detected: " + detail);
+    }
+}
+
+void CoreRankedOnPlayerLeft(int port)
+{
+    // only the first player to leave a live set counts
+    if (!l_Active.load() || l_Replay.load() || l_SetEnded || l_LeftPort != 0 || l_Instance == nullptr ||
+        std::find(l_Session.Ports.begin(), l_Session.Ports.end(), port) == l_Session.Ports.end())
+    {
+        return;
+    }
+    l_LeftPort  = port;
+    l_LeftFrame = std::max<int64_t>(l_MaxObservedFrame, 0);
+    ranked_log(CoreDebugMessageType::Info, "P" + std::to_string(port) + " left at frame " +
+        std::to_string(l_LeftFrame) + "; the set is kept as of that frame");
+    // frames up to it may already be confirmed
+    if (l_NextConfirmFrame > l_LeftFrame)
+    {
+        capture_left_set();
     }
 }

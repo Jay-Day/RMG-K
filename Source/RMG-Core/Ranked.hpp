@@ -66,6 +66,9 @@ enum class CoreRankedEventType
     SetEnded,
     // replay only: the replay diverged from the recorded set
     ReplayMismatch = 100,
+    // a ranked player (WinnerPort) left mid-set; the set is frozen as of the
+    // frame they left at (CoreRankedGetLeftJson) and nothing after it counts
+    PlayerLeft,
 };
 
 struct CoreRankedEvent
@@ -113,6 +116,16 @@ uint64_t CoreRankedGetRulesetHash(void);
 // returns the JSON result record of the last finished set, empty when none
 std::string CoreRankedGetLastResultJson(void);
 
+// returns the games the running set has counted so far, as JSON
+// ({"games": [{"game", "winnerPort", "winnerTeam", "stage", "players"}...]}),
+// empty when none
+std::string CoreRankedGetProgressJson(void);
+
+// returns the set as of the frame a player left it (after a PlayerLeft
+// event): the games so far plus, from modules that report it, the game
+// under way with each player's stocks and percent. Empty when no one left.
+std::string CoreRankedGetLeftJson(void);
+
 // Live broadcasts of ranked matches (spectators need the write journal too):
 // broadcaster: takes the journal frames confirmed since the last call,
 // encoded (at most about maxBytes), false when there are none
@@ -152,6 +165,10 @@ void CoreRankedOnCoreFrame(uint32_t frame);
 
 // marks the running set as unverified (rollback engine desync detection)
 void CoreRankedReportDesync(const std::string& detail);
+
+// the rollback engine dropped the player on `port` (they left the match);
+// emulation thread. The set is frozen once that frame is confirmed.
+void CoreRankedOnPlayerLeft(int port);
 
 // the rollback engine wrote .krec input record `recordIndex` (0-based) for
 // `frame`; resolves bookmarks placed at or before that frame

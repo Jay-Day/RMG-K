@@ -102,6 +102,12 @@ public:
     // MainWindow calls this when the ranked module decided the set, so this
     // player's MATCH_RESULT reaches the server before emulation stops.
     void reportRankedSetEnded();
+    // MainWindow calls this after each counted game of a ranked set: the
+    // lobby checks a leaver's set against the games both players confirmed.
+    void reportRankedProgress();
+    // MainWindow calls this when a player left the ranked set: the set as of
+    // that moment goes to the lobby, which decides forfeit or void from it.
+    void reportRankedPlayerLeft();
 
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
@@ -484,6 +490,11 @@ private:
     QJsonObject m_currentRoomRanked;         // ROOM_STATE "ranked", empty when unranked
     quint64     m_rankedMatchId = 0;         // match running as a ranked set
     bool        m_rankedResultSent = false;
+    // A ranked opponent left: their set as of then is reported once the core
+    // has it (reportRankedPlayerLeft), so closing the match waits for that.
+    bool        m_rankedLeftPending = false;
+    bool        m_closeMatchAfterLeftReport = false;
+    void        finishRankedLeftWait();
 
     // Ranked replay upload. The set id arrives with RANKED_RESULT and the .krec
     // is complete once emulation stops; whichever comes last starts the offer.

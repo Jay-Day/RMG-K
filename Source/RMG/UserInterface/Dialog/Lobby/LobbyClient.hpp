@@ -308,6 +308,10 @@ public:
     void reportMatchFinished(quint64 matchId);
     // Ranked: this player's report of the finished set (MATCH_RESULT payload).
     void reportMatchResult(const QJsonObject& result);
+    // Ranked: the games counted so far (MATCH_PROGRESS payload).
+    void reportMatchProgress(const QJsonObject& progress);
+    // Ranked: the set as of a player leaving it (MATCH_ABANDONED payload).
+    void reportMatchAbandoned(const QJsonObject& report);
     // Changes the account's password; every saved login is revoked and this
     // connection gets a new session token (passwordChangeResult follows).
     void changePassword(const QString& currentPassword, const QString& newPassword);

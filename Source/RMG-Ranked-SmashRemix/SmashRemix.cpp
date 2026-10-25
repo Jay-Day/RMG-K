@@ -53,6 +53,9 @@
  *  - resets, CPUs, extra players, a stage that isn't allowed (or its hazard
  *    mode differs), wrong rules, a character outside the ruleset's roster,
  *    or (2v2) other partners void the game
+ *  - RankedModule_GetLiveState: the score and, during a game that counts,
+ *    each ranked port's stocks and damage percent, for when a player leaves
+ *    mid-set
  *
  * Remix code lives at addresses that move with every build, so the module
  * resolves them from a symbol file generated from bass' logfile.log:
@@ -148,6 +151,7 @@ constexpr uint32_t kPlayerFkind        = 0x03;
 constexpr uint32_t kPlayerTeam         = 0x04; // team colour: 0 red, 1 blue, 2 green
 constexpr uint32_t kPlayerStockCount   = 0x0B; // s8, -1 = out
 constexpr uint32_t kPlayerPlace        = 0x0D;
+constexpr uint32_t kPlayerDamage       = 0x4C; // u32, the current stock's damage percent
 
 constexpr uint8_t kSceneTitle          = 0x01;
 constexpr uint8_t kSceneN64Logo        = 0x1B;
@@ -420,6 +424,7 @@ struct PlayerObservation
     int8_t  stockCount;
     uint8_t place;
     uint8_t team; // team colour
+    uint16_t damage; // percent, capped at 999
 };
 
 struct Observation
@@ -1121,6 +1126,7 @@ void observe(Instance* i, Observation& o)
         o.players[port].stockCount = static_cast<int8_t>(read8(i, player + kPlayerStockCount));
         o.players[port].place = read8(i, player + kPlayerPlace);
         o.players[port].team = read8(i, player + kPlayerTeam);
+        o.players[port].damage = static_cast<uint16_t>(std::min<uint32_t>(read32(i, player + kPlayerDamage), 999));
     }
 }
 
@@ -1851,6 +1857,39 @@ MODULE_EXPORT uint32_t RankedModule_GetStatusText(RankedModuleInstance* handle, 
     }
     copy_string(out, outSize, text);
     return static_cast<uint32_t>(std::strlen(text));
+}
+
+MODULE_EXPORT int RankedModule_GetLiveState(RankedModuleInstance* handle, RankedLiveState* out)
+{
+    Instance* i = reinterpret_cast<Instance*>(handle);
+    if (i == nullptr || out == nullptr || out->size < sizeof(RankedLiveState))
+    {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(i->stateMutex);
+
+    const uint32_t size = out->size;
+    std::memset(out, 0, sizeof(RankedLiveState));
+    out->size = size;
+    out->gameNumber = i->gamesCounted + 1;
+    // a game counts from its countdown until the battle scene is left; one
+    // that won't count (wrong character, rules...) has no lead
+    out->inGame = !i->setOver && i->inBattle && i->gameStarted && i->invalidReason.empty() ? 1 : 0;
+    for (int port = 0; port < RANKED_MAX_PLAYERS; port++)
+    {
+        out->score[port] = i->score[port];
+        out->teams[port] = i->pairing[port];
+        out->players[port] = {-1, -1, -1};
+    }
+    if (out->inGame)
+    {
+        for (int port : i->ports)
+        {
+            const PlayerObservation& player = i->previous.players[port - 1];
+            out->players[port - 1] = {player.fkind, std::max(0, player.stockCount + 1), player.damage};
+        }
+    }
+    return 1;
 }
 
 MODULE_EXPORT void RankedModule_Destroy(RankedModuleInstance* handle)

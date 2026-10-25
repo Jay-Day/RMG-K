@@ -4818,6 +4818,108 @@ void RollbackLobbyDialog::reportRankedSetEnded()
     appendChatSystemLine(CHANNEL_ROOM, tr("Ranked set finished — result sent."));
 }
 
+// the counted games (controller ports are the lobby's seat slots)
+static QJsonArray rankedGamesForLobby(const QJsonArray& games)
+{
+    QJsonArray out;
+    for (const QJsonValue& value : games)
+    {
+        const QJsonObject game = value.toObject();
+        QJsonArray players;
+        for (const QJsonValue& p : game.value("players").toArray())
+        {
+            const QJsonObject player = p.toObject();
+            QJsonObject entry;
+            entry["slot"]       = player.value("port").toInt();
+            entry["character"]  = player.value("character").toInt();
+            entry["stocksLeft"] = player.value("stocksLeft").toInt();
+            players.append(entry);
+        }
+        QJsonObject entry;
+        entry["game"]       = game.value("game").toInt();
+        entry["winnerSlot"] = game.value("winnerPort").toInt();
+        if (game.value("winnerTeam").toInt() != 0)
+            entry["winnerTeam"] = game.value("winnerTeam").toInt();
+        entry["stage"]   = game.value("stage").toInt();
+        entry["players"] = players;
+        out.append(entry);
+    }
+    return out;
+}
+
+void RollbackLobbyDialog::reportRankedProgress()
+{
+    if (!m_client || m_rankedMatchId == 0 || m_rankedResultSent)
+        return;
+    const QJsonObject progress = QJsonDocument::fromJson(
+        QByteArray::fromStdString(CoreRankedGetProgressJson())).object();
+    if (progress.isEmpty())
+        return;
+    QJsonObject report;
+    report["matchId"] = QJsonValue(qint64(m_rankedMatchId));
+    report["games"]   = rankedGamesForLobby(progress.value("games").toArray());
+    m_client->reportMatchProgress(report);
+}
+
+void RollbackLobbyDialog::reportRankedPlayerLeft()
+{
+    if (!m_client || m_rankedMatchId == 0 || m_rankedResultSent)
+        return;
+    // the set as of the frame the player left (Ranked.cpp build_left_json)
+    const QJsonObject left = QJsonDocument::fromJson(
+        QByteArray::fromStdString(CoreRankedGetLeftJson())).object();
+    if (left.isEmpty())
+        return;
+
+    QJsonObject report;
+    report["matchId"]       = QJsonValue(qint64(m_rankedMatchId));
+    report["leftSlot"]      = left.value("leftPort").toInt();
+    report["games"]         = rankedGamesForLobby(left.value("games").toArray());
+    report["voidedGames"]   = left.value("voidedGames").toInt();
+    report["integrity"]     = left.value("integrity").toString();
+    report["rulesetHash"]   = left.value("ruleset").toObject().value("hash").toString();
+    report["rulesetId"]     = left.value("ruleset").toObject().value("id").toString();
+    report["moduleVersion"] = left.value("module").toObject().value("version").toString();
+    report["romMd5"]        = left.value("romMd5").toString();
+    const QJsonObject live = left.value("live").toObject();
+    if (!live.isEmpty())
+    {
+        QJsonArray players;
+        for (const QJsonValue& value : live.value("players").toArray())
+        {
+            const QJsonObject player = value.toObject();
+            QJsonObject entry;
+            entry["slot"]    = player.value("port").toInt();
+            entry["stocks"]  = player.value("stocksLeft").toInt();
+            entry["percent"] = player.value("percent").toInt();
+            players.append(entry);
+        }
+        QJsonObject game;
+        game["game"]    = live.value("game").toInt();
+        game["inGame"]  = live.value("inGame").toBool();
+        game["teams"]   = live.value("teams").toArray();
+        game["players"] = players;
+        report["live"] = game;
+    }
+    m_client->reportMatchAbandoned(report);
+    m_rankedResultSent = true;
+    appendChatSystemLine(CHANNEL_ROOM, tr("A player left the ranked set; the lobby decides the result from the "
+                                          "score when they left."));
+    finishRankedLeftWait();
+}
+
+void RollbackLobbyDialog::finishRankedLeftWait()
+{
+    if (!m_rankedLeftPending)
+        return;
+    m_rankedLeftPending = false;
+    if (m_closeMatchAfterLeftReport)
+    {
+        m_closeMatchAfterLeftReport = false;
+        emit closeMatchRequested();
+    }
+}
+
 void RollbackLobbyDialog::onRankedResult(const QJsonObject& result)
 {
     const QString status = result.value("status").toString();
@@ -4839,7 +4941,10 @@ void RollbackLobbyDialog::onRankedResult(const QJsonObject& result)
                 change += tr(", now %1").arg(tierName(after.tier));
             changes << change;
         }
-        line = tr("Ranked set rated: %1").arg(changes.join(" · "));
+        const QString leaver = result.value("leftUsername").toString();
+        line = result.value("reason").toString() == "forfeit" && !leaver.isEmpty()
+            ? tr("Ranked set rated: %1 left and forfeits. %2").arg(leaver, changes.join(" · "))
+            : tr("Ranked set rated: %1").arg(changes.join(" · "));
     }
     else if (status == "disputed")
     {
@@ -4851,6 +4956,8 @@ void RollbackLobbyDialog::onRankedResult(const QJsonObject& result)
         const QString reason = result.value("reason").toString();
         QString why = reason;
         if (reason == "player_left")         why = tr("a player left before the set finished");
+        else if (reason == "left_in_game_1") why = tr("a player left before game 1 was over");
+        else if (reason == "leader_left")    why = tr("the player who left was ahead");
         else if (reason == "result_timeout") why = tr("a result report never arrived");
         else if (reason == "server_error")   why = tr("a server error");
         line = tr("Ranked set voided: %1. Ratings unchanged.").arg(why);
@@ -5061,6 +5168,19 @@ void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int s
     {
         recording_player_names[slot - 1][0] = '\0';
         emit portLabelsChanged();
+    }
+
+    // A ranked set: the core keeps it as of this player leaving (about half a
+    // second from now, once that frame is confirmed) and reportRankedPlayerLeft
+    // sends it. Closing the match (the room may be closing) waits for that.
+    if (slot > 0 && m_rankedMatchId != 0 && !m_rankedResultSent && !m_rankedLeftPending)
+    {
+        m_rankedLeftPending = true;
+        const quint64 rankedMatchId = m_rankedMatchId;
+        QTimer::singleShot(3000, this, [this, rankedMatchId]() {
+            if (m_rankedMatchId == rankedMatchId)
+                finishRankedLeftWait();
+        });
     }
 
     QString who = QString::number(userId);
@@ -5454,7 +5574,12 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_admitRequestedUserId = 0;
     m_announcedWaitingSelf = false;
     if (m_emulationActive || m_awaitingEmulationStart)
-        emit closeMatchRequested();
+    {
+        if (m_rankedLeftPending)
+            m_closeMatchAfterLeftReport = true; // after the left report
+        else
+            emit closeMatchRequested();
+    }
 
     for (auto& s : m_seats)
         s.userId = 0;
@@ -6636,6 +6761,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // peer stages the same module, ruleset and set length from MATCH_BEGIN.
     m_rankedMatchId = 0;
     m_rankedResultSent = false;
+    m_rankedLeftPending = false;
+    m_closeMatchAfterLeftReport = false;
     const QJsonObject ranked = m_client->matchRankedInfo(matchId);
     if (!ranked.isEmpty())
     {

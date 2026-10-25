@@ -6581,10 +6581,14 @@ void MainWindow::processRankedEvents(void)
         case CoreRankedEventType::ReplayMismatch:
             message = tr("Replay out of sync: %1").arg(detail);
             break;
+        case CoreRankedEventType::PlayerLeft:
+            message = tr("Ranked: P%1 left the set; the lobby decides the result").arg(event.WinnerPort);
+            break;
         }
 
         const QString status = localizeRankedText(QString::fromStdString(CoreRankedGetStatusText()));
-        if (!status.isEmpty() && event.Type != CoreRankedEventType::SetEnded)
+        if (!status.isEmpty() && event.Type != CoreRankedEventType::SetEnded &&
+            event.Type != CoreRankedEventType::PlayerLeft)
         {
             message += "  |  " + status;
         }
@@ -6603,6 +6607,17 @@ void MainWindow::processRankedEvents(void)
             this->ui_LobbyNetplaySession)
         {
             this->rollbackLobbyDialog->reportRankedSetEnded();
+        }
+        // each counted game, so the lobby can judge a set someone leaves
+        if (event.Type == CoreRankedEventType::GameEnded && this->rollbackLobbyDialog != nullptr &&
+            this->ui_LobbyNetplaySession)
+        {
+            this->rollbackLobbyDialog->reportRankedProgress();
+        }
+        if (event.Type == CoreRankedEventType::PlayerLeft && this->rollbackLobbyDialog != nullptr &&
+            this->ui_LobbyNetplaySession)
+        {
+            this->rollbackLobbyDialog->reportRankedPlayerLeft();
         }
 #endif // NETPLAY
 

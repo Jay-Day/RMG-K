@@ -3651,6 +3651,16 @@ void LobbyClient::reportMatchResult(const QJsonObject& result)
     sendEnvelope("MATCH_RESULT", result);
 }
 
+void LobbyClient::reportMatchProgress(const QJsonObject& progress)
+{
+    sendEnvelope("MATCH_PROGRESS", progress);
+}
+
+void LobbyClient::reportMatchAbandoned(const QJsonObject& report)
+{
+    sendEnvelope("MATCH_ABANDONED", report);
+}
+
 void LobbyClient::offerReplay(qint64 setId, int size, const QString& sha256, const QJsonArray& bookmarks)
 {
     QJsonObject d;

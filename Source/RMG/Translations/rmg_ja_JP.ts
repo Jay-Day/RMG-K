@@ -4370,6 +4370,22 @@ stop the session. Needs a logged-in account.</source>
             <source>Finish the match before logging out.</source>
             <translation>ログアウトする前にマッチを終えてください。</translation>
         </message>
+        <message>
+            <source>Ranked set rated: %1 left and forfeits. %2</source>
+            <translation>ランクセットを評価しました: %1 が退出したため棄権負けです。%2</translation>
+        </message>
+        <message>
+            <source>a player left before game 1 was over</source>
+            <translation>第1ゲームが終わる前にプレイヤーが退出しました</translation>
+        </message>
+        <message>
+            <source>the player who left was ahead</source>
+            <translation>退出したプレイヤーがリードしていました</translation>
+        </message>
+        <message>
+            <source>A player left the ranked set; the lobby decides the result from the score when they left.</source>
+            <translation>プレイヤーがランクセットから退出しました。退出時のスコアからロビーが結果を判定します。</translation>
+        </message>
     </context>
         <context>
         <name>KailleraPlaybackDialog</name>
@@ -4574,6 +4590,10 @@ stop the session. Needs a logged-in account.</source>
         <message>
             <source>Search for a ranked set against anyone looking for the same format and roster. After each set the next search starts by itself, with a new opponent, until you stop the session.</source>
             <translation>同じ形式とロスターで探しているプレイヤーとランクセットの相手を探します。セットが終わるたびに、セッションを止めるまで新しい相手で次の検索が自動で始まります。</translation>
+        </message>
+        <message>
+            <source>Ranked: P%1 left the set; the lobby decides the result</source>
+            <translation>ランク: P%1 がセットから退出しました。結果はロビーが判定します</translation>
         </message>
     </context>
     <context>

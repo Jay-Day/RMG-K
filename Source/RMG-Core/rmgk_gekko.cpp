@@ -1367,6 +1367,16 @@ void log_session_events()
         {
             CoreRankedReportDesync("frame " + std::to_string(event->data.desynced.frame));
         }
+        if (event->type == GekkoPlayerDisconnected)
+        {
+            // a peer that stopped sending: a ranked set keeps the frame they left at
+            const auto it = std::find(g_GekkoPlayerHandles.begin(), g_GekkoPlayerHandles.end(),
+                                      event->data.disconnected.handle);
+            if (it != g_GekkoPlayerHandles.end())
+            {
+                CoreRankedOnPlayerLeft(static_cast<int>(it - g_GekkoPlayerHandles.begin()) + 1);
+            }
+        }
         if (!g_GekkoLogEnabled)
         {
             continue;
@@ -2113,6 +2123,7 @@ void process_pending_disconnects()
             continue;
         }
         gekko_disconnect_player(g_GekkoSession, handle);
+        CoreRankedOnPlayerLeft(slot);
         std::ostringstream stream;
         stream << "force_disconnect slot=" << slot << " handle=" << handle
                << " reason=lobby_peer_left";
