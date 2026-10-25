@@ -3323,7 +3323,7 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
     {
         if (summary.broadcasting && summary.matchId != 0)
         {
-            beginSpectate(summary.matchId, summary.romName);
+            beginSpectate(summary.matchId, summary.romName, summary.romMd5);
         }
         else
         {
@@ -3375,7 +3375,16 @@ void RollbackLobbyDialog::onMatchDoubleClicked(QTreeWidgetItem* item, int /*colu
             "That match isn't streaming a live replay, so there's nothing to watch.");
         return;
     }
-    beginSpectate(matchId, item->text(1)); // ROM name column
+    QString romMd5;
+    for (const auto& summary : m_client->rooms())
+    {
+        if (summary.matchId == matchId)
+        {
+            romMd5 = summary.romMd5;
+            break;
+        }
+    }
+    beginSpectate(matchId, item->text(1), romMd5); // ROM name column
 }
 
 void RollbackLobbyDialog::onRoomCreateFailed(const QString& reason)
@@ -4626,15 +4635,34 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
 
 // ── Spectator ─────────────────────────────────────────────────────────
 
-void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName)
+void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName, const QString& romMd5)
 {
     if (m_spectatingMatchId != 0) return; // already spectating
+
+    // Watch with the exact ROM the players use, matched by MD5 like joining a
+    // room. Another build of the game (e.g. a different Smash Remix version) would
+    // reject the match's keyframe and play its inputs on different game data,
+    // which shows up as the wrong stage.
+    QString romPath;
+    if (!romMd5.isEmpty())
+    {
+        romPath = localRomPathForMd5(romMd5);
+        if (romPath.isEmpty())
+        {
+            QMessageBox::warning(this, "ROM not found",
+                QString("You don't have the ROM this match is using (%1).\n\n"
+                        "Add it to your ROM directory and refresh the list, then try again.")
+                    .arg(gameName));
+            return;
+        }
+    }
+
     m_spectatingMatchId = matchId;
     m_spectateStreamArmed = false; // wait for this subscribe's SPECTATE_BEGIN before accepting data
     m_client->startSpectate(matchId);
     m_chatViewSpectate->clear();
     setSpectatorChatVisible(true);
-    emit spectateLaunch(matchId, gameName);
+    emit spectateLaunch(matchId, gameName, romPath);
     appendChatSystemLine(CHANNEL_SPECTATE, "Connecting to live replay…");
 }
 

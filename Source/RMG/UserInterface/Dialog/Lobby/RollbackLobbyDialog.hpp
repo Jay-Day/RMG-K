@@ -105,7 +105,8 @@ signals:
 
     // Spectating: ask MainWindow to launch a streaming-playback session for a
     // broadcast match, feed it krec bytes as they arrive, and tear it down.
-    void spectateLaunch(quint64 matchId, QString gameName);
+    // romPath is the local ROM matching the match's MD5 (empty when unknown).
+    void spectateLaunch(quint64 matchId, QString gameName, QString romPath);
     void spectateStreamData(QByteArray bytes, int liveFrame, qint64 offset);
     // A savestate keyframe (raw bytes) plus the first krec record index to consume
     // after restoring it, so catch-up is bounded regardless of match length.
@@ -274,8 +275,8 @@ private:
     void feedBroadcastBytes(const void* data, int len);
 
     // Begin spectating a broadcast match: tell the server and ask MainWindow to
-    // launch a streaming-playback session.
-    void beginSpectate(quint64 matchId, const QString& gameName);
+    // launch a streaming-playback session with the ROM matching romMd5.
+    void beginSpectate(quint64 matchId, const QString& gameName, const QString& romMd5);
 
     // Shows the Spectators chat tab (and selects it) while watching a live
     // replay; hiding it returns the column to lobby chat.
