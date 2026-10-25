@@ -116,12 +116,6 @@ enum class SettingsID
     Rollback_HideLocation,
     Rollback_RememberInputDelay,
 
-    // Ranked Settings
-    Ranked_DevModuleId,
-    Ranked_DevRulesetId,
-    Ranked_DevBestOf,
-    Ranked_DevPorts,
-
     // Core Plugin Settings
     Core_GFX_Plugin,
     Core_AUDIO_Plugin,
@@ -578,6 +572,12 @@ enum class SettingsID
 
     // raphnetraw Input Plugin Settings
     RaphnetRaw_Player1AdapterPort,
+
+    // Ranked Settings (appended so the IDs above stay the same)
+    Ranked_DevModuleId,
+    Ranked_DevRulesetId,
+    Ranked_DevBestOf,
+    Ranked_DevPorts,
 
     Invalid
 };

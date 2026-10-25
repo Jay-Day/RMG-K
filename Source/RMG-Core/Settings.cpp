@@ -369,18 +369,6 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_RememberInputDelay:
         setting = {SETTING_SECTION_ROLLBACK, "RememberInputDelay", false};
         break;
-    case SettingsID::Ranked_DevModuleId:
-        setting = {SETTING_SECTION_RANKED, "DevModuleId", std::string("")};
-        break;
-    case SettingsID::Ranked_DevRulesetId:
-        setting = {SETTING_SECTION_RANKED, "DevRulesetId", std::string("")};
-        break;
-    case SettingsID::Ranked_DevBestOf:
-        setting = {SETTING_SECTION_RANKED, "DevBestOf", 3};
-        break;
-    case SettingsID::Ranked_DevPorts:
-        setting = {SETTING_SECTION_RANKED, "DevPorts", std::string("1;2")};
-        break;
     case SettingsID::Rollback_PacingTrace:
         setting = {SETTING_SECTION_ROLLBACK, "PacingTrace", false};
         break;
@@ -1693,6 +1681,19 @@ static l_Setting get_setting(SettingsID settingId)
 
     case SettingsID::RaphnetRaw_Player1AdapterPort:
         setting = {SETTING_SECTION_RAPHNET_INPUT, "Player1AdapterPort", 1};
+        break;
+
+    case SettingsID::Ranked_DevModuleId:
+        setting = {SETTING_SECTION_RANKED, "DevModuleId", std::string("")};
+        break;
+    case SettingsID::Ranked_DevRulesetId:
+        setting = {SETTING_SECTION_RANKED, "DevRulesetId", std::string("")};
+        break;
+    case SettingsID::Ranked_DevBestOf:
+        setting = {SETTING_SECTION_RANKED, "DevBestOf", 3};
+        break;
+    case SettingsID::Ranked_DevPorts:
+        setting = {SETTING_SECTION_RANKED, "DevPorts", std::string("1;2")};
         break;
 
     }
