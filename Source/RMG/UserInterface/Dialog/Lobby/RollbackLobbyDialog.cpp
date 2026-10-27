@@ -2500,6 +2500,17 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         s == LobbyClient::ConnectionState::Failed)
     {
         emit liveReplayViewerCountCleared();
+        // A live replay arrives over this connection, so watching can't outlive
+        // it. End the watch (closing the lobby window lands here too) instead of
+        // leaving playback frozen, waiting for data that will never come. The
+        // server drops a disconnected viewer itself.
+        if (m_spectatingMatchId != 0)
+        {
+            m_spectatingMatchId = 0;
+            m_spectateStreamArmed = false;
+            setSpectatorChatVisible(false);
+            emit spectateStreamClosed(QStringLiteral("disconnected"));
+        }
         m_playersTree->clear();
         m_roomsTree->clear();
         m_matchesTree->clear();
