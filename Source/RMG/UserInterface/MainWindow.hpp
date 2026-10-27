@@ -181,6 +181,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     // deferred until emulation stops so callbacks cannot outlive their manager.
     bool    ui_SpectateCleanupPending = false;
     quint64 ui_SpectateMatchId = 0;
+    QString ui_SpectateRomFile;      // the match's ROM, matched by MD5 (empty when unknown)
     int     ui_SpectateTimerId = 0;
     bool    ui_SpectateNamesShown = false; // OSD port labels set from krec header
 
@@ -352,7 +353,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Kaillera_RecordingFileClosed(void);
     void on_Rollback_SessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);
     void on_Lobby_SessionRequested(QString gameName, QString romFile, QStringList remotePeers, int localPort, int localPlayer, int frameDelay, int predictionWindow);
-    void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName);
+    void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QString romPath);
     void on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 offset);
     void on_Lobby_SpectateKeyframe(int frame, QByteArray savestate);
     void on_Lobby_SpectateClosed(QString reason);

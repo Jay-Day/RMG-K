@@ -4358,7 +4358,7 @@ void MainWindow::ensureKailleraSessionManager()
 // Reuses the playback path (n02 mode 2 → gameCallback → on_Kaillera_GameStarted
 // launches emulation once the krec header arrives); a timer drives the state
 // machine and fast-forwards toward the live edge.
-void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
+void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QString romPath)
 {
     if (this->ui_SpectateActive)
     {
@@ -4393,6 +4393,7 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName)
 
     this->ui_SpectateActive    = true;
     this->ui_SpectateMatchId   = matchId;
+    this->ui_SpectateRomFile   = romPath;
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
     this->ui_SpectateNamesShown = false; // set once the krec header arrives
     this->ui_SpectateExpectedOffset = 0;
@@ -4479,6 +4480,7 @@ void MainWindow::stopLobbySpectate()
     }
     this->ui_SpectateActive  = false; // set first so re-entry (via stop→finish) bails
     this->ui_SpectateMatchId = 0;
+    this->ui_SpectateRomFile.clear();
     this->ui_SpectateExpectedOffset = 0;
     if (this->ui_SpectateTimerId != 0)
     {
@@ -5009,8 +5011,11 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
         return;
     }
 
-    // Find ROM file by game name
-    QString romFile = this->findRomByName(gameName);
+    // Find ROM file by game name. A live replay already has the exact ROM,
+    // matched by MD5 in the lobby; a name can also match another build.
+    QString romFile = (this->ui_SpectateActive && !this->ui_SpectateRomFile.isEmpty())
+        ? this->ui_SpectateRomFile
+        : this->findRomByName(gameName);
     if (romFile.isEmpty())
     {
         this->showErrorMessage("ROM Not Found",
@@ -6407,6 +6412,19 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
         } break;
         case CoreStateCallbackType::SaveStateLoaded:
         {
+#ifdef NETPLAY
+            // A live replay starts from the broadcaster's savestate (keyframe). If it
+            // doesn't load, e.g. it was saved with another ROM build, the inputs that
+            // follow would drive a different game, so stop watching instead.
+            if (this->ui_SpectateActive && value == 0)
+            {
+                this->stopLobbySpectate();
+                this->showErrorMessage(tr("Live Replay Error"),
+                    tr("Couldn't load the live replay's saved state, so watching stopped. "
+                       "Your ROM or RMG-K version is probably different from the players'."));
+                break;
+            }
+#endif // NETPLAY
             if (this->ui_LoadSaveStateSlotTimerId != -1 && value == 0)
             {
                 this->ui_LoadSaveStateSlotCounter++;
