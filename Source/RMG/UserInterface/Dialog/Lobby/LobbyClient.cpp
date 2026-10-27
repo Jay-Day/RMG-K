@@ -944,7 +944,7 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
     LobbyIce::set_diagnostics_enabled(iceDiagnostics);
     if (!LobbyIce::configure(m_selfUserId, stunHost, stunPort, turnServers))
     {
-        emit connectError(QStringLiteral("Failed to initialize ICE transport."));
+        emit connectError(QCoreApplication::translate("LobbyClient","Failed to initialize ICE transport."));
         setState(ConnectionState::Failed);
         return;
     }
@@ -3044,14 +3044,14 @@ bool LobbyClient::allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QStri
         if (!peer.iceSupported)
         {
             if (error)
-                *error = QStringLiteral("%1 is using a lobby client without ICE support.")
+                *error = QCoreApplication::translate("LobbyClient","%1 is using a lobby client without ICE support.")
                              .arg(peer.username.isEmpty() ? QString::number(peer.userId) : peer.username);
             return false;
         }
         if (!LobbyIce::peer_connected(peer.userId))
         {
             if (error)
-                *error = QStringLiteral("Waiting for a direct ICE connection to %1.")
+                *error = QCoreApplication::translate("LobbyClient","Waiting for a direct ICE connection to %1.")
                              .arg(peer.username.isEmpty() ? QString::number(peer.userId) : peer.username);
             return false;
         }
