@@ -1934,6 +1934,10 @@ void LobbyClient::handleMatchBegin(const QJsonObject& data)
         p.iceSupported = o.value("iceSupported").toBool();
         peers.append(p);
     }
+    // The lobby sets the live replay keyframe interval in its config. Older
+    // lobbies don't send it; keep 30 s for them. Same bounds as the lobby.
+    const int keyframeSec = data.value("keyframeIntervalSec").toInt(0);
+    m_broadcastKeyframeIntervalMs = keyframeSec > 0 ? qint64(std::clamp(keyframeSec, 10, 600)) * 1000 : 30'000;
     emit matchBegin(matchId, peers);
 }
 

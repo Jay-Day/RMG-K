@@ -420,7 +420,7 @@ private:
     bool       m_broadcasting   = false;
     quint64    m_broadcastMatchId = 0;
     // Wall-clock of the last savestate-keyframe request (0 = request one now). The
-    // drain tick requests a keyframe at a fixed interval and polls for the result.
+    // drain tick requests a keyframe at the lobby's interval and polls for the result.
     qint64     m_lastKeyframeRequestMs = 0;
 
     // Non-zero while this client is spectating a broadcast match (the match id
