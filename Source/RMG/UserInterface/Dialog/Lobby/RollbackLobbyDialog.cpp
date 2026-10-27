@@ -39,6 +39,7 @@
 #include <QRegularExpression>
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QPalette>
 #include <QStyledItemDelegate>
 #include <QPainter>
@@ -120,7 +121,7 @@ void setAutoComboLabel(QComboBox* combo, int resolved)
 {
     if (!combo) return;
     const int idx = combo->findData(-1);
-    if (idx >= 0) combo->setItemText(idx, QStringLiteral("Auto (%1 f)").arg(resolved));
+    if (idx >= 0) combo->setItemText(idx, QCoreApplication::translate("RollbackLobbyDialog", "Auto (%1 f)").arg(resolved));
 }
 
 } // namespace
@@ -175,13 +176,13 @@ namespace
     {
         switch (s)
         {
-            case LobbyClient::ConnectionState::Disconnected:   return "Offline";
-            case LobbyClient::ConnectionState::Connecting:     return "Connecting";
-            case LobbyClient::ConnectionState::Authenticating: return "Authenticating";
-            case LobbyClient::ConnectionState::Connected:      return "Online";
-            case LobbyClient::ConnectionState::Failed:         return "Connection failed";
+            case LobbyClient::ConnectionState::Disconnected:   return QCoreApplication::translate("RollbackLobbyDialog", "Offline");
+            case LobbyClient::ConnectionState::Connecting:     return QCoreApplication::translate("RollbackLobbyDialog", "Connecting");
+            case LobbyClient::ConnectionState::Authenticating: return QCoreApplication::translate("RollbackLobbyDialog", "Authenticating");
+            case LobbyClient::ConnectionState::Connected:      return QCoreApplication::translate("RollbackLobbyDialog", "Online");
+            case LobbyClient::ConnectionState::Failed:         return QCoreApplication::translate("RollbackLobbyDialog", "Connection failed");
         }
-        return "Unknown";
+        return QCoreApplication::translate("RollbackLobbyDialog", "Unknown");
     }
 
     QString statusColor(LobbyClient::ConnectionState s)
@@ -282,10 +283,10 @@ namespace
     // "starting", "in_game", "finished") that stateGlyph would pass through raw.
     QString roomStateLabel(const QString& state)
     {
-        if (state == "waiting")  return "Waiting";
-        if (state == "starting") return "Starting";
-        if (state == "in_game")  return "In Game";
-        if (state == "finished") return "Finished";
+        if (state == "waiting")  return QCoreApplication::translate("RollbackLobbyDialog", "Waiting");
+        if (state == "starting") return QCoreApplication::translate("RollbackLobbyDialog", "Starting");
+        if (state == "in_game")  return QCoreApplication::translate("RollbackLobbyDialog", "In Game");
+        if (state == "finished") return QCoreApplication::translate("RollbackLobbyDialog", "Finished");
         return state;
     }
 
@@ -315,11 +316,11 @@ namespace
     {
         QStringList parts;
         if (isHost)
-            parts << QString("<span style='color:%1; font-weight:700;'>HOST</span>")
-                         .arg(playerAccentHex(slot, dark));
+            parts << QString("<span style='color:%1; font-weight:700;'>%2</span>")
+                         .arg(playerAccentHex(slot, dark), QCoreApplication::translate("RollbackLobbyDialog", "HOST"));
         if (frameDelay >= 0)
-            parts << QStringLiteral("<span style='font-weight:600;'>Frame delay: %1f</span>")
-                         .arg(frameDelay);
+            parts << QString("<span style='font-weight:600;'>%1</span>")
+                         .arg(QCoreApplication::translate("RollbackLobbyDialog", "Frame delay: %1f").arg(frameDelay));
         if (!status.isEmpty())
             parts << status;
         else if (pingMs >= 0)
@@ -333,9 +334,8 @@ namespace
     {
         const auto c = statusColors();
         if (failed)
-            return QString("<span style='color:%1; font-weight:600;'>unreachable</span>").arg(c.fail);
-        return QString("<span style='color:%1; font-weight:600;'>retrying %2/%3…</span>")
-                   .arg(c.wait).arg(attempt).arg(maxAttempts);
+            return QString("<span style='color:%1; font-weight:600;'>%2</span>").arg(c.fail,QCoreApplication::translate("RollbackLobbyDialog","unreachable"));
+        return QString("<span style='color:%1; font-weight:600;'>%2</span>").arg(c.wait,QCoreApplication::translate("RollbackLobbyDialog","retrying %2/%3…").arg(attempt).arg(maxAttempts));
     }
 
     // Shown before the first ping can be sent. ICE negotiation may take a few
@@ -344,15 +344,13 @@ namespace
     QString seatIceStatusHtml(int attempt = 1, int maxAttempts = 20)
     {
         const auto c = statusColors();
-        return QString("<span style='color:%1; font-weight:600;'>Connection attempt %2/%3…</span>")
-                   .arg(c.wait).arg(attempt).arg(maxAttempts);
+        return QString("<span style='color:%1; font-weight:600;'>%2</span>").arg(c.wait,QCoreApplication::translate("RollbackLobbyDialog","Connection attempt %2/%3…").arg(attempt).arg(maxAttempts));
     }
 
     QString seatIceFailedStatusHtml()
     {
         const auto c = statusColors();
-        return QString("<span style='color:%1; font-weight:600;'>connection failed</span>")
-                   .arg(c.fail);
+        return QString("<span style='color:%1; font-weight:600;'>%2</span>").arg(c.fail,QCoreApplication::translate("RollbackLobbyDialog","connection failed"));
     }
 
     // A translucent fill derived from a solid hex — used for the soft pill /
@@ -387,10 +385,10 @@ namespace
 
     QString connectionTypeName(const QString& connection)
     {
-        if (connection == QLatin1String("wifi"))      return QStringLiteral("Wi-Fi");
-        if (connection == QLatin1String("lan"))       return QStringLiteral("Ethernet");
-        if (connection == QLatin1String("cellular"))  return QStringLiteral("Cellular");
-        if (connection == QLatin1String("bluetooth")) return QStringLiteral("Bluetooth");
+        if (connection == QLatin1String("wifi"))      return QCoreApplication::translate("RollbackLobbyDialog", "Wi-Fi");
+        if (connection == QLatin1String("lan"))       return QCoreApplication::translate("RollbackLobbyDialog", "Ethernet");
+        if (connection == QLatin1String("cellular"))  return QCoreApplication::translate("RollbackLobbyDialog", "Cellular");
+        if (connection == QLatin1String("bluetooth")) return QCoreApplication::translate("RollbackLobbyDialog", "Bluetooth");
         return QString();
     }
 
@@ -470,7 +468,7 @@ namespace
             return;
         const QString name = connectionTypeName(connection);
         label->setProperty("connectionType", connection);
-        label->setToolTip(name.isEmpty() ? QStringLiteral("Connection type unknown") : name);
+        label->setToolTip(name.isEmpty() ? QCoreApplication::translate("RollbackLobbyDialog", "Connection type unknown") : name);
         label->update();
     }
 
@@ -493,7 +491,7 @@ namespace
         const QString countryName = territory != QLocale::AnyTerritory
             ? QLocale::territoryToString(territory)
             : country;
-        label->setToolTip(QString("Country: %1").arg(countryName));
+        label->setToolTip(QString(QCoreApplication::translate("RollbackLobbyDialog", "Country: %1")).arg(countryName));
         label->setVisible(true);
     }
 
@@ -633,7 +631,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
               | Qt::WindowMinMaxButtonsHint
               | Qt::WindowCloseButtonHint)
 {
-    setWindowTitle("RMG-K Lobby");
+    setWindowTitle(tr("RMG-K Lobby"));
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setWindowModality(Qt::NonModal);
     resize(1180, 720);
@@ -801,7 +799,7 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     h->setContentsMargins(MARGIN_OUTER * 2, 0, MARGIN_OUTER * 2, 0);
     h->setSpacing(SPACING_DEFAULT * 2);
 
-    m_brandLabel = new QLabel("RMG-K · Rollback Netplay", this);
+    m_brandLabel = new QLabel(tr("RMG-K · Rollback Netplay"), this);
     m_brandLabel->setObjectName("LobbyBrand");
     bumpFont(m_brandLabel, 1, /*bold=*/true);
     h->addWidget(m_brandLabel);
@@ -824,14 +822,14 @@ QWidget* RollbackLobbyDialog::buildMarquee()
             .arg(statusColors().idle).arg(STATUS_DOT_PX / 2));
     pillLay->addWidget(m_statusLed);
 
-    m_statusText = new QLabel("Offline", m_statusPill);
+    m_statusText = new QLabel(tr("Offline"), m_statusPill);
     m_statusText->setStyleSheet(QString("color: %1; font-weight: 600;").arg(statusColors().idle));
     pillLay->addWidget(m_statusText);
     h->addWidget(m_statusPill);
 
     h->addSpacing(SPACING_DEFAULT * 2);
 
-    m_serverMeta = new QLabel("Not connected", this);
+    m_serverMeta = new QLabel(tr("Not connected"), this);
     // PlaceholderText is the right role for "secondary body text" — Mid is
     // a border-tone and disappears on Fusion Dark. PlaceholderText derives
     // from palette(text) with reduced alpha, so it reads on every theme.
@@ -840,7 +838,7 @@ QWidget* RollbackLobbyDialog::buildMarquee()
 
     h->addStretch(1);
 
-    m_userLabel = new QLabel("User: —", this);
+    m_userLabel = new QLabel(tr("User: —"), this);
     m_userLabel->setObjectName("UserLabel");
     h->addWidget(m_userLabel);
 
@@ -868,11 +866,11 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     bumpFont(bannerIcon, 2, /*bold=*/true);
     bannerLay->addWidget(bannerIcon);
 
-    m_bannerText = new QLabel("You're in a room", this);
+    m_bannerText = new QLabel(tr("You're in a room"), this);
     bumpFont(m_bannerText, 0, /*bold=*/true);
     bannerLay->addWidget(m_bannerText, 1);
 
-    m_bannerReturn = new QPushButton(QStringLiteral("Return to Room  →"), this);
+    m_bannerReturn = new QPushButton(tr("Return to Room  →"), this);
     m_bannerReturn->setObjectName("BannerReturnBtn");
     m_bannerReturn->setMinimumHeight(BUTTON_MIN_HEIGHT);
     m_bannerReturn->setCursor(Qt::PointingHandCursor);
@@ -888,7 +886,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     auto* heroRow = new QHBoxLayout;
     heroRow->setSpacing(SPACING_DEFAULT);
 
-    m_quickMatchBtn = new QPushButton("⚡  Quick Match", this);
+    m_quickMatchBtn = new QPushButton(tr("⚡  Quick Match"), this);
     m_quickMatchBtn->setObjectName("QuickMatchBtn");
     m_quickMatchBtn->setEnabled(false);
     m_quickMatchBtn->setAutoDefault(false);
@@ -896,11 +894,10 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_quickMatchBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
     m_quickMatchBtn->setCursor(Qt::PointingHandCursor);
     m_quickMatchBtn->setToolTip(
-        "Auto-match with another player searching for the selected game.\n"
-        "Uses Auto frame delay unless remembering your last choice is enabled.\n"
-        "Your frame delay can be changed during the warmup. Prediction defaults to 7 frames.");
-
-    m_createRoomBtn = new QPushButton("Create Room…", this);
+        tr("Auto-match with another player searching for the selected game.\n"
+           "Uses Auto frame delay unless remembering your last choice is enabled.\n"
+           "Your frame delay can be changed during the warmup. Prediction defaults to 7 frames."));
+    m_createRoomBtn = new QPushButton(tr("Create Room…"), this);
     m_createRoomBtn->setObjectName("CreateRoomBtn");
     m_createRoomBtn->setAutoDefault(false);
     m_createRoomBtn->setDefault(false);
@@ -918,7 +915,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     //    Quick Match key off the selected game's MD5. ──
     auto* gameRow = new QHBoxLayout;
     gameRow->setSpacing(SPACING_DEFAULT);
-    auto* gameLbl = new QLabel("Game:", this);
+    auto* gameLbl = new QLabel(tr("Game:"), this);
     m_browseRomCombo = new QComboBox(this);
     m_browseRomCombo->setObjectName("BrowseRomCombo");
     m_browseRomCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
@@ -964,16 +961,16 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     roomsLay->setContentsMargins(0, 0, 0, 0);
     roomsLay->setSpacing(SPACING_DEFAULT);
 
-    auto* roomsHeader = new QLabel("ACTIVE ROOMS", this);
+    auto* roomsHeader = new QLabel(tr("ACTIVE ROOMS"), this);
     roomsHeader->setProperty("class", "SectionHeader");
     auto* roomsHeaderRow = new QHBoxLayout;
     roomsHeaderRow->setContentsMargins(0, 0, 0, 0);
     roomsHeaderRow->setSpacing(SPACING_DEFAULT);
     roomsHeaderRow->addWidget(roomsHeader, 1);
 
-    m_sameGameFilterCheck = new QCheckBox("Same game only", this);
+    m_sameGameFilterCheck = new QCheckBox(tr("Same game only"), this);
     m_sameGameFilterCheck->setToolTip(
-        "Only show rooms and matches for the selected game.");
+        tr("Only show rooms and matches for the selected game."));
     m_sameGameFilterCheck->setEnabled(!selectedBrowseRom().isEmpty());
     connect(m_sameGameFilterCheck, &QCheckBox::toggled,
             this, [this](bool) { onRoomListChanged(); });
@@ -982,7 +979,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     m_roomsTree = new QTreeWidget(this);
     m_roomsTree->setObjectName("RoomsTree");
-    m_roomsTree->setHeaderLabels({ "Name", "Host", "Ping", "ROM", "Seats" });
+    m_roomsTree->setHeaderLabels({ tr("Name"), tr("Host"), tr("Ping"), tr("ROM"), tr("Seats") });
     m_roomsTree->setRootIsDecorated(false);
     m_roomsTree->setSortingEnabled(true);
     m_roomsTree->setAlternatingRowColors(true);
@@ -1040,14 +1037,14 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     matchesLay->setContentsMargins(0, 0, 0, 0);
     matchesLay->setSpacing(SPACING_DEFAULT);
 
-    auto* matchesHeader = new QLabel("ONGOING MATCHES", this);
+    auto* matchesHeader = new QLabel(tr("ONGOING MATCHES"), this);
     matchesHeader->setProperty("class", "SectionHeader");
     matchesLay->addWidget(matchesHeader);
 
     m_matchesTree = new QTreeWidget(this);
     m_matchesTree->setObjectName("MatchesTree");
     // Keep the wide text columns first and the compact match stats at the right.
-    m_matchesTree->setHeaderLabels({ "Players", "ROM", "Duration", "Viewers" });
+    m_matchesTree->setHeaderLabels({ tr("Players"), tr("ROM"), tr("Duration"), tr("Viewers") });
     m_matchesTree->setRootIsDecorated(false);
     m_matchesTree->setSortingEnabled(true);
     m_matchesTree->sortItems(2, Qt::AscendingOrder);
@@ -1129,18 +1126,18 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     // Top row: breadcrumb + state label
     auto* topRow = new QHBoxLayout;
     topRow->setSpacing(SPACING_DEFAULT);
-    auto* breadcrumb = new QPushButton("←  Browse Rooms", this);
+    auto* breadcrumb = new QPushButton(tr("←  Browse Rooms"), this);
     breadcrumb->setFlat(true);
     breadcrumb->setCursor(Qt::PointingHandCursor);
     breadcrumb->setAutoDefault(false);
-    breadcrumb->setToolTip("Switch to the room list. You stay in your seat — use Leave Room to actually exit.");
+    breadcrumb->setToolTip(tr("Switch to the room list. You stay in your seat — use Leave Room to actually exit."));
     connect(breadcrumb, &QPushButton::clicked, this, &RollbackLobbyDialog::switchToRoomsView);
     topRow->addWidget(breadcrumb);
     topRow->addStretch(1);
 
-    m_roomStateLabel = new QLabel("Waiting", this);
+    m_roomStateLabel = new QLabel(tr("Waiting"), this);
     topRow->addWidget(m_roomStateLabel);
-    applyRoomStateBadge("Waiting", stateHex("waiting", isDarkTheme()));
+    applyRoomStateBadge(tr("Waiting"), stateHex("waiting", isDarkTheme()));
     lay->addLayout(topRow);
 
     // ROM title (large). Word-wrap so a long ROM name doesn't pin a wide
@@ -1162,14 +1159,12 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     settingsRow->setContentsMargins(0, SPACING_TIGHT, 0, 0);
     settingsRow->setSpacing(SPACING_DEFAULT);
 
-    const QString delayTip = QStringLiteral(
-        "Frames of input delay added before sending to peer.\n"
+    const QString delayTip = tr("Frames of input delay added before sending to peer.\n"
         "Higher delay = fewer rollbacks but more input latency.\n"
         "Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.\n"
         "\n"
         "Local setting — each player may choose a different value.");
-    const QString predictionTip = QStringLiteral(
-        "Maximum frames the rollback engine may predict ahead.\n"
+    const QString predictionTip = tr("Maximum frames the rollback engine may predict ahead.\n"
         "Higher prediction tolerates longer network stalls but can produce larger rollbacks.\n"
         "Default: 7 frames.\n"
         "\n"
@@ -1183,17 +1178,17 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
                              int sentinel, const QList<int>& options) {
         combo->addItem(autoLabel, sentinel);
         for (int v : options)
-            combo->addItem(QString("%1 f").arg(v), v);
+            combo->addItem(QString(tr("%1 f")).arg(v), v);
         combo->setCurrentIndex(0); // default to Auto
     };
 
-    auto* delayLbl = new QLabel("Your frame delay:", this);
+    auto* delayLbl = new QLabel(tr("Your frame delay:"), this);
     m_delayCombo = new QComboBox(this);
     m_delayCombo->setObjectName("LobbyCombo");
     // Re-measure when the Auto entry grows into "Auto (2 f)" so the resolved
     // value isn't clipped.
     m_delayCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-    fillFrameCombo(m_delayCombo, "Auto", -1, DELAY_OPTIONS);
+    fillFrameCombo(m_delayCombo, tr("Auto"), -1, DELAY_OPTIONS);
     m_delayCombo->setToolTip(delayTip);
     // Stash the explainer so onRoomStateChanged can restore it after a
     // disabled stint (host became host again, or match ended).
@@ -1203,12 +1198,12 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     settingsRow->addSpacing(SPACING_DEFAULT * 2);
 
-    auto* predictionLbl = new QLabel("Prediction:", this);
+    auto* predictionLbl = new QLabel(tr("Prediction:"), this);
     m_predictionCombo = new QComboBox(this);
     m_predictionCombo->setObjectName("LobbyCombo");
     m_predictionCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     fillFrameCombo(m_predictionCombo,
-                   QStringLiteral("Default (%1 f)").arg(kDefaultPredictionWindow),
+                   tr("Default (%1 f)").arg(kDefaultPredictionWindow),
                    0, PREDICTION_OPTIONS);
     m_predictionCombo->setToolTip(predictionTip);
     m_predictionCombo->setProperty("originalTip", predictionTip);
@@ -1227,7 +1222,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     // Per-player local saving, independent of the host's Live Replay choice.
     // Editable before the match and initialized from the cap-aware default.
-    m_recordCheck = new QCheckBox("Record locally", this);
+    m_recordCheck = new QCheckBox(tr("Record locally"), this);
     const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
     n02_kaillera_recording_enabled = recordingDefault;
     m_recordCheck->setChecked(recordingDefault);
@@ -1237,7 +1232,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     toggleRow->addWidget(m_recordCheck);
 
     // Broadcast replay bytes to the server without requiring a local file.
-    m_broadcastCheck = new QCheckBox("Live Replay", this);
+    m_broadcastCheck = new QCheckBox(tr("Live Replay"), this);
     m_broadcastCheck->setChecked(liveReplayPreference());
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (m_suppressSettingsSignal) return;
@@ -1285,7 +1280,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     auto* seatsHeaderRow = new QHBoxLayout;
     seatsHeaderRow->setContentsMargins(0, SPACING_DEFAULT, 0, 0);
     seatsHeaderRow->setSpacing(SPACING_TIGHT);
-    auto* seatsHeader = new QLabel("SEATS", this);
+    auto* seatsHeader = new QLabel(tr("SEATS"), this);
     seatsHeader->setProperty("class", "SectionHeader");
     seatsHeaderRow->addWidget(seatsHeader, 0, Qt::AlignBaseline);
     m_seatCountLabel = new QLabel(this);
@@ -1311,7 +1306,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     // ── Room chat — sits directly below the seats, with its own input. The
     //    lobby chat stays in the dedicated middle column. ──
-    auto* roomChatHeader = new QLabel("ROOM CHAT", this);
+    auto* roomChatHeader = new QLabel(tr("ROOM CHAT"), this);
     roomChatHeader->setProperty("class", "SectionHeader");
     roomChatHeader->setContentsMargins(0, SPACING_DEFAULT, 0, 0);
     lay->addWidget(roomChatHeader);
@@ -1329,7 +1324,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     roomChatLay->addWidget(m_chatViewRoom, 1);
 
     m_roomChatInput = new QLineEdit(roomChatCard);
-    m_roomChatInput->setPlaceholderText("Message the room…");
+    m_roomChatInput->setPlaceholderText(tr("Message the room…"));
     m_roomChatInput->setEnabled(false);
     m_roomChatInput->setMaxLength(500); // server truncates at 500; cap client-side too
     m_roomChatInput->setMinimumHeight(BUTTON_MIN_HEIGHT);
@@ -1342,7 +1337,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     auto* actionRow = new QHBoxLayout;
     actionRow->setSpacing(SPACING_DEFAULT);
 
-    m_startBtn = new QPushButton("Start Game", this);
+    m_startBtn = new QPushButton(tr("Start Game"), this);
     m_startBtn->setObjectName("StartGameBtn");
     m_startBtn->setEnabled(false);
     m_startBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
@@ -1351,23 +1346,23 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_startBtn->setDefault(false);
     connect(m_startBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onStartGameClicked);
 
-    m_dropBtn = new QPushButton("Drop Game", this);
+    m_dropBtn = new QPushButton(tr("Drop Game"), this);
     m_dropBtn->setObjectName("DropBtn");
     m_dropBtn->setEnabled(false);
     m_dropBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
     m_dropBtn->setAutoDefault(false);
     m_dropBtn->setDefault(false);
     m_dropBtn->setCursor(Qt::PointingHandCursor);
-    m_dropBtn->setToolTip("Stop playing the current match. If you're the host, the match ends for everyone.");
+    m_dropBtn->setToolTip(tr("Stop playing the current match. If you're the host, the match ends for everyone."));
     connect(m_dropBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onDropGameClicked);
 
-    m_leaveBtn = new QPushButton("Leave Room", this);
+    m_leaveBtn = new QPushButton(tr("Leave Room"), this);
     m_leaveBtn->setObjectName("LeaveBtn");
     m_leaveBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
     m_leaveBtn->setAutoDefault(false);
     m_leaveBtn->setDefault(false);
     m_leaveBtn->setCursor(Qt::PointingHandCursor);
-    m_leaveBtn->setToolTip("Leave the room and return to the lobby.");
+    m_leaveBtn->setToolTip(tr("Leave the room and return to the lobby."));
     connect(m_leaveBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onLeaveRoomClicked);
 
     actionRow->addWidget(m_startBtn, 1);
@@ -1402,7 +1397,7 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
     s.dragHandle->setAlignment(Qt::AlignCenter);
     s.dragHandle->setForegroundRole(QPalette::PlaceholderText); // subtle grip
     s.dragHandle->setCursor(Qt::OpenHandCursor);
-    s.dragHandle->setToolTip(QStringLiteral("Drag onto another seat to swap players"));
+    s.dragHandle->setToolTip(tr("Drag onto another seat to swap players"));
     s.dragHandle->setVisible(false);
     s.dragHandle->installEventFilter(this);
     lay->addWidget(s.dragHandle);
@@ -1421,7 +1416,7 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
     s.slotLabel->setMinimumWidth(30);
     lay->addWidget(s.slotLabel);
 
-    s.nameLabel = new QLabel(QStringLiteral("Waiting…"), s.row);
+    s.nameLabel = new QLabel(tr("Waiting…"), s.row);
     lay->addWidget(s.nameLabel);
 
     s.countryLabel = new QLabel(s.row);
@@ -1452,14 +1447,14 @@ void RollbackLobbyDialog::buildSeatRow(SeatRow& s, int slotIdx, QWidget* parent)
     s.kickButton->setFixedSize(20, 20);
     s.kickButton->setCursor(Qt::PointingHandCursor);
     s.kickButton->setFocusPolicy(Qt::NoFocus);
-    s.kickButton->setToolTip(QStringLiteral("Remove this player from the match"));
+    s.kickButton->setToolTip(tr("Remove this player from the match"));
     s.kickButton->setVisible(false);
     connect(s.kickButton, &QPushButton::clicked, this, [this, &s]() {
         if (!m_client || s.userId == 0)
             return;
         const QString name = s.nameLabel ? s.nameLabel->text() : QString();
-        if (QMessageBox::question(this, "Remove player",
-                QString("Remove %1 from the match?").arg(name.isEmpty() ? QStringLiteral("this player") : name),
+        if (QMessageBox::question(this, tr("Remove player"),
+                QString(tr("Remove %1 from the match?")).arg(name.isEmpty() ? tr("this player") : name),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
             return;
         m_client->kickFromRoom(s.userId);
@@ -1500,7 +1495,7 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
                     "}").arg(statusColors().idle));
     if (s.nameLabel)
     {
-        s.nameLabel->setText(QStringLiteral("Waiting…"));
+        s.nameLabel->setText(tr("Waiting…"));
         s.nameLabel->setStyleSheet(QString());
         s.nameLabel->setForegroundRole(QPalette::PlaceholderText);
         QFont f = s.nameLabel->font();
@@ -1572,7 +1567,7 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
     if (s.nameLabel)
     {
         QString name = username;
-        if (isSelf) name += QStringLiteral("  (you)");
+        if (isSelf) name += tr("  (you)");
         s.nameLabel->setText(name);
         s.nameLabel->setStyleSheet(QString());
         s.nameLabel->setForegroundRole(QPalette::WindowText);
@@ -1608,7 +1603,7 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
     lay->setContentsMargins(MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER, MARGIN_OUTER);
     lay->setSpacing(SPACING_DEFAULT);
 
-    m_chatHeader = new QLabel("LOBBY CHAT", this);
+    m_chatHeader = new QLabel(tr("LOBBY CHAT"), this);
     m_chatHeader->setProperty("class", "SectionHeader");
     lay->addWidget(m_chatHeader);
 
@@ -1623,11 +1618,11 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
     m_chatTabs->setDocumentMode(true);
     m_chatTabs->setDrawBase(false);
     m_chatTabs->setExpanding(false);
-    m_chatTabs->addTab("Lobby");
-    m_chatTabs->addTab("Spectators");
-    m_chatTabs->setTabToolTip(kChatTabLobby, "Everyone in the lobby.");
+    m_chatTabs->addTab(tr("Lobby"));
+    m_chatTabs->addTab(tr("Spectators"));
+    m_chatTabs->setTabToolTip(kChatTabLobby, tr("Everyone in the lobby."));
     m_chatTabs->setTabToolTip(kChatTabSpectators,
-        "Everyone watching this match. The players can't see it.");
+        tr("Everyone watching this match. The players can't see it."));
     m_chatTabs->setVisible(false);
     cardLay->addWidget(m_chatTabs);
 
@@ -1649,17 +1644,17 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
         m_chatStack->setCurrentIndex(index);
         if (index == kChatTabSpectators)
         {
-            m_chatTabs->setTabText(kChatTabSpectators, "Spectators"); // clear the unread mark
-            m_chatInput->setPlaceholderText("Message the other spectators…");
+            m_chatTabs->setTabText(kChatTabSpectators, tr("Spectators")); // clear the unread mark
+            m_chatInput->setPlaceholderText(tr("Message the other spectators…"));
         }
         else
         {
-            m_chatInput->setPlaceholderText("Message the lobby…");
+            m_chatInput->setPlaceholderText(tr("Message the lobby…"));
         }
     });
 
     m_chatInput = new QLineEdit(card);
-    m_chatInput->setPlaceholderText("Message the lobby…");
+    m_chatInput->setPlaceholderText(tr("Message the lobby…"));
     m_chatInput->setEnabled(false);
     m_chatInput->setMaxLength(500); // server truncates at 500; cap client-side too
     m_chatInput->setMinimumHeight(BUTTON_MIN_HEIGHT);
@@ -1690,7 +1685,7 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
 
     m_playersTree = new QTreeWidget(card);
     m_playersTree->setObjectName("PlayersTree");
-    m_playersTree->setHeaderLabels({ "Player", "State", "Ping", "Type" });
+    m_playersTree->setHeaderLabels({ tr("Player"), tr("State"), tr("Ping"), tr("Type") });
     m_playersTree->setRootIsDecorated(false);
     m_playersTree->setSortingEnabled(true);
 	m_playersTree->sortItems(0, Qt::AscendingOrder);
@@ -1716,8 +1711,8 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         const int stateWidth  = fm.horizontalAdvance(QStringLiteral("Spectating")) + pad;
         // Wide enough for the painted bars and header label. The sort indicator
         // renders above the label in this header style, so it needs no extra room.
-        const int pingWidth = std::max(fm.horizontalAdvance(QStringLiteral("Ping")) + pad - 4, 40);
-        const int typeWidth = std::max(fm.horizontalAdvance(QStringLiteral("Type")) + pad - 4, 44);
+        const int pingWidth = std::max(fm.horizontalAdvance(tr("Ping")) + pad - 4, 40);
+        const int typeWidth = std::max(fm.horizontalAdvance(tr("Type")) + pad - 4, 44);
         m_playersTree->setColumnWidth(1, stateWidth);
         m_playersTree->setColumnWidth(2, pingWidth);
         m_playersTree->setColumnWidth(3, typeWidth);
@@ -2037,7 +2032,7 @@ void RollbackLobbyDialog::populateBrowseRoms()
 
     if (m_roms.isEmpty())
     {
-        m_browseRomCombo->addItem("No ROMs in your library — add some first");
+        m_browseRomCombo->addItem(tr("No ROMs in your library — add some first"));
         m_browseRomCombo->setEnabled(false);
         m_browseRomCombo->blockSignals(false);
         refreshSameGameFilter();
@@ -2436,7 +2431,7 @@ void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
     m_username  = prompt.username();
     m_serverUrl = prompt.serverUrl();
     if (m_userLabel)
-        m_userLabel->setText(QString("User: %1").arg(m_username));
+        m_userLabel->setText(QString(tr("User: %1")).arg(m_username));
 
     // A new WebSocket session has no claim on a room from the previous server
     // session. This is normally already cleared by the disconnect handler, but
@@ -2454,8 +2449,7 @@ bool RollbackLobbyDialog::matchTransportInProgress() const
 
 void RollbackLobbyDialog::showMatchConnectionLostNotice()
 {
-    const QString notice = QStringLiteral(
-        "Error: lost connection to server. You can continue the game but without chat.");
+    const QString notice = tr("Error: lost connection to server. You can continue the game but without chat.");
     if (m_connectPromptMessage.isEmpty())
         m_connectPromptMessage = notice;
 
@@ -2468,7 +2462,7 @@ void RollbackLobbyDialog::showMatchConnectionLostNotice()
 
     if (m_roomChatInput)
         m_roomChatInput->setEnabled(false);
-    applyRoomStateBadge(QStringLiteral("Lobby offline — game continues"),
+    applyRoomStateBadge(tr("Lobby offline — game continues"),
                         QString(statusColors().fail));
 
     // Broadcast and spectator traffic use the WebSocket, unlike gameplay.
@@ -2506,13 +2500,24 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         s == LobbyClient::ConnectionState::Failed)
     {
         emit liveReplayViewerCountCleared();
+        // A live replay arrives over this connection, so watching can't outlive
+        // it. End the watch (closing the lobby window lands here too) instead of
+        // leaving playback frozen, waiting for data that will never come. The
+        // server drops a disconnected viewer itself.
+        if (m_spectatingMatchId != 0)
+        {
+            m_spectatingMatchId = 0;
+            m_spectateStreamArmed = false;
+            setSpectatorChatVisible(false);
+            emit spectateStreamClosed(QStringLiteral("disconnected"));
+        }
         m_playersTree->clear();
         m_roomsTree->clear();
         m_matchesTree->clear();
         m_userItems.clear();
         m_roomItems.clear();
         m_quickMatchActive = false;
-        if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
+        if (m_quickMatchBtn) m_quickMatchBtn->setText(tr("⚡  Quick Match"));
 
         if (m_chatViewLobby) m_chatViewLobby->clear();
         if (matchTransportInProgress())
@@ -2554,13 +2559,13 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
 void RollbackLobbyDialog::onHelloFailed(const QString& reason)
 {
     QString human = reason;
-    if (reason == "username_taken")    human = "That username is already in use.";
-    else if (reason == "invalid_hello") human = "Server rejected the connection handshake.";
-    else if (reason == "invalid_payload") human = "That username isn't allowed.";
+    if (reason == "username_taken")    human = tr("That username is already in use.");
+    else if (reason == "invalid_hello") human = tr("Server rejected the connection handshake.");
+    else if (reason == "invalid_payload") human = tr("That username isn't allowed.");
     else if (reason == "version_mismatch") human =
-        "Your RMG-K client is out of date. This lobby requires RMG-K 0.9.13 "
-        "or vdev-2367 or newer.";
-    else if (reason == "server_full") human = "The lobby is currently full.";
+        tr("Your RMG-K client is out of date. This lobby requires RMG-K 0.9.13 "
+        "or vdev-2367 or newer.");
+    else if (reason == "server_full") human = tr("The lobby is currently full.");
 
     m_connectPromptMessage = human;
     if (matchTransportInProgress())
@@ -2579,7 +2584,7 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
 
 void RollbackLobbyDialog::onConnectError(const QString& msg)
 {
-    m_connectPromptMessage = "Couldn't reach the lobby: " + msg;
+    m_connectPromptMessage = tr("Couldn't reach the lobby: %1").arg(msg);
     if (matchTransportInProgress())
     {
         showMatchConnectionLostNotice();
@@ -2638,15 +2643,15 @@ void RollbackLobbyDialog::updateInRoomBanner()
     if (it != rooms.constEnd() && !it->name.isEmpty())
         name = it->name;
     else
-        name = QStringLiteral("Your room");
+        name = tr("Your room");
 
     // Also include seat count when we have it cached from ROOM_STATE.
     QString seats;
     if (it != rooms.constEnd() && it->maxPlayers > 0)
-        seats = QString("  ·  %1/%2 seats").arg(it->players).arg(it->maxPlayers);
+        seats = QString(tr("  ·  %1/%2 seats")).arg(it->players).arg(it->maxPlayers);
 
     if (m_bannerText)
-        m_bannerText->setText(QString("You're in: <b>%1</b>%2").arg(name, seats));
+        m_bannerText->setText(QString(tr("You're in: <b>%1</b>%2")).arg(name, seats));
 }
 
 void RollbackLobbyDialog::updateServerMeta()
@@ -2654,16 +2659,19 @@ void RollbackLobbyDialog::updateServerMeta()
     if (!m_serverMeta) return;
     if (m_client->state() != LobbyClient::ConnectionState::Connected)
     {
-        m_serverMeta->setText("Not connected");
+        m_serverMeta->setText(tr("Not connected"));
         return;
     }
     const int players = m_client->users().size();
     const int rooms = m_client->rooms().size();
     // Server host/IP intentionally omitted from the header — just show the
     // live population.
-    m_serverMeta->setText(QString("%1 player%2  ·  %3 room%4")
-                              .arg(players).arg(players == 1 ? "" : "s")
-                              .arg(rooms).arg(rooms == 1 ? "" : "s"));
+    const char* populationSource = "%1 player%3  ·  %2 room%4";
+    const QString populationText = tr("%1 player%3  ·  %2 room%4");
+    const bool translatedPopulation = populationText != QLatin1String(populationSource);
+    m_serverMeta->setText(populationText.arg(players).arg(rooms)
+                              .arg(translatedPopulation || players == 1 ? "" : "s")
+                              .arg(translatedPopulation || rooms == 1 ? "" : "s"));
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -2755,7 +2763,7 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
 
     // While searching, hovering the state shows which ROM they're queued for.
     if (u.state == "searching" && !u.searchingRom.isEmpty())
-        item->setToolTip(1, QString("Searching for: %1").arg(u.searchingRom));
+        item->setToolTip(1, QString(tr("Searching for: %1")).arg(u.searchingRom));
     else
         item->setToolTip(1, QString());
 
@@ -2803,27 +2811,27 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     // so the country is the only location we state.
     QStringList tipLines;
     if (!countryName.isEmpty())
-        tipLines << QString("Country: %1").arg(countryName);
+        tipLines << QString(tr("Country: %1")).arg(countryName);
     // Self-reported transport medium ("wifi"/"lan"/...) and build, when the
     // peer's client and the server are new enough to relay them.
     const QString connLabel = connectionTypeName(u.connection);
     item->setText(3, connLabel);
     item->setData(3, kConnectionTypeRole, u.connection);
     if (!connLabel.isEmpty())
-        tipLines << QString("Connection: %1").arg(connLabel);
+        tipLines << QString(tr("Connection: %1")).arg(connLabel);
     if (!u.clientVersion.isEmpty())
-        tipLines << QString("Build: %1").arg(u.clientVersion);
+        tipLines << QString(tr("Build: %1")).arg(u.clientVersion);
     if (!isSelf)
     {
         // The bars give the tier; the tooltip gives the number. An estimate is
         // hedged and only stands in until a real UDP probe lands — say what
         // makes it real rather than implying a measurement is on its way.
         if (measured >= 0)
-            tipLines << QString("Ping: %1 ms").arg(measured);
+            tipLines << QString(tr("Ping: %1 ms")).arg(measured);
         else
             tipLines << (estimate > 0
-                ? QString("Ping: ~%1 ms (estimate — click to measure)").arg(estimate)
-                : QStringLiteral("Ping: click to measure"));
+                ? QString(tr("Ping: ~%1 ms (estimate — click to measure)")).arg(estimate)
+                : tr("Ping: click to measure"));
     }
     const QString tip = tipLines.join(QChar('\n'));
     item->setToolTip(0, tip);
@@ -2834,14 +2842,14 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
 
 QString RollbackLobbyDialog::stateGlyph(const QString& state) const
 {
-    if (state == "idle")       return "Online";
-    if (state == "browsing")   return "Browsing";
-    if (state == "hosting")    return "Hosting";
-    if (state == "in_room")    return "In Room";
-    if (state == "searching")  return "Searching";
-    if (state == "playing")    return "In Game";
-    if (state == "spectating") return "Watching";
-    if (state == "away")       return "Away";
+    if (state == "idle")       return tr("Online");
+    if (state == "browsing")   return tr("Browsing");
+    if (state == "hosting")    return tr("Hosting");
+    if (state == "in_room")    return tr("In Room");
+    if (state == "searching")  return tr("Searching");
+    if (state == "playing")    return tr("In Game");
+    if (state == "spectating") return tr("Watching");
+    if (state == "away")       return tr("Away");
     return state;
 }
 
@@ -2945,7 +2953,7 @@ void RollbackLobbyDialog::onRoomListChanged()
         if (r.state == "in_game")
         {
             auto* matchRow = new MatchTreeItem(m_matchesTree);
-            matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(" vs "));
+            matchRow->setText(0, r.playerNames.isEmpty() ? r.name : r.playerNames.join(tr(" vs ")));
             matchRow->setText(1, r.romName);
             matchRow->setText(2, formatMatchDuration(r.startedAtMs));
             matchRow->setText(3, matchViewersLabel(r));
@@ -2959,7 +2967,7 @@ void RollbackLobbyDialog::onRoomListChanged()
             if (r.broadcasting && r.matchId != 0)
             {
                 const QColor live(0x2e, 0xa0, 0x43); // green, readable on light + dark
-                const QString tip = QStringLiteral("🔴 Live — double-click to watch");
+                const QString tip = tr("🔴 Live — double-click to watch");
                 for (int col = 0; col < m_matchesTree->columnCount(); ++col)
                 {
                     matchRow->setForeground(col, live);
@@ -3085,9 +3093,9 @@ void RollbackLobbyDialog::refreshRoomRow(QTreeWidgetItem* item, const LobbyClien
     item->setForeground(2, QColor(pingHex(pingMs)));
     item->setData(2, Qt::UserRole, pingMs);
     item->setToolTip(2,
-        pingMeasured  ? QStringLiteral("Your measured ping to the host")
-        : pingMs >= 0 ? QStringLiteral("Estimated from regions — click the row to measure")
-                      : QStringLiteral("Click the row to measure your ping to the host"));
+        pingMeasured  ? tr("Your measured ping to the host")
+        : pingMs >= 0 ? tr("Estimated from regions — click the row to measure")
+                      : tr("Click the row to measure your ping to the host"));
 
     // Seats: green when there's room to join, red when full.
     const bool full = (r.maxPlayers > 0 && r.players >= r.maxPlayers);
@@ -3138,8 +3146,8 @@ void RollbackLobbyDialog::onCreateRoomClicked()
         return;
     if (m_currentRoomId != 0)
     {
-        QMessageBox::information(this, "Already in a room",
-            "Leave your current room before creating a new one.");
+        QMessageBox::information(this, tr("Already in a room"),
+            tr("Leave your current room before creating a new one."));
         return;
     }
     if (m_createRoomDialog)
@@ -3155,8 +3163,8 @@ void RollbackLobbyDialog::onCreateRoomClicked()
     const QString romMd5  = romData.value("md5").toString();
     if (romMd5.isEmpty())
     {
-        QMessageBox::information(this, "Select a game",
-            "Pick a game from the dropdown before creating a room.");
+        QMessageBox::information(this, tr("Select a game"),
+            tr("Pick a game from the dropdown before creating a room."));
         return;
     }
 
@@ -3197,7 +3205,7 @@ void RollbackLobbyDialog::onRoomCreated(quint64 roomId)
         m_createRoomDialog->accept();
     }
     enterRoom(roomId,
-        QStringLiteral("<i>Room created — waiting for players</i>"));
+        QString("<i>%1</i>").arg(tr("Room created — waiting for players")));
 }
 
 void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
@@ -3208,23 +3216,23 @@ void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
         roomName = it.value().name;
     enterRoom(roomId,
         roomName.isEmpty()
-            ? QStringLiteral("<i>You joined the room</i>")
-            : QString("<i>You joined &quot;%1&quot;</i>").arg(roomName.toHtmlEscaped()));
+            ? tr("<i>You joined the room</i>")
+            : QString(tr("<i>You joined &quot;%1&quot;</i>")).arg(roomName.toHtmlEscaped()));
 }
 
 void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
 {
     QString human = reason;
-    if (reason == "wrong_password")    human = "Wrong password.";
-    else if (reason == "full")         human = "Room is full.";
-    else if (reason == "already_started") human = "That game has already started.";
-    else if (reason == "already_in_room") human = "You're already in a room.";
-    else if (reason == "room_not_found")  human = "That room no longer exists.";
+    if (reason == "wrong_password")    human = tr("Wrong password.");
+    else if (reason == "full")         human = tr("Room is full.");
+    else if (reason == "already_started") human = tr("That game has already started.");
+    else if (reason == "already_in_room") human = tr("You're already in a room.");
+    else if (reason == "room_not_found")  human = tr("That room no longer exists.");
     else if (reason == "kicked_from_room") human =
-        "You were removed from this room and cannot rejoin.";
+        tr("You were removed from this room and cannot rejoin.");
     else if (reason == "kicked_recently") human =
-        "You were recently removed from this room. Try again in a moment.";
-    QMessageBox::warning(this, "Couldn't join room", human);
+        tr("You were recently removed from this room. Try again in a moment.");
+    QMessageBox::warning(this, tr("Couldn't join room"), human);
 }
 
 void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatLine)
@@ -3247,7 +3255,7 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     // sends quickMatchCancel() (a no-op once we're out of the queue) instead of
     // quickMatchJoin() — leaving the button unable to start a new search.
     m_quickMatchActive = false;
-    if (m_quickMatchBtn) m_quickMatchBtn->setText("⚡  Quick Match");
+    if (m_quickMatchBtn) m_quickMatchBtn->setText(tr("⚡  Quick Match"));
 
     // Restore only our selected mode/value, never an Auto calculation or a
     // remote player's delay. With remembering disabled, each room uses Auto.
@@ -3307,8 +3315,8 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
     if (m_client->state() != LobbyClient::ConnectionState::Connected) return;
     if (m_currentRoomId != 0)
     {
-        QMessageBox::information(this, "Already in a room",
-            "Leave your current room before joining another.");
+        QMessageBox::information(this, tr("Already in a room"),
+            tr("Leave your current room before joining another."));
         return;
     }
 
@@ -3327,8 +3335,8 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
         }
         else
         {
-            QMessageBox::information(this, "Match in progress",
-                "That room is already playing — try another or wait for it to finish.");
+            QMessageBox::information(this, tr("Match in progress"),
+                tr("That room is already playing — try another or wait for it to finish."));
         }
         return;
     }
@@ -3339,9 +3347,9 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
     // guarantees the ROM resolves at match start too.
     if (!summary.romMd5.isEmpty() && localRomPathForMd5(summary.romMd5).isEmpty())
     {
-        QMessageBox::warning(this, "ROM not found",
-            QString("You don't have the ROM for \"%1\" (%2).\n\n"
-                    "Add it to your ROM directory and refresh the list, then try again.")
+        QMessageBox::warning(this, tr("ROM not found"),
+            QString(tr("You don't have the ROM for \"%1\" (%2).\n\n"
+                    "Add it to your ROM directory and refresh the list, then try again."))
                 .arg(summary.name, summary.romName));
         return;
     }
@@ -3350,8 +3358,8 @@ void RollbackLobbyDialog::onRoomDoubleClicked(QTreeWidgetItem* item, int /*colum
     if (summary.hasPassword)
     {
         bool ok = false;
-        password = QInputDialog::getText(this, "Password required",
-            QString("Enter password for \"%1\":").arg(summary.name),
+        password = QInputDialog::getText(this, tr("Password required"),
+            QString(tr("Enter password for \"%1\":")).arg(summary.name),
             QLineEdit::Password, QString(), &ok);
         if (!ok) return;
     }
@@ -3364,15 +3372,15 @@ void RollbackLobbyDialog::onMatchDoubleClicked(QTreeWidgetItem* item, int /*colu
     if (m_client->state() != LobbyClient::ConnectionState::Connected) return;
     if (m_currentRoomId != 0)
     {
-        QMessageBox::information(this, "In a room",
-            "Leave your room before watching a match.");
+        QMessageBox::information(this, tr("In a room"),
+            tr("Leave your room before watching a match."));
         return;
     }
     const quint64 matchId = item->data(0, Qt::UserRole + 1).toULongLong();
     if (matchId == 0)
     {
-        QMessageBox::information(this, "Not live",
-            "That match isn't streaming a live replay, so there's nothing to watch.");
+        QMessageBox::information(this, tr("Not live"),
+            tr("That match isn't streaming a live replay, so there's nothing to watch."));
         return;
     }
     QString romMd5;
@@ -3389,7 +3397,7 @@ void RollbackLobbyDialog::onMatchDoubleClicked(QTreeWidgetItem* item, int /*colu
 
 void RollbackLobbyDialog::onRoomCreateFailed(const QString& reason)
 {
-    QMessageBox::warning(this, "Couldn't create room", reason);
+    QMessageBox::warning(this, tr("Couldn't create room"), reason);
 }
 
 void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
@@ -3450,7 +3458,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     if (prevState == "in_game" && state != "in_game" &&
         (m_emulationActive || m_awaitingEmulationStart))
     {
-        appendChatSystemLine(CHANNEL_ROOM, "Host ended the match — stopping game.");
+        appendChatSystemLine(CHANNEL_ROOM, tr("Host ended the match — stopping game."));
         emit closeMatchRequested();
     }
 
@@ -3460,8 +3468,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             (m_emulationActive || m_awaitingEmulationStart));
         m_dropBtn->setToolTip(
             iAmHost
-                ? "Stop the match for everyone in the room."
-                : "Drop out of the match. Other players keep playing.");
+                ? tr("Stop the match for everyone in the room.")
+                : tr("Drop out of the match. Other players keep playing."));
     }
     if (m_leaveBtn) m_leaveBtn->setEnabled(true);
 
@@ -3475,17 +3483,15 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
 
     const QJsonArray players = roomState.value("players").toArray();
     m_seatCountLabel->setText(QString("(%1/%2)").arg(players.size()).arg(maxPlayers));
-    m_roomRegionLabel->setText(QString("<b>Region:</b> %1").arg(romRegion.toHtmlEscaped()));
+    m_roomRegionLabel->setText(QString("<b>%1:</b> %2").arg(tr("Region"),romRegion.toHtmlEscaped()));
     m_roomRegionLabel->setVisible(!romRegion.isEmpty());
 
     // Delay remains local to every player. Prediction mirrors authoritative
     // room state and is editable only by the host while waiting.
     if (m_delayCombo && m_predictionCombo)
     {
-        static const QString tipDisabledMidMatch = QStringLiteral(
-            "Can't change settings during a match.");
-        static const QString tipHostControlled = QStringLiteral(
-            "Only the room host can change the prediction window.");
+        static const QString tipDisabledMidMatch = tr("Can't change settings during a match.");
+        static const QString tipHostControlled = tr("Only the room host can change the prediction window.");
 
         const bool delayEditable = state == "waiting";
         const bool predictionEditable = delayEditable && iAmHost;
@@ -3644,12 +3650,12 @@ void RollbackLobbyDialog::updateRecordingControls()
     if (!editable)
     {
         m_recordCheck->setToolTip(
-            QStringLiteral("Recording can't be changed during a match."));
+            tr("Recording can't be changed during a match."));
     }
     else
     {
         m_recordCheck->setToolTip(
-            QStringLiteral("Record this match to a .krec file on your PC.\n"
+            tr("Record this match to a .krec file on your PC.\n"
                            "Independent of Live Replay — each player chooses whether to save a copy."));
     }
 
@@ -3657,18 +3663,18 @@ void RollbackLobbyDialog::updateRecordingControls()
     if (!iAmHost)
     {
         m_broadcastCheck->setToolTip(liveReplayEnabled
-            ? QStringLiteral("The room host will stream this match as a live replay.")
-            : QStringLiteral("The room host has live replay streaming turned off."));
+            ? tr("The room host will stream this match as a live replay.")
+            : tr("The room host has live replay streaming turned off."));
     }
     else if (!editable)
     {
         m_broadcastCheck->setToolTip(
-            QStringLiteral("The live replay choice is locked while a match is running."));
+            tr("The live replay choice is locked while a match is running."));
     }
     else
     {
         m_broadcastCheck->setToolTip(
-            QStringLiteral("Let others in the lobby watch this match live.\n"
+            tr("Let others in the lobby watch this match live.\n"
                            "A local replay is saved only if Record locally is checked."));
     }
 }
@@ -3704,10 +3710,10 @@ void RollbackLobbyDialog::refreshStartButton()
 
     m_startBtn->setEnabled(canStart);
     m_startBtn->setToolTip(
-        !iAmHost         ? QStringLiteral("Only the host can start the game.")
-        : !waiting       ? QStringLiteral("Already in a match.")
-        : !enoughPlayers ? QStringLiteral("Need at least 2 players to start.")
-        : !pingsReady    ? QStringLiteral("Measuring every player-to-player path…")
+        !iAmHost         ? tr("Only the host can start the game.")
+        : !waiting       ? tr("Already in a match.")
+        : !enoughPlayers ? tr("Need at least 2 players to start.")
+        : !pingsReady    ? tr("Measuring every player-to-player path…")
                          : QString());
 }
 
@@ -3756,7 +3762,7 @@ void RollbackLobbyDialog::notifyEmulationStarted()
         CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
     }
     m_client->reportMatchConnected(m_currentMatchId, 0);
-    appendChatSystemLine(CHANNEL_ROOM, "Match started — playing now.");
+    appendChatSystemLine(CHANNEL_ROOM, tr("Match started — playing now."));
 }
 
 void RollbackLobbyDialog::notifyEmulationFinished()
@@ -3825,11 +3831,11 @@ void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int s
         if (it != users.end() && !it->username.isEmpty())
             who = it->username;
     }
-    const QString suffix = reason.isEmpty() ? QString("left") : reason;
+    const QString suffix = reason.isEmpty() ? QString(tr("left")) : reason;
     const QString line = slot > 0
-        ? QString("%1 (P%2) dropped (%3) — controller %2 will go idle.")
+        ? QString(tr("%1 (P%2) dropped (%3) — controller %2 will go idle."))
               .arg(who).arg(slot).arg(suffix)
-        : QString("%1 dropped (%2).").arg(who, suffix);
+        : QString(tr("%1 dropped (%2).")).arg(who, suffix);
     appendChatSystemLine(CHANNEL_ROOM, line);
 }
 
@@ -3999,8 +4005,8 @@ void RollbackLobbyDialog::onPingProbeFailed(quint64 userId)
             name = it->username;
     }
     appendChatSystemLine(CHANNEL_ROOM,
-        QString("Couldn't reach %1 to measure ping — their connection may not allow "
-                "a direct link. Start stays disabled until it succeeds.").arg(name));
+        QString(tr("Couldn't reach %1 to measure ping — their connection may not allow "
+                "a direct link. Start stays disabled until it succeeds.")).arg(name));
 }
 
 void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
@@ -4171,14 +4177,14 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
 
     // Tell the user why they left, if it wasn't their own doing.
     if (reason == QLatin1String("kicked"))
-        QMessageBox::information(this, "Removed from match",
-            "You were removed from the lobby by the host.");
+        QMessageBox::information(this, tr("Removed from match"),
+            tr("You were removed from the lobby by the host."));
     else if (reason == QLatin1String("host_left"))
-        QMessageBox::information(this, "Room closed",
-            "The host closed the room.");
+        QMessageBox::information(this, tr("Room closed"),
+            tr("The host closed the room."));
     else if (reason == QLatin1String("admin_closed"))
-        QMessageBox::information(this, "Room closed",
-            "The room was closed by a moderator.");
+        QMessageBox::information(this, tr("Room closed"),
+            tr("The room was closed by a moderator."));
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -4220,7 +4226,7 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
         appendChatLine(CHANNEL_SPECTATE, QString("[%1] <b>%2:</b> %3")
             .arg(ts, msg.fromUsername.toHtmlEscaped(), msg.message.toHtmlEscaped()));
         if (m_chatTabs->currentIndex() != kChatTabSpectators)
-            m_chatTabs->setTabText(kChatTabSpectators, "Spectators •");
+            m_chatTabs->setTabText(kChatTabSpectators, tr("Spectators •"));
         emit spectatorChatReceived(msg.fromUsername, msg.message);
         return;
     }
@@ -4235,12 +4241,14 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
     // The "@notify" token is a trigger, not content — hide it from the
     // rendered line. A bare "@notify" still needs something to show on the bar.
     QString displayMessage = msg.message;
+    if (msg.channel == CHANNEL_ROOM && msg.message == QStringLiteral("I dropped from the game."))
+        displayMessage = tr("I dropped from the game.");
     if (notifyPing)
     {
         displayMessage.remove(QStringLiteral("@notify"));
         displayMessage = displayMessage.simplified();
         if (displayMessage.isEmpty())
-            displayMessage = QStringLiteral("📣 Attention!");
+            displayMessage = tr("📣 Attention!");
     }
 
     const auto ts = QDateTime::fromMSecsSinceEpoch(msg.serverTimeMs).toString("hh:mm");
@@ -4497,8 +4505,8 @@ void RollbackLobbyDialog::onQuickMatchClicked()
     {
         if (m_currentRoomId != 0)
         {
-            QMessageBox::information(this, "Already in a room",
-                "Leave your current room before searching for a match.");
+            QMessageBox::information(this, tr("Already in a room"),
+                tr("Leave your current room before searching for a match."));
             return;
         }
 
@@ -4507,9 +4515,9 @@ void RollbackLobbyDialog::onQuickMatchClicked()
         const QString romMd5  = romData.value("md5").toString();
         if (romMd5.isEmpty())
         {
-            QMessageBox::information(this, "Select a game",
-                "Pick a game from the dropdown before searching — Quick Match "
-                "only pairs you with players searching for that same ROM.");
+            QMessageBox::information(this, tr("Select a game"),
+                tr("Pick a game from the dropdown before searching — Quick Match "
+                "only pairs you with players searching for that same ROM."));
             return;
         }
         qInfo() << "lobby: quick match search" << "game" << romName << "md5" << romMd5;
@@ -4525,14 +4533,14 @@ void RollbackLobbyDialog::onQuickMatchStatusChanged(bool searching, int queueSiz
     if (searching)
     {
         const QString suffix = queueSize > 1
-            ? QString(" (%1 in queue)").arg(queueSize)
-            : QString(" (searching…)");
-        m_quickMatchBtn->setText("✕  Cancel Quick Match" + suffix);
+            ? QString(tr(" (%1 in queue)")).arg(queueSize)
+            : QString(tr(" (searching…)"));
+        m_quickMatchBtn->setText(tr("✕  Cancel Quick Match") + suffix);
         if (m_createRoomBtn) m_createRoomBtn->setEnabled(false);
     }
     else
     {
-        m_quickMatchBtn->setText("⚡  Quick Match");
+        m_quickMatchBtn->setText(tr("⚡  Quick Match"));
         if (m_createRoomBtn)
             m_createRoomBtn->setEnabled(m_client->state() == LobbyClient::ConnectionState::Connected
                                         && m_currentRoomId == 0);
@@ -4546,7 +4554,8 @@ void RollbackLobbyDialog::startBroadcast(quint64 matchId)
     if (m_broadcasting) return;
     if (!m_client->sendBroadcastBegin(matchId))
     {
-        appendChatSystemLine(CHANNEL_ROOM, "Live Replay unavailable: the match settings are missing or too large to sync.");
+        appendChatSystemLine(CHANNEL_ROOM,
+            tr("Live Replay unavailable: the match settings are missing or too large to sync."));
         return;
     }
     m_broadcasting = true;
@@ -4562,7 +4571,7 @@ void RollbackLobbyDialog::startBroadcast(quint64 matchId)
     });
     m_broadcastDrainTimer->start();
     emit liveReplayViewerCountChanged(0, false);
-    appendChatSystemLine(CHANNEL_ROOM, "Live Replay on — others can watch this match.");
+    appendChatSystemLine(CHANNEL_ROOM, tr("Live Replay on — others can watch this match."));
 }
 
 void RollbackLobbyDialog::stopBroadcast()
@@ -4649,9 +4658,9 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
         romPath = localRomPathForMd5(romMd5);
         if (romPath.isEmpty())
         {
-            QMessageBox::warning(this, "ROM not found",
-                QString("You don't have the ROM this match is using (%1).\n\n"
-                        "Add it to your ROM directory and refresh the list, then try again.")
+            QMessageBox::warning(this, tr("ROM not found"),
+                QString(tr("You don't have the ROM this match is using (%1).\n\n"
+                        "Add it to your ROM directory and refresh the list, then try again."))
                     .arg(gameName));
             return;
         }
@@ -4663,7 +4672,7 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
     m_chatViewSpectate->clear();
     setSpectatorChatVisible(true);
     emit spectateLaunch(matchId, gameName, romPath);
-    appendChatSystemLine(CHANNEL_SPECTATE, "Connecting to live replay…");
+    appendChatSystemLine(CHANNEL_SPECTATE, tr("Connecting to live replay…"));
 }
 
 void RollbackLobbyDialog::stopSpectating()
@@ -4678,8 +4687,8 @@ void RollbackLobbyDialog::stopSpectating()
 
 void RollbackLobbyDialog::setSpectatorChatVisible(bool visible)
 {
-    m_chatHeader->setText(visible ? "CHAT" : "LOBBY CHAT");
-    m_chatTabs->setTabText(kChatTabSpectators, "Spectators");
+    m_chatHeader->setText(visible ? tr("CHAT") : tr("LOBBY CHAT"));
+    m_chatTabs->setTabText(kChatTabSpectators, tr("Spectators"));
     m_chatTabs->setCurrentIndex(visible ? kChatTabSpectators : kChatTabLobby);
     m_chatTabs->setVisible(visible);
 }
@@ -4700,7 +4709,7 @@ void RollbackLobbyDialog::onSpectateBegan(quint64 matchId, const QByteArray& man
     // The session boundary: everything on the wire before this is leftover from a
     // prior watch of this same match. Arm the stream now; keyframe + tail follow.
     m_spectateStreamArmed = true;
-    appendChatSystemLine(CHANNEL_SPECTATE, "Watching — buffering the match…");
+    appendChatSystemLine(CHANNEL_SPECTATE, tr("Watching — buffering the match…"));
 }
 
 void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset)
@@ -4733,11 +4742,11 @@ void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reaso
     setSpectatorChatVisible(false);
     emit liveReplayViewerCountCleared();
     const QString human =
-        reason == "not_broadcasting" ? QStringLiteral("That live replay isn't available anymore.") :
-        reason == "ended"            ? QStringLiteral("That live replay just ended.") :
-        reason == "invalid_manifest" ? QStringLiteral("The live replay's cheat settings are missing or invalid. The host and lobby server need to support spectator cheat sync.") :
-                                       QStringLiteral("Couldn't watch: %1").arg(reason);
-    QMessageBox::information(this, "Live Replay", human);
+        reason == "not_broadcasting" ? tr("That live replay isn't available anymore.") :
+        reason == "ended"            ? tr("That live replay just ended.") :
+        reason == "invalid_manifest" ? tr("The live replay's cheat settings are missing or invalid. The host and lobby server need to support spectator cheat sync.") :
+                                       tr("Couldn't watch: %1").arg(reason);
+    QMessageBox::information(this, tr("Live Replay"), human);
     emit spectateStreamClosed(reason);
 }
 
@@ -4781,7 +4790,7 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
         appendChatSystemLine(CHANNEL_ROOM, reason);
         CoreAddCallbackMessage(CoreDebugMessageType::Error, reason.toUtf8().constData());
     }
-    applyRoomStateBadge("Pre-match start failed", QString(statusColors().fail));
+    applyRoomStateBadge(tr("Pre-match start failed"), QString(statusColors().fail));
 
     const quint64 matchId = m_currentMatchId;
     m_awaitingEmulationStart = false;
@@ -4815,7 +4824,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         {
             m_iceWaitingMatchId = matchId;
             m_iceMatchDeadlineMs = nowMs + 15'000;
-            appendChatSystemLine(CHANNEL_ROOM, "Negotiating direct ICE connections...");
+            appendChatSystemLine(CHANNEL_ROOM, tr("Negotiating direct ICE connections..."));
         }
         if (unsupported || nowMs >= m_iceMatchDeadlineMs)
         {
@@ -4824,11 +4833,11 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
             m_iceWaitingMatchId = 0;
             m_iceMatchDeadlineMs = 0;
             abortMatchStart(unsupported
-                ? QStringLiteral("Match start failed: %1").arg(iceError)
-                : QStringLiteral("Match start failed: direct ICE negotiation timed out. No TURN relay is configured."));
+                ? tr("Match start failed: %1").arg(iceError)
+                : tr("Match start failed: direct ICE negotiation timed out. No TURN relay is configured."));
             return;
         }
-        applyRoomStateBadge("Negotiating ICE…", stateHex("connecting", isDarkTheme()));
+        applyRoomStateBadge(tr("Negotiating ICE…"), stateHex("connecting", isDarkTheme()));
         QTimer::singleShot(100, this, [this, matchId, peers]() {
             if (m_iceWaitingMatchId == matchId)
                 onMatchBegin(matchId, peers);
@@ -4838,7 +4847,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
 
-    const QString line = QString("Match #%1 starting with %2 player(s)").arg(matchId).arg(peers.size());
+    const QString line = QString(tr("Match #%1 starting with %2 player(s)")).arg(matchId).arg(peers.size());
     appendChatSystemLine(CHANNEL_LOBBY, line);
     appendChatSystemLine(CHANNEL_ROOM,  line);
 
@@ -4849,14 +4858,14 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         {
             const int worst = worstLocalPeerPingMs();
             delayMsg = worst >= 0
-                ? QStringLiteral("Your frame delay: %1 (auto, from %2 ms ping) · prediction %3")
+                ? tr("Your frame delay: %1 (auto, from %2 ms ping) · prediction %3")
                       .arg(m_currentRoomDelay).arg(worst).arg(m_currentRoomPrediction)
-                : QStringLiteral("Your frame delay: %1 (auto) · prediction %2")
+                : tr("Your frame delay: %1 (auto) · prediction %2")
                       .arg(m_currentRoomDelay).arg(m_currentRoomPrediction);
         }
         else
         {
-            delayMsg = QStringLiteral("Your frame delay: %1 · prediction %2")
+            delayMsg = tr("Your frame delay: %1 · prediction %2")
                            .arg(m_currentRoomDelay).arg(m_currentRoomPrediction);
         }
         appendChatSystemLine(CHANNEL_ROOM, delayMsg);
@@ -4871,7 +4880,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // the awaiting flag was set and left Drop disabled.
     if (m_startBtn) m_startBtn->setEnabled(false);
     if (m_dropBtn)  m_dropBtn->setEnabled(true);
-    applyRoomStateBadge("Connecting…", stateHex("connecting", isDarkTheme()));
+    applyRoomStateBadge(tr("Connecting…"), stateHex("connecting", isDarkTheme()));
 
     CoreAddCallbackMessage(CoreDebugMessageType::Info,
         QString("Rollback lobby MATCH_BEGIN: match=%1 peers=%2 self=%3 roomGame='%4' delay=%5 prediction=%6 transport=ice")
@@ -4907,7 +4916,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     if (!foundLocal)
     {
-        abortMatchStart("Match start failed: missing local peer.");
+        abortMatchStart(tr("Match start failed: missing local peer."));
         return;
     }
 
@@ -4950,26 +4959,26 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     if (remotePeers.isEmpty())
     {
-        abortMatchStart("Match start failed: missing remote peer.");
+        abortMatchStart(tr("Match start failed: missing remote peer."));
         return;
     }
 
     const QString localRomFile = localRomPathForMd5(m_currentRoomMd5);
     if (localRomFile.isEmpty())
     {
-        abortMatchStart(QString("Match start failed: you don't have the ROM for %1.").arg(m_currentRoomGame));
+        abortMatchStart(QString(tr("Match start failed: you don't have the ROM for %1.")).arg(m_currentRoomGame));
         return;
     }
 
-    appendChatSystemLine(CHANNEL_ROOM, "Synchronizing pre-match settings...");
+    appendChatSystemLine(CHANNEL_ROOM, tr("Synchronizing pre-match settings..."));
     QString prematchError;
     if (!m_client->syncPrematchManifest(peers, local.slot, m_currentRoomHostId,
                                         localRomFile, prematchError))
     {
-        abortMatchStart(prematchError.isEmpty() ? QStringLiteral("Pre-match sync failed.") : prematchError);
+        abortMatchStart(prematchError.isEmpty() ? tr("Pre-match sync failed.") : prematchError);
         return;
     }
-    appendChatSystemLine(CHANNEL_ROOM, "Pre-match sync complete.");
+    appendChatSystemLine(CHANNEL_ROOM, tr("Pre-match sync complete."));
 
     // Share the exact settings just synced to the players. Arm the stream sink
     // before matchReady begins capture, leaving local recording independent.

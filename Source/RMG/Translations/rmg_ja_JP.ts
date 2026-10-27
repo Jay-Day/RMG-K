@@ -1261,7 +1261,11 @@ Try connecting the adapter to a different USB port, preferably directly on your 
 network stats so you can see which player's input stopped arriving. Writes nothing
 during smooth play, so the log stays tiny — unlike verbose stats, which writes every
 frame. Safe to leave on; one player logging is enough to identify the culprit.</source>
-            <translation>ロールバックセッションが停止（数秒間フリーズ）したときだけ、プレイヤーごとのネットワーク統計を記録します。どのプレイヤーから入力が届かなくなったか確認できます。正常に動作している間は何も記録しないため、毎フレーム記録する詳細統計ログよりファイルが小さくなります。常時有効にしても問題ありません。原因特定には1人が記録すれば十分です。</translation>
+            <translation>数秒間のフリーズが発生したときだけ記録します。
+プレイヤーごとの通信統計を使って、入力が途絶えた相手を特定できます。
+通常のプレイ中は記録しないため、ログは小さく保たれます。
+常時有効にしても問題ありません。
+対戦者のうち1人が有効にすれば診断できます。</translation>
         </message>
         <message>
             <source>Enable pacing trace logging</source>
@@ -1270,7 +1274,10 @@ frame. Safe to leave on; one player logging is enough to identify the culprit.</
         <message>
             <source>Writes detailed frontend and core pacing CSV logs when a rollback session ends.
 Enable this only while diagnosing frame pacing; it is disabled by default.</source>
-            <translation>ロールバックセッション終了時にフロントエンドとコアのペーシング詳細をCSVに記録します。フレームペーシングの診断時のみ有効にしてください。既定では無効です。</translation>
+            <translation>対戦終了時に、フロントエンドとコアの
+ペーシングに関する詳細なCSVログを出力します。
+フレーム進行の問題を調べるときだけ有効にしてください。
+通常は無効のままで構いません。</translation>
         </message>
         <message>
             <source>Enable verbose PIF input logging</source>
@@ -1289,7 +1296,12 @@ Enable this only while diagnosing frame pacing; it is disabled by default.</sour
 candidate gathering, signaling, connectivity checks, and peer pings. Candidate
 addresses are included, but ICE credentials are redacted. Only useful when
 debugging connection problems. Applies the next time you connect to the lobby.</source>
-            <translation>ICE/STUN候補の収集、シグナリング、接続確認、ピアへのpingを記録した詳細な lobby_ping_*.log ファイルをLogsフォルダーに作成します。候補アドレスは記録されますが、ICE認証情報は伏せられます。接続問題の診断にのみ使用してください。次回ロビー接続時に反映されます。</translation>
+            <translation>Logsフォルダーにlobby_ping_*.logを作成し、
+ICE/STUN候補の収集、シグナリング、接続確認、
+ピアへのPingを記録します。
+候補アドレスは記録されますが、ICE認証情報は伏せられます。
+接続問題の診断時のみ使用してください。
+次回ロビー接続時から反映されます。</translation>
         </message>
         <message>
             <source>Hide my location from other players</source>
@@ -1300,7 +1312,12 @@ debugging connection problems. Applies the next time you connect to the lobby.</
 hover tooltip, for everyone on the server. Region-based ping estimates still
 work. Players you actually play with still exchange connection addresses —
 this hides the flag, not your traffic. Applies the next time you connect.</source>
-            <translation>ネットプレイロビーでは、他のプレイヤーに自分の国旗と国名を表示しません。地域に基づくPing推定は引き続き機能します。実際に対戦する相手とは接続アドレスを引き続き交換します。この設定で隠れるのは国旗・国名の表示であり、通信そのものではありません。次回ロビー接続時に反映されます。</translation>
+            <translation>ロビー一覧やマウスオーバー時のツールチップで、
+他のプレイヤーに国旗・国名を表示しません。
+地域に基づくPing推定は引き続き利用できます。
+実際に対戦する相手とは接続アドレスを交換します。
+隠すのは国旗・国名だけで、通信自体は隠せません。
+次回ロビー接続時から反映されます。</translation>
         </message>
         <message>
             <source>Rollback</source>
@@ -1325,6 +1342,18 @@ this hides the flag, not your traffic. Applies the next time you connect.</sourc
         <message>
             <source>**Use Core Plugin Settings**</source>
             <translation>**コアのプラグイン設定を使用**</translation>
+        </message>
+        <message><source>Remember my last input delay</source>
+            <translation>前回のフレーム遅延を記憶する</translation>
+        </message>
+        <message><source>Reuse your last frame delay choice when hosting or joining a rollback lobby room,
+including Quick Match. Choosing Auto remembers Auto instead of its calculated value.
+When disabled, each new room starts on Auto. Applies the next time you enter a room.</source>
+            <translation>ルームの作成・参加時に、前回のフレーム遅延を再利用します。
+クイックマッチも対象です。
+「自動」を選ぶと、計算値ではなく「自動」を記憶します。
+無効にすると、新しいルームでは毎回「自動」に戻ります。
+次回ルーム参加時から反映されます。</translation>
         </message>
     </context>
     <context>
@@ -2138,4 +2167,958 @@ Use Default mode anyway?</source>
             <translation>スロット%1 - %2</translation>
         </message>
     </context>
-</TS>
+<context><name>RollbackLobbyDialog</name>
+        <message>
+            <source>Auto (%1 f)</source>
+            <translation>自動（%1フレーム）</translation>
+        </message>
+        <message>
+            <source>HOST</source>
+            <translation>ホスト</translation>
+        </message>
+        <message>
+            <source>Frame delay: %1f</source>
+            <translation>フレーム遅延: %1フレーム</translation>
+        </message>
+        <message>
+            <source>unreachable</source>
+            <translation>接続不可</translation>
+        </message>
+        <message>
+            <source>retrying %2/%3…</source>
+            <translation>再試行中（%2/%3）…</translation>
+        </message>
+        <message>
+            <source>Connection attempt %2/%3…</source>
+            <translation>接続試行中（%2/%3）…</translation>
+        </message>
+        <message>
+            <source>connection failed</source>
+            <translation>接続失敗</translation>
+        </message>
+        <message>
+            <source>Offline</source>
+            <translation>オフライン</translation>
+        </message>
+        <message>
+            <source>Connecting</source>
+            <translation>接続中</translation>
+        </message>
+        <message>
+            <source>Authenticating</source>
+            <translation>認証中</translation>
+        </message>
+        <message>
+            <source>Online</source>
+            <translation>オンライン</translation>
+        </message>
+        <message>
+            <source>Connection failed</source>
+            <translation>接続失敗</translation>
+        </message>
+        <message>
+            <source>Unknown</source>
+            <translation>不明</translation>
+        </message>
+        <message>
+            <source>Waiting</source>
+            <translation>待機中</translation>
+        </message>
+        <message>
+            <source>Starting</source>
+            <translation>開始準備中</translation>
+        </message>
+        <message>
+            <source>In Game</source>
+            <translation>ゲーム中</translation>
+        </message>
+        <message>
+            <source>Finished</source>
+            <translation>終了</translation>
+        </message>
+        <message>
+            <source>Wi-Fi</source>
+            <translation>Wi-Fi</translation>
+        </message>
+        <message>
+            <source>Ethernet</source>
+            <translation>有線LAN</translation>
+        </message>
+        <message>
+            <source>Cellular</source>
+            <translation>モバイル回線</translation>
+        </message>
+        <message>
+            <source>Bluetooth</source>
+            <translation>Bluetooth</translation>
+        </message>
+        <message>
+            <source>Connection type unknown</source>
+            <translation>接続方式不明</translation>
+        </message>
+        <message>
+            <source>Country: %1</source>
+            <translation>国: %1</translation>
+        </message>
+    </context>
+    <context><name>UserInterface::Dialog::LobbyConnectDialog</name>
+        <message>
+            <source>Welcome to Netplay!</source>
+            <translation>ネットプレイへようこそ！</translation>
+        </message>
+        <message>
+            <source>2-20 characters: letters, numbers, _ - .</source>
+            <translation>2～20文字: 英数字、_、-、.</translation>
+        </message>
+        <message>
+            <source>Username must be at least 2 characters.</source>
+            <translation>ユーザー名は2文字以上で入力してください。</translation>
+        </message>
+        <message>
+            <source>Join Rollback Netplay</source>
+            <translation>ロールバックネットプレイに参加</translation>
+        </message>
+        <message>
+            <source>Enter a username:</source>
+            <translation>ユーザー名:</translation>
+        </message>
+        <message>
+            <source>Connect</source>
+            <translation>接続</translation>
+        </message>
+    </context>
+    <context><name>UserInterface::Dialog::CreateRoomDialog</name>
+        <message>
+            <source>Create Room</source>
+            <translation>ルームを作成</translation>
+        </message>
+        <message>
+            <source>%1's Room</source>
+            <translation>%1のルーム</translation>
+        </message>
+        <message>
+            <source>My Room</source>
+            <translation>自分のルーム</translation>
+        </message>
+        <message>
+            <source>Room name:</source>
+            <translation>ルーム名:</translation>
+        </message>
+        <message>
+            <source>Game:</source>
+            <translation>ゲーム:</translation>
+        </message>
+        <message>
+            <source>Max players:</source>
+            <translation>最大プレイヤー数:</translation>
+        </message>
+        <message>
+            <source> players</source>
+            <translation>人</translation>
+        </message>
+        <message>
+            <source>Password-protect this room</source>
+            <translation>このルームをパスワードで保護する</translation>
+        </message>
+        <message>
+            <source>Room password</source>
+            <translation>ルームのパスワード</translation>
+        </message>
+        <message>
+            <source>Create</source>
+            <translation>作成</translation>
+        </message>
+        <message>
+            <source>Room name is required.</source>
+            <translation>ルーム名を入力してください。</translation>
+        </message>
+        <message>
+            <source>Add a ROM to your library before creating a room.</source>
+            <translation>ルームを作成する前にROMをライブラリへ追加してください。</translation>
+        </message>
+        <message>
+            <source>Password cannot be empty when enabled.</source>
+            <translation>パスワード保護を有効にした場合は、パスワードを入力してください。</translation>
+        </message>
+        <message>
+            <source>Creating room...</source>
+            <translation>ルームを作成中...</translation>
+        </message>
+        <message>
+            <source>You're already in a room. Leave it first.</source>
+            <translation>すでにルームに参加しています。先に退出してください。</translation>
+        </message>
+        <message>
+            <source>Server rejected the room settings.</source>
+            <translation>サーバーがルーム設定を拒否しました。</translation>
+        </message>
+        <message>
+            <source>Couldn't create room: %1</source>
+            <translation>ルームを作成できませんでした: %1</translation>
+        </message>
+    </context>
+    <context><name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>Auto-match with another player searching for the selected game.
+Uses Auto frame delay unless remembering your last choice is enabled.
+Your frame delay can be changed during the warmup. Prediction defaults to 7 frames.</source>
+            <translation>選択したゲームを検索中のプレイヤーと自動的にマッチングします。
+前回のフレーム遅延を記憶する設定が有効な場合は前回の選択を、無効な場合は自動設定を使用します。
+ウォームアップ中は自分のフレーム遅延を変更できます。予測の初期値は7フレームです。</translation>
+        </message>
+        <message>
+            <source>Same game only</source>
+            <translation>同じゲームのみ</translation>
+        </message>
+        <message>
+            <source>Only show rooms and matches for the selected game.</source>
+            <translation>選択したゲームのルームと対戦だけを表示します。</translation>
+        </message>
+        <message>
+            <source>Your frame delay:</source>
+            <translation>自分のフレーム遅延:</translation>
+        </message>
+        <message>
+            <source>Maximum frames the rollback engine may predict ahead.
+Higher prediction tolerates longer network stalls but can produce larger rollbacks.
+Default: 7 frames.
+
+Room setting — only the host may change this value.</source>
+            <translation>ロールバックエンジンが先読みできる最大フレーム数です。
+予測を増やすと長いネットワーク停止に耐えやすくなりますが、ロールバックが大きくなる場合があります。
+既定値: 7フレーム。
+
+ルーム設定です。この値を変更できるのはホストのみです。</translation>
+        </message>
+        <message>
+            <source>Default (%1 f)</source>
+            <translation>既定値（%1フレーム）</translation>
+        </message>
+        <message>
+            <source>Measuring every player-to-player path…</source>
+            <translation>すべてのプレイヤー間の通信経路を測定中…</translation>
+        </message>
+        <message>
+            <source>Couldn't reach the lobby: %1</source>
+            <translation>ロビーに接続できませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Country: %1</source>
+            <translation>国: %1</translation>
+        </message>
+        <message>
+            <source>Connection: %1</source>
+            <translation>接続: %1</translation>
+        </message>
+        <message>
+            <source>Build: %1</source>
+            <translation>ビルド: %1</translation>
+        </message>
+        <message>
+            <source>Ping: %1 ms</source>
+            <translation>Ping: %1 ms</translation>
+        </message>
+        <message>
+            <source>Ping: ~%1 ms (estimate — click to measure)</source>
+            <translation>Ping: ~%1 ms（推定値 — クリックして測定）</translation>
+        </message>
+        <message>
+            <source>Ping: click to measure</source>
+            <translation>Ping: クリックして測定</translation>
+        </message>
+        <message>
+            <source>Your measured ping to the host</source>
+            <translation>ホストへの実測Ping</translation>
+        </message>
+        <message>
+            <source>Estimated from regions — click the row to measure</source>
+            <translation>地域からの推定値 — 行をクリックして測定</translation>
+        </message>
+        <message>
+            <source>Click the row to measure your ping to the host</source>
+            <translation>行をクリックしてホストへのPingを測定</translation>
+        </message>
+        <message>
+            <source>Frames of input delay added before sending to peer.
+Higher delay = fewer rollbacks but more input latency.
+Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.
+
+Local setting — each player may choose a different value.</source>
+            <translation>相手へ送信する前に追加する入力遅延フレーム数です。
+遅延を大きくするとロールバックは減りますが、入力遅延が増えます。
+推奨値: RTT約80msでは2、約150msでは3～4。
+
+ローカル設定です。各プレイヤーが異なる値を選択できます。</translation>
+        </message>
+        <message>
+            <source>Your RMG-K client is out of date. This lobby requires RMG-K 0.9.13 or vdev-2367 or newer.</source>
+            <translation>RMG-Kクライアントが古いため接続できません。このロビーにはRMG-K 0.9.13、またはvdev-2367以降が必要です。</translation>
+        </message>
+        <message>
+            <source>That username isn't allowed.</source>
+            <translation>そのユーザー名は使用できません。</translation>
+        </message>
+        <message>
+            <source>The lobby is currently full.</source>
+            <translation>ロビーは現在満員です。</translation>
+        </message>
+        <message>
+            <source>You were removed from this room and cannot rejoin.</source>
+            <translation>このルームから退出させられたため、再参加できません。</translation>
+        </message>
+        <message>
+            <source>The room was closed by a moderator.</source>
+            <translation>モデレーターによりルームが閉じられました。</translation>
+        </message>
+        <message>
+            <source>RMG-K Lobby</source>
+            <translation>RMG-K ロビー</translation>
+        </message>
+        <message>
+            <source>RMG-K · Rollback Netplay</source>
+            <translation>RMG-K · ロールバックネットプレイ</translation>
+        </message>
+        <message>
+            <source>Offline</source>
+            <translation>オフライン</translation>
+        </message>
+        <message>
+            <source>Not connected</source>
+            <translation>未接続</translation>
+        </message>
+        <message>
+            <source>User: —</source>
+            <translation>ユーザー: —</translation>
+        </message>
+        <message>
+            <source>You're in a room</source>
+            <translation>ルームに参加中です</translation>
+        </message>
+        <message>
+            <source>Return to Room  →</source>
+            <translation>ルームへ戻る →</translation>
+        </message>
+        <message>
+            <source>⚡  Quick Match</source>
+            <translation>⚡  クイックマッチ</translation>
+        </message>
+        <message>
+            <source>Create Room…</source>
+            <translation>ルームを作成…</translation>
+        </message>
+        <message>
+            <source>Game:</source>
+            <translation>ゲーム:</translation>
+        </message>
+        <message>
+            <source>ACTIVE ROOMS</source>
+            <translation>ルーム一覧</translation>
+        </message>
+        <message>
+            <source>Name</source>
+            <translation>名前</translation>
+        </message>
+        <message>
+            <source>Host</source>
+            <translation>ホスト</translation>
+        </message>
+        <message>
+            <source>ROM</source>
+            <translation>ROM</translation>
+        </message>
+        <message>
+            <source>Seats</source>
+            <translation>参加人数</translation>
+        </message>
+        <message>
+            <source>State</source>
+            <translation>状態</translation>
+        </message>
+        <message>
+            <source>ONGOING MATCHES</source>
+            <translation>進行中の対戦</translation>
+        </message>
+        <message>
+            <source>Players</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>Duration</source>
+            <translation>経過時間</translation>
+        </message>
+        <message>
+            <source>←  Browse Rooms</source>
+            <translation>←  ルーム一覧</translation>
+        </message>
+        <message>
+            <source>Switch to the room list. You stay in your seat — use Leave Room to actually exit.</source>
+            <translation>ルーム一覧へ戻ります。参加状態は維持されます。実際に退出するには「ルームを退出」を使用してください。</translation>
+        </message>
+        <message>
+            <source>Waiting</source>
+            <translation>待機中</translation>
+        </message>
+        <message>
+            <source>Auto</source>
+            <translation>自動</translation>
+        </message>
+        <message>
+            <source>Prediction:</source>
+            <translation>予測:</translation>
+        </message>
+        <message>
+            <source>Live Replay</source>
+            <translation>ライブリプレイ</translation>
+        </message>
+        <message>
+            <source>Record locally</source>
+            <translation>ローカルに保存</translation>
+        </message>
+        <message>
+            <source>Record this match to a .krec file on your PC.
+Independent of Live Replay — each player chooses whether to save a copy.</source>
+            <translation>この対戦をPC上の.krecファイルに保存します。
+ライブリプレイとは独立した設定です。保存するかどうかは各プレイヤーが選べます。</translation>
+        </message>
+        <message>
+            <source>Let others in the lobby watch this match live.
+A local replay is saved only if Record locally is checked.</source>
+            <translation>ロビーの他のユーザーが、この対戦をライブで視聴できるようにします。
+ローカルにリプレイを保存するには「ローカルに保存」を有効にしてください。</translation>
+        </message>
+        <message>
+            <source>SEATS</source>
+            <translation>参加枠</translation>
+        </message>
+        <message>
+            <source>ROOM CHAT</source>
+            <translation>ルームチャット</translation>
+        </message>
+        <message>
+            <source>Message the room…</source>
+            <translation>ルームにメッセージを送信…</translation>
+        </message>
+        <message>
+            <source>Start Game</source>
+            <translation>ゲーム開始</translation>
+        </message>
+        <message>
+            <source>Drop Game</source>
+            <translation>対戦から離脱</translation>
+        </message>
+        <message>
+            <source>Stop playing the current match. If you're the host, the match ends for everyone.</source>
+            <translation>現在の対戦から離脱します。ホストが離脱すると全員の対戦が終了します。</translation>
+        </message>
+        <message>
+            <source>Leave Room</source>
+            <translation>ルームを退出</translation>
+        </message>
+        <message>
+            <source>Leave the room and return to the lobby.</source>
+            <translation>ルームを退出してロビーへ戻ります。</translation>
+        </message>
+        <message>
+            <source>Drag onto another seat to swap players</source>
+            <translation>別の参加枠へドラッグしてプレイヤーを入れ替えます</translation>
+        </message>
+        <message>
+            <source>Waiting…</source>
+            <translation>待機中…</translation>
+        </message>
+        <message>
+            <source>Remove this player from the match</source>
+            <translation>このプレイヤーを対戦から退出させる</translation>
+        </message>
+        <message>
+            <source>Remove player</source>
+            <translation>プレイヤーを退出させる</translation>
+        </message>
+        <message>
+            <source>Remove %1 from the match?</source>
+            <translation>%1を対戦から退出させますか？</translation>
+        </message>
+        <message>
+            <source>this player</source>
+            <translation>このプレイヤー</translation>
+        </message>
+        <message>
+            <source>  (you)</source>
+            <translation>  （あなた）</translation>
+        </message>
+        <message>
+            <source>Message the lobby…</source>
+            <translation>ロビーにメッセージを送信…</translation>
+        </message>
+        <message>
+            <source>LOBBY CHAT</source>
+            <translation>ロビーチャット</translation>
+        </message>
+        <message>
+            <source>Room created — waiting for players</source>
+            <translation>ルームを作成しました。参加者を待っています</translation>
+        </message>
+        <message>
+            <source>&lt;i&gt;You joined the room&lt;/i&gt;</source>
+            <translation>&lt;i&gt;ルームに参加しました&lt;/i&gt;</translation>
+        </message>
+        <message>
+            <source>&lt;i&gt;You joined &amp;quot;%1&amp;quot;&lt;/i&gt;</source>
+            <translation>&lt;i&gt;&amp;quot;%1&amp;quot; に参加しました&lt;/i&gt;</translation>
+        </message>
+        <message>
+            <source>Player</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>No ROMs in your library — add some first</source>
+            <translation>ライブラリにROMがありません。先に追加してください</translation>
+        </message>
+        <message>
+            <source>User: %1</source>
+            <translation>ユーザー: %1</translation>
+        </message>
+        <message>
+            <source>Connecting…</source>
+            <translation>接続中…</translation>
+        </message>
+        <message>
+            <source>That username is already in use.</source>
+            <translation>そのユーザー名はすでに使用されています。</translation>
+        </message>
+        <message>
+            <source>Server rejected the connection handshake.</source>
+            <translation>サーバーが接続開始時のハンドシェイクを拒否しました。</translation>
+        </message>
+        <message>
+            <source>Your room</source>
+            <translation>あなたのルーム</translation>
+        </message>
+        <message>
+            <source>  ·  %1/%2 seats</source>
+            <translation>  ·  %1/%2人</translation>
+        </message>
+        <message>
+            <source>You're in: &lt;b&gt;%1&lt;/b&gt;%2</source>
+            <translation>参加中: &lt;b&gt;%1&lt;/b&gt;%2</translation>
+        </message>
+        <message>
+            <source>%1 player%3  ·  %2 room%4</source>
+            <translation>%1人のプレイヤー%3・%2件のルーム%4</translation>
+        </message>
+        <message>
+            <source>Searching for: %1</source>
+            <translation>検索中: %1</translation>
+        </message>
+        <message>
+            <source>Region</source>
+            <translation>地域</translation>
+        </message>
+        <message>
+            <source>Online</source>
+            <translation>オンライン</translation>
+        </message>
+        <message>
+            <source>Hosting</source>
+            <translation>ホスト</translation>
+        </message>
+        <message>
+            <source>Browsing</source>
+            <translation>閲覧中</translation>
+        </message>
+        <message>
+            <source>In Room</source>
+            <translation>ルーム参加中</translation>
+        </message>
+        <message>
+            <source>Searching</source>
+            <translation>検索中</translation>
+        </message>
+        <message>
+            <source>In Game</source>
+            <translation>ゲーム中</translation>
+        </message>
+        <message>
+            <source> vs </source>
+            <translation> 対 </translation>
+        </message>
+        <message>
+            <source>Watching</source>
+            <translation>視聴中</translation>
+        </message>
+        <message>
+            <source>Away</source>
+            <translation>離席中</translation>
+        </message>
+        <message>
+            <source>🔴 Live — double-click to watch</source>
+            <translation>🔴 ライブ配信中 — ダブルクリックして視聴</translation>
+        </message>
+        <message>
+            <source>Match start failed: missing local peer.</source>
+            <translation>対戦開始に失敗しました: ローカルプレイヤーが見つかりません。</translation>
+        </message>
+        <message>
+            <source>Match start failed: missing remote peer.</source>
+            <translation>対戦開始に失敗しました: リモートプレイヤーが見つかりません。</translation>
+        </message>
+        <message>
+            <source>Already in a room</source>
+            <translation>ルームに参加中</translation>
+        </message>
+        <message>
+            <source>Leave your current room before creating a new one.</source>
+            <translation>新しいルームを作成する前に、現在のルームを退出してください。</translation>
+        </message>
+        <message>
+            <source>Select a game</source>
+            <translation>ゲームを選択</translation>
+        </message>
+        <message>
+            <source>Pick a game from the dropdown before creating a room.</source>
+            <translation>ルームを作成する前に、ドロップダウンからゲームを選択してください。</translation>
+        </message>
+        <message>
+            <source>Pick a game from the dropdown before searching — Quick Match only pairs you with players searching for that same ROM.</source>
+            <translation>検索を始める前にドロップダウンからゲームを選択してください。クイックマッチは同じROMを検索しているプレイヤー同士だけを組み合わせます。</translation>
+        </message>
+        <message>
+            <source>You don't have the ROM for "%1" (%2).
+
+Add it to your ROM directory and refresh the list, then try again.</source>
+            <translation>「%1」（%2）のROMがありません。
+
+ROMディレクトリへ追加して一覧を更新してから、もう一度お試しください。</translation>
+        </message>
+        <message>
+            <source>Wrong password.</source>
+            <translation>パスワードが違います。</translation>
+        </message>
+        <message>
+            <source>Room is full.</source>
+            <translation>ルームは満員です。</translation>
+        </message>
+        <message>
+            <source>That game has already started.</source>
+            <translation>そのゲームはすでに開始されています。</translation>
+        </message>
+        <message>
+            <source>You're already in a room.</source>
+            <translation>すでにルームに参加しています。</translation>
+        </message>
+        <message>
+            <source>That room no longer exists.</source>
+            <translation>そのルームはもう存在しません。</translation>
+        </message>
+        <message>
+            <source>You were recently removed from this room. Try again in a moment.</source>
+            <translation>このルームから最近退出させられました。少し待ってから再試行してください。</translation>
+        </message>
+        <message>
+            <source>Couldn't join room</source>
+            <translation>ルームに参加できませんでした</translation>
+        </message>
+        <message>
+            <source>Leave your current room before joining another.</source>
+            <translation>別のルームへ参加する前に、現在のルームを退出してください。</translation>
+        </message>
+        <message>
+            <source>Match in progress</source>
+            <translation>対戦進行中</translation>
+        </message>
+        <message>
+            <source>That room is already playing — try another or wait for it to finish.</source>
+            <translation>そのルームはすでに対戦中です。別のルームを試すか、終了までお待ちください。</translation>
+        </message>
+        <message>
+            <source>ROM not found</source>
+            <translation>ROMが見つかりません</translation>
+        </message>
+        <message>
+            <source>Password required</source>
+            <translation>パスワードが必要です</translation>
+        </message>
+        <message>
+            <source>Enter password for "%1":</source>
+            <translation>「%1」のパスワードを入力してください:</translation>
+        </message>
+        <message>
+            <source>In a room</source>
+            <translation>ルーム参加中</translation>
+        </message>
+        <message>
+            <source>Leave your room before watching a match.</source>
+            <translation>対戦を視聴する前に、現在のルームを退出してください。</translation>
+        </message>
+        <message>
+            <source>Not live</source>
+            <translation>ライブ配信ではありません</translation>
+        </message>
+        <message>
+            <source>That match isn't streaming a live replay, so there's nothing to watch.</source>
+            <translation>この対戦はライブリプレイを配信していないため、視聴できません。</translation>
+        </message>
+        <message>
+            <source>Couldn't create room</source>
+            <translation>ルームを作成できませんでした</translation>
+        </message>
+        <message>
+            <source>Host ended the match — stopping game.</source>
+            <translation>ホストが対戦を終了しました — ゲームを停止します。</translation>
+        </message>
+        <message>
+            <source>Stop the match for everyone in the room.</source>
+            <translation>ルーム内の全員の対戦を終了します。</translation>
+        </message>
+        <message>
+            <source>Drop out of the match. Other players keep playing.</source>
+            <translation>対戦から離脱します。他のプレイヤーは対戦を続けます。</translation>
+        </message>
+        <message>
+            <source>Only the room host can change the prediction window.</source>
+            <translation>予測ウィンドウを変更できるのはルームのホストのみです。</translation>
+        </message>
+        <message>
+            <source>Can't change settings during a match.</source>
+            <translation>対戦中は設定を変更できません。</translation>
+        </message>
+        <message>
+            <source>Only the host can start the game.</source>
+            <translation>ゲームを開始できるのはホストのみです。</translation>
+        </message>
+        <message>
+            <source>Already in a match.</source>
+            <translation>すでに対戦中です。</translation>
+        </message>
+        <message>
+            <source>Need at least 2 players to start.</source>
+            <translation>開始するには2人以上のプレイヤーが必要です。</translation>
+        </message>
+        <message>
+            <source>Match started — playing now.</source>
+            <translation>対戦を開始しました — プレイ中です。</translation>
+        </message>
+        <message>
+            <source>left</source>
+            <translation>退出</translation>
+        </message>
+        <message>
+            <source>%1 (P%2) dropped (%3) — controller %2 will go idle.</source>
+            <translation>%1（P%2）が離脱しました（%3）。コントローラー%2からの入力はなくなります。</translation>
+        </message>
+        <message>
+            <source>%1 dropped (%2).</source>
+            <translation>%1が離脱しました（%2）。</translation>
+        </message>
+        <message>
+            <source>Removed from match</source>
+            <translation>対戦から退出させられました</translation>
+        </message>
+        <message>
+            <source>You were removed from the lobby by the host.</source>
+            <translation>ホストにより退出させられました。</translation>
+        </message>
+        <message>
+            <source>Room closed</source>
+            <translation>ルームが閉じられました</translation>
+        </message>
+        <message>
+            <source>The host closed the room.</source>
+            <translation>ホストがルームを閉じました。</translation>
+        </message>
+        <message>
+            <source>Leave your current room before searching for a match.</source>
+            <translation>対戦を検索する前に、現在のルームを退出してください。</translation>
+        </message>
+        <message>
+            <source> (%1 in queue)</source>
+            <translation>（待機列: %1人）</translation>
+        </message>
+        <message>
+            <source> (searching…)</source>
+            <translation>（検索中…）</translation>
+        </message>
+        <message>
+            <source>✕  Cancel Quick Match</source>
+            <translation>✕  クイックマッチをキャンセル</translation>
+        </message>
+        <message>
+            <source>Live Replay on — others can watch this match.</source>
+            <translation>ライブリプレイを有効にしました — 他のユーザーがこの対戦を視聴できます。</translation>
+        </message>
+        <message>
+            <source>Connecting to live replay…</source>
+            <translation>ライブリプレイに接続中…</translation>
+        </message>
+        <message>
+            <source>Watching — buffering the match…</source>
+            <translation>視聴準備中 — 対戦データを読み込んでいます…</translation>
+        </message>
+        <message>
+            <source>That live replay isn't available anymore.</source>
+            <translation>そのライブリプレイは利用できなくなりました。</translation>
+        </message>
+        <message>
+            <source>That live replay just ended.</source>
+            <translation>そのライブリプレイは終了しました。</translation>
+        </message>
+        <message>
+            <source>Couldn't watch: %1</source>
+            <translation>視聴できませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Pre-match start failed</source>
+            <translation>対戦開始前の処理に失敗しました</translation>
+        </message>
+        <message>
+            <source>Match #%1 starting with %2 player(s)</source>
+            <translation>対戦 #%1 を%2人で開始します</translation>
+        </message>
+        <message>
+            <source>Your frame delay: %1 (auto, from %2 ms ping) · prediction %3</source>
+            <translation>自分のフレーム遅延: %1（自動、%2 msのPingから算出）· 予測 %3</translation>
+        </message>
+        <message>
+            <source>Your frame delay: %1 (auto) · prediction %2</source>
+            <translation>自分のフレーム遅延: %1（自動）· 予測 %2</translation>
+        </message>
+        <message>
+            <source>Your frame delay: %1 · prediction %2</source>
+            <translation>自分のフレーム遅延: %1 · 予測 %2</translation>
+        </message>
+        <message>
+            <source>Match start failed: you don't have the ROM for %1.</source>
+            <translation>対戦を開始できませんでした: %1のROMがありません。</translation>
+        </message>
+        <message>
+            <source>Synchronizing pre-match settings...</source>
+            <translation>対戦前設定を同期中...</translation>
+        </message>
+        <message>
+            <source>Pre-match sync failed.</source>
+            <translation>対戦前設定の同期に失敗しました。</translation>
+        </message>
+        <message>
+            <source>Pre-match sync complete.</source>
+            <translation>対戦前設定の同期が完了しました。</translation>
+        </message>
+        <message>
+            <source>Ping</source>
+            <translation>Ping</translation>
+        </message>
+        <message>
+            <source>%1 f</source>
+            <translation>%1フレーム</translation>
+        </message>
+        <message>
+            <source>Type</source>
+            <translation>接続方式</translation>
+        </message>
+        <message>
+            <source>Error: lost connection to server. You can continue the game but without chat.</source>
+            <translation>エラー: サーバーとの接続が切れました。ゲームは続行できますが、チャットは利用できません。</translation>
+        </message>
+        <message>
+            <source>Lobby offline — game continues</source>
+            <translation>ロビー未接続 — ゲームは続行中</translation>
+        </message>
+        <message>
+            <source>Recording can't be changed during a match.</source>
+            <translation>対戦中は保存設定を変更できません。</translation>
+        </message>
+        <message>
+            <source>The room host will stream this match as a live replay.</source>
+            <translation>ルームのホストが、この対戦をライブリプレイで配信します。</translation>
+        </message>
+        <message>
+            <source>The room host has live replay streaming turned off.</source>
+            <translation>ルームのホストがライブリプレイ配信を無効にしています。</translation>
+        </message>
+        <message>
+            <source>The live replay choice is locked while a match is running.</source>
+            <translation>対戦中はライブリプレイの設定を変更できません。</translation>
+        </message>
+        <message>
+            <source>Couldn't reach %1 to measure ping — their connection may not allow a direct link. Start stays disabled until it succeeds.</source>
+            <translation>%1へのPingを測定できませんでした。相手の接続環境で直接接続が制限されている可能性があります。測定が成功するまでゲームを開始できません。</translation>
+        </message>
+        <message>
+            <source>📣 Attention!</source>
+            <translation>📣 お知らせ！</translation>
+        </message>
+        <message>
+            <source>Negotiating direct ICE connections...</source>
+            <translation>ICEによる直接接続を確立中...</translation>
+        </message>
+        <message>
+            <source>Match start failed: %1</source>
+            <translation>対戦開始に失敗しました: %1</translation>
+        </message>
+        <message>
+            <source>Match start failed: direct ICE negotiation timed out. No TURN relay is configured.</source>
+            <translation>対戦開始に失敗しました。ICEによる直接接続がタイムアウトしました。TURN中継は設定されていません。</translation>
+        </message>
+        <message>
+            <source>Negotiating ICE…</source>
+            <translation>ICE接続を確立中…</translation>
+        </message>
+        <message><source>Viewers</source>
+            <translation>視聴者数</translation>
+        </message>
+        <message><source>Live Replay unavailable: the match settings are missing or too large to sync.</source>
+            <translation>Live Replayを利用できません：対戦設定が見つからないか、同期できるサイズを超えています。</translation>
+        </message>
+        <message><source>The live replay's cheat settings are missing or invalid. The host and lobby server need to support spectator cheat sync.</source>
+            <translation>Live Replayのチート設定が見つからないか、無効です。ホストとロビーサーバーが観戦者向けのチート同期に対応している必要があります。</translation>
+        </message>
+        <message>
+            <source>I dropped from the game.</source>
+            <translation>対戦から離脱しました。</translation>
+        </message>
+    </context>
+    <context><name>LobbyClient</name>
+        <message>
+            <source>Failed to initialize ICE transport.</source>
+            <translation>ICE通信の初期化に失敗しました。</translation>
+        </message>
+        <message>
+            <source>%1 is using a lobby client without ICE support.</source>
+            <translation>%1はICEに対応していないロビークライアントを使用しています。</translation>
+        </message>
+        <message>
+            <source>Waiting for a direct ICE connection to %1.</source>
+            <translation>%1とのICE直接接続を待っています。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>CHAT</source>
+            <translation>チャット</translation>
+        </message>
+        <message>
+            <source>Lobby</source>
+            <translation>ロビー</translation>
+        </message>
+        <message>
+            <source>Spectators</source>
+            <translation>観戦者</translation>
+        </message>
+        <message>
+            <source>Spectators •</source>
+            <translation>観戦者 •</translation>
+        </message>
+        <message>
+            <source>Everyone in the lobby.</source>
+            <translation>ロビーにいる全員に表示されます。</translation>
+        </message>
+        <message>
+            <source>Everyone watching this match. The players can't see it.</source>
+            <translation>この試合を観戦中の全員に表示されます。プレイヤーには表示されません。</translation>
+        </message>
+        <message>
+            <source>Message the other spectators…</source>
+            <translation>他の観戦者にメッセージを送信…</translation>
+        </message>
+    </context>
+    </TS>

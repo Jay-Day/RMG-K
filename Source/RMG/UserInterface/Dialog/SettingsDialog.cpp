@@ -262,15 +262,15 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
             "debugging connection problems. Applies the next time you connect to the lobby."));
     this->rollbackHideLocationCheckBox = new QCheckBox(tr("Hide my location from other players"), rollbackTab);
     this->rollbackHideLocationCheckBox->setToolTip(
-        "Your row in the netplay lobby shows no country flag, and no country in its\n"
+        tr("Your row in the netplay lobby shows no country flag, and no country in its\n"
         "hover tooltip, for everyone on the server. Region-based ping estimates still\n"
         "work. Players you actually play with still exchange connection addresses —\n"
-        "this hides the flag, not your traffic. Applies the next time you connect.");
-    this->rollbackRememberInputDelayCheckBox = new QCheckBox("Remember my last input delay", rollbackTab);
+        "this hides the flag, not your traffic. Applies the next time you connect."));
+    this->rollbackRememberInputDelayCheckBox = new QCheckBox(tr("Remember my last input delay"), rollbackTab);
     this->rollbackRememberInputDelayCheckBox->setToolTip(
-        "Reuse your last frame delay choice when hosting or joining a rollback lobby room,\n"
+        tr("Reuse your last frame delay choice when hosting or joining a rollback lobby room,\n"
         "including Quick Match. Choosing Auto remembers Auto instead of its calculated value.\n"
-        "When disabled, each new room starts on Auto. Applies the next time you enter a room.");
+        "When disabled, each new room starts on Auto. Applies the next time you enter a room."));
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
     rollbackLayout->addWidget(this->rollbackHideLocationCheckBox);
     rollbackLayout->addWidget(this->rollbackRememberInputDelayCheckBox);
