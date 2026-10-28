@@ -381,6 +381,11 @@ void Gekko::GameSession::DisconnectPlayer(i32 handle)
 	}
 }
 
+void Gekko::GameSession::SetDisconnectTimeout(u32 timeout_ms)
+{
+    _msg.SetPlayerDisconnectTimeout(timeout_ms);
+}
+
 void Gekko::GameSession::SendSpectatorInputs()
 {
 	const Frame current = _msg.GetLastAddedInput(true) + 1;

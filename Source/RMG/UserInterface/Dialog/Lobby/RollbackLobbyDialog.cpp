@@ -3813,13 +3813,16 @@ void RollbackLobbyDialog::notifyEmulationFinished()
 
 void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason)
 {
-    Q_UNUSED(matchId);
+    // A late notice from an earlier match must not drop whoever holds that
+    // slot in this one.
+    if (matchId == 0 || matchId != m_currentMatchId)
+        return;
 
-    // The lobby server already knows this peer is gone, so tell the rollback
-    // engine to drop their actor immediately. Without this, GekkoNet only sees
-    // the peer stop sending UDP input and stalls the match ~5 s waiting out its
-    // disconnect timeout before substituting idle input. The request is queued
-    // and applied on the emulation thread at the next frame.
+    // Lobby matches leave player drops to this notice (GekkoNet's own silence
+    // timeout is only a 30 s fallback): tell the rollback engine to substitute
+    // idle input for them. Every seat gets the same notice, so all peers drop
+    // the same player. The request is queued and applied on the emulation
+    // thread at the next frame.
     if (slot > 0)
         rmgk_gekko::request_disconnect_player(slot);
 

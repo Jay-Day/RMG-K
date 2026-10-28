@@ -45,6 +45,7 @@ Gekko::MessageSystem::MessageSystem()
     _num_players = 0;
 	_input_size = 0;
 	_last_sent_network_check = 0;
+    _player_disconnect_timeout = NetStats::DISCONNECT_TIMEOUT;
 
 	_session_magic = GenerateSessionMagic();
 
@@ -384,8 +385,18 @@ std::deque<std::unique_ptr<u8[]>>& Gekko::MessageSystem::GetNetPlayerQueue(Handl
     return _net_player_queue[player].inputs;
 }
 
+void Gekko::MessageSystem::SetPlayerDisconnectTimeout(u64 timeout_ms)
+{
+    _player_disconnect_timeout = timeout_ms;
+}
+
 void Gekko::MessageSystem::HandleTooFarBehindActors(bool spectator)
 {
+    const u64 timeout = spectator ? NetStats::DISCONNECT_TIMEOUT : _player_disconnect_timeout;
+    if (timeout == 0) {
+        return;
+    }
+
     const u64 now = TimeSinceEpoch();
 	for (auto& actor : spectator ? spectators : remotes) {
 		if (actor->GetStatus() == Connected) {
@@ -396,7 +407,7 @@ void Gekko::MessageSystem::HandleTooFarBehindActors(bool spectator)
             }
             // check whether messages are being sent if not disconnect.
             const u64 msg_diff = now - actor->stats.last_received_message;
-			if (msg_diff > NetStats::DISCONNECT_TIMEOUT) {
+			if (msg_diff > timeout) {
                 session_events.AddPlayerDisconnectedEvent(actor->handle);
                 actor->SetStatus(Disconnected);
                 actor->sync_num = 0;
