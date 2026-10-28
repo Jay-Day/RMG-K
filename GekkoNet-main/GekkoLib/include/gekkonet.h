@@ -190,6 +190,14 @@ GEKKONET_API int gekko_add_actor(GekkoSession* session, GekkoPlayerType player_t
 
 GEKKONET_API void gekko_set_local_delay(GekkoSession* session, int player, unsigned char delay);
 
+// Change the input prediction window of a running game session. Only the local
+// session is affected; peers may use different windows without desyncing.
+// Raising the window past the largest one used so far grows the rollback state
+// storage. Returns false and keeps the current window when the session can't
+// change it: a window of 0, a lockstep or limited-saving session, a spectator
+// or stress session, or a failed allocation.
+GEKKONET_API bool gekko_set_prediction_window(GekkoSession* session, unsigned char window);
+
 GEKKONET_API void gekko_set_runahead(GekkoSession* session, unsigned char runahead);
 
 GEKKONET_API void gekko_add_local_input(GekkoSession* session, int player, void* input);

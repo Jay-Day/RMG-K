@@ -15,6 +15,7 @@
 struct GekkoSession {
     virtual void Init(GekkoConfig* config) = 0;
     virtual void SetLocalDelay(i32 player, u8 delay) = 0;
+    virtual bool SetPredictionWindow(u8 window) = 0;
     virtual void SetRunahead(u8 runahead) = 0;
     virtual void SetNetAdapter(GekkoNetAdapter* adapter) = 0;
     virtual i32 AddActor(GekkoPlayerType type, GekkoNetAddress* addr) = 0;
@@ -38,6 +39,8 @@ namespace Gekko {
         void Init(GekkoConfig* config) override;
 
         void SetLocalDelay(i32 player, u8 delay) override;
+
+        bool SetPredictionWindow(u8 window) override;
 
         void SetRunahead(u8 runahead) override;
 
@@ -105,6 +108,11 @@ namespace Gekko {
 
 		u8 _runahead_frames;
 
+		// largest prediction window this session has run with. predictions made
+		// under it may still be pending, so the state storage stays sized for it
+		// and frames older than it are the only ones known to be confirmed.
+		u8 _max_prediction_window;
+
 		std::unique_ptr<u8[]> _disconnected_input;
 
 		GekkoConfig _config;
@@ -127,6 +135,9 @@ namespace Gekko {
         void Init(GekkoConfig* config) override;
 
         void SetLocalDelay(i32 player, u8 delay) override;
+
+        // Spectators never predict.
+        bool SetPredictionWindow(u8 window) override { (void)window; return false; }
 
         void SetRunahead(u8 runahead) override {}
 
@@ -185,6 +196,9 @@ namespace Gekko {
         void Init(GekkoConfig* config) override;
 
         void SetLocalDelay(i32 player, u8 delay) override;
+
+        // Stress sessions roll back a fixed check distance, not a prediction window.
+        bool SetPredictionWindow(u8 window) override { (void)window; return false; }
 
         void SetRunahead(u8 runahead) override {}
 

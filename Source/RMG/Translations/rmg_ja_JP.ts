@@ -2987,6 +2987,14 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>自分のフレーム遅延: %1 · 予測 %2</translation>
         </message>
         <message>
+            <source>Your frame delay is now %1 f.</source>
+            <translation>自分のフレーム遅延を%1フレームに変更しました。</translation>
+        </message>
+        <message>
+            <source>Prediction is now %1 f.</source>
+            <translation>予測が%1フレームに変更されました。</translation>
+        </message>
+        <message>
             <source>Match start failed: you don't have the ROM for %1.</source>
             <translation>対戦を開始できませんでした: %1のROMがありません。</translation>
         </message>

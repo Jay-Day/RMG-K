@@ -61,6 +61,17 @@ class rmgk_gekko
     // call from any thread (e.g. the lobby UI when the server reports a drop);
     // a no-op if there's no active session or the slot isn't a remote.
     static void request_disconnect_player(int slot);
+    // Thread-safe: the input delay this player should use in the running
+    // rollback session, or -1 for none. The emulation thread notices a new value
+    // at the start of the next frame and steps the delay toward it one frame at
+    // a time, so the input stream every peer receives stays sequential. The
+    // value outlives session starts, so one chosen while a match is still
+    // starting applies once it runs; the caller clears it when its match ends.
+    static void set_live_local_delay(int delay);
+    // Thread-safe: likewise for the prediction window, which applies at the
+    // start of the next frame. It only limits how far this client predicts
+    // ahead, so peers may run with different windows.
+    static void set_live_prediction_window(int predictionWindow);
     static bool is_netplay_session_active();
     static bool execute();
     // Rollback presentation pacer. The core invokes this through the video

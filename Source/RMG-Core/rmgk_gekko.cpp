@@ -128,6 +128,12 @@ constexpr double kGekkoAsymTimesyncLerp           = 0.15;
 // cached target on every frame in between.
 constexpr int    kGekkoAsymTimesyncIntervalFrames = 30;
 constexpr size_t kGekkoClientReplayFrames = 600;
+// Lowering the delay discards one frame of local input per step, so a step
+// waits for a frame whose input repeats the previous one. Held buttons make
+// that near-immediate; if the input changes on every frame for this long (a
+// stick in constant motion), step anyway. The discarded input then only loses
+// a change that lasted a single frame.
+constexpr int    kGekkoDelayStepMaxWaitFrames = 30;
 
 #ifdef RMGK_HAVE_GEKKONET
 enum class ClientInputReplayMode
@@ -198,6 +204,23 @@ std::vector<PendingGekkoSave> g_GekkoPendingSaves;
 // GekkoNet session (which is single-threaded on the emulation thread).
 std::mutex g_GekkoDisconnectMutex;
 std::vector<int> g_GekkoPendingDisconnectSlots;
+
+// Live delay / prediction values set by set_live_local_delay() and
+// set_live_prediction_window() on another thread (-1 = none). The emulation
+// thread acts on a value once, when it first sees it in a session; the *Seen
+// copies remember which value that was. Everything below the atomics is only
+// touched on the emulation thread.
+std::atomic_int g_GekkoLiveLocalDelay{-1};
+std::atomic_int g_GekkoLivePredictionWindow{-1};
+int g_GekkoLiveLocalDelaySeen = -1;
+int g_GekkoLivePredictionWindowSeen = -1;
+int g_GekkoLocalDelay = 0;       // delay GekkoNet applies to local input now
+int g_GekkoTargetLocalDelay = 0; // delay step_local_delay() is moving toward
+int g_GekkoPredictionWindow = 0;
+// The previous frame's sampled inputs, so lowering the delay can wait for a
+// frame whose input it can discard without losing anything.
+std::vector<uint32_t> g_GekkoPreviousSampledInputs;
+int g_GekkoDelayStepWaitFrames = 0;
 std::mutex g_GekkoLogMutex;
 std::filesystem::path g_GekkoLogDirectory;
 std::string g_GekkoLogPrefix;
@@ -1493,6 +1516,106 @@ bool load_gekko_state(const GekkoGameEvent* event)
     return true;
 }
 
+// Session start: the new session runs the delay and window it was started
+// with, and re-reads whatever live values are set from its first frame.
+void reset_live_settings(int localDelay, int predictionWindow)
+{
+    g_GekkoLiveLocalDelaySeen = -1;
+    g_GekkoLivePredictionWindowSeen = -1;
+    g_GekkoLocalDelay = localDelay;
+    g_GekkoTargetLocalDelay = localDelay;
+    g_GekkoPredictionWindow = predictionWindow;
+    g_GekkoPreviousSampledInputs.clear();
+    g_GekkoDelayStepWaitFrames = 0;
+}
+
+// Pick up live values set since the last frame. A new prediction window applies
+// now: GekkoNet grows its rollback storage before any prediction can use the
+// extra frames, and a smaller window only stops new predictions early. A new
+// delay only becomes the target that step_local_delay() moves toward.
+void apply_live_settings()
+{
+    const int window = g_GekkoLivePredictionWindow.load(std::memory_order_relaxed);
+    if (window != g_GekkoLivePredictionWindowSeen)
+    {
+        g_GekkoLivePredictionWindowSeen = window;
+        const int clampedWindow = std::clamp(window, 1, 10);
+        if (window >= 0 && clampedWindow != g_GekkoPredictionWindow)
+        {
+            const bool applied = gekko_set_prediction_window(g_GekkoSession,
+                static_cast<unsigned char>(clampedWindow));
+            std::ostringstream stream;
+            stream << "prediction_window change from=" << g_GekkoPredictionWindow
+                   << " to=" << clampedWindow
+                   << " result=" << (applied ? "ok" : "fail");
+            write_gekko_stall_log(stream.str());
+            if (applied)
+            {
+                g_GekkoPredictionWindow = clampedWindow;
+            }
+        }
+    }
+
+    const int delay = g_GekkoLiveLocalDelay.load(std::memory_order_relaxed);
+    if (delay != g_GekkoLiveLocalDelaySeen)
+    {
+        g_GekkoLiveLocalDelaySeen = delay;
+        const int clampedDelay = std::clamp(delay, 0, 10);
+        if (delay >= 0 && clampedDelay != g_GekkoTargetLocalDelay)
+        {
+            std::ostringstream stream;
+            stream << "local_delay target from=" << g_GekkoTargetLocalDelay
+                   << " to=" << clampedDelay
+                   << " current=" << g_GekkoLocalDelay;
+            write_gekko_stall_log(stream.str());
+            g_GekkoTargetLocalDelay = clampedDelay;
+            g_GekkoDelayStepWaitFrames = 0;
+        }
+    }
+}
+
+// Move the local input delay one frame toward g_GekkoTargetLocalDelay, before
+// this frame's input is added. GekkoNet keeps the input stream sequential:
+// raising the delay sends the last input once more, lowering it discards the
+// input added this frame. Either way every peer receives the same stream, so
+// the change can't desync; one frame per step stretches the input over a
+// raise instead of freezing it, and a lowering step waits for a frame it can
+// discard losslessly (see kGekkoDelayStepMaxWaitFrames).
+void step_local_delay(const std::vector<uint32_t>& sampledInputs)
+{
+    const bool inputRepeated = sampledInputs == g_GekkoPreviousSampledInputs;
+    g_GekkoPreviousSampledInputs = sampledInputs;
+    if (g_GekkoLocalDelay == g_GekkoTargetLocalDelay)
+    {
+        return;
+    }
+
+    const bool lowering = g_GekkoTargetLocalDelay < g_GekkoLocalDelay;
+    if (lowering && !inputRepeated &&
+        ++g_GekkoDelayStepWaitFrames < kGekkoDelayStepMaxWaitFrames)
+    {
+        return;
+    }
+
+    const int nextDelay = g_GekkoLocalDelay + (lowering ? -1 : 1);
+    for (const int handle : g_GekkoLocalHandles)
+    {
+        if (handle >= 0)
+        {
+            gekko_set_local_delay(g_GekkoSession, handle, static_cast<unsigned char>(nextDelay));
+        }
+    }
+
+    std::ostringstream stream;
+    stream << "local_delay step from=" << g_GekkoLocalDelay
+           << " to=" << nextDelay
+           << " target=" << g_GekkoTargetLocalDelay
+           << " waited_frames=" << g_GekkoDelayStepWaitFrames;
+    write_gekko_stall_log(stream.str());
+    g_GekkoLocalDelay = nextDelay;
+    g_GekkoDelayStepWaitFrames = 0;
+}
+
 bool submit_local_input()
 {
     const bool localOnlySession = g_GekkoRemoteHandle < 0 && g_GekkoLocalHandles.size() > 1;
@@ -1503,6 +1626,7 @@ bool submit_local_input()
         write_gekko_log("add_local_input sample=fail");
         return false;
     }
+    step_local_delay(physicalInputs);
 
     bool submitted = false;
 
@@ -1923,6 +2047,9 @@ int rollback_execute_begin_frame(void* userData)
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
     gekko_network_poll(g_GekkoSession);
+    // Live delay / prediction changes land on the frame boundary, before this
+    // frame's local input is added.
+    apply_live_settings();
     if (timingEnabled)
     {
         summaryNetworkPollUs =
@@ -2510,6 +2637,7 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
     config.desync_detection = true;
     config.check_distance = 10;
     gekko_start(g_GekkoSession, &config);
+    reset_live_settings(clampedLocalDelay, clampedPredictionWindow);
 #ifdef RMGK_HAVE_P2P_TRANSPORT
     p2p_rollback_transport_clear();
     gekko_net_adapter_set(g_GekkoSession, &g_GekkoP2PAdapter);
@@ -2757,6 +2885,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     config.desync_detection = true;
     config.check_distance = 10;
     gekko_start(g_GekkoSession, &config);
+    reset_live_settings(clampedLocalDelay, clampedPredictionWindow);
 
     g_GekkoUsingIceAdapter = useIce;
     g_GekkoUsingExternalSocket = !useIce && (g_GekkoExternalSocket.load() != kExtSocketNone);
@@ -2995,6 +3124,7 @@ CORE_EXPORT bool rmgk_gekko::start_local_session(const char* gameName, int playe
     config.desync_detection = true;
     config.check_distance = 10;
     gekko_start(g_GekkoSession, &config);
+    reset_live_settings(clampedLocalDelay, predictionWindow);
     gekko_set_runahead(g_GekkoSession, 0);
 
     g_GekkoPlayers = players;
@@ -3183,6 +3313,25 @@ CORE_EXPORT void rmgk_gekko::request_disconnect_player(int slot)
     g_GekkoPendingDisconnectSlots.push_back(slot);
 #else
     (void)slot;
+#endif
+}
+
+CORE_EXPORT void rmgk_gekko::set_live_local_delay(int delay)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    g_GekkoLiveLocalDelay.store(delay < 0 ? -1 : delay, std::memory_order_relaxed);
+#else
+    (void)delay;
+#endif
+}
+
+CORE_EXPORT void rmgk_gekko::set_live_prediction_window(int predictionWindow)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    g_GekkoLivePredictionWindow.store(predictionWindow < 0 ? -1 : predictionWindow,
+        std::memory_order_relaxed);
+#else
+    (void)predictionWindow;
 #endif
 }
 

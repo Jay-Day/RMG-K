@@ -263,9 +263,14 @@ private:
 
     // Delay is local to this player. Auto resolves from this client's direct
     // RTTs. Prediction is room-wide and may be changed only by the host.
+    // Both stay editable while this client plays the match; the running
+    // session follows the live values handed to rmgk_gekko.
     int     worstLocalPeerPingMs() const;
     void    applyLocalFrameDelay(bool force);
     void    applyRoomPrediction(bool force);
+    bool    inLiveMatch() const;
+    void    updateRollbackSettingControls();
+    void    endLiveRollbackSettings();
 
     // Broadcaster lifecycle. startBroadcast arms the n02 recording sink + drain
     // timer and sends BROADCAST_BEGIN; stopBroadcast flushes and sends
@@ -479,6 +484,11 @@ private:
     QString m_currentRoomState;
     int     m_currentRoomDelay      = 2;   // this client's local input delay
     int     m_currentRoomPrediction = 7;
+    int     m_livePrediction        = 0;   // window handed to this match's engine
+    // The server relays delay and prediction changes while the room is in game
+    // (ROOM_STATE "inGameSettings"). Older servers drop them, so the host can't
+    // change prediction mid-match there.
+    bool    m_serverAcceptsInGameSettings = false;
     int     m_currentRoomPacing     = 0;   // 0 = aggressive, 1 = smooth
     quint64 m_currentRoomHostId     = 0;   // seated host's user id (0 when none)
     quint64 m_currentMatchId        = 0;

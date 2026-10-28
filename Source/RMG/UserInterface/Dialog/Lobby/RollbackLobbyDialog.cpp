@@ -2556,6 +2556,7 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
             m_currentMatchId = 0;
             m_awaitingEmulationStart = false;
             m_emulationActive = false;
+            endLiveRollbackSettings();
             clearServerRoomSnapshot();
         }
     }
@@ -3057,6 +3058,7 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     m_roomSeatsSeen = false;
     m_localDelayPublished = false;
     m_probeFailureAnnounced.clear();
+    updateRollbackSettingControls();
 
     if (m_roomTitle) m_roomTitle->setText(QStringLiteral("—"));
     if (m_roomRegionLabel) m_roomRegionLabel->setVisible(false);
@@ -3468,6 +3470,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_predictionAuto        = roomPredictionAuto;
     m_currentRoomPacing     = pacing;
     m_currentRoomHostId     = hostId;
+    m_serverAcceptsInGameSettings = roomState.value("inGameSettings").toBool(false);
 
     // Pacing is host-authoritative and applies to every seat. Mirror it into the
     // engine setting now (host included) so the match starts on the room's model;
@@ -3510,16 +3513,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_roomRegionLabel->setVisible(!romRegion.isEmpty());
 
     // Delay remains local to every player. Prediction mirrors authoritative
-    // room state and is editable only by the host while waiting.
+    // room state; updateRollbackSettingControls() decides who may edit them.
     if (m_delayCombo && m_predictionCombo)
     {
-        static const QString tipDisabledMidMatch = tr("Can't change settings during a match.");
-        static const QString tipHostControlled = tr("Only the room host can change the prediction window.");
-
-        const bool delayEditable = state == "waiting";
-        const bool predictionEditable = delayEditable && iAmHost;
         setAutoComboLabel(m_delayCombo, m_currentRoomDelay);
-        m_delayCombo->setEnabled(delayEditable);
 
         m_suppressSettingsSignal = true;
         const int predictionData = roomPredictionAuto ? 0 : roomPrediction;
@@ -3527,17 +3524,20 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         if (predictionIndex >= 0)
             m_predictionCombo->setCurrentIndex(predictionIndex);
         m_suppressSettingsSignal = false;
-        m_predictionCombo->setEnabled(predictionEditable);
+    }
+    updateRollbackSettingControls();
 
-        const QString delayTip = delayEditable
-            ? m_delayCombo->property("originalTip").toString()
-            : tipDisabledMidMatch;
-        const QString predictionTip = state != "waiting"
-            ? tipDisabledMidMatch
-            : (iAmHost ? m_predictionCombo->property("originalTip").toString()
-                       : tipHostControlled);
-        m_delayCombo->setToolTip(delayTip);
-        m_predictionCombo->setToolTip(predictionTip);
+    // The host's prediction reaches every seat through ROOM_STATE, the host's
+    // own included, so each player's running match switches to it on receipt.
+    // Players may switch a few frames apart: the window only limits how far
+    // each client predicts ahead, so the match stays in sync either way.
+    if (inLiveMatch() && roomPrediction != m_livePrediction)
+    {
+        m_livePrediction = roomPrediction;
+        rmgk_gekko::set_live_prediction_window(roomPrediction);
+        appendChatSystemLine(CHANNEL_ROOM, tr("Prediction is now %1 f.").arg(roomPrediction));
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            QString("Rollback lobby live prediction=%1").arg(roomPrediction).toUtf8().constData());
     }
 
     // The host owns the room-wide live-replay choice, but every seated player
@@ -3769,6 +3769,7 @@ void RollbackLobbyDialog::notifyEmulationStarted()
     if (!m_awaitingEmulationStart) return;
     m_awaitingEmulationStart = false;
     m_emulationActive = true;
+    updateRollbackSettingControls();
 
     // Emulation is live now, so retire the "Connecting…" transient that
     // onMatchBegin painted over the badge. The room is in_game on the server;
@@ -3799,6 +3800,7 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     const quint64 matchId = m_currentMatchId;
     m_emulationActive = false;
     m_awaitingEmulationStart = false;
+    endLiveRollbackSettings();
     if (m_client)
         m_client->setMatchTransportActive(false);
     updateRecordingControls();
@@ -4100,7 +4102,13 @@ int RollbackLobbyDialog::worstLocalPeerPingMs() const
 
 void RollbackLobbyDialog::applyLocalFrameDelay(bool force)
 {
-    if (m_currentRoomId == 0 || m_currentRoomState != "waiting" || !m_delayCombo)
+    const bool liveMatch = inLiveMatch();
+    if (m_currentRoomId == 0 || !m_delayCombo ||
+        (m_currentRoomState != "waiting" && !liveMatch))
+        return;
+    // Auto settles the delay before the match. Mid-match it resolves only when
+    // the player picks it, so a ping change never moves the delay under them.
+    if (liveMatch && !force)
         return;
 
     const int delay = m_delayAuto
@@ -4111,6 +4119,14 @@ void RollbackLobbyDialog::applyLocalFrameDelay(bool force)
     if (!force && delay == m_currentRoomDelay && m_localDelayPublished)
         return;
 
+    if (liveMatch && delay != m_currentRoomDelay)
+    {
+        rmgk_gekko::set_live_local_delay(delay);
+        appendChatSystemLine(CHANNEL_ROOM, tr("Your frame delay is now %1 f.").arg(delay));
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+            QString("Rollback lobby live delay=%1 auto=%2").arg(delay).arg(m_delayAuto ? 1 : 0)
+                .toUtf8().constData());
+    }
     m_currentRoomDelay = delay;
     if (m_client)
     {
@@ -4139,7 +4155,10 @@ void RollbackLobbyDialog::applyLocalFrameDelay(bool force)
 
 void RollbackLobbyDialog::applyRoomPrediction(bool force)
 {
-    if (m_currentRoomId == 0 || m_currentRoomState != "waiting" ||
+    // Mid-match the host's change only takes effect when the server relays it:
+    // every player, the host included, applies it from the ROOM_STATE echo.
+    const bool liveChange = inLiveMatch() && m_serverAcceptsInGameSettings;
+    if (m_currentRoomId == 0 || (m_currentRoomState != "waiting" && !liveChange) ||
         !m_predictionCombo || !m_client ||
         m_currentRoomHostId != m_client->selfUserId())
         return;
@@ -4158,6 +4177,50 @@ void RollbackLobbyDialog::applyRoomPrediction(bool force)
     s.endGroup();
 
     m_client->updateRoomPrediction(prediction, m_predictionAuto);
+}
+
+// This client is playing (or starting) the room's current match.
+bool RollbackLobbyDialog::inLiveMatch() const
+{
+    return m_currentRoomState == "in_game" && (m_emulationActive || m_awaitingEmulationStart);
+}
+
+void RollbackLobbyDialog::updateRollbackSettingControls()
+{
+    if (!m_delayCombo || !m_predictionCombo || !m_client)
+        return;
+
+    static const QString tipDisabledMidMatch = tr("Can't change settings during a match.");
+    static const QString tipHostControlled = tr("Only the room host can change the prediction window.");
+
+    // The running session switches to a new delay or prediction without
+    // desyncing, so both stay editable while this client plays the match.
+    // Prediction reaches the other players through the server, so mid-match it
+    // also needs a server that accepts it once the room is in game.
+    const bool iAmHost = m_currentRoomHostId == m_client->selfUserId();
+    const bool waiting = m_currentRoomState == "waiting";
+    const bool liveMatch = inLiveMatch();
+    const bool delayEditable = waiting || liveMatch;
+    const bool predictionOpen = waiting || (liveMatch && m_serverAcceptsInGameSettings);
+    m_delayCombo->setEnabled(delayEditable);
+    m_predictionCombo->setEnabled(predictionOpen && iAmHost);
+
+    m_delayCombo->setToolTip(delayEditable
+        ? m_delayCombo->property("originalTip").toString()
+        : tipDisabledMidMatch);
+    m_predictionCombo->setToolTip(!predictionOpen
+        ? tipDisabledMidMatch
+        : (iAmHost ? m_predictionCombo->property("originalTip").toString()
+                   : tipHostControlled));
+}
+
+// The match is over for this client. Stop steering the engine so the next
+// session, lobby or not, runs the values it is started with.
+void RollbackLobbyDialog::endLiveRollbackSettings()
+{
+    rmgk_gekko::set_live_local_delay(-1);
+    rmgk_gekko::set_live_prediction_window(-1);
+    updateRollbackSettingControls();
 }
 
 void RollbackLobbyDialog::onRoomLeft(const QString& reason)
@@ -4182,6 +4245,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_iceMatchDeadlineMs = 0;
     m_awaitingEmulationStart = false;
     m_emulationActive = false;
+    endLiveRollbackSettings();
     m_knownSeatedUsers.clear();
     m_roomSeatsSeen = false;
     m_localDelayPublished = false;
@@ -4822,6 +4886,7 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
     const quint64 matchId = m_currentMatchId;
     m_awaitingEmulationStart = false;
     m_currentMatchId = 0;
+    endLiveRollbackSettings();
     if (m_client)
         m_client->setMatchTransportActive(false);
     emit liveReplayViewerCountCleared();
@@ -4901,6 +4966,14 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     m_currentMatchId = matchId;
     m_awaitingEmulationStart = true;
     updateRecordingControls();
+
+    // The engine follows these live values for the whole match. Seeding them
+    // with the start values replaces anything left from an earlier match, and
+    // a change made while the session is still starting applies once it runs.
+    m_livePrediction = m_currentRoomPrediction;
+    rmgk_gekko::set_live_local_delay(m_currentRoomDelay);
+    rmgk_gekko::set_live_prediction_window(m_currentRoomPrediction);
+    updateRollbackSettingControls();
 
     // Disable start; enable Drop now — MATCH_BEGIN arrives *after* the
     // ROOM_STATE that flipped us to in_game, so onRoomStateChanged ran before

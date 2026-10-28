@@ -32,6 +32,7 @@ Gekko::GameSession::GameSession()
     _last_sent_healthcheck = GameInput::NULL_FRAME;
     _runahead_start_frame = GameInput::NULL_FRAME;
     _runahead_frames = 0;
+    _max_prediction_window = 0;
     _config = GekkoConfig();
 }
 
@@ -55,6 +56,7 @@ void Gekko::GameSession::Init(GekkoConfig* config)
 
     // setup state storage
     _storage.Init(_config.input_prediction_window, _config.state_size, _config.limited_saving);
+    _max_prediction_window = _config.input_prediction_window;
 
     // setup disconnected input for disconnected player within the session
     _disconnected_input = std::make_unique<u8[]>(_config.input_size);
@@ -76,6 +78,34 @@ void Gekko::GameSession::SetLocalDelay(i32 player, u8 delay)
             _sync.SetLocalDelay(player, delay);
         }
     }
+}
+
+bool Gekko::GameSession::SetPredictionWindow(u8 window)
+{
+    // lockstep sessions have no rollback path to switch into, and limited
+    // saving keeps only two states, so only a full-saving rollback session
+    // can change its window while running.
+    if (window == 0 || IsLockstepActive() || _config.limited_saving) {
+        return false;
+    }
+
+    // a larger window lets predictions run further ahead, so rollbacks can
+    // reach further back. the storage has to hold those states before any
+    // prediction can use the extra frames.
+    if (window > _max_prediction_window) {
+        if (!_storage.Grow(window)) {
+            return false;
+        }
+        _max_prediction_window = window;
+    }
+
+    // a smaller window only stops new predictions early. predictions already
+    // made under the old window still roll back from the storage kept above.
+    _config.input_prediction_window = window;
+    for (auto& remote : _msg.remotes) {
+        _sync.SetInputPredictionWindow(remote->handle, window);
+    }
+    return true;
 }
 
 void Gekko::GameSession::SetNetAdapter(GekkoNetAdapter* adapter)
@@ -288,8 +318,10 @@ void Gekko::GameSession::SendSessionHealthCheck()
         return;
     }
 
+    // use the largest window seen: after the window shrinks, frames inside the
+    // old window may still be predicted and the storage only reaches that far.
     const Frame current = _sync.GetCurrentFrame();
-    const Frame confirmed = (current - _config.input_prediction_window) - 1;
+    const Frame confirmed = (current - _max_prediction_window) - 1;
 
     if (confirmed <= GameInput::NULL_FRAME) {
         return;

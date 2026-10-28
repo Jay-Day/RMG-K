@@ -59,6 +59,11 @@ void gekko_set_local_delay(GekkoSession* session, int player, unsigned char dela
     session->SetLocalDelay(player, delay);
 }
 
+bool gekko_set_prediction_window(GekkoSession* session, unsigned char window)
+{
+    return session->SetPredictionWindow(window);
+}
+
 void gekko_set_runahead(GekkoSession* session, unsigned char runahead)
 {
     session->SetRunahead(runahead);
