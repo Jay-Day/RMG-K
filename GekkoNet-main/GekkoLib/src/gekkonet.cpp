@@ -109,6 +109,21 @@ void gekko_set_disconnect_timeout(GekkoSession* session, unsigned int timeout_ms
     session->SetDisconnectTimeout(timeout_ms);
 }
 
+void gekko_set_advance_limit(GekkoSession* session, int frame)
+{
+    session->SetAdvanceLimit(frame);
+}
+
+int gekko_current_frame(GekkoSession* session)
+{
+    return session->CurrentFrame();
+}
+
+int gekko_confirmed_frame(GekkoSession* session)
+{
+    return session->ConfirmedFrame();
+}
+
 #ifndef GEKKONET_NO_ASIO
 
 #ifdef _WIN32

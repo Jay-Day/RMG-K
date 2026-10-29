@@ -27,6 +27,10 @@ struct GekkoSession {
     virtual void NetworkPoll() = 0;
     virtual void DisconnectPlayer(i32 handle) = 0;
     virtual void SetDisconnectTimeout(u32 timeout_ms) = 0;
+    // Only game sessions advance frames of their own; see gekkonet.h.
+    virtual void SetAdvanceLimit(i32 frame) { (void)frame; }
+    virtual i32 CurrentFrame() { return -1; }
+    virtual i32 ConfirmedFrame() { return -1; }
     virtual ~GekkoSession() = default;
 };
 
@@ -63,6 +67,12 @@ namespace Gekko {
         void DisconnectPlayer(i32 handle) override;
 
         void SetDisconnectTimeout(u32 timeout_ms) override;
+
+        void SetAdvanceLimit(i32 frame) override;
+
+        i32 CurrentFrame() override;
+
+        i32 ConfirmedFrame() override;
 
 	private:
 		void Poll();
@@ -112,6 +122,9 @@ namespace Gekko {
 		// under it may still be pending, so the state storage stays sized for it
 		// and frames older than it are the only ones known to be confirmed.
 		u8 _max_prediction_window;
+
+		// frames at or past this are not advanced (NULL_FRAME: no limit).
+		Frame _advance_limit;
 
 		std::unique_ptr<u8[]> _disconnected_input;
 

@@ -142,9 +142,11 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
 // 3-/4-player rollback sessions can wire each remote actor to a distinct peer.
 // Format: LOBBY|<delay>|<prediction>|<slot>,<ip>,<port>|<slot>,<ip>,<port>...
 static bool parse_lobby_address(const std::string& address, int& frameDelay, int& predictionWindow,
-    std::vector<LobbyRemotePeer>& remotes)
+    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch)
 {
     remotes.clear();
+    seats = 0;
+    joinEpoch = -1;
 
     constexpr const char* prefix = "LOBBY|";
     if (address.rfind(prefix, 0) != 0)
@@ -190,6 +192,26 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
     for (size_t i = 2; i < tokens.size(); i++)
     {
         const std::string& tok = tokens[i];
+        // Options ride as key=value tokens among the peers: seats=<ports the
+        // match emulates> and join=<epoch> for a late joiner.
+        const size_t equals = tok.find('=');
+        if (equals != std::string::npos)
+        {
+            const std::string key = tok.substr(0, equals);
+            try
+            {
+                const int value = std::stoi(tok.substr(equals + 1));
+                if (key == "seats" && value >= 2 && value <= 4)
+                    seats = value;
+                else if (key == "join" && value >= 0)
+                    joinEpoch = value;
+            }
+            catch (...)
+            {
+                return false;
+            }
+            continue;
+        }
         const size_t firstComma = tok.find(',');
         if (firstComma == std::string::npos)
         {
@@ -945,7 +967,9 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             int frameDelay = 0;
             int predictionWindow = 4;
             std::vector<LobbyRemotePeer> remotes;
-            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes))
+            int seats = 0;
+            int joinEpoch = -1;
+            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch))
             {
                 CoreSetError("CoreStartEmulation: invalid Lobby session parameters");
                 m64p_ret = M64ERR_INPUT_INVALID;
@@ -964,7 +988,10 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                 // be sparse — two players in P1 and P3 is a 3-port session with
                 // one empty port, not a 2-port one. Using the count here made
                 // the slot-3 player fail its own `slot > players` check.
-                int totalSeats = player;
+                // A match that can take late joiners emulates every seat the
+                // room has (seats=), so an empty seat is an idle controller
+                // someone can take over later.
+                int totalSeats = std::max(player, seats);
                 for (const auto& remote : remotes)
                 {
                     if (remote.slot > totalSeats)
@@ -974,7 +1001,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                     totalSeats, static_cast<int>(sizeof(uint32_t)),
                     player, static_cast<unsigned short>(port),
                     remotes.data(), static_cast<int>(remotes.size()),
-                    frameDelay, predictionWindow);
+                    frameDelay, predictionWindow, joinEpoch);
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())

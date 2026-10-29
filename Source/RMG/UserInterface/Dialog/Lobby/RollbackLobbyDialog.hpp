@@ -22,6 +22,9 @@
 #include <QVariant>
 
 #include <RMG-Core/RomSettings.hpp>
+#include <RMG-Core/rmgk_gekko.hpp> // LobbyRemotePeer (late join rosters)
+
+#include <vector>
 
 class QFrame;
 class QLabel;
@@ -116,6 +119,14 @@ signals:
     void liveReplayViewerCountChanged(int viewerCount, bool isSpectator);
     void liveReplayViewerCountCleared();
 
+    // Late join notices for the running game: a line in the OSD message
+    // stack, the centered banner shown while the game holds for a joiner
+    // (empty hides it), and a refresh of the port labels from
+    // recording_player_names for a match emulating `seats` ports.
+    void overlayMessage(QString message);
+    void overlayCenterMessage(QString message);
+    void portLabelsChanged(int seats);
+
 protected:
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
@@ -153,6 +164,14 @@ private slots:
     void onStartGameClicked();
 
     void onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
+    void onMatchAdmitBegin(quint64 matchId, quint64 admitId, int epoch, int seats, quint64 hostId,
+                           const LobbyClient::LobbyMatchPeer& joiner,
+                           const QList<LobbyClient::LobbyMatchPeer>& peers);
+    void onMatchAdmitStep(quint64 matchId, quint64 admitId, quint64 fromUserId, const QString& step,
+                          int frame, bool ok, const QString& reason);
+    void onMatchAdmitBlob(quint64 matchId, quint64 admitId, const QString& step, const QByteArray& raw);
+    void onMatchAdmitFailed(quint64 matchId, quint64 userId, const QString& reason);
+    void onLateJoinTick();
 
     // Broadcaster: drain staged krec bytes to the WebSocket.
     void onBroadcastDrainTick();
@@ -298,9 +317,11 @@ private:
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
         QLabel*  countryLabel = nullptr;  // country flag beside player name
+        QLabel*  statusLabel = nullptr;   // "waiting to join" beside the name, mid-match
         QLabel*  metaLabel = nullptr;     // "host · Frame delay: 2f · 12ms"
         QLabel*  connectionTypeLabel = nullptr; // Wi-Fi/Ethernet icon after ping
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
+        QPushButton* admitButton = nullptr; // host-only: add a waiting member to the running game
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
         int      slot      = 0;           // 1-4, drives the per-player accent color
@@ -499,6 +520,50 @@ private:
     // player joins (so we can flash/chime). m_roomSeatsSeen suppresses the chime
     // on the first ROOM_STATE after entering a room (those seats aren't "joins").
     QSet<quint64> m_knownSeatedUsers;
+
+    // ── Late join (see the section in the .cpp) ──
+    enum class LateJoinRole { None, Host, Player, Joiner };
+    struct LateJoin
+    {
+        LateJoinRole role = LateJoinRole::None;
+        quint64 matchId = 0;
+        quint64 admitId = 0;
+        int epoch = 0;
+        int seats = 0;
+        quint64 hostId = 0;
+        LobbyClient::LobbyMatchPeer joiner;
+        QList<LobbyClient::LobbyMatchPeer> peers; // roster after the join
+        QSet<quint64> left;                       // players who left mid hand-off
+        qint64 startedMs = 0;
+        int cutFrame = -1;
+        qint64 cutSentMs = 0;
+        QSet<quint64> awaitingCut;                // host: players yet to stop
+        bool stateSent = false;                   // host
+        bool cutReported = false;                 // player
+        bool launched = false;                    // joiner
+        bool readySent = false;                   // joiner
+        qint64 readyMs = 0;                       // joiner
+        bool stateReceived = false;               // joiner
+        bool released = false;                    // left the cut for the new session
+        qint64 releasedMs = 0;
+    };
+    LateJoin m_lateJoin;
+    QTimer* m_lateJoinTimer = nullptr;
+    // From ROOM_STATE: the running match can take late joiners, and which
+    // seated members are outside it and able to join.
+    bool m_roomLateJoin = false;
+    QSet<quint64> m_outOfMatchUsers;
+    QSet<quint64> m_lateJoinCapableUsers;
+    quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet
+    bool m_announcedWaitingSelf = false;
+    QString lobbyUserName(quint64 userId) const;
+    void onAdmitClicked(quint64 userId);
+    void launchAsLateJoiner();
+    std::vector<LobbyRemotePeer> lateJoinRemotes() const;
+    void applyLateJoinRoster();
+    void finishLateJoin(bool resumed);
+    void abortLateJoin(const QString& reason, bool tellOthers);
+    void refreshAdmitButtons();
     bool          m_roomSeatsSeen = false;
 
     // Delay Auto is local. Prediction Auto is the host-owned room selection;

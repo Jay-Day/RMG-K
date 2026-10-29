@@ -29,6 +29,15 @@ struct LobbyRemotePeer
     unsigned short port = 0;
 };
 
+// Where a late join's cut stands on this client (see rmgk_gekko::arm_admit_cut).
+enum class AdmitCutStatus
+{
+    None,    // no cut armed
+    Armed,   // still playing toward the cut frame
+    Reached, // stopped at the cut; every frame before it is final
+    Passed,  // the session was already past the cut frame when it was armed
+};
+
 class rmgk_gekko
 {
   public:
@@ -39,11 +48,14 @@ class rmgk_gekko
         int localPlayer, unsigned short localPort, const char* remoteIp, unsigned short remotePort, int localDelay, int predictionWindow);
     // Lobby variant: uses the room's libjuice ICE mesh. It remains separate
     // from the n02/connect-code transport and takes one lobby identity per
-    // remote controller slot.
+    // remote controller slot. `players` is the number of controller ports the
+    // match emulates. A late joiner passes the session's epoch as joinEpoch:
+    // its emulation then runs one boot frame and holds until
+    // provide_join_state() hands it the state to start from.
     static bool start_lobby_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort,
         const LobbyRemotePeer* remotes, int numRemotes,
-        int localDelay, int predictionWindow);
+        int localDelay, int predictionWindow, int joinEpoch = -1);
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     // n02-style shared transport: adopt an already-bound UDP socket (the
     // lobby's anchor) for the next lobby session instead of binding our own.
@@ -73,6 +85,35 @@ class rmgk_gekko
     // ahead, so peers may run with different windows.
     static void set_live_prediction_window(int predictionWindow);
     static bool is_netplay_session_active();
+
+    // --- Late join ---
+    // A late join moves the match to a new session that includes the joiner.
+    // Every player stops on the same frame (the cut), where the frames before
+    // it are final everywhere, then continues from the state it already has
+    // in the new session; the joiner loads the host's copy of that state.
+    //
+    // Thread-safe: the frame the session advances next (-1 without one), and
+    // which of the match's sessions that is (0 for the first, -1 without one).
+    // A caller waiting for a new session to run checks both: the frame
+    // resets before the epoch changes.
+    static int current_frame();
+    static int session_epoch();
+    // Thread-safe: stop at `frame`. With captureState (the host), a full
+    // savestate of the cut is kept for take_admit_state().
+    static void arm_admit_cut(int frame, bool captureState);
+    static AdmitCutStatus admit_cut_status();
+    // Thread-safe: the state captured at the cut, once Reached.
+    static bool take_admit_state(std::vector<unsigned char>& out);
+    // Thread-safe: leave the cut for a new session with these remote players
+    // on ICE channel `epoch`. Ignored until the cut is Reached.
+    static void release_admit_cut(const std::vector<LobbyRemotePeer>& remotes, int epoch);
+    // Thread-safe: drop the cut and carry on in the current session.
+    static void cancel_admit_cut();
+    // Thread-safe (joiner): true while booted and waiting for its state.
+    static bool join_holding();
+    // Thread-safe (joiner): the state to start from; the held session loads
+    // it and connects to the players.
+    static void provide_join_state(std::vector<unsigned char> state);
     static bool execute();
     // Rollback presentation pacer. The core invokes this through the video
     // plugin rendering callback immediately before OpenGL or Vulkan presents.

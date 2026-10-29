@@ -228,6 +228,20 @@ GEKKONET_API void gekko_disconnect_player(GekkoSession* session, int handle);
 // decides drops for every peer. Spectator timeouts are unaffected.
 GEKKONET_API void gekko_set_disconnect_timeout(GekkoSession* session, unsigned int timeout_ms);
 
+// Stop a game session at `frame`: update_session keeps rolling back and
+// re-simulating earlier frames as late inputs arrive, but no longer advances
+// `frame` or any later one. -1 lifts the limit. Lets every peer halt on the
+// same frame, e.g. to hand the match over to a new session.
+GEKKONET_API void gekko_set_advance_limit(GekkoSession* session, int frame);
+
+// The frame a game session advances next (-1 for other sessions).
+GEKKONET_API int gekko_current_frame(GekkoSession* session);
+
+// The newest frame whose input from every player has arrived (-1 before any).
+// After an update_session call has run its events, every frame up to here is
+// final: no late input can roll it back any more.
+GEKKONET_API int gekko_confirmed_frame(GekkoSession* session);
+
 #ifndef GEKKONET_NO_ASIO
 
 GEKKONET_API GekkoNetAdapter* gekko_default_adapter(unsigned short port);
