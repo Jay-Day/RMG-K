@@ -109,14 +109,18 @@ void Gekko::InputBuffer::SetDelay(u8 delay)
 	}
 
 	// when our current delay is smaller then the new delay 
-	// all we have to do is expand the delay with the last input we received
+	// all we have to do is expand the delay with the last input we received.
+	// only the difference is filled: the frames up to _last_received_input
+	// already carry the old delay, and filling more would leave the next
+	// AddLocalInput out of sequence so it drops real inputs.
 	if (_input_delay < delay) {
+		const i32 added = delay - _input_delay;
 		_input_delay = delay;
 
 		Frame last_input = _last_received_input;
         u8* prev = _inputs[last_input % _buff_size]->input.get();
 
-		for (i32 i = 1; i <= _input_delay; i++) {
+		for (i32 i = 1; i <= added; i++) {
 			AddInput(last_input + i, prev);
 		}
 

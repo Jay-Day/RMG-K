@@ -59,6 +59,11 @@ void gekko_set_local_delay(GekkoSession* session, int player, unsigned char dela
     session->SetLocalDelay(player, delay);
 }
 
+bool gekko_set_prediction_window(GekkoSession* session, unsigned char window)
+{
+    return session->SetPredictionWindow(window);
+}
+
 void gekko_set_runahead(GekkoSession* session, unsigned char runahead)
 {
     session->SetRunahead(runahead);
@@ -102,6 +107,21 @@ void gekko_disconnect_player(GekkoSession* session, int handle)
 void gekko_set_disconnect_timeout(GekkoSession* session, unsigned int timeout_ms)
 {
     session->SetDisconnectTimeout(timeout_ms);
+}
+
+void gekko_set_advance_limit(GekkoSession* session, int frame)
+{
+    session->SetAdvanceLimit(frame);
+}
+
+int gekko_current_frame(GekkoSession* session)
+{
+    return session->CurrentFrame();
+}
+
+int gekko_confirmed_frame(GekkoSession* session)
+{
+    return session->ConfirmedFrame();
 }
 
 #ifndef GEKKONET_NO_ASIO

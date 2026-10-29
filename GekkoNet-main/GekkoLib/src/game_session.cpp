@@ -32,6 +32,8 @@ Gekko::GameSession::GameSession()
     _last_sent_healthcheck = GameInput::NULL_FRAME;
     _runahead_start_frame = GameInput::NULL_FRAME;
     _runahead_frames = 0;
+    _max_prediction_window = 0;
+    _advance_limit = GameInput::NULL_FRAME;
     _config = GekkoConfig();
 }
 
@@ -55,6 +57,7 @@ void Gekko::GameSession::Init(GekkoConfig* config)
 
     // setup state storage
     _storage.Init(_config.input_prediction_window, _config.state_size, _config.limited_saving);
+    _max_prediction_window = _config.input_prediction_window;
 
     // setup disconnected input for disconnected player within the session
     _disconnected_input = std::make_unique<u8[]>(_config.input_size);
@@ -76,6 +79,34 @@ void Gekko::GameSession::SetLocalDelay(i32 player, u8 delay)
             _sync.SetLocalDelay(player, delay);
         }
     }
+}
+
+bool Gekko::GameSession::SetPredictionWindow(u8 window)
+{
+    // lockstep sessions have no rollback path to switch into, and limited
+    // saving keeps only two states, so only a full-saving rollback session
+    // can change its window while running.
+    if (window == 0 || IsLockstepActive() || _config.limited_saving) {
+        return false;
+    }
+
+    // a larger window lets predictions run further ahead, so rollbacks can
+    // reach further back. the storage has to hold those states before any
+    // prediction can use the extra frames.
+    if (window > _max_prediction_window) {
+        if (!_storage.Grow(window)) {
+            return false;
+        }
+        _max_prediction_window = window;
+    }
+
+    // a smaller window only stops new predictions early. predictions already
+    // made under the old window still roll back from the storage kept above.
+    _config.input_prediction_window = window;
+    for (auto& remote : _msg.remotes) {
+        _sync.SetInputPredictionWindow(remote->handle, window);
+    }
+    return true;
 }
 
 void Gekko::GameSession::SetNetAdapter(GekkoNetAdapter* adapter)
@@ -172,8 +203,10 @@ GekkoGameEvent** Gekko::GameSession::UpdateSession(i32* count)
         // check if the session is still doing alright.
         SessionIntegrityCheck();
 
-        // then advance the session
-        if (_game_events.AddAdvanceEvent(_sync, false)) {
+        // then advance the session, unless it has reached its advance limit
+        const bool at_limit = _advance_limit != GameInput::NULL_FRAME &&
+            _sync.GetCurrentFrame() >= _advance_limit;
+        if (!at_limit && _game_events.AddAdvanceEvent(_sync, false)) {
             // Frame 0 is the rollback baseline. It is executed only after every
             // peer's real frame-0 input is present, then saved for rollbacks
             // beginning at frame 1.
@@ -187,7 +220,9 @@ GekkoGameEvent** Gekko::GameSession::UpdateSession(i32* count)
         }
 
         // run ahead if configured
-        HandleRunahead();
+        if (!at_limit) {
+            HandleRunahead();
+        }
     }
 
     *count = _game_events.Count();
@@ -288,8 +323,10 @@ void Gekko::GameSession::SendSessionHealthCheck()
         return;
     }
 
+    // use the largest window seen: after the window shrinks, frames inside the
+    // old window may still be predicted and the storage only reaches that far.
     const Frame current = _sync.GetCurrentFrame();
-    const Frame confirmed = (current - _config.input_prediction_window) - 1;
+    const Frame confirmed = (current - _max_prediction_window) - 1;
 
     if (confirmed <= GameInput::NULL_FRAME) {
         return;
@@ -357,11 +394,28 @@ void Gekko::GameSession::AddDisconnectedPlayerInputs()
 		if (player->GetStatus() == Disconnected) {
             const Frame last_recv = _sync.GetLastReceivedFrom(player->handle) + 1;
             const Frame current = _sync.GetCurrentFrame();
-            for (Frame i = last_recv; i < current; i++) {
+            // up to and including the current frame: one dropped before frame 0
+            // has sent nothing, and frame 0 is never predicted.
+            for (Frame i = last_recv; i <= current; i++) {
                 _sync.AddRemoteInput(player->handle, _disconnected_input.get(), i);
             }
 		}
 	}
+}
+
+void Gekko::GameSession::SetAdvanceLimit(i32 frame)
+{
+    _advance_limit = frame < 0 ? GameInput::NULL_FRAME : frame;
+}
+
+i32 Gekko::GameSession::CurrentFrame()
+{
+    return _sync.GetCurrentFrame();
+}
+
+i32 Gekko::GameSession::ConfirmedFrame()
+{
+    return _sync.GetMinReceivedFrame();
 }
 
 void Gekko::GameSession::DisconnectPlayer(i32 handle)
@@ -371,8 +425,11 @@ void Gekko::GameSession::DisconnectPlayer(i32 handle)
 	// is gone (e.g. the lobby server reported it). Once marked Disconnected,
 	// AddDisconnectedPlayerInputs feeds idle input for them and the session
 	// advances immediately instead of stalling on their missing frames.
+	// An actor still Initiating counts too: a session that hasn't started
+	// would otherwise wait for it forever.
 	for (auto& actor : _msg.remotes) {
-		if (actor->handle == handle && actor->GetStatus() == Connected) {
+		if (actor->handle == handle &&
+			(actor->GetStatus() == Connected || actor->GetStatus() == Initiating)) {
 			_msg.session_events.AddPlayerDisconnectedEvent(actor->handle);
 			actor->SetStatus(Disconnected);
 			actor->sync_num = 0;

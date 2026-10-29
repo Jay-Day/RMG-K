@@ -1038,6 +1038,10 @@
     <context>
         <name>UserInterface::MainWindow</name>
         <message>
+            <source>Joining the game…</source>
+            <translation>ゲームに参加しています…</translation>
+        </message>
+        <message>
             <source>%1 viewer</source>
             <translation>視聴者：%1人</translation>
         </message>
@@ -2987,6 +2991,14 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>自分のフレーム遅延: %1 · 予測 %2</translation>
         </message>
         <message>
+            <source>Your frame delay is now %1 f.</source>
+            <translation>自分のフレーム遅延を%1フレームに変更しました。</translation>
+        </message>
+        <message>
+            <source>Prediction is now %1 f.</source>
+            <translation>予測が%1フレームに変更されました。</translation>
+        </message>
+        <message>
             <source>Match start failed: you don't have the ROM for %1.</source>
             <translation>対戦を開始できませんでした: %1のROMがありません。</translation>
         </message>
@@ -3119,6 +3131,186 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         <message>
             <source>Message the other spectators…</source>
             <translation>他の観戦者にメッセージを送信…</translation>
+        </message>
+        <message>
+            <source>Add to Game</source>
+            <translation>ゲームに追加</translation>
+        </message>
+        <message>
+            <source>Adding…</source>
+            <translation>追加中…</translation>
+        </message>
+        <message>
+            <source>Another player is joining right now.</source>
+            <translation>別のプレイヤーが参加中です。</translation>
+        </message>
+        <message>
+            <source>Add this player to the running game. Everyone pauses for a moment while they load in.</source>
+            <translation>このプレイヤーを進行中のゲームに追加します。読み込みの間、全員のゲームが一瞬止まります。</translation>
+        </message>
+        <message>
+            <source>waiting to join</source>
+            <translation>参加待ち</translation>
+        </message>
+        <message>
+            <source>Waiting to join</source>
+            <translation>参加待ち</translation>
+        </message>
+        <message>
+            <source>(playing)</source>
+            <translation>（プレイ中）</translation>
+        </message>
+        <message>
+            <source>Match in progress. Join, and the host can add you to the game.</source>
+            <translation>対戦進行中です。ルームに参加すると、ホストがあなたをゲームに追加できます。</translation>
+        </message>
+        <message>
+            <source>A match is in progress. The host can add you to the game; it starts on its own when they do.</source>
+            <translation>対戦が進行中です。ホストがあなたをゲームに追加できます。追加されると自動的に始まります。</translation>
+        </message>
+        <message>
+            <source>%1 is waiting to join. Click Add to Game on their seat to bring them in.</source>
+            <translation>%1が参加待ちです。席の「ゲームに追加」をクリックすると参加させられます。</translation>
+        </message>
+        <message>
+            <source>%1 is waiting to join. The host can add them to the game.</source>
+            <translation>%1が参加待ちです。ホストがゲームに追加できます。</translation>
+        </message>
+        <message>
+            <source>%1 is waiting to join (Add to Game in the lobby)</source>
+            <translation>%1が参加待ちです（ロビーで「ゲームに追加」）</translation>
+        </message>
+        <message>
+            <source>%1 is waiting to join</source>
+            <translation>%1が参加待ちです</translation>
+        </message>
+        <message>
+            <source>Adding %1 to the game…</source>
+            <translation>%1をゲームに追加しています…</translation>
+        </message>
+        <message>
+            <source>The host is adding you to the game…</source>
+            <translation>ホストがあなたをゲームに追加しています…</translation>
+        </message>
+        <message>
+            <source>The host is adding %1 to the game…</source>
+            <translation>ホストが%1をゲームに追加しています…</translation>
+        </message>
+        <message>
+            <source>Joining the game…</source>
+            <translation>ゲームに参加しています…</translation>
+        </message>
+        <message>
+            <source>%1 is joining the game…</source>
+            <translation>%1がゲームに参加しています…</translation>
+        </message>
+        <message>
+            <source>%1 is joining the game</source>
+            <translation>%1がゲームに参加します</translation>
+        </message>
+        <message>
+            <source>You joined the game as P%1.</source>
+            <translation>P%1としてゲームに参加しました。</translation>
+        </message>
+        <message>
+            <source>You joined the game as P%1</source>
+            <translation>P%1としてゲームに参加しました</translation>
+        </message>
+        <message>
+            <source>%1 joined the game as P%2.</source>
+            <translation>%1がP%2としてゲームに参加しました。</translation>
+        </message>
+        <message>
+            <source>%1 joined the game as P%2</source>
+            <translation>%1がP%2としてゲームに参加しました</translation>
+        </message>
+        <message>
+            <source>Still waiting for %1 to connect…</source>
+            <translation>%1の接続を待っています…</translation>
+        </message>
+        <message>
+            <source>You don't have the ROM for %1.</source>
+            <translation>%1のROMがありません。</translation>
+        </message>
+        <message>
+            <source>Couldn't add %1: %2.</source>
+            <translation>%1を追加できませんでした: %2。</translation>
+        </message>
+        <message>
+            <source>Couldn't join the game: %1.</source>
+            <translation>ゲームに参加できませんでした: %1。</translation>
+        </message>
+        <message>
+            <source>%1 couldn't join</source>
+            <translation>%1は参加できませんでした</translation>
+        </message>
+        <message>
+            <source>they're on a different RMG-K version</source>
+            <translation>相手のRMG-Kのバージョンが異なります</translation>
+        </message>
+        <message>
+            <source>another player is joining right now</source>
+            <translation>別のプレイヤーが参加中です</translation>
+        </message>
+        <message>
+            <source>this match or their RMG-K can't add players mid-game</source>
+            <translation>この対戦または相手のRMG-Kは途中参加に対応していません</translation>
+        </message>
+        <message>
+            <source>they're not waiting to join any more</source>
+            <translation>相手はもう参加待ちではありません</translation>
+        </message>
+        <message>
+            <source>they left the room</source>
+            <translation>相手がルームを退出しました</translation>
+        </message>
+        <message>
+            <source>their game didn't get ready in time</source>
+            <translation>相手のゲームの準備が間に合いませんでした</translation>
+        </message>
+        <message>
+            <source>your game didn't get ready in time</source>
+            <translation>ゲームの準備が間に合いませんでした</translation>
+        </message>
+        <message>
+            <source>a player was too far ahead to stop in time — try again</source>
+            <translation>停止が間に合わないプレイヤーがいました — もう一度お試しください</translation>
+        </message>
+        <message>
+            <source>a player was too far ahead to stop in time</source>
+            <translation>停止が間に合わないプレイヤーがいました</translation>
+        </message>
+        <message>
+            <source>they don't have the ROM</source>
+            <translation>相手がROMを持っていません</translation>
+        </message>
+        <message>
+            <source>you don't have the ROM</source>
+            <translation>ROMがありません</translation>
+        </message>
+        <message>
+            <source>the match ended</source>
+            <translation>対戦が終了しました</translation>
+        </message>
+        <message>
+            <source>a player stopped responding</source>
+            <translation>応答しなくなったプレイヤーがいます</translation>
+        </message>
+        <message>
+            <source>the game couldn't be sent to them</source>
+            <translation>相手にゲームを送信できませんでした</translation>
+        </message>
+        <message>
+            <source>the game couldn't be sent to you</source>
+            <translation>ゲームを受信できませんでした</translation>
+        </message>
+        <message>
+            <source>the game was closed</source>
+            <translation>ゲームが終了しました</translation>
+        </message>
+        <message>
+            <source>something went wrong (%1)</source>
+            <translation>問題が発生しました（%1）</translation>
         </message>
     </context>
     </TS>

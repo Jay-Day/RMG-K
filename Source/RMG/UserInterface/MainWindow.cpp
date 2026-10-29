@@ -4986,6 +4986,19 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_LiveReplayViewerCountChanged);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountCleared,
             this, []() { OnScreenDisplaySetLiveReplayStatus(""); });
+    // Late join notices for the running game.
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::overlayMessage,
+            this, [this](const QString& message) {
+                if (this->emulationThread && this->emulationThread->isRunning())
+                    OnScreenDisplaySetMessage(message.toStdString());
+            });
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::overlayCenterMessage,
+            this, [](const QString& message) { OnScreenDisplaySetCenterMessage(message.toStdString()); });
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::portLabelsChanged,
+            this, [](int seats) {
+                if (seats >= 1 && seats <= 4)
+                    OnScreenDisplaySetKailleraPortLabels(seats, GetLiveKailleraPortLabelNames());
+            });
 }
 #endif
 
@@ -5214,19 +5227,40 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     // Seats can be sparse — two players in P1 and P3 is a 3-port match with P2
     // empty. Both the krec header and the OSD labels are per-PORT, so they need
     // the highest occupied seat; the player count would drop the top player and
-    // shift every label past the gap. Each remotePeers entry is "slot,ip,port".
+    // shift every label past the gap. Each remotePeers entry is "slot,ip,port",
+    // or an option: "seats=N" (a match open to late joiners emulates every
+    // seat) and "join=E" (this client is joining the running match).
     int seatCount = localPlayer;
+    bool lateJoiner = false;
     for (const QString& peer : remotePeers)
     {
+        if (peer.startsWith(QStringLiteral("seats=")))
+        {
+            seatCount = std::max(seatCount, peer.mid(6).toInt());
+            continue;
+        }
+        if (peer.startsWith(QStringLiteral("join=")))
+        {
+            lateJoiner = true;
+            continue;
+        }
         const int slot = peer.section(',', 0, 0).toInt();
         if (slot > seatCount)
             seatCount = slot;
     }
 
+    // A late joiner's replay would start mid-game with nothing to restore
+    // from, so it records nothing; the host's replay covers the whole match.
+    if (!lateJoiner)
     {
         const std::string recAppName = "RMG-K " + CoreGetVersion();
         n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
                            localPlayer, seatCount);
+    }
+    else
+    {
+        // Drawn on the boot frame and held there until the game arrives.
+        OnScreenDisplaySetCenterMessage(tr("Joining the game…").toStdString());
     }
 
     // Label the OSD ports with the seated players' usernames. The lobby's
