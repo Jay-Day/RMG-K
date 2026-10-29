@@ -1973,7 +1973,7 @@ void GraphicsDrawer::_setSpecialTexrect() const
 		texturedRectSpecial = nullptr;
 }
 
-void GraphicsDrawer::_initData()
+void GraphicsDrawer::_initData(bool _keepCombiners)
 {
 	_initStates();
 	_setSpecialTexrect();
@@ -1982,7 +1982,8 @@ void GraphicsDrawer::_initData()
 	g_textDrawer.init();
 	DepthBuffer_Init();
 	FrameBuffer_Init();
-	Combiner_Init();
+	if (!_keepCombiners)
+		Combiner_Init();
 	TFH.init();
 	PostProcessor::get().init();
 	g_zlutTexture.init();
@@ -2003,7 +2004,7 @@ void GraphicsDrawer::_initData()
 	m_dmaVerticesNum = 0;
 }
 
-void GraphicsDrawer::_destroyData()
+void GraphicsDrawer::_destroyData(bool _keepCombiners)
 {
 	m_drawingState = DrawingState::Non;
 	m_texrectDrawer.destroy();
@@ -2012,7 +2013,8 @@ void GraphicsDrawer::_destroyData()
 	PostProcessor::get().destroy();
 	if (TFH.optionsChanged())
 		TFH.shutdown();
-	Combiner_Destroy();
+	if (!_keepCombiners)
+		Combiner_Destroy();
 	FrameBuffer_Destroy();
 	DepthBuffer_Destroy();
 	g_textDrawer.destroy();
