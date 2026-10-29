@@ -202,6 +202,8 @@ public:
     // if another keyframe is already compressing/uploading.
     bool sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame);
     bool broadcastKeyframeUploadBusy() const;
+    // How often to upload a keyframe, from the lobby's last MATCH_BEGIN.
+    qint64 broadcastKeyframeIntervalMs() const { return m_broadcastKeyframeIntervalMs; }
     void sendBroadcastEnd(quint64 matchId);
 
     // Spectate (pull a broadcast match's krec stream back down).
@@ -469,6 +471,7 @@ private:
     QString m_observedIp;
     QString m_region;
     bool    m_isModerator = false; // set once ADMIN_AUTH_OK is received
+    qint64  m_broadcastKeyframeIntervalMs = 30'000;
     quint64 m_currentIceRoomId = 0;
     quint64 m_currentIceHostUserId = 0;
     QSet<quint64> m_icePeerIds;

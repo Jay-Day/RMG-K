@@ -4619,14 +4619,15 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
     }
 
     // Keep a recent, rollback-confirmed keyframe on the server so late viewers
-    // start from a short tail instead of replaying from frame zero. Thirty seconds
-    // keeps recurring upload cost low while limiting a late viewer to a short
-    // headless fast-forward. Runs even when no krec chunk drained this tick.
-    constexpr qint64 kKeyframeIntervalMs = 30'000;
+    // start from a short tail instead of replaying from frame zero. The lobby
+    // picks the interval (30 s by default), trading recurring upload cost against
+    // a late viewer's headless fast-forward. Runs even when no krec chunk drained
+    // this tick.
+    const qint64 keyframeIntervalMs = m_client->broadcastKeyframeIntervalMs();
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     const bool keyframeUploadBusy = m_client->broadcastKeyframeUploadBusy();
     if (!keyframeUploadBusy &&
-        (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= kKeyframeIntervalMs))
+        (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= keyframeIntervalMs))
     {
         rmgk_gekko::request_keyframe();
         m_lastKeyframeRequestMs = nowMs;
