@@ -1990,6 +1990,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
 
     struct savestate_work *save;
     char *curr;
+    char *extra_state_start;
     size_t allocation_size;
 
     /* OK to cast away const qualifier */
@@ -2309,6 +2310,7 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, 0);
 #endif
 
+    extra_state_start = curr;
     PUTDATA(curr, uint32_t, dev->ai.last_read);
     PUTDATA(curr, uint32_t, dev->ai.delayed_carry);
 
@@ -2458,6 +2460,19 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     PUTDATA(curr, uint32_t, dev->sp.rsp_wait);
     if (rollback_buffer_save)
     {
+        /* The extra state above occupies a fixed 4096-byte block: the loader
+         * reads it whole (data_0001_0200) and finds the AI FIFO addresses and
+         * SRAM after it. Appending them straight after the last field put
+         * them ~2.9 KB early, so every rollback restored SRAM shifted, with
+         * its tail taken from this buffer's unwritten (and, for a stripped
+         * save, uninitialized) padding, and the AI FIFO addresses from SRAM. */
+        const size_t extra_state_size = (size_t)(curr - extra_state_start);
+        if (extra_state_size < 4096)
+        {
+            memset(curr, 0, 4096 - extra_state_size);
+            curr += 4096 - extra_state_size;
+        }
+
         PUTDATA(curr, uint32_t, dev->ai.fifo[0].address);
         PUTDATA(curr, uint32_t, dev->ai.fifo[1].address);
     }
