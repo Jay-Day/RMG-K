@@ -273,6 +273,29 @@ static int rollback_should_skip_raw_pif_channel(size_t player)
         && Controls[player].RawData;
 }
 
+/* A rollback session synchronizes the first l_rollback_input_players ports.
+ * The rest must look identical on every peer too, so they always read as
+ * empty instead of whatever controller this machine has configured there:
+ * a second local pad on P3 would otherwise be plugged in (and move) on one
+ * peer only. */
+static int rollback_should_force_absent_channel(size_t player)
+{
+    return l_rollback_input_callback != NULL
+        && player >= (size_t)l_rollback_input_players
+        && player < NUM_CONTROLLER;
+}
+
+static void rollback_force_controller_absent(struct pif_channel* channel)
+{
+    if (channel->tx == NULL) {
+        return;
+    }
+
+    *channel->tx &= 0x3f;
+    *channel->rx &= 0x3f;
+    *channel->rx |= 0x80;
+}
+
 void pif_begin_rollback_input_frame(void)
 {
     l_rollback_input_valid = 0;
@@ -702,6 +725,13 @@ void update_pif_ram(struct pif* pif)
             rollback_log_pif_channel("skip-before", k, &pif->channels[k]);
             rollback_force_controller_present(&pif->channels[k]);
             rollback_log_pif_channel("skip-after", k, &pif->channels[k]);
+            continue;
+        }
+        if (rollback_should_force_absent_channel(k)) {
+            if (Controls[k].RawData) {
+                skipped_raw_pif_channel = 1;
+            }
+            rollback_force_controller_absent(&pif->channels[k]);
             continue;
         }
         rollback_log_pif_channel("native-before", k, &pif->channels[k]);
