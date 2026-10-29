@@ -2,8 +2,8 @@
 Type=Application
 Name=Rosalie's Mupen GUI
 Comment=An easy to use &amp; cross-platform mupen64plus front-end written in C++ & Qt
-Exec=RMG %f
-TryExec=RMG
+Exec=RMG-K %f
+TryExec=RMG-K
 Icon=com.github.Rosalie241.RMG
 Terminal=false
 Categories=Game;Emulator;Qt;
