@@ -52,6 +52,7 @@
 #include <QTreeWidget>
 #include <QHeaderView>
 #include <QTextEdit>
+#include <QScrollBar>
 #include <QLineEdit>
 #include <QJsonArray>
 #include <QPushButton>
@@ -84,6 +85,7 @@
 #include <QLocale>
 #include <QMenu>
 #include <algorithm>
+#include <memory>
 #include <vector>
 #include <cstdio>
 #include <cstring>
@@ -371,6 +373,25 @@ namespace
         f.setPointSize(f.pointSize() + pointDelta);
         if (bold) f.setBold(true);
         w->setFont(f);
+    }
+
+    // QTextEdit::append only follows new lines while the view is exactly at
+    // the bottom. When the text grows without an append, the reader is left
+    // a few lines up and every later append stays parked there. That happens
+    // when the splitter narrows the chat column and lines rewrap, e.g. when
+    // the room column's minimum width grows on entering a room or at a match
+    // start or end. Remember whether the reader was at the bottom and keep
+    // them there when the range grows; scrolling up still holds the view.
+    void keepChatAtBottom(QTextEdit* view)
+    {
+        QScrollBar* bar = view->verticalScrollBar();
+        auto atBottom = std::make_shared<bool>(true);
+        QObject::connect(bar, &QScrollBar::valueChanged, view, [bar, atBottom](int value) {
+            *atBottom = value >= bar->maximum();
+        });
+        QObject::connect(bar, &QScrollBar::rangeChanged, view, [bar, atBottom](int, int max) {
+            if (*atBottom) bar->setValue(max);
+        });
     }
 
     // Column-0 role carrying "this player is searching for a match" for the
@@ -1321,6 +1342,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_chatViewRoom->setReadOnly(true);
     m_chatViewRoom->setLineWrapMode(QTextEdit::WidgetWidth);
     m_chatViewRoom->setFrameShape(QFrame::NoFrame);
+    keepChatAtBottom(m_chatViewRoom);
     roomChatLay->addWidget(m_chatViewRoom, 1);
 
     m_roomChatInput = new QLineEdit(roomChatCard);
@@ -1631,6 +1653,7 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
         view->setReadOnly(true);
         view->setLineWrapMode(QTextEdit::WidgetWidth);
         view->setFrameShape(QFrame::NoFrame);
+        keepChatAtBottom(view);
         return view;
     };
     m_chatStack = new QStackedWidget(card);
