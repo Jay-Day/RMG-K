@@ -99,6 +99,11 @@ void gekko_disconnect_player(GekkoSession* session, int handle)
     session->DisconnectPlayer(handle);
 }
 
+void gekko_set_disconnect_timeout(GekkoSession* session, unsigned int timeout_ms)
+{
+    session->SetDisconnectTimeout(timeout_ms);
+}
+
 #ifndef GEKKONET_NO_ASIO
 
 #ifdef _WIN32

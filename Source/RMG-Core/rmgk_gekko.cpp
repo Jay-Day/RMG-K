@@ -69,6 +69,12 @@ namespace
 constexpr unsigned int kGekkoStateCapacity = 24u * 1024u * 1024u;
 constexpr int kGekkoMaxLoggedFrames = 600;
 constexpr int kGekkoWaitSleepUs = 100;
+// Lobby matches leave player drops to the lobby (MATCH_PEER_LEFT). GekkoNet's
+// own silence timeout is only a fallback for a peer the lobby can't see go
+// away (e.g. its network dies while the lobby connection lingers). It is long
+// enough that a client stall (shader reload, alt-tab) never reaches it, since
+// each peer applies it on its own and a stall near the limit splits the match.
+constexpr unsigned int kGekkoLobbyPeerTimeoutMs = 30000;
 // Lightweight stall diagnostics: don't treat a wait as a stall until it exceeds a
 // normal sub-frame hitch (~a frame), then snapshot per-peer stats at a coarse
 // wall-clock cadence. This keeps a multi-second freeze down to a handful of log
@@ -1917,10 +1923,6 @@ int rollback_execute_begin_frame(void* userData)
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
     gekko_network_poll(g_GekkoSession);
-    // Apply any lobby-driven force-disconnects before update_session, so a known
-    // peer drop substitutes idle input this very frame instead of stalling out
-    // GekkoNet's 5 s silence timeout.
-    process_pending_disconnects();
     if (timingEnabled)
     {
         summaryNetworkPollUs =
@@ -1960,6 +1962,12 @@ int rollback_execute_begin_frame(void* userData)
             write_gekko_log("begin_frame result=stop_requested");
             return 0;
         }
+
+        // Apply lobby-driven force-disconnects before every update_session,
+        // including while we wait on a peer's input. If the peer we're stalled
+        // on leaves, this ends the wait right away instead of after the lobby
+        // session's long silence timeout.
+        process_pending_disconnects();
 
         int count = 0;
         const auto updateSessionTime = timingEnabled
@@ -2791,6 +2799,14 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
 
     gekko_set_runahead(g_GekkoSession, 0);
 
+    // The lobby server decides when a player has left (MATCH_PEER_LEFT, applied
+    // through request_disconnect_player), and every seat hears it. GekkoNet's own
+    // silence timeout runs separately on each peer, so a ~5 s hitch on one client
+    // could drop it on some peers but not others — after which no peer can
+    // advance and the whole match freezes. Leave drops to the lobby and keep
+    // only a long fallback (see kGekkoLobbyPeerTimeoutMs).
+    gekko_set_disconnect_timeout(g_GekkoSession, kGekkoLobbyPeerTimeoutMs);
+
     g_GekkoPlayers = players;
     g_GekkoActors = numRemotes + 1;
     g_GekkoInputSize = inputSize;
@@ -2817,7 +2833,8 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
                << " clamped_prediction_window=" << clampedPredictionWindow
                << " transport=" << (useIce ? "libjuice_ice" :
                     (g_GekkoUsingExternalSocket ? "shared_anchor_socket" : "gekko_default_udp"))
-               << " num_remotes=" << numRemotes;
+               << " num_remotes=" << numRemotes
+               << " peer_timeout_ms=" << kGekkoLobbyPeerTimeoutMs;
         for (int i = 0; i < numRemotes; i++)
         {
             stream << " remote[" << i << "]=slot" << remotes[i].slot;

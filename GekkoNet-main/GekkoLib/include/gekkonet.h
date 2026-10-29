@@ -212,6 +212,14 @@ GEKKONET_API void gekko_network_poll(GekkoSession* session);
 // not a connected remote.
 GEKKONET_API void gekko_disconnect_player(GekkoSession* session, int handle);
 
+// How long a remote player may stay silent before this session marks them
+// Disconnected (default NetStats::DISCONNECT_TIMEOUT). 0 disables the timeout,
+// so players only leave through gekko_disconnect_player. Each peer applies the
+// timeout on its own, so a hitch near the limit can drop a player on some peers
+// but not others; disable it when an out-of-band channel (e.g. a lobby server)
+// decides drops for every peer. Spectator timeouts are unaffected.
+GEKKONET_API void gekko_set_disconnect_timeout(GekkoSession* session, unsigned int timeout_ms);
+
 #ifndef GEKKONET_NO_ASIO
 
 GEKKONET_API GekkoNetAdapter* gekko_default_adapter(unsigned short port);
