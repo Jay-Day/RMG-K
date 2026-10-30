@@ -196,6 +196,7 @@ set(RMG_TRANSLATION_TS
 qt_add_lupdate(RMG
     TS_FILES ${RMG_TRANSLATION_TS}
     SOURCES ${RMG_SOURCES} Utilities/Translation.hpp
+        ${CMAKE_SOURCE_DIR}/Source/RMG-Audio/UserInterface/MainDialog.ui
 )
 if (WIN32 AND CMAKE_GENERATOR STREQUAL "MSYS Makefiles")
     # Qt's Windows tool wrapper is a batch file in the build directory.  The
