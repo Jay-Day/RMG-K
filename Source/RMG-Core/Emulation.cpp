@@ -169,7 +169,7 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
         pos = next + 1;
     }
 
-    // Need at least: delay, prediction, and one peer entry.
+    // Need at least: delay, prediction, and one peer entry or option.
     if (tokens.size() < 3)
     {
         return false;
@@ -250,7 +250,9 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
         remotes.push_back(std::move(peer));
     }
 
-    return !remotes.empty();
+    // No peers is a host playing alone until someone is added, which only a
+    // match open to late joiners allows.
+    return !remotes.empty() || seats > 0;
 }
 
 //

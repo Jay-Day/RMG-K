@@ -47,6 +47,9 @@ void OnScreenDisplaySetInputPrompt(std::string message);
 // sets live Kaillera port labels rendered by the OSD
 void OnScreenDisplaySetKailleraPortLabels(int playerCount, const std::array<std::string, 4>& playerNames);
 
+// changes the names on the live Kaillera port labels, keeping the port count
+void OnScreenDisplaySetKailleraPortLabelNames(const std::array<std::string, 4>& playerNames);
+
 // clears live Kaillera port labels
 void OnScreenDisplayClearKailleraPortLabels(void);
 

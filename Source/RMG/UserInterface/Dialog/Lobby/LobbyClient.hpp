@@ -386,6 +386,8 @@ private:
     void handlePingProbeIncoming(const QJsonObject& data);
     void handleIceSignal(const QJsonObject& data);
     void reconcileIcePeers(const QJsonObject& roomState);
+    void removeIcePeer(quint64 userId);
+    bool iceAgentInUseByMatch(quint64 userId) const;
     void resetIceMesh();
     void resetIceTransport();
     bool restartIcePeer(quint64 userId, quint32 generation,
@@ -520,6 +522,8 @@ private:
     QHash<quint64, quint32> m_iceGenerations;
     QHash<quint64, int> m_iceRestartAttempts;
     bool m_matchTransportActive = false;
+    // Room members waiting beside the running match.
+    QSet<quint64> m_iceOutsideMatch;
     bool m_deferredIceMeshReset = false;
     bool m_deferredIceTransportReset = false;
     // Host-only matrix for non-host paths. To avoid duplicate reports, only

@@ -4995,10 +4995,7 @@ void MainWindow::ensureRollbackLobbyDialog()
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::overlayCenterMessage,
             this, [](const QString& message) { OnScreenDisplaySetCenterMessage(message.toStdString()); });
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::portLabelsChanged,
-            this, [](int seats) {
-                if (seats >= 1 && seats <= 4)
-                    OnScreenDisplaySetKailleraPortLabels(seats, GetLiveKailleraPortLabelNames());
-            });
+            this, []() { OnScreenDisplaySetKailleraPortLabelNames(GetLiveKailleraPortLabelNames()); });
 }
 #endif
 
@@ -5260,7 +5257,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     else
     {
         // Drawn on the boot frame and held there until the game arrives.
-        OnScreenDisplaySetCenterMessage(tr("Joining the game…").toStdString());
+        OnScreenDisplaySetCenterMessage(tr("Joining the game...").toStdString());
     }
 
     // Label the OSD ports with the seated players' usernames. The lobby's

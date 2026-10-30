@@ -178,6 +178,9 @@ int g_GekkoInputSize = 0;
 int g_GekkoLocalPlayer = 0;
 int g_GekkoLocalHandle = -1;
 int g_GekkoRemoteHandle = -1;
+// A lobby match. The host may be alone in it until someone is added, so this
+// can't be told from the remote handle.
+bool g_GekkoLobbySession = false;
 std::vector<int> g_GekkoPlayerHandles;
 std::vector<int> g_GekkoLocalHandles;
 std::vector<unsigned char> g_GekkoLatchedInput;
@@ -1666,7 +1669,11 @@ void step_local_delay(const std::vector<uint32_t>& sampledInputs)
 
 bool submit_local_input()
 {
-    const bool localOnlySession = g_GekkoRemoteHandle < 0 && g_GekkoLocalHandles.size() > 1;
+    // Several local controllers: the local testing session. A host alone in a
+    // lobby match has one, in whichever seat they sit.
+    const bool localOnlySession = g_GekkoRemoteHandle < 0 &&
+        std::count_if(g_GekkoLocalHandles.begin(), g_GekkoLocalHandles.end(),
+            [](int handle) { return handle >= 0; }) > 1;
     const int samplePlayers = localOnlySession ? g_GekkoPlayers : 1;
     std::vector<uint32_t> physicalInputs(static_cast<size_t>(std::max(samplePlayers, 1)), 0);
     if (!CoreRollbackSampleInput(physicalInputs.data(), g_GekkoInputSize, samplePlayers))
@@ -3432,9 +3439,10 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     // `players` is the highest occupied SEAT, not the player count — seats may
     // be sparse (P1 + P3 with P2 empty), so numRemotes can be short of
     // players - 1. It can never exceed it: seats are unique and one is ours.
+    // It can be 0: a host playing alone until someone is added.
     if (gameName == nullptr || players < 2 || players > 4 || inputSize != static_cast<int>(sizeof(uint32_t)) ||
-        localPlayer < 1 || localPlayer > players || remotes == nullptr ||
-        numRemotes < 1 || numRemotes > players - 1)
+        localPlayer < 1 || localPlayer > players || (remotes == nullptr && numRemotes > 0) ||
+        numRemotes < 0 || numRemotes > players - 1 || (joinEpoch >= 0 && numRemotes < 1))
     {
         write_gekko_log("start_lobby_session result=fail reason=invalid_params");
         return false;
@@ -3465,9 +3473,11 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
         write_gekko_log("start_lobby_session result=fail reason=mixed_lobby_transports");
         return false;
     }
-    bool useIce = sawIce;
+    // Alone there's nobody to reach yet, and anyone added later comes through ICE.
+    bool useIce = sawIce || numRemotes == 0;
 #ifdef NETPLAY
-    if (useIce)
+    // A late joiner holds on its boot frame until it's connected to everyone.
+    if (useIce && joinEpoch < 0)
     {
         for (int i = 0; i < numRemotes; ++i)
         {
@@ -3640,6 +3650,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
         return false;
     }
     g_GekkoSessionEpoch.store(0);
+    g_GekkoLobbySession = true;
 
     if (!install_core_input_callback())
     {
@@ -3813,6 +3824,7 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoJoinRemotes.clear();
     g_GekkoCurrentFrame.store(-1);
     g_GekkoSessionEpoch.store(-1);
+    g_GekkoLobbySession = false;
     g_GekkoPlayers = 0;
     g_GekkoActors = 0;
     g_GekkoInputSize = 0;
@@ -3926,7 +3938,7 @@ CORE_EXPORT void rmgk_gekko::set_live_prediction_window(int predictionWindow)
 CORE_EXPORT bool rmgk_gekko::is_netplay_session_active()
 {
 #ifdef RMGK_HAVE_GEKKONET
-    return (g_GekkoSession != nullptr && g_GekkoRemoteHandle >= 0) ||
+    return (g_GekkoSession != nullptr && (g_GekkoRemoteHandle >= 0 || g_GekkoLobbySession)) ||
         g_GekkoJoinHoldPhase != JoinHoldPhase::None;
 #else
     return false;

@@ -851,7 +851,11 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             rollback_tlb_end = SDL_GetPerformanceCounter();
     }
 
-    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t), memory_data == NULL);
+    /* A rollback returns to this machine's own recent past, so its compiled code stays
+     * valid. A FULL buffer comes from another machine (a late joiner, a spectator): code
+     * compiled here before the load no longer matches the RDRAM it was compiled from. */
+    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t),
+                           memory_data == NULL || !rollback_tlb_lut_omitted);
 
     *r4300_cp0_next_interrupt(&dev->r4300.cp0) = GETDATA(curr, uint32_t);
     curr += 4; /* here there used to be next_vi */

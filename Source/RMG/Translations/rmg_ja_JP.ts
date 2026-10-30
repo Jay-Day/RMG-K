@@ -1038,8 +1038,8 @@
     <context>
         <name>UserInterface::MainWindow</name>
         <message>
-            <source>Joining the game…</source>
-            <translation>ゲームに参加しています…</translation>
+            <source>Joining the game...</source>
+            <translation>ゲームに参加しています...</translation>
         </message>
         <message>
             <source>%1 viewer</source>
@@ -3137,6 +3137,14 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>ゲームに追加</translation>
         </message>
         <message>
+            <source>Start playing now. You can add anyone who joins the room to the game.</source>
+            <translation>今すぐプレイを開始します。ルームに参加したプレイヤーはゲームに追加できます。</translation>
+        </message>
+        <message>
+            <source>You're playing alone for now. When someone joins the room, click Add to Game on their seat.</source>
+            <translation>現在は1人でプレイしています。誰かがルームに参加したら、その席の「ゲームに追加」をクリックしてください。</translation>
+        </message>
+        <message>
             <source>Adding…</source>
             <translation>追加中…</translation>
         </message>
@@ -3199,6 +3207,10 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         <message>
             <source>Joining the game…</source>
             <translation>ゲームに参加しています…</translation>
+        </message>
+        <message>
+            <source>Joining the game...</source>
+            <translation>ゲームに参加しています...</translation>
         </message>
         <message>
             <source>%1 is joining the game…</source>
@@ -3271,6 +3283,14 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         <message>
             <source>your game didn't get ready in time</source>
             <translation>ゲームの準備が間に合いませんでした</translation>
+        </message>
+        <message>
+            <source>you couldn't connect to every player</source>
+            <translation>一部のプレイヤーに接続できませんでした</translation>
+        </message>
+        <message>
+            <source>they couldn't connect to every player</source>
+            <translation>相手が一部のプレイヤーに接続できませんでした</translation>
         </message>
         <message>
             <source>a player was too far ahead to stop in time — try again</source>

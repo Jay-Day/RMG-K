@@ -125,7 +125,7 @@ signals:
     // recording_player_names for a match emulating `seats` ports.
     void overlayMessage(QString message);
     void overlayCenterMessage(QString message);
-    void portLabelsChanged(int seats);
+    void portLabelsChanged();
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -542,7 +542,7 @@ private:
         bool cutReported = false;                 // player
         bool launched = false;                    // joiner
         bool readySent = false;                   // joiner
-        qint64 readyMs = 0;                       // joiner
+        qint64 readyMs = 0;                       // joiner, host: when it was ready
         bool stateReceived = false;               // joiner
         bool released = false;                    // left the cut for the new session
         qint64 releasedMs = 0;
@@ -552,6 +552,11 @@ private:
     // From ROOM_STATE: the running match can take late joiners, and which
     // seated members are outside it and able to join.
     bool m_roomLateJoin = false;
+    // From ROOM_STATE: the host may start with nobody else seated.
+    bool m_canStartAlone = false;
+    // In a match with nobody else in it yet.
+    bool m_playingAlone = false;
+    int autoFrameDelay() const;
     QSet<quint64> m_outOfMatchUsers;
     QSet<quint64> m_lateJoinCapableUsers;
     quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet
@@ -561,6 +566,8 @@ private:
     void launchAsLateJoiner();
     std::vector<LobbyRemotePeer> lateJoinRemotes() const;
     void applyLateJoinRoster();
+    void armLateJoinCut();
+    bool connectedToLateJoiner() const;
     void finishLateJoin(bool resumed);
     void abortLateJoin(const QString& reason, bool tellOthers);
     void refreshAdmitButtons();
