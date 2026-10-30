@@ -1108,26 +1108,39 @@ void LobbyClient::handleRoomJoinFail(const QJsonObject& data)
 
 void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
 {
+    const quint64 roomId = static_cast<quint64>(roomState.value("id").toDouble());
+
     // Room state is control-plane data. Once GekkoNet owns the established
-    // mesh, no server-side room transition may replace or remove its
-    // transport agents; actual actor teardown is driven by emulation finish.
-    // A member who joins mid-match only gets an agent added, so a late join
-    // finds them already connected.
+    // mesh, no server-side room transition may replace or remove the agents
+    // it's using; actual actor teardown is driven by emulation finish. Members
+    // outside the match are another matter: one who joins mid-match gets an
+    // agent, so a late join finds them already connected, and one who leaves
+    // loses it, since their next agent can't pair with the old one.
     if (m_matchTransportActive)
     {
-        if (static_cast<quint64>(roomState.value("id").toDouble()) != m_currentIceRoomId)
+        if (roomId != m_currentIceRoomId)
             return;
+        m_iceOutsideMatch.clear();
+        QSet<quint64> seated;
         for (const QJsonValue& value : roomState.value("players").toArray())
         {
             const QJsonObject player = value.toObject();
             const quint64 userId = static_cast<quint64>(player.value("userId").toDouble());
-            if (userId != 0 && userId != m_selfUserId && player.value("iceSupported").toBool())
+            if (userId == 0 || userId == m_selfUserId)
+                continue;
+            seated.insert(userId);
+            // Older servers don't send it; everyone seated is in their matches.
+            if (!player.value("inMatch").toBool(true))
+                m_iceOutsideMatch.insert(userId);
+            if (player.value("iceSupported").toBool())
                 ensureIcePeer(userId);
         }
+        // The server drops anyone leaving from the match before unseating them.
+        for (quint64 userId : m_icePeerIds - seated)
+            removeIcePeer(userId);
         return;
     }
 
-    const quint64 roomId = static_cast<quint64>(roomState.value("id").toDouble());
     if (roomId == 0)
         return;
     if (m_currentIceRoomId != 0 && m_currentIceRoomId != roomId)
@@ -1178,19 +1191,27 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
 
     const QSet<quint64> stale = m_icePeerIds - desired;
     for (quint64 userId : stale)
-    {
-        writePingDiagnostic(QStringLiteral("ICE_PEER_REMOVED"),
-                            QStringLiteral("peer=%1 room=%2 reason=not_in_room_state")
-                                .arg(pingUserLabel(userId)).arg(roomId));
-        LobbyIce::remove_peer(userId);
-        m_icePeerIds.remove(userId);
-        m_lastIceStates.remove(userId);
-        m_iceGenerations.remove(userId);
-        m_iceRestartAttempts.remove(userId);
-        m_roomPeerPings.remove(userId);
-        for (auto it = m_roomPeerPings.begin(); it != m_roomPeerPings.end(); ++it)
-            it.value().remove(userId);
-    }
+        removeIcePeer(userId);
+}
+
+void LobbyClient::removeIcePeer(quint64 userId)
+{
+    writePingDiagnostic(QStringLiteral("ICE_PEER_REMOVED"),
+                        QStringLiteral("peer=%1 room=%2 reason=not_in_room_state")
+                            .arg(pingUserLabel(userId)).arg(m_currentIceRoomId));
+    LobbyIce::remove_peer(userId);
+    m_icePeerIds.remove(userId);
+    m_lastIceStates.remove(userId);
+    m_iceGenerations.remove(userId);
+    m_iceRestartAttempts.remove(userId);
+    m_roomPeerPings.remove(userId);
+    for (auto it = m_roomPeerPings.begin(); it != m_roomPeerPings.end(); ++it)
+        it.value().remove(userId);
+}
+
+bool LobbyClient::iceAgentInUseByMatch(quint64 userId) const
+{
+    return m_matchTransportActive && !m_iceOutsideMatch.contains(userId);
 }
 
 void LobbyClient::resetIceMesh()
@@ -1236,6 +1257,7 @@ void LobbyClient::setMatchTransportActive(bool active)
         return;
 
     m_matchTransportActive = active;
+    m_iceOutsideMatch.clear();
     if (active)
         return;
 
@@ -1280,8 +1302,9 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
 
     // Replacing an agent underneath GekkoNet interrupts the active data plane.
     // Same-generation trickle candidates remain safe to apply, but ICE restart
-    // signaling is deferred until the match has released the mesh.
-    if (m_matchTransportActive &&
+    // signaling is deferred until the match has released the mesh. Someone
+    // waiting beside the match isn't using it yet and has to be able to connect.
+    if (iceAgentInUseByMatch(fromUserId) &&
         (kind == QStringLiteral("restart") || generation > currentGeneration))
     {
         writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN_DROPPED"),
@@ -1347,7 +1370,7 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
 bool LobbyClient::restartIcePeer(quint64 userId, quint32 generation,
                                  const QString& reason, bool notifyPeer)
 {
-    if (m_matchTransportActive || m_currentIceRoomId == 0 || !m_icePeerIds.contains(userId) ||
+    if (iceAgentInUseByMatch(userId) || m_currentIceRoomId == 0 || !m_icePeerIds.contains(userId) ||
         generation == 0 || generation <= m_iceGenerations.value(userId, 0) ||
         m_iceRestartAttempts.value(userId, 0) >= MAX_ICE_AUTO_RESTARTS)
     {
