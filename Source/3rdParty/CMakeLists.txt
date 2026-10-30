@@ -207,6 +207,16 @@ ExternalProject_Add(mupen64plus-input-raphnetraw
 set(GLIDEN64_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-video-GLideN64")
 set(GLIDEN64_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-video-GLideN64")
 set(GLIDEN64_CUSTOM_INI "${GLIDEN64_DIR}/ini/GLideN64.custom.ini")
+find_package(Qt6 6.2 COMPONENTS LinguistTools REQUIRED)
+set(GLIDEN64_JA_TS "${GLIDEN64_DIR}/translations/gliden64_ja.ts")
+set(GLIDEN64_JA_QM "${CMAKE_CURRENT_BINARY_DIR}/gliden64_ja.qm")
+add_custom_command(
+    OUTPUT "${GLIDEN64_JA_QM}"
+    COMMAND Qt6::lrelease "${GLIDEN64_JA_TS}" -qm "${GLIDEN64_JA_QM}"
+    DEPENDS Qt6::lrelease "${GLIDEN64_JA_TS}"
+    VERBATIM
+)
+add_custom_target(GLideN64JapaneseTranslation ALL DEPENDS "${GLIDEN64_JA_QM}")
 # taken from GLideN64's CMakeLists.txt
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Release" OR
     "${CMAKE_BUILD_TYPE}" STREQUAL "MinSizeRel" OR
@@ -314,6 +324,7 @@ endif(USE_ANGRYLION)
 ExternalProject_Get_property(mupen64plus-video-GLideN64 BUILD_BYPRODUCTS)
 set(MUPEN64PLUS_PLUGIN_GFX_GLIDEN64 ${BUILD_BYPRODUCTS} PARENT_SCOPE)
 set(MUPEN64PLUS_PLUGIN_GFX_GLIDEN64_DATA ${GLIDEN64_CUSTOM_INI} PARENT_SCOPE)
+set(MUPEN64PLUS_PLUGIN_GFX_GLIDEN64_TRANSLATION ${GLIDEN64_JA_QM} PARENT_SCOPE)
 
 ExternalProject_Get_property(mupen64plus-video-parallel BUILD_BYPRODUCTS)
 set(MUPEN64PLUS_PLUGIN_GFX_PARALLEL ${BUILD_BYPRODUCTS} PARENT_SCOPE)
