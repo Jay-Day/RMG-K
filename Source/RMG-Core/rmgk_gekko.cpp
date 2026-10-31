@@ -28,6 +28,7 @@
 #include "Error.hpp"
 #include "Library.hpp"
 #include "Settings.hpp"
+#include "Ranked.hpp"
 #ifdef NETPLAY
 #include "LobbyIce.hpp"
 #endif
@@ -1346,7 +1347,8 @@ const char* gekko_game_event_name(GekkoGameEventType type)
 
 void log_session_events()
 {
-    if (!g_GekkoLogEnabled)
+    // ranked sets need desync notifications even when logging is off
+    if (!g_GekkoLogEnabled && !CoreRankedIsActive())
     {
         return;
     }
@@ -1357,6 +1359,25 @@ void log_session_events()
     {
         GekkoSessionEvent* event = events[i];
         if (event == nullptr)
+        {
+            continue;
+        }
+
+        if (event->type == GekkoDesyncDetected)
+        {
+            CoreRankedReportDesync("frame " + std::to_string(event->data.desynced.frame));
+        }
+        if (event->type == GekkoPlayerDisconnected)
+        {
+            // a peer that stopped sending: a ranked set keeps the frame they left at
+            const auto it = std::find(g_GekkoPlayerHandles.begin(), g_GekkoPlayerHandles.end(),
+                                      event->data.disconnected.handle);
+            if (it != g_GekkoPlayerHandles.end())
+            {
+                CoreRankedOnPlayerLeft(static_cast<int>(it - g_GekkoPlayerHandles.begin()) + 1);
+            }
+        }
+        if (!g_GekkoLogEnabled)
         {
             continue;
         }
@@ -2018,6 +2039,7 @@ void commit_oldest_recorded_frame()
 {
     auto it = g_GekkoFrameInputBuffer.begin();
     n02::recordingWriteInputs(it->second.data(), static_cast<int>(it->second.size()));
+    CoreRankedOnRecordWritten(it->first, n02::recordingFrameCount() - 1);
     // Spectate input probe: log the confirmed krec input per frame (the exact
     // bytes a spectator must replay) so it can be diffed against the
     // spectator's applied input — revealing whether the boundary divergence is
@@ -2101,6 +2123,7 @@ void process_pending_disconnects()
             continue;
         }
         gekko_disconnect_player(g_GekkoSession, handle);
+        CoreRankedOnPlayerLeft(slot);
         std::ostringstream stream;
         stream << "force_disconnect slot=" << slot << " handle=" << handle
                << " reason=lobby_peer_left";
@@ -2908,6 +2931,9 @@ int rollback_execute_begin_frame(void* userData)
                 {
                     return 0;
                 }
+                // ranked module observes/enforces at the boundary before this
+                // frame runs, for resimulated and live frames alike
+                CoreRankedOnFrame(static_cast<uint32_t>(event->data.adv.frame));
                 if (timingEnabled)
                 {
                     summaryLatchInputUs +=
@@ -3190,6 +3216,12 @@ int rollback_execute_end_frame(void* userData)
         }
     }
     g_GekkoHasLatchedInput = false;
+
+    // frames older than the rollback horizon can no longer be re-simulated
+    if (g_GekkoLatchedFrame >= 0)
+    {
+        CoreRankedConfirmThrough(static_cast<int64_t>(g_GekkoLatchedFrame) - kGekkoRecordingRollbackHorizon);
+    }
 
     const auto traceEndTotalUs = timingEnabled
         ? std::chrono::duration_cast<std::chrono::microseconds>(
@@ -3846,6 +3878,7 @@ CORE_EXPORT void rmgk_gekko::close_session()
     for (auto& entry : g_GekkoFrameInputBuffer)
     {
         n02::recordingWriteInputs(entry.second.data(), static_cast<int>(entry.second.size()));
+        CoreRankedOnRecordWritten(entry.first, n02::recordingFrameCount() - 1);
     }
 #endif
     g_GekkoFrameInputBuffer.clear();

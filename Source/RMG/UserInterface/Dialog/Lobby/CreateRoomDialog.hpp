@@ -11,8 +11,12 @@
 
 #include <QDialog>
 #include <QString>
+#include <QList>
+#include <QPair>
+#include <QMap>
 
 class QLineEdit;
+class QComboBox;
 class QSpinBox;
 class QCheckBox;
 class QPushButton;
@@ -22,6 +26,28 @@ namespace UserInterface
 {
 namespace Dialog
 {
+
+// What the lobby knows about ranked play for the selected game.
+struct CreateRoomRankedOptions
+{
+    bool available = false;
+    // Why ranked can't be chosen (shown when !available); empty hides the
+    // ranked section entirely (server without ranked support).
+    QString unavailableReason;
+    // one per ladder the game is on: 1v1 and, when the server has one, 2v2
+    struct Format
+    {
+        QString ladderId;
+        QString ladderName;
+        int teamSize = 1;
+        int bestOf = 3; // every set's length
+        // allowed rulesets (e.g. rosters) as id + display name, first = default
+        QList<QPair<QString, QString>> rulesets;
+        // the player's standing per roster, e.g. "✓ Gold 1532"
+        QMap<QString, QString> standings;
+    };
+    QList<Format> formats;
+};
 
 // Modal form for creating a lobby room. Returns the chosen settings to the
 // caller via accessors; caller is responsible for sending the protocol message.
@@ -34,6 +60,7 @@ public:
     // dialog shows it read-only and reports it back via romName()/romMd5().
     CreateRoomDialog(const QString& defaultUsername, const QString& defaultRoomName,
                      const QString& gameName, const QString& gameMd5,
+                     const CreateRoomRankedOptions& ranked = CreateRoomRankedOptions(),
                      QWidget* parent = nullptr);
     ~CreateRoomDialog() override = default;
 
@@ -46,6 +73,11 @@ public:
     int     delay()      const { return m_delay; }
     int     prediction() const { return m_prediction; }
     QString password()   const { return m_password; }
+    bool    ranked()           const { return m_isRanked; }
+    QString rulesetId()        const { return m_rulesetId; }
+    QString ladderId()         const { return m_ladderId; }
+    int teamSize()             const { return m_teamSize; }
+    int     maxPing()          const { return m_maxPing; }
 
     // Called by the lobby when the server replies ROOM_CREATE_FAIL.
     // Re-enables the form so the user can edit and retry.
@@ -64,6 +96,9 @@ signals:
 private slots:
     void onCreateClicked();
     void onPasswordToggled(bool enabled);
+    void onRankedToggled(bool enabled);
+    // shows the set length and fills the rosters for the chosen format
+    void onFormatChanged();
     void validateInput();
 
 private:
@@ -81,6 +116,13 @@ private:
     QPushButton* m_createButton   = nullptr;
     QPushButton* m_cancelButton   = nullptr;
     QLabel*      m_statusLabel    = nullptr;
+    QCheckBox*   m_rankedCheck    = nullptr;
+    QWidget*     m_rankedOptions  = nullptr;
+    QLabel*      m_bestOfLabel    = nullptr;
+    QComboBox*   m_rulesetCombo   = nullptr;
+    QComboBox*   m_formatCombo    = nullptr;
+    QComboBox*   m_pingCombo      = nullptr;
+    CreateRoomRankedOptions m_rankedInfo;
 
     // Accessor backing
     QString m_name;
@@ -91,6 +133,11 @@ private:
     int     m_delay      = 2;
     int     m_prediction = 7;
     QString m_password;
+    bool    m_isRanked = false;
+    QString m_rulesetId;
+    QString m_ladderId;
+    int m_teamSize = 1;
+    int     m_maxPing = 120;
 };
 
 } // namespace Dialog

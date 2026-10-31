@@ -224,6 +224,16 @@ EXPORT int CALL DebugMemGetMemInfo(m64p_dbg_mem_info mem_info_type, unsigned int
 #endif
 }
 
+/* RMG-K: the frontend's ranked modules patch game code in RDRAM directly
+ * (bypassing the memory handlers), so recompiled copies of that code must be
+ * dropped explicitly. Covers both the cached and uncached mirrors. */
+EXPORT void CALL RmgkInvalidateCachedCode(unsigned int address, unsigned int size)
+{
+    uint32_t physical = address & UINT32_C(0x1fffffff);
+    invalidate_r4300_cached_code(&g_dev.r4300, UINT32_C(0x80000000) + physical, size);
+    invalidate_r4300_cached_code(&g_dev.r4300, UINT32_C(0xa0000000) + physical, size);
+}
+
 EXPORT void * CALL DebugMemGetPointer(m64p_dbg_memptr_type mem_ptr_type)
 {
     switch (mem_ptr_type)

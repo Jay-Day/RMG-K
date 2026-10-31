@@ -25,6 +25,7 @@
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/LobbyIce.hpp>
+#include <RMG-Core/Ranked.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
@@ -534,7 +535,8 @@ LobbyClient::~LobbyClient()
 }
 
 void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
-                                   const QStringList& romHashes, const QString& udpAddr)
+                                   const QStringList& romHashes, const QString& udpAddr,
+                                   const LobbyAuth& auth)
 {
     // HELLO_OK calls LobbyIce::configure(), which resets the process-wide ICE
     // mesh. A running GekkoNet lobby match owns that mesh, so reconnecting now
@@ -551,7 +553,21 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     }
 
     m_pendingUsername  = username;
+    m_pendingAuth      = auth;
     m_pendingRomHashes = romHashes;
+    m_selfUsername     = username;
+    m_accountId        = 0;
+    m_sessionToken.clear();
+    m_lastHelloFailReason.clear();
+    m_discordLinkTicket.clear();
+    m_discordLinkName.clear();
+    m_discordLink = DiscordLink();
+    m_emailAvailable = false;
+    m_accountEmail.clear();
+    m_standings.clear();
+    m_ladders.clear();
+    m_lastMatchRankedId = 0;
+    m_lastMatchRanked   = QJsonObject();
     m_pendingLocalIp   = detectLocalIPv4();
     m_selfUserId       = 0;
     m_users.clear();
@@ -805,6 +821,47 @@ void LobbyClient::onWsConnected()
     if (!m_pendingLocalIp.isEmpty())
         data["localIp"] = m_pendingLocalIp;
 
+    // Optional account login. Older servers ignore the field and treat us
+    // as a guest. The password is dropped as soon as it has been sent.
+    if (!m_pendingAuth.mode.isEmpty())
+    {
+        QJsonObject auth;
+        auth["mode"] = m_pendingAuth.mode;
+        if (!m_pendingAuth.password.isEmpty())
+            auth["password"] = m_pendingAuth.password;
+        if (!m_pendingAuth.token.isEmpty())
+            auth["token"] = m_pendingAuth.token;
+        if (!m_pendingAuth.resetCode.isEmpty())
+            auth["resetCode"] = m_pendingAuth.resetCode;
+        if (!m_pendingAuth.code.isEmpty())
+        {
+            auth["code"]         = m_pendingAuth.code;
+            auth["codeVerifier"] = m_pendingAuth.codeVerifier;
+            auth["redirectUri"]  = m_pendingAuth.redirectUri;
+        }
+        if (!m_pendingAuth.ticket.isEmpty())
+            auth["ticket"] = m_pendingAuth.ticket;
+        data["auth"] = auth;
+    }
+    m_pendingAuth.password.clear();
+    m_pendingAuth.resetCode.clear();
+    // single-use: a reconnect must not replay them
+    m_pendingAuth.code.clear();
+    m_pendingAuth.codeVerifier.clear();
+    m_pendingAuth.ticket.clear();
+
+    // Advertise installed ranked game modules.
+    QJsonArray modules;
+    for (const CoreRankedModuleInfo& module : CoreGetRankedModules())
+    {
+        QJsonObject entry;
+        entry["id"] = QString::fromStdString(module.Id);
+        entry["version"] = QString::fromStdString(module.Version);
+        modules.append(entry);
+    }
+    if (!modules.isEmpty())
+        data["rankedModules"] = modules;
+
     sendEnvelope("HELLO", data, "hello-1");
 }
 
@@ -899,10 +956,53 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "MATCH_ADMIT_BEGIN")    handleMatchAdmitBegin(data);
     else if (type == "MATCH_ADMIT_SIGNAL")   handleMatchAdmitSignal(data);
     else if (type == "MATCH_ADMIT_FAIL")     handleMatchAdmitFail(data);
+    else if (type == "RANKED_RESULT")        handleRankedResult(data);
+    else if (type == "ACCOUNT_PASSWORD_CHANGED")
+    {
+        m_sessionToken = data.value("sessionToken").toString();
+        emit passwordChangeResult(true, QString());
+        emit accountUpdated(); // saves the new session token
+    }
+    else if (type == "ACCOUNT_PASSWORD_FAIL")
+        emit passwordChangeResult(false, data.value("message").toString());
+    else if (type == "ACCOUNT_DISCORD")
+    {
+        m_discordLink.linked   = data.value("linked").toBool();
+        m_discordLink.username = data.value("username").toString();
+        m_discordLink.name     = data.value("name").toString();
+        emit discordLinkResult(true, QString());
+        emit accountUpdated();
+    }
+    else if (type == "ACCOUNT_DISCORD_FAIL")
+        emit discordLinkResult(false, data.value("message").toString());
+    else if (type == "ACCOUNT_EMAIL_CODE_SENT")
+        emit emailCodeSent(data.value("address").toString());
+    else if (type == "ACCOUNT_EMAIL")
+    {
+        m_accountEmail = data.value("address").toString();
+        emit emailUpdated(m_accountEmail);
+    }
+    else if (type == "ACCOUNT_EMAIL_FAIL")
+        emit emailFailed(data.value("message").toString());
+    else if (type == "REPLAY_ACCEPT")
+        emit replayAccepted(data.value("setId").toInteger(), data.value("chunkSize").toInt());
+    else if (type == "REPLAY_DECLINE")
+        emit replayDeclined(data.value("setId").toInteger(), data.value("reason").toString());
+    else if (type == "REPLAY_STORED")        emit replayStored(data.value("setId").toInteger());
     else if (type == "QUICK_MATCH_STATUS")   handleQuickMatchStatus(data);
+    else if (type == "QUICK_MATCH_REMATCH_OFFER")
+    {
+        QStringList opponents;
+        for (const QJsonValue& name : data.value("opponents").toArray())
+            opponents << name.toString();
+        emit quickMatchRematchOffered(opponents);
+    }
     else if (type == "SPECTATE_BEGIN")       handleSpectateBegin(data);
     else if (type == "SPECTATE_DATA")        handleSpectateData(data);
     else if (type == "SPECTATE_KEYFRAME")    handleSpectateKeyframe(data);
+    else if (type == "SPECTATE_JOURNAL")
+        emit spectateJournal(static_cast<quint64>(data.value("matchId").toDouble()),
+            data.value("seq").toInt(), QByteArray::fromBase64(data.value("data").toString().toLatin1()));
     else if (type == "SPECTATE_END")         handleSpectateEnd(data);
     else if (type == "SPECTATE_FAIL")        handleSpectateFail(data);
     else if (type == "BROADCAST_VIEWER_COUNT") handleBroadcastViewerCount(data);
@@ -920,6 +1020,45 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
     m_selfUserId  = static_cast<quint64>(data.value("userId").toDouble());
     m_observedIp  = data.value("observedIp").toString();
     m_region      = data.value("region").toString();
+
+    // Accounts: the server returns the registered spelling of our name, a
+    // remember-me token and our ladder standings. Absent for guests.
+    if (!data.value("username").toString().isEmpty())
+        m_selfUsername = data.value("username").toString();
+    const QJsonObject account = data.value("account").toObject();
+    m_accountId    = static_cast<qint64>(account.value("accountId").toDouble());
+    m_sessionToken = account.value("sessionToken").toString();
+    const QJsonObject discord = account.value("discord").toObject();
+    m_discordLink.linked   = discord.value("linked").toBool();
+    m_discordLink.username = discord.value("username").toString();
+    m_discordLink.name     = discord.value("name").toString();
+    // present only when the lobby can send email
+    m_emailAvailable = account.value("email").isObject();
+    m_accountEmail   = account.value("email").toObject().value("address").toString();
+    m_standings.clear();
+    for (const QJsonValue& value : account.value("standings").toArray())
+        m_standings.append(parseStanding(value.toObject()));
+    m_ladders.clear();
+    for (const QJsonValue& value : data.value("ladders").toArray())
+    {
+        const QJsonObject object = value.toObject();
+        LadderInfo ladder;
+        ladder.id       = object.value("id").toString();
+        ladder.name     = object.value("name").toString();
+        ladder.moduleId = object.value("moduleId").toString();
+        for (const QJsonValue& v : object.value("rulesets").toArray()) ladder.rulesets << v.toString();
+        const QJsonObject rulesetNames = object.value("rulesetNames").toObject();
+        for (auto it = rulesetNames.constBegin(); it != rulesetNames.constEnd(); ++it)
+            ladder.rulesetNames.insert(it.key(), it.value().toString());
+        // older lobbies send the set lengths a host could pick; the first
+        // was the default
+        const QJsonValue bestOf = object.value("bestOf");
+        ladder.bestOf = bestOf.isArray() ? bestOf.toArray().at(0).toInt(3) : bestOf.toInt(3);
+        for (const QJsonValue& v : object.value("romMd5s").toArray())  ladder.romMd5s << v.toString();
+        for (const QJsonValue& v : object.value("tiers").toArray())    ladder.tiers << v.toString();
+        ladder.teamSize = qMax(1, object.value("teamSize").toInt(1));
+        m_ladders.append(ladder);
+    }
 
     std::string stunHost = "stun.l.google.com";
     quint16 stunPort = 19302;
@@ -988,6 +1127,7 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
                                                          : turnEndpoints.join(QLatin1Char(','))));
 
     setState(ConnectionState::Connected);
+    emit accountUpdated();
     m_heartbeatTimer->start();
     // ICE owns the UDP sockets. The legacy lobby anchor is intentionally not
     // opened by ICE-capable clients.
@@ -997,6 +1137,10 @@ void LobbyClient::handleHelloFail(const QJsonObject& data)
 {
     const QString reason = data.value("reason").toString();
     const QString message = data.value("message").toString();
+    m_lastHelloFailReason = reason;
+    m_discordLinkTicket   = data.value("ticket").toString();
+    m_discordLinkName     = data.value("discordName").toString();
+    m_lastHelloRetryAfter = data.value("retryAfter").toInt();
     emit helloFailed(message.isEmpty() ? reason : message);
     setState(ConnectionState::Failed);
     if (m_ws)
@@ -1065,6 +1209,8 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.matchId      = static_cast<quint64>(o.value("matchId").toDouble());
         r.viewerCount  = qMax(0, o.value("viewerCount").toInt());
         r.lateJoin     = o.value("lateJoin").toBool();
+        r.ranked       = o.value("ranked").toBool();
+        r.ladder       = o.value("ladder").toString();
         for (const auto& n : o.value("playerNames").toArray())
             r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
@@ -1982,6 +2128,8 @@ void LobbyClient::handleMatchBegin(const QJsonObject& data)
     // lobbies don't send it; keep 30 s for them. Same bounds as the lobby.
     const int keyframeSec = data.value("keyframeIntervalSec").toInt(0);
     m_broadcastKeyframeIntervalMs = keyframeSec > 0 ? qint64(std::clamp(keyframeSec, 10, 600)) * 1000 : 30'000;
+    m_lastMatchRankedId = matchId;
+    m_lastMatchRanked   = data.value("ranked").toObject();
     emit matchBegin(matchId, peers);
 }
 
@@ -2136,7 +2284,10 @@ void LobbyClient::handleMatchPeerLeft(const QJsonObject& data)
 
 void LobbyClient::handleQuickMatchStatus(const QJsonObject& data)
 {
-    emit quickMatchStatus(data.value("searching").toBool(), data.value("queueSize").toInt());
+    emit quickMatchStatus(data.value("searching").toBool(), data.value("queueSize").toInt(),
+                          data.value("ranked").toBool(), data.value("continuous").toBool(),
+                          data.value("keepTeammate").toBool(), data.value("teammate").toString(),
+                          data.value("waitingFor").toString());
 }
 
 void LobbyClient::handleSpectateBegin(const QJsonObject& data)
@@ -3312,7 +3463,7 @@ void LobbyClient::handleModList(const QJsonObject& data)
 
 void LobbyClient::createRoom(const QString& name, const QString& romName, const QString& romMd5,
                               const QString& romRegion, int maxPlayers, int delay, int prediction,
-                              int pacing, const QString& password)
+                              int pacing, const QString& password, const QJsonObject& ranked)
 {
     QJsonObject rom;
     rom["name"]   = romName;
@@ -3328,6 +3479,8 @@ void LobbyClient::createRoom(const QString& name, const QString& romName, const 
     d["pacing"]     = pacing;
     if (!password.isEmpty())
         d["password"] = password;
+    if (!ranked.isEmpty())
+        d["ranked"] = ranked;
 
     sendEnvelope("ROOM_CREATE", d);
 }
@@ -3356,6 +3509,11 @@ void LobbyClient::updateRoomLiveReplay(bool enabled)
     QJsonObject d;
     d["enabled"] = enabled;
     sendEnvelope("ROOM_UPDATE_LIVE_REPLAY", d);
+}
+
+void LobbyClient::updateRoomRanked(const QJsonObject& ranked)
+{
+    sendEnvelope("ROOM_UPDATE_RANKED", ranked);
 }
 
 void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)
@@ -3442,6 +3600,161 @@ void LobbyClient::reportMatchFinished(quint64 matchId)
     sendEnvelope("MATCH_FINISHED", d);
 }
 
+void LobbyClient::changePassword(const QString& currentPassword, const QString& newPassword)
+{
+    QJsonObject d;
+    d["currentPassword"] = currentPassword;
+    d["newPassword"]     = newPassword;
+    sendEnvelope("ACCOUNT_CHANGE_PASSWORD", d);
+}
+
+void LobbyClient::logout()
+{
+    sendEnvelope("ACCOUNT_LOGOUT");
+}
+
+void LobbyClient::linkDiscord(const QString& code, const QString& codeVerifier, const QString& redirectUri)
+{
+    QJsonObject d;
+    d["code"]         = code;
+    d["codeVerifier"] = codeVerifier;
+    d["redirectUri"]  = redirectUri;
+    sendEnvelope("ACCOUNT_LINK_DISCORD", d);
+}
+
+void LobbyClient::unlinkDiscord()
+{
+    sendEnvelope("ACCOUNT_UNLINK_DISCORD", QJsonObject());
+}
+
+void LobbyClient::setAccountEmail(const QString& email)
+{
+    QJsonObject d;
+    d["email"] = email;
+    sendEnvelope("ACCOUNT_SET_EMAIL", d);
+}
+
+void LobbyClient::confirmAccountEmail(const QString& code)
+{
+    QJsonObject d;
+    d["code"] = code;
+    sendEnvelope("ACCOUNT_CONFIRM_EMAIL", d);
+}
+
+void LobbyClient::removeAccountEmail()
+{
+    sendEnvelope("ACCOUNT_REMOVE_EMAIL", QJsonObject());
+}
+
+void LobbyClient::reportMatchResult(const QJsonObject& result)
+{
+    sendEnvelope("MATCH_RESULT", result);
+}
+
+void LobbyClient::reportMatchProgress(const QJsonObject& progress)
+{
+    sendEnvelope("MATCH_PROGRESS", progress);
+}
+
+void LobbyClient::reportMatchAbandoned(const QJsonObject& report)
+{
+    sendEnvelope("MATCH_ABANDONED", report);
+}
+
+void LobbyClient::offerReplay(qint64 setId, int size, const QString& sha256, const QJsonArray& bookmarks)
+{
+    QJsonObject d;
+    d["setId"]     = QJsonValue(setId);
+    d["size"]      = size;
+    d["sha256"]    = sha256;
+    d["bookmarks"] = bookmarks;
+    sendEnvelope("REPLAY_OFFER", d);
+}
+
+void LobbyClient::sendReplayChunk(qint64 setId, int index, int count, const QByteArray& data)
+{
+    QJsonObject d;
+    d["setId"] = QJsonValue(setId);
+    d["index"] = index;
+    d["count"] = count;
+    d["data"]  = QString::fromLatin1(data.toBase64());
+    sendEnvelope("REPLAY_CHUNK", d);
+}
+
+void LobbyClient::handleRankedResult(const QJsonObject& data)
+{
+    // Refresh our own standing from the "after" side of the result.
+    for (const QJsonValue& value : data.value("players").toArray())
+    {
+        const QJsonObject player = value.toObject();
+        if (player.value("username").toString().compare(m_selfUsername, Qt::CaseInsensitive) != 0)
+            continue;
+        const LadderStanding after = parseStanding(player.value("after").toObject());
+        bool replaced = false;
+        for (LadderStanding& existing : m_standings)
+        {
+            if (existing.ladder == after.ladder && existing.ruleset == after.ruleset)
+            {
+                existing = after;
+                replaced = true;
+            }
+        }
+        if (!replaced)
+            m_standings.append(after);
+        emit accountUpdated();
+    }
+    emit rankedResult(data);
+}
+
+const LobbyClient::LadderInfo* LobbyClient::ladderForRomMd5(const QString& md5) const
+{
+    const QList<const LadderInfo*> ladders = laddersForRomMd5(md5);
+    return ladders.isEmpty() ? nullptr : ladders.first();
+}
+
+QList<const LobbyClient::LadderInfo*> LobbyClient::laddersForRomMd5(const QString& md5) const
+{
+    QList<const LadderInfo*> out;
+    for (const LadderInfo& ladder : m_ladders)
+    {
+        for (const QString& romMd5 : ladder.romMd5s)
+        {
+            if (romMd5.compare(md5, Qt::CaseInsensitive) == 0)
+            {
+                out.append(&ladder);
+                break;
+            }
+        }
+    }
+    std::stable_sort(out.begin(), out.end(), [](const LadderInfo* a, const LadderInfo* b) { return a->teamSize < b->teamSize; });
+    return out;
+}
+
+const LobbyClient::LadderStanding* LobbyClient::standing(const QString& ladderId, const QString& rulesetId) const
+{
+    for (const LadderStanding& standing : m_standings)
+    {
+        // a server that rates whole ladders sends no ruleset
+        if (standing.ladder == ladderId && (standing.ruleset == rulesetId || standing.ruleset.isEmpty()))
+            return &standing;
+    }
+    return nullptr;
+}
+
+LobbyClient::LadderStanding LobbyClient::parseStanding(const QJsonObject& obj)
+{
+    LadderStanding s;
+    s.ladder      = obj.value("ladder").toString();
+    s.ruleset     = obj.value("ruleset").toString();
+    s.rating      = obj.value("rating").toInt();
+    s.deviation   = obj.value("deviation").toInt();
+    s.tier        = obj.value("tier").toString();
+    s.tierIndex   = obj.value("tierIndex").toInt();
+    s.provisional = obj.value("provisional").toBool(true);
+    s.setsPlayed  = obj.value("setsPlayed").toInt();
+    return s;
+}
+
 bool LobbyClient::sendBroadcastBegin(quint64 matchId)
 {
     // Leave room for base64 and the JSON envelope under the server's 1 MiB limit.
@@ -3501,6 +3814,16 @@ bool LobbyClient::broadcastKeyframeUploadBusy() const
     return m_kfCompressing || m_kfUploadActive;
 }
 
+void LobbyClient::sendBroadcastJournal(quint64 matchId, const QByteArray& journal)
+{
+    if (journal.isEmpty())
+        return;
+    QJsonObject d;
+    d["matchId"] = QJsonValue(qint64(matchId));
+    d["data"]    = QString::fromLatin1(journal.toBase64());
+    sendEnvelope("BROADCAST_JOURNAL", d);
+}
+
 void LobbyClient::sendBroadcastEnd(quint64 matchId)
 {
     resetBroadcastKeyframeUpload(matchId);
@@ -3523,18 +3846,48 @@ void LobbyClient::stopSpectate(quint64 matchId)
     sendEnvelope("SPECTATE_STOP", d);
 }
 
-void LobbyClient::quickMatchJoin(const QString& romName, const QString& romMd5)
+void LobbyClient::quickMatchJoin(const QString& romName, const QString& romMd5, const QJsonObject& ranked,
+                                 bool keepTeammate, const QString& teammate)
 {
     QJsonObject rom;
     rom["name"]   = romName;
     rom["md5"]    = romMd5;
     rom["region"] = QString();
-    sendEnvelope("QUICK_MATCH_JOIN", { {"rom", rom} });
+    // every search is a session: it searches again after each match until
+    // stopped (quickMatchSetContinuous(false))
+    QJsonObject data{ {"rom", rom}, {"continuous", true} };
+    if (!ranked.isEmpty())
+        data["ranked"] = ranked;
+    if (keepTeammate)
+        data["keepTeammate"] = true;
+    if (!teammate.isEmpty())
+        data["teammate"] = teammate;
+    sendEnvelope("QUICK_MATCH_JOIN", data);
 }
 
 void LobbyClient::quickMatchCancel()
 {
     sendEnvelope("QUICK_MATCH_CANCEL");
+}
+
+void LobbyClient::quickMatchRematch(bool accept)
+{
+    sendEnvelope("QUICK_MATCH_REMATCH", { {"accept", accept} });
+}
+
+void LobbyClient::quickMatchSetContinuous(bool continuous)
+{
+    sendEnvelope("QUICK_MATCH_SESSION", { {"continuous", continuous} });
+}
+
+void LobbyClient::quickMatchSetKeepTeammate(bool keep)
+{
+    sendEnvelope("QUICK_MATCH_TEAMMATE", { {"keep", keep} });
+}
+
+void LobbyClient::reportRoomPeerPing(quint64 userId, int rttMs)
+{
+    sendEnvelope("ROOM_PEER_PING", { {"userId", QJsonValue(qint64(userId))}, {"rttMs", rttMs} });
 }
 
 LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
@@ -3552,6 +3905,8 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.currentRoomId   = static_cast<quint64>(obj.value("currentRoomId").toDouble());
     u.currentRoomName = obj.value("currentRoomName").toString();
     u.searchingRom    = obj.value("searchingRom").toString();
+    u.watchingMatchId = static_cast<quint64>(obj.value("watchingMatchId").toDouble());
+    u.verified        = obj.value("verified").toBool();
     return u;
 }
 
