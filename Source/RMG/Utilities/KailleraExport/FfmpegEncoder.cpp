@@ -8,6 +8,8 @@
 #ifdef _WIN32
 #include <io.h>
 #include <windows.h>
+#else
+#include <cstdlib>
 #endif
 
 namespace KailleraExport
@@ -37,6 +39,92 @@ static bool fail(std::string* errorMessage, const std::string& message)
     }
     return false;
 }
+
+#ifndef _WIN32
+static bool runCommandWithCapturedOutputUnix(const char* command,
+                                         const vector<const char*> arguments,
+                                         int timeoutMs,
+                                         bool requireOutput,
+                                         int* exitCode)
+{
+    int rwPipe[2];
+    const int READ_PIPE = 0;
+    const int WRITE_PIPE = 1;
+    
+    if (pipe(rwPipe) == -1)
+    {
+        return false;
+    }
+    
+    pid_t child_pid = fork();
+    
+    if (child_pid == -1)
+    {
+        return false;
+    }
+    
+    if (child_pid == 0)
+    {
+        //Replace stdout and stderr in the child with the pipes
+        dup2(rwPipe[WRITE_PIPE], STDOUT_FILENO);
+        dup2(rwPipe[WRITE_PIPE], STDERR_FILENO);
+        close(rwPipe[READ_PIPE]);
+        close(rwPipe[WRITE_PIPE]);
+        
+        if (execvp(command, const_cast<char* const*>(arguments.data())) == -1) {
+            return false;
+        }
+    }
+    //Parent process
+    else {
+        int childStatus;
+        
+        //Close unused write pipe
+        close(rwPipe[WRITE_PIPE]);
+        
+        //Wait for the child process to exit
+        if (waitpid(child_pid, &childStatus, 0) == -1) {
+            if (exitCode != nullptr)
+            {
+                *exitCode = childStatus;
+            }
+            
+            return false;
+        }
+        
+        echo << *exitCode << endl;
+        
+        bool gotOutput = false;
+        
+        //Read from the pipe
+        char output[256];
+        const int readBytes = read(rwPipe[READ_PIPE], &output, sizeof(output));
+        
+        if (readBytes > 0)
+        {
+            gotOutput = true;
+        }
+ 
+        //Close no longer needed pipe
+        close(rwPipe[READ_PIPE]);
+        
+        if (exitCode != nullptr)
+        {
+            *exitCode = childStatus;
+        }
+        
+        if (requireOutput && !gotOutput)
+        {
+            return false;
+        }
+ 
+        return *exitCode == 0;
+    }
+    
+    return true;
+}
+
+#endif
 
 #ifdef _WIN32
 static bool runCommandWithCapturedOutput(const std::string& command,
