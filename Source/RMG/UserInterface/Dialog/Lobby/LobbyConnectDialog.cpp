@@ -45,7 +45,7 @@ QString LobbyConnectDialog::defaultServerUrl()
 LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle("Join Rollback Netplay");
+    setWindowTitle(tr("Join Rollback Netplay"));
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setModal(true);
     setMinimumWidth(380);
@@ -60,7 +60,7 @@ void LobbyConnectDialog::buildUi()
     root->setContentsMargins(24, 20, 24, 20);
     root->setSpacing(14);
 
-    auto* heading = new QLabel("Welcome to Netplay!", this);
+    auto* heading = new QLabel(tr("Welcome to Netplay!"), this);
     QFont headingFont = heading->font();
     headingFont.setBold(true);
     headingFont.setPointSizeF(headingFont.pointSizeF() + 2.0);
@@ -71,11 +71,11 @@ void LobbyConnectDialog::buildUi()
 
     m_usernameEdit = new QLineEdit(this);
     m_usernameEdit->setMaxLength(20);
-    m_usernameEdit->setPlaceholderText("2-20 characters: letters, numbers, _ - .");
+    m_usernameEdit->setPlaceholderText(tr("2-20 characters: letters, numbers, _ - ."));
     auto* validator = new QRegularExpressionValidator(
         QRegularExpression(R"([A-Za-z0-9_\-\.]{1,20})"), this);
     m_usernameEdit->setValidator(validator);
-    form->addRow("Enter a username:", m_usernameEdit);
+    form->addRow(tr("Enter a username:"), m_usernameEdit);
 
     root->addLayout(form);
 
@@ -84,7 +84,7 @@ void LobbyConnectDialog::buildUi()
     root->addWidget(m_validationLbl);
 
     auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
-    m_connectButton = btnBox->addButton("Connect", QDialogButtonBox::AcceptRole);
+    m_connectButton = btnBox->addButton(tr("Connect"), QDialogButtonBox::AcceptRole);
     connect(btnBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(m_connectButton, &QPushButton::clicked, this, &LobbyConnectDialog::onConnect);
 
@@ -102,7 +102,7 @@ void LobbyConnectDialog::validateInput()
 
     QString reason;
     if (user.length() < 2)
-        reason = "Username must be at least 2 characters.";
+        reason = tr("Username must be at least 2 characters.");
 
     const QString message = reason.isEmpty() ? m_statusMessage : reason;
     m_validationLbl->setStyleSheet(

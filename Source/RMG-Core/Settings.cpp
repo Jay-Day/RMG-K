@@ -52,9 +52,6 @@ static m64p_handle              l_sectionHandle = nullptr;
 static std::vector<std::string> l_sectionList;
 static std::vector<std::string> l_keyList;
 
-// Internal runtime settings (not persisted to config file)
-static bool l_InputPluginSwitchRequested = false;
-
 //
 // Local Functions
 //
@@ -171,6 +168,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::GUI_OnScreenDisplayKailleraPortLabels:
         setting = {SETTING_SECTION_GUI, "OnScreenDisplayKailleraPortLabels", false};
         break;
+    case SettingsID::GUI_OnScreenDisplayLiveReplayStatus:
+        setting = {SETTING_SECTION_GUI, "OnScreenDisplayLiveReplayStatus", false};
+        break;
     case SettingsID::GUI_AutoStartNetplayOnStartup:
         setting = {SETTING_SECTION_GUI, "AutoStartNetplayOnStartup", false};
         break;
@@ -201,8 +201,8 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::GUI_ConfirmExitWhileInGame:
         setting = {SETTING_SECTION_GUI, "ConfirmExitWhileInGame", true};
         break;
-    case SettingsID::GUI_DontAskRaphnetPluginSwitch:
-        setting = {SETTING_SECTION_GUI, "DontAskRaphnetPluginSwitch", false};
+    case SettingsID::GUI_PreferredInputPlugin:
+        setting = {SETTING_SECTION_GUI, "PreferredInputPlugin", -1, "Last manual controller choice: -1 unset, 0 USB/keyboard, 1 raphnet, 2 GameCube"};
         break;
     case SettingsID::GUI_Version:
         setting = {SETTING_SECTION_GUI, "Version", CoreGetVersion()};
@@ -237,7 +237,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_KAILLERA, "ConnectionSetting", 1}; // 1=LAN, 2=Good, 3=Average, 4=Low, 6=Bad
         break;
     case SettingsID::Kaillera_RecordingEnabled:
-        setting = {SETTING_SECTION_KAILLERA, "RecordingEnabled", false};
+        setting = {SETTING_SECTION_KAILLERA, "RecordingEnabled", true};
         break;
     case SettingsID::Kaillera_RecordsDirectory:
         setting = {SETTING_SECTION_KAILLERA, "RecordsDirectory", std::string("records")};
@@ -246,7 +246,7 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_KAILLERA, "RecordingCapEnabled", true};
         break;
     case SettingsID::Kaillera_RecordingCapMB:
-        setting = {SETTING_SECTION_KAILLERA, "RecordingCapMB", 1024};
+        setting = {SETTING_SECTION_KAILLERA, "RecordingCapMB", 512};
         break;
     case SettingsID::Kaillera_SpoofPing:
         setting = {SETTING_SECTION_KAILLERA, "SpoofPing", 0}; // 0=disabled, >0=spoof ping in ms
@@ -366,6 +366,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Rollback_HideLocation:
         setting = {SETTING_SECTION_ROLLBACK, "HideLocation", false};
         break;
+    case SettingsID::Rollback_RememberInputDelay:
+        setting = {SETTING_SECTION_ROLLBACK, "RememberInputDelay", false};
+        break;
     case SettingsID::Rollback_PacingTrace:
         setting = {SETTING_SECTION_ROLLBACK, "PacingTrace", false};
         break;
@@ -412,13 +415,16 @@ static l_Setting get_setting(SettingsID settingId)
 #endif // _WIN32
                   };
         break;
-		
-    case SettingsID::RaphnetInput_InputMode:
-        setting = {SETTING_SECTION_RAPHNET_INPUT, "InputMode", 0,
-            "0 = Default; 1 = Multithreaded/Cached/Adaptive/Nopak (recommended for USB latency > 2ms)"};
+
+    case SettingsID::RaphnetInput_LastUsbWarning:
+        setting = {SETTING_SECTION_RAPHNET_INPUT, "LastUsbWarning", std::string("0"), "USB latency warning time; nonzero means the one-time popup has been shown"};
         break;
-
-
+    case SettingsID::RaphnetInput_StartupNoticeShown:
+        setting = {SETTING_SECTION_RAPHNET_INPUT, "StartupNoticeShown", false, "Whether the one-time slow USB status-bar notice has been shown"};
+        break;
+    case SettingsID::RaphnetInput_PollingMode:
+        setting = {SETTING_SECTION_RAPHNET_INPUT, "PollingMode", 0, "0 = Automatic; 1 = Cached / No Pak; 2 = Direct / Pak support"};
+        break;
     case SettingsID::Core_OverrideGameSpecificSettings:
         setting = {SETTING_SECTION_CORE, "OverrideGameSpecificSettings", false};
         break;
@@ -867,6 +873,9 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::Input_DeviceSerial:
         setting = {"", "DeviceSerial"};
+        break;
+    case SettingsID::Input_DeviceGUID:
+        setting = {"", "DeviceGUID"};
         break;
     case SettingsID::Input_Deadzone:
         setting = {"", "Deadzone"};
@@ -1580,6 +1589,12 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {"", "Hotkey_Fullscreen_ExtraData" };
         break;
 
+    case SettingsID::GCAInput_Profiles:
+        setting = {SETTING_SECTION_GCA, "Profiles", std::string("")};
+        break;
+    case SettingsID::GCAInput_UseProfile:
+        setting = {"", "UseProfile"};
+        break;
     case SettingsID::GCAInput_Deadzone:
         setting = {SETTING_SECTION_GCA, "Deadzone", 5};
         break;
@@ -1591,6 +1606,12 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::GCAInput_TriggerTreshold:
         setting = {SETTING_SECTION_GCA, "TriggerTreshold", 50};
+        break;
+    case SettingsID::GCAInput_LeftTriggerAnalog:
+        setting = {SETTING_SECTION_GCA, "LeftTriggerAnalog", true};
+        break;
+    case SettingsID::GCAInput_RightTriggerAnalog:
+        setting = {SETTING_SECTION_GCA, "RightTriggerAnalog", true};
         break;
     case SettingsID::GCAInput_SwapZL:
         setting = {SETTING_SECTION_GCA, "GCAInput_SwapZL", true};
@@ -1606,6 +1627,10 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::GCAInput_Port4Enabled:
         setting = {SETTING_SECTION_GCA, "Port4Enabled", false};
+        break;
+    case SettingsID::GCAInput_ControllerPorts:
+        setting = {SETTING_SECTION_GCA, "ControllerPorts", "",
+            "Physical adapter port for each emulated player (0-3, -1 disabled); empty uses legacy enabled-port order"};
         break;
 
     case SettingsID::GCAInput_Map_A:
@@ -1624,13 +1649,13 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GCA, "Map_Z2", 13};
         break;
     case SettingsID::GCAInput_Map_L:
-        setting = {SETTING_SECTION_GCA, "Map_L", 14};
+        setting = {SETTING_SECTION_GCA, "Map_L", 8};
         break;
     case SettingsID::GCAInput_Map_R:
         setting = {SETTING_SECTION_GCA, "Map_R", 4};
         break;
     case SettingsID::GCAInput_Map_DpadUp:
-        setting = {SETTING_SECTION_GCA, "Map_DpadUp", 8};
+        setting = {SETTING_SECTION_GCA, "Map_DpadUp", 14};
         break;
     case SettingsID::GCAInput_Map_DpadDown:
         setting = {SETTING_SECTION_GCA, "Map_DpadDown", 9};
@@ -1642,10 +1667,10 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GCA, "Map_DpadRight", 11};
         break;
     case SettingsID::GCAInput_Map_CUp:
-        setting = {SETTING_SECTION_GCA, "Map_CUp", -1};
+        setting = {SETTING_SECTION_GCA, "Map_CUp", 16};
         break;
     case SettingsID::GCAInput_Map_CDown:
-        setting = {SETTING_SECTION_GCA, "Map_CDown", -1};
+        setting = {SETTING_SECTION_GCA, "Map_CDown", 15};
         break;
     case SettingsID::GCAInput_Map_CLeft:
         setting = {SETTING_SECTION_GCA, "Map_CLeft", 3};
@@ -1654,9 +1679,8 @@ static l_Setting get_setting(SettingsID settingId)
         setting = {SETTING_SECTION_GCA, "Map_CRight", 2};
         break;
 
-    // Internal settings (runtime-only, not persisted)
-    case SettingsID::Internal_InputPluginSwitchRequested:
-        setting = {"", "InputPluginSwitchRequested", false};
+    case SettingsID::RaphnetRaw_Player1AdapterPort:
+        setting = {SETTING_SECTION_RAPHNET_INPUT, "Player1AdapterPort", 1};
         break;
 
     // Game Stats / Replay Settings
@@ -2308,13 +2332,6 @@ CORE_EXPORT bool CoreSettingsSetValue(SettingsID settingId, int value)
 
 CORE_EXPORT bool CoreSettingsSetValue(SettingsID settingId, bool value)
 {
-    // Handle internal runtime settings
-    if (settingId == SettingsID::Internal_InputPluginSwitchRequested)
-    {
-        l_InputPluginSwitchRequested = value;
-        return true;
-    }
-
     l_Setting setting = get_setting(settingId);
     int intValue = value ? 1 : 0;
     return config_option_set(setting.Section, setting.Key, M64TYPE_BOOL, &intValue);
@@ -2484,12 +2501,6 @@ CORE_EXPORT int CoreSettingsGetIntValue(SettingsID settingId)
 
 CORE_EXPORT bool CoreSettingsGetBoolValue(SettingsID settingId)
 {
-    // Handle internal runtime settings
-    if (settingId == SettingsID::Internal_InputPluginSwitchRequested)
-    {
-        return l_InputPluginSwitchRequested;
-    }
-
     l_Setting setting = get_setting(settingId);
     int value = setting.DefaultValue.index() == 0 ? 0 : (std::get<bool>(setting.DefaultValue) ? 1 : 0);
     config_option_get(setting.Section, setting.Key, M64TYPE_BOOL, &value, sizeof(value));

@@ -35,39 +35,31 @@ void selectServerDialog(void* parent);
 // Returns: number of bytes of synced data, 0 during delay frames, -1 on error
 int modifyPlayValues(void *values, int size);
 
-// Append a synchronized-inputs record (0x12 marker + size + bytes) to the
-// open recording. Mirrors what modifyPlayValues writes for normal play,
-// but is callable from outside n02's frame loop — the P2P rollback path
-// uses GekkoNet for input sync so it never reaches modifyPlayValues.
-// No-op if no recording is open.
+// Append synchronized inputs (0x12 marker + size + bytes) to the active replay
+// capture. The GekkoNet rollback path calls this outside n02's frame loop.
+// No-op unless local saving or live streaming was enabled at recordingOpen().
 void recordingWriteInputs(const void* values, int size);
 
-// Number of input (0x12) records written so far for the open recording — the
-// broadcaster's live frame, in the same units a spectator's playback counts.
-// Thread-safe; returns 0 when no recording is open. Used to stamp the live edge
-// onto the broadcast stream so spectators can fast-forward to it.
+// Number of input records captured in the most recent session. Thread-safe;
+// used to stamp the live edge so spectators can fast-forward to it.
 int recordingFrameCount();
 
-// Queue a chat line to be embedded in the open recording as a 0x08 record. Safe
-// to call from any thread; the line is written into the krec on the emulation
-// thread just before the next input frame, and is a no-op when nothing is
-// recording. Lets the lobby — whose room chat arrives off the frame loop — carry
-// chat through to spectators and saved replays. nick/msg are length-bounded.
+// Queue chat for the active replay capture. Safe from any thread; the chat is
+// written before the next input frame, to the stream and/or local file.
+// No-op without an active capture. nick/msg are length-bounded.
 void recordingQueueChat(const char* nick, const char* msg);
 
-// Open a new .krec recording for a session that bypasses n02's game-start
-// callback (the GekkoNet rollback lobby path). Closes any open recording first,
-// then writes a KRC1 header — but only when n02_kaillera_recording_enabled is
-// set. The caller must populate recording_player_names beforehand. appName /
-// gameName populate the header; localPlayer is this client's 1-based slot.
+// Begin replay capture for the GekkoNet rollback lobby, closing any previous
+// capture first. Writes a KRC1 header if local saving or streaming is enabled.
+// n02_kaillera_recording_enabled controls local saving independently of the
+// stream sink. Populate recording_player_names first. localPlayer is 1-based.
 void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers);
 
-// Flush and close the recording opened by recordingOpen(). No-op if none open.
+// Flush and end replay capture, closing the local file if one was opened.
 void recordingClose();
 
-// Register a sink that receives the exact bytes written to the open .krec
-// (header + every flushed record) — used to stream a live match up to the
-// lobby for spectators. Pass nullptr to clear. Set/clear only while emulation
+// Register a sink for replay bytes (header + every flushed record), independent
+// of local file saving. Pass nullptr to clear. Set/clear only while emulation
 // is stopped; the sink is invoked on the emulation thread during play.
 void setRecordingStreamSink(std::function<void(const void*, int)> sink);
 

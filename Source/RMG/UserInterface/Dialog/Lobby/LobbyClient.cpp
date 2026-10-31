@@ -801,6 +801,7 @@ void LobbyClient::onWsConnected()
         romArr.append(h);
     data["romHashes"] = romArr;
     data["iceSupported"] = true;
+    data["lateJoin"] = true;
     if (!m_pendingLocalIp.isEmpty())
         data["localIp"] = m_pendingLocalIp;
 
@@ -895,6 +896,9 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "ICE_SIGNAL")           handleIceSignal(data);
     else if (type == "MATCH_BEGIN")          handleMatchBegin(data);
     else if (type == "MATCH_PEER_LEFT")      handleMatchPeerLeft(data);
+    else if (type == "MATCH_ADMIT_BEGIN")    handleMatchAdmitBegin(data);
+    else if (type == "MATCH_ADMIT_SIGNAL")   handleMatchAdmitSignal(data);
+    else if (type == "MATCH_ADMIT_FAIL")     handleMatchAdmitFail(data);
     else if (type == "QUICK_MATCH_STATUS")   handleQuickMatchStatus(data);
     else if (type == "SPECTATE_BEGIN")       handleSpectateBegin(data);
     else if (type == "SPECTATE_DATA")        handleSpectateData(data);
@@ -944,7 +948,7 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
     LobbyIce::set_diagnostics_enabled(iceDiagnostics);
     if (!LobbyIce::configure(m_selfUserId, stunHost, stunPort, turnServers))
     {
-        emit connectError(QStringLiteral("Failed to initialize ICE transport."));
+        emit connectError(QCoreApplication::translate("LobbyClient","Failed to initialize ICE transport."));
         setState(ConnectionState::Failed);
         return;
     }
@@ -1059,6 +1063,8 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.startedAtMs = static_cast<qint64>(o.value("startedAt").toDouble());
         r.broadcasting = o.value("broadcasting").toBool();
         r.matchId      = static_cast<quint64>(o.value("matchId").toDouble());
+        r.viewerCount  = qMax(0, o.value("viewerCount").toInt());
+        r.lateJoin     = o.value("lateJoin").toBool();
         for (const auto& n : o.value("playerNames").toArray())
             r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
@@ -1102,13 +1108,39 @@ void LobbyClient::handleRoomJoinFail(const QJsonObject& data)
 
 void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
 {
-    // Room state is control-plane data. Once GekkoNet owns the established
-    // mesh, no server-side room transition may add, replace, or remove its
-    // transport agents; actual actor teardown is driven by emulation finish.
-    if (m_matchTransportActive)
-        return;
-
     const quint64 roomId = static_cast<quint64>(roomState.value("id").toDouble());
+
+    // Room state is control-plane data. Once GekkoNet owns the established
+    // mesh, no server-side room transition may replace or remove the agents
+    // it's using; actual actor teardown is driven by emulation finish. Members
+    // outside the match are another matter: one who joins mid-match gets an
+    // agent, so a late join finds them already connected, and one who leaves
+    // loses it, since their next agent can't pair with the old one.
+    if (m_matchTransportActive)
+    {
+        if (roomId != m_currentIceRoomId)
+            return;
+        m_iceOutsideMatch.clear();
+        QSet<quint64> seated;
+        for (const QJsonValue& value : roomState.value("players").toArray())
+        {
+            const QJsonObject player = value.toObject();
+            const quint64 userId = static_cast<quint64>(player.value("userId").toDouble());
+            if (userId == 0 || userId == m_selfUserId)
+                continue;
+            seated.insert(userId);
+            // Older servers don't send it; everyone seated is in their matches.
+            if (!player.value("inMatch").toBool(true))
+                m_iceOutsideMatch.insert(userId);
+            if (player.value("iceSupported").toBool())
+                ensureIcePeer(userId);
+        }
+        // The server drops anyone leaving from the match before unseating them.
+        for (quint64 userId : m_icePeerIds - seated)
+            removeIcePeer(userId);
+        return;
+    }
+
     if (roomId == 0)
         return;
     if (m_currentIceRoomId != 0 && m_currentIceRoomId != roomId)
@@ -1159,19 +1191,27 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
 
     const QSet<quint64> stale = m_icePeerIds - desired;
     for (quint64 userId : stale)
-    {
-        writePingDiagnostic(QStringLiteral("ICE_PEER_REMOVED"),
-                            QStringLiteral("peer=%1 room=%2 reason=not_in_room_state")
-                                .arg(pingUserLabel(userId)).arg(roomId));
-        LobbyIce::remove_peer(userId);
-        m_icePeerIds.remove(userId);
-        m_lastIceStates.remove(userId);
-        m_iceGenerations.remove(userId);
-        m_iceRestartAttempts.remove(userId);
-        m_roomPeerPings.remove(userId);
-        for (auto it = m_roomPeerPings.begin(); it != m_roomPeerPings.end(); ++it)
-            it.value().remove(userId);
-    }
+        removeIcePeer(userId);
+}
+
+void LobbyClient::removeIcePeer(quint64 userId)
+{
+    writePingDiagnostic(QStringLiteral("ICE_PEER_REMOVED"),
+                        QStringLiteral("peer=%1 room=%2 reason=not_in_room_state")
+                            .arg(pingUserLabel(userId)).arg(m_currentIceRoomId));
+    LobbyIce::remove_peer(userId);
+    m_icePeerIds.remove(userId);
+    m_lastIceStates.remove(userId);
+    m_iceGenerations.remove(userId);
+    m_iceRestartAttempts.remove(userId);
+    m_roomPeerPings.remove(userId);
+    for (auto it = m_roomPeerPings.begin(); it != m_roomPeerPings.end(); ++it)
+        it.value().remove(userId);
+}
+
+bool LobbyClient::iceAgentInUseByMatch(quint64 userId) const
+{
+    return m_matchTransportActive && !m_iceOutsideMatch.contains(userId);
 }
 
 void LobbyClient::resetIceMesh()
@@ -1217,6 +1257,7 @@ void LobbyClient::setMatchTransportActive(bool active)
         return;
 
     m_matchTransportActive = active;
+    m_iceOutsideMatch.clear();
     if (active)
         return;
 
@@ -1261,8 +1302,9 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
 
     // Replacing an agent underneath GekkoNet interrupts the active data plane.
     // Same-generation trickle candidates remain safe to apply, but ICE restart
-    // signaling is deferred until the match has released the mesh.
-    if (m_matchTransportActive &&
+    // signaling is deferred until the match has released the mesh. Someone
+    // waiting beside the match isn't using it yet and has to be able to connect.
+    if (iceAgentInUseByMatch(fromUserId) &&
         (kind == QStringLiteral("restart") || generation > currentGeneration))
     {
         writePingDiagnostic(QStringLiteral("ICE_SIGNAL_IN_DROPPED"),
@@ -1328,7 +1370,7 @@ void LobbyClient::handleIceSignal(const QJsonObject& data)
 bool LobbyClient::restartIcePeer(quint64 userId, quint32 generation,
                                  const QString& reason, bool notifyPeer)
 {
-    if (m_matchTransportActive || m_currentIceRoomId == 0 || !m_icePeerIds.contains(userId) ||
+    if (iceAgentInUseByMatch(userId) || m_currentIceRoomId == 0 || !m_icePeerIds.contains(userId) ||
         generation == 0 || generation <= m_iceGenerations.value(userId, 0) ||
         m_iceRestartAttempts.value(userId, 0) >= MAX_ICE_AUTO_RESTARTS)
     {
@@ -1916,24 +1958,171 @@ void LobbyClient::handlePingProbeIncoming(const QJsonObject& data)
     sendProbeTo(uid, endpoint);
 }
 
+static LobbyClient::LobbyMatchPeer parseMatchPeer(const QJsonObject& o)
+{
+    LobbyClient::LobbyMatchPeer p;
+    p.userId     = static_cast<quint64>(o.value("userId").toDouble());
+    p.username   = o.value("username").toString();
+    p.publicIp   = o.value("publicIp").toString();
+    p.publicPort = static_cast<quint16>(o.value("publicPort").toInt());
+    p.localIp    = o.value("localIp").toString();
+    p.slot       = o.value("slot").toInt();
+    p.iceSupported = o.value("iceSupported").toBool();
+    return p;
+}
+
 void LobbyClient::handleMatchBegin(const QJsonObject& data)
 {
     const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
     QList<LobbyMatchPeer> peers;
     for (const auto& v : data.value("peers").toArray())
-    {
-        const auto o = v.toObject();
-        LobbyMatchPeer p;
-        p.userId     = static_cast<quint64>(o.value("userId").toDouble());
-        p.username   = o.value("username").toString();
-        p.publicIp   = o.value("publicIp").toString();
-        p.publicPort = static_cast<quint16>(o.value("publicPort").toInt());
-        p.localIp    = o.value("localIp").toString();
-        p.slot       = o.value("slot").toInt();
-        p.iceSupported = o.value("iceSupported").toBool();
-        peers.append(p);
-    }
+        peers.append(parseMatchPeer(v.toObject()));
+    m_matchSeats = qBound(0, data.value("seats").toInt(), 4);
+    // The lobby sets the live replay keyframe interval in its config. Older
+    // lobbies don't send it; keep 30 s for them. Same bounds as the lobby.
+    const int keyframeSec = data.value("keyframeIntervalSec").toInt(0);
+    m_broadcastKeyframeIntervalMs = keyframeSec > 0 ? qint64(std::clamp(keyframeSec, 10, 600)) * 1000 : 30'000;
     emit matchBegin(matchId, peers);
+}
+
+void LobbyClient::handleMatchAdmitBegin(const QJsonObject& data)
+{
+    QList<LobbyMatchPeer> peers;
+    for (const auto& v : data.value("peers").toArray())
+        peers.append(parseMatchPeer(v.toObject()));
+    m_admitBlobId = 0;
+    m_admitBlobParts.clear();
+    emit matchAdmitBegin(static_cast<quint64>(data.value("matchId").toDouble()),
+                         static_cast<quint64>(data.value("admitId").toDouble()),
+                         data.value("epoch").toInt(),
+                         qBound(0, data.value("seats").toInt(), 4),
+                         static_cast<quint64>(data.value("hostId").toDouble()),
+                         parseMatchPeer(data.value("joiner").toObject()), peers);
+}
+
+void LobbyClient::handleMatchAdmitSignal(const QJsonObject& data)
+{
+    const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
+    const quint64 admitId = static_cast<quint64>(data.value("admitId").toDouble());
+    const QString step = data.value("step").toString();
+    const int count = data.value("count").toInt();
+    if (count <= 0)
+    {
+        emit matchAdmitStep(matchId, admitId, static_cast<quint64>(data.value("fromUserId").toDouble()),
+                            step, data.value("frame").toInt(), data.value("ok").toBool(),
+                            data.value("reason").toString());
+        return;
+    }
+
+    // A blob step arrives as `count` chunks, in order over the one socket.
+    const int index = data.value("index").toInt();
+    if (index == 0 || m_admitBlobId != admitId || m_admitBlobStep != step ||
+        m_admitBlobParts.size() != count)
+    {
+        m_admitBlobId = admitId;
+        m_admitBlobStep = step;
+        m_admitBlobParts.clear();
+        m_admitBlobParts.resize(count);
+    }
+    if (index < 0 || index >= count)
+        return;
+    m_admitBlobParts[index] = QByteArray::fromBase64(data.value("data").toString().toLatin1());
+    for (const QByteArray& part : std::as_const(m_admitBlobParts))
+    {
+        if (part.isEmpty())
+            return;
+    }
+    QByteArray encoded;
+    for (const QByteArray& part : std::as_const(m_admitBlobParts))
+        encoded.append(part);
+    m_admitBlobParts.clear();
+    m_admitBlobId = 0;
+
+    QByteArray raw;
+    if (!decodeSpectateKeyframe(encoded, raw))
+    {
+        qWarning() << "Rollback lobby late join: couldn't decode" << step;
+        raw.clear();
+    }
+    emit matchAdmitBlob(matchId, admitId, step, raw);
+}
+
+void LobbyClient::handleMatchAdmitFail(const QJsonObject& data)
+{
+    emit matchAdmitFailed(static_cast<quint64>(data.value("matchId").toDouble()),
+                          static_cast<quint64>(data.value("userId").toDouble()),
+                          data.value("reason").toString());
+}
+
+void LobbyClient::sendMatchAdmit(quint64 matchId, quint64 userId)
+{
+    QJsonObject d;
+    d["matchId"] = QJsonValue(qint64(matchId));
+    d["userId"] = QJsonValue(qint64(userId));
+    sendEnvelope("MATCH_ADMIT", d);
+}
+
+void LobbyClient::sendAdmitStep(quint64 matchId, quint64 admitId, const QString& step,
+                                int frame, bool ok, const QString& reason)
+{
+    QJsonObject d;
+    d["matchId"] = QJsonValue(qint64(matchId));
+    d["admitId"] = QJsonValue(qint64(admitId));
+    d["step"] = step;
+    if (frame != 0)
+        d["frame"] = frame;
+    if (ok)
+        d["ok"] = true;
+    if (!reason.isEmpty())
+        d["reason"] = reason;
+    sendEnvelope("MATCH_ADMIT_SIGNAL", d);
+}
+
+void LobbyClient::sendAdmitBlob(quint64 matchId, quint64 admitId, const QString& step, const QByteArray& raw)
+{
+    // Chunks stay well under the server's 1 MiB message limit once base64'd.
+    constexpr int kChunkBytes = 384 * 1024;
+    const QByteArray encoded = encodeSpectateKeyframe(raw);
+    if (encoded.isEmpty())
+        return;
+    const int count = int((encoded.size() + kChunkBytes - 1) / kChunkBytes);
+    for (int i = 0; i < count; i++)
+    {
+        QJsonObject d;
+        d["matchId"] = QJsonValue(qint64(matchId));
+        d["admitId"] = QJsonValue(qint64(admitId));
+        d["step"] = step;
+        d["index"] = i;
+        d["count"] = count;
+        d["data"] = QString::fromLatin1(encoded.mid(qsizetype(i) * kChunkBytes, kChunkBytes).toBase64());
+        sendEnvelope("MATCH_ADMIT_SIGNAL", d);
+    }
+    qInfo() << "Rollback lobby late join: sent" << step << "raw" << raw.size()
+            << "compressed" << encoded.size() << "chunks" << count;
+}
+
+void LobbyClient::ensureIcePeer(quint64 userId)
+{
+    if (userId == 0 || userId == m_selfUserId || m_icePeerIds.contains(userId) ||
+        m_currentIceRoomId == 0)
+        return;
+    if (!m_iceGenerations.contains(userId))
+        m_iceGenerations.insert(userId, 0);
+    if (!m_iceRestartAttempts.contains(userId))
+        m_iceRestartAttempts.insert(userId, 0);
+    if (!LobbyIce::add_peer(userId))
+    {
+        writePingDiagnostic(QStringLiteral("ICE_PEER_ADD_FAILED"),
+                            QStringLiteral("peer=%1 room=%2 reason=mid_match")
+                                .arg(pingUserLabel(userId)).arg(m_currentIceRoomId));
+        return;
+    }
+    m_icePeerIds.insert(userId);
+    emit icePeerConnectionAttemptChanged(
+        userId, m_iceRestartAttempts.value(userId, 0) + 1, MAX_ICE_CONNECTION_ATTEMPTS);
+    writePingDiagnostic(QStringLiteral("ICE_PEER_ADDED"),
+                        QStringLiteral("peer=%1 room=%2 reason=mid_match")
+                            .arg(pingUserLabel(userId)).arg(m_currentIceRoomId));
 }
 
 void LobbyClient::handleMatchPeerLeft(const QJsonObject& data)
@@ -1952,7 +2141,9 @@ void LobbyClient::handleQuickMatchStatus(const QJsonObject& data)
 
 void LobbyClient::handleSpectateBegin(const QJsonObject& data)
 {
-    emit spectateBegan(static_cast<quint64>(data.value("matchId").toDouble()));
+    const QByteArray manifest = QByteArray::fromBase64(
+        data.value("manifest").toString().toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
+    emit spectateBegan(static_cast<quint64>(data.value("matchId").toDouble()), manifest);
 }
 
 void LobbyClient::handleSpectateData(const QJsonObject& data)
@@ -2038,6 +2229,12 @@ void LobbyClient::handleBroadcastViewerCount(const QJsonObject& data)
 {
     const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
     const int viewerCount = qMax(0, data.value("viewerCount").toInt());
+    if (matchId == 0) return;
+    for (auto it = m_rooms.begin(); it != m_rooms.end(); ++it)
+    {
+        if (it->matchId == matchId)
+            it->viewerCount = viewerCount;
+    }
     emit broadcastViewerCount(matchId, viewerCount);
 }
 
@@ -2288,6 +2485,7 @@ void LobbyClient::punchPeerEndpoints(const QList<LobbyMatchPeer>& peers)
 bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int localSlot,
                                        quint64 hostUserId, const QString& romFile, QString& error)
 {
+    m_prematchManifest.clear();
     error.clear();
     if (m_selfUserId == 0 || localSlot < 1)
     {
@@ -2402,6 +2600,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
             error = QString::fromStdString(CoreGetError());
             return false;
         }
+        m_prematchManifest = QByteArray::fromStdString(manifest);
         qInfo() << "Rollback lobby ICE prematch host complete"
                 << "hash" << static_cast<qulonglong>(manifestHash)
                 << "cheats" << static_cast<qulonglong>(cheatCount);
@@ -3033,14 +3232,14 @@ bool LobbyClient::allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QStri
         if (!peer.iceSupported)
         {
             if (error)
-                *error = QStringLiteral("%1 is using a lobby client without ICE support.")
+                *error = QCoreApplication::translate("LobbyClient","%1 is using a lobby client without ICE support.")
                              .arg(peer.username.isEmpty() ? QString::number(peer.userId) : peer.username);
             return false;
         }
         if (!LobbyIce::peer_connected(peer.userId))
         {
             if (error)
-                *error = QStringLiteral("Waiting for a direct ICE connection to %1.")
+                *error = QCoreApplication::translate("LobbyClient","Waiting for a direct ICE connection to %1.")
                              .arg(peer.username.isEmpty() ? QString::number(peer.userId) : peer.username);
             return false;
         }
@@ -3243,11 +3442,29 @@ void LobbyClient::reportMatchFinished(quint64 matchId)
     sendEnvelope("MATCH_FINISHED", d);
 }
 
-void LobbyClient::sendBroadcastBegin(quint64 matchId)
+bool LobbyClient::sendBroadcastBegin(quint64 matchId)
 {
+    // Leave room for base64 and the JSON envelope under the server's 1 MiB limit.
+    if (m_prematchManifest.isEmpty() || m_prematchManifest.size() > 512 * 1024)
+        return false;
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
+    d["manifest"] = QString::fromLatin1(m_prematchManifest.toBase64());
     sendEnvelope("BROADCAST_BEGIN", d);
+    return true;
+}
+
+bool LobbyClient::applySpectateManifest(const QByteArray& manifest)
+{
+    uint64_t manifestHash = 0;
+    size_t cheatCount = 0;
+    if (manifest.isEmpty() || manifest.size() > 512 * 1024 ||
+        !applyPrematchManifest(manifest.toStdString(), manifestHash, cheatCount))
+        return false;
+    qInfo() << "Rollback lobby spectator prematch complete"
+            << "hash" << static_cast<qulonglong>(manifestHash)
+            << "cheats" << static_cast<qulonglong>(cheatCount);
+    return true;
 }
 
 void LobbyClient::sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame)

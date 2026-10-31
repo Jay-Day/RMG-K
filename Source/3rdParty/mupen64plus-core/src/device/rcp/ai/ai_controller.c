@@ -55,6 +55,7 @@ struct ai_rollback_stats
 };
 
 static struct ai_rollback_stats l_AiRollbackStats;
+static int l_AiRollbackStatsEnabled = 0;
 
 static uint64_t ai_rollback_now_us(void)
 {
@@ -63,9 +64,15 @@ static uint64_t ai_rollback_now_us(void)
     return (counter / frequency) * 1000000ULL + ((counter % frequency) * 1000000ULL) / frequency;
 }
 
-void ai_rollback_stats_reset(void)
+void ai_rollback_stats_reset(int enabled)
 {
     memset(&l_AiRollbackStats, 0, sizeof(l_AiRollbackStats));
+    l_AiRollbackStatsEnabled = enabled != 0;
+}
+
+void ai_rollback_stats_stop(void)
+{
+    l_AiRollbackStatsEnabled = 0;
 }
 
 void ai_rollback_stats_fill(m64p_rollback_run_frame_stats* stats)
@@ -129,10 +136,13 @@ static void do_dma(struct ai_controller* ai, struct ai_dma* dma)
 
         if (!main_rollback_hidden_frame_active())
         {
-            uint64_t begin = ai_rollback_now_us();
+            uint64_t begin = l_AiRollbackStatsEnabled ? ai_rollback_now_us() : 0;
             ai->iaout->set_frequency(ai->aout, frequency);
-            l_AiRollbackStats.set_frequency_count++;
-            l_AiRollbackStats.set_frequency_us += ai_rollback_now_us() - begin;
+            if (l_AiRollbackStatsEnabled)
+            {
+                l_AiRollbackStats.set_frequency_count++;
+                l_AiRollbackStats.set_frequency_us += ai_rollback_now_us() - begin;
+            }
         }
         ai->samples_format_changed = 0;
     }
@@ -231,10 +241,13 @@ void read_ai_regs(void* opaque, uint32_t address, uint32_t* value)
             unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
             if (main_frame_audio_enabled())
             {
-                uint64_t begin = ai_rollback_now_us();
+                uint64_t begin = l_AiRollbackStatsEnabled ? ai_rollback_now_us() : 0;
                 ai->iaout->push_samples(ai->aout, p + diff, ai->last_read - *value);
-                l_AiRollbackStats.push_samples_count++;
-                l_AiRollbackStats.push_samples_us += ai_rollback_now_us() - begin;
+                if (l_AiRollbackStatsEnabled)
+                {
+                    l_AiRollbackStats.push_samples_count++;
+                    l_AiRollbackStats.push_samples_us += ai_rollback_now_us() - begin;
+                }
             }
             ai->last_read = *value;
         }
@@ -291,25 +304,38 @@ void ai_end_of_dma_event(void* opaque)
         unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
         if (main_frame_audio_enabled())
         {
-            uint64_t begin = ai_rollback_now_us();
+            uint64_t begin = l_AiRollbackStatsEnabled ? ai_rollback_now_us() : 0;
             ai->iaout->push_samples(ai->aout, p + diff, ai->last_read);
-            l_AiRollbackStats.push_samples_count++;
-            l_AiRollbackStats.push_samples_us += ai_rollback_now_us() - begin;
+            if (l_AiRollbackStatsEnabled)
+            {
+                l_AiRollbackStats.push_samples_count++;
+                l_AiRollbackStats.push_samples_us += ai_rollback_now_us() - begin;
+            }
         }
         ai->last_read = 0;
     }
 
+    if (l_AiRollbackStatsEnabled)
     {
         uint64_t begin = ai_rollback_now_us();
         l_AiRollbackStats.fifo_pop_count++;
         fifo_pop(ai);
         l_AiRollbackStats.fifo_pop_us += ai_rollback_now_us() - begin;
     }
+    else
+    {
+        fifo_pop(ai);
+    }
 
+    if (l_AiRollbackStatsEnabled)
     {
         uint64_t begin = ai_rollback_now_us();
         l_AiRollbackStats.raise_interrupt_count++;
         raise_rcp_interrupt(ai->mi, MI_INTR_AI);
         l_AiRollbackStats.raise_interrupt_us += ai_rollback_now_us() - begin;
+    }
+    else
+    {
+        raise_rcp_interrupt(ai->mi, MI_INTR_AI);
     }
 }

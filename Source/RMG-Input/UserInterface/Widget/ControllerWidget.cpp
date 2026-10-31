@@ -8,6 +8,7 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include "ControllerWidget.hpp"
+#include "DeviceIdentity.hpp"
 #include "UserInterface/OptionsDialog.hpp"
 
 #include "UserInterface/Layout/AlignCenterLayout.hpp"
@@ -357,13 +358,6 @@ void ControllerWidget::enableAllChildren()
 
 void ControllerWidget::removeDuplicates(MappingButton* button)
 {
-    std::string section = this->getCurrentSettingsSection().toStdString();
-
-    if (!this->optionsDialogSettings.RemoveDuplicateMappings)
-    {
-        return;
-    }
-
     std::vector<int> inputType = button->GetInputType();
     std::vector<int> inputData = button->GetInputData();
     std::vector<int> extraInputData = button->GetExtraInputData();
@@ -866,7 +860,6 @@ void ControllerWidget::on_inputDeviceComboBox_currentIndexChanged(int value)
 #else
                 CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, std::string("mupen64plus-input-raphnetraw.so"));
 #endif
-                CoreSettingsSetValue(SettingsID::Internal_InputPluginSwitchRequested, true);
                 CoreSettingsSave();
                 emit this->RaphnetPluginSwitchRequested();
                 return;
@@ -1101,8 +1094,7 @@ void ControllerWidget::on_hotkeysButton_clicked()
 {
     HotkeysDialog dialog(this, this->hotkeySettingMappings,
                          this->currentJoystickId, this->currentGamepad,
-                         this->optionsDialogSettings.FilterEventsForButtons,
-                         this->optionsDialogSettings.RemoveDuplicateMappings);
+                         this->optionsDialogSettings.FilterEventsForButtons);
 
     // clear our UI state
     this->controllerImageWidget->ClearControllerState();
@@ -1937,7 +1929,6 @@ void ControllerWidget::LoadSettings(QString sectionQString, bool loadUserProfile
     this->analogStickRangeSlider->setValue(rangeValue);
     this->on_analogStickRangeSlider_valueChanged(rangeValue);
     this->deadZoneSlider->setValue(CoreSettingsGetIntValue(SettingsID::Input_Deadzone, section));
-    this->optionsDialogSettings.RemoveDuplicateMappings = CoreSettingsGetBoolValue(SettingsID::Input_RemoveDuplicateMappings, section);
     this->optionsDialogSettings.ControllerPak = CoreSettingsGetIntValue(SettingsID::Input_Pak, section);
     this->optionsDialogSettings.GameboyRom = CoreSettingsGetStringValue(SettingsID::Input_GameboyRom, section);
     this->optionsDialogSettings.GameboySave = CoreSettingsGetStringValue(SettingsID::Input_GameboySave, section);
@@ -2011,11 +2002,11 @@ void ControllerWidget::SaveDefaultSettings()
     CoreSettingsSetValue(SettingsID::Input_DeviceType, section, static_cast<int>(InputDeviceType::None));
     CoreSettingsSetValue(SettingsID::Input_DevicePath, section, std::string(""));
     CoreSettingsSetValue(SettingsID::Input_DeviceSerial, section, std::string(""));
+    CoreSettingsSetValue(SettingsID::Input_DeviceGUID, section, std::string(""));
     CoreSettingsSetValue(SettingsID::Input_Deadzone, section, 9);
     CoreSettingsSetValue(SettingsID::Input_Range, section, 66);
     CoreSettingsSetValue(SettingsID::Input_RealN64Range, section, true);
     CoreSettingsSetValue(SettingsID::Input_Pak, section, 0);
-    CoreSettingsSetValue(SettingsID::Input_RemoveDuplicateMappings, section, true);
     CoreSettingsSetValue(SettingsID::Input_FilterEventsForButtons, section, true);
     CoreSettingsSetValue(SettingsID::Input_FilterEventsForAxis, section, true);
 
@@ -2123,6 +2114,12 @@ void ControllerWidget::SaveSettings(QString section)
 
     this->GetCurrentInputDevice(device, true);
 
+    const std::string guid = device.type == InputDeviceType::Joystick && device.id != 0 ? InputDeviceGuid(device.id) :
+        (device.type == InputDeviceType::Joystick &&
+         CoreSettingsGetStringValue(SettingsID::Input_DeviceName, sectionStr) == device.name &&
+         CoreSettingsGetStringValue(SettingsID::Input_DevicePath, sectionStr) == device.path ?
+            CoreSettingsGetStringValue(SettingsID::Input_DeviceGUID, sectionStr) : std::string());
+    CoreSettingsSetValue(SettingsID::Input_DeviceGUID, sectionStr, guid);
     CoreSettingsSetValue(SettingsID::Input_PluggedIn, sectionStr, this->IsPluggedIn());
     CoreSettingsSetValue(SettingsID::Input_DeviceName, sectionStr, device.name);
     CoreSettingsSetValue(SettingsID::Input_DeviceType, sectionStr, static_cast<int>(device.type));
@@ -2134,7 +2131,6 @@ void ControllerWidget::SaveSettings(QString section)
     CoreSettingsSetValue(SettingsID::Input_Pak, sectionStr, this->optionsDialogSettings.ControllerPak);
     CoreSettingsSetValue(SettingsID::Input_GameboyRom, sectionStr, this->optionsDialogSettings.GameboyRom);
     CoreSettingsSetValue(SettingsID::Input_GameboySave, sectionStr, this->optionsDialogSettings.GameboySave);
-    CoreSettingsSetValue(SettingsID::Input_RemoveDuplicateMappings, sectionStr, this->optionsDialogSettings.RemoveDuplicateMappings);
     CoreSettingsSetValue(SettingsID::Input_FilterEventsForButtons, sectionStr, this->optionsDialogSettings.FilterEventsForButtons);
     CoreSettingsSetValue(SettingsID::Input_FilterEventsForAxis, sectionStr, this->optionsDialogSettings.FilterEventsForAxis);
 

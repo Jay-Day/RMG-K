@@ -121,6 +121,8 @@ namespace Gekko {
 
         std::deque<std::unique_ptr<u8[]>>& GetNetPlayerQueue(Handle player);
 
+        void SetPlayerDisconnectTimeout(u64 timeout_ms);
+
 	public:
 		std::vector<std::unique_ptr<Player>> locals;
 
@@ -203,5 +205,8 @@ namespace Gekko {
         std::vector<u8> _bin_buffer;
 
         u64 _last_sent_network_check;
+
+        // silence limit for remote players; 0 = never time them out
+        u64 _player_disconnect_timeout;
 	};
 }

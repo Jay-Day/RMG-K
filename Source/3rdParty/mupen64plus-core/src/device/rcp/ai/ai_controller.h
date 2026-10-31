@@ -89,7 +89,8 @@ void read_ai_regs(void* opaque, uint32_t address, uint32_t* value);
 void write_ai_regs(void* opaque, uint32_t address, uint32_t value, uint32_t mask);
 
 void ai_end_of_dma_event(void* opaque);
-void ai_rollback_stats_reset(void);
+void ai_rollback_stats_reset(int enabled);
+void ai_rollback_stats_stop(void);
 void ai_rollback_stats_fill(m64p_rollback_run_frame_stats* stats);
 
 #endif

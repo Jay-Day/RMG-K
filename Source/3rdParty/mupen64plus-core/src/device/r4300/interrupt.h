@@ -35,7 +35,8 @@ void init_interrupt(struct cp0* cp0);
 void raise_maskable_interrupt(struct r4300_core* r4300, uint32_t cause_ip);
 
 void gen_interrupt(struct r4300_core* r4300);
-void interrupt_rollback_stats_reset(void);
+void interrupt_rollback_stats_reset(int enabled);
+void interrupt_rollback_stats_stop(void);
 void interrupt_rollback_stats_fill(m64p_rollback_run_frame_stats* stats);
 void r4300_check_interrupt(struct r4300_core* r4300, uint32_t cause_ip, int set_cause);
 
@@ -46,6 +47,7 @@ void add_interrupt_event(struct cp0* cp0, int type, unsigned int delay);
 unsigned int* get_event(const struct interrupt_queue* q, int type);
 int get_next_event_type(const struct interrupt_queue* q);
 unsigned int add_random_interrupt_time(struct r4300_core* r4300);
+void interrupt_set_rollback_input_active(int active);
 void remove_interrupt_event(struct cp0* cp0);
 
 int save_eventqueue_infos(const struct cp0* cp0, char *buf);

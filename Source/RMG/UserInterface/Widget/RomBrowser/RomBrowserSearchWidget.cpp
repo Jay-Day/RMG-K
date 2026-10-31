@@ -15,12 +15,12 @@ RomBrowserSearchWidget::RomBrowserSearchWidget(QWidget* parent) : QWidget(parent
 {
 	// configure search line edit
 	this->lineEdit = new QLineEdit(this);
-	this->lineEdit->setPlaceholderText("Search games...");
+	this->lineEdit->setPlaceholderText(tr("Search games..."));
     connect(this->lineEdit, &QLineEdit::textChanged, this, &RomBrowserSearchWidget::on_lineEdit_textChanged);
 
     // configure close button
 	this->closeButton = new QPushButton(this);
-    this->closeButton->setText("Close");
+    this->closeButton->setText(tr("Close"));
     connect(this->closeButton, &QPushButton::clicked, this, &RomBrowserSearchWidget::on_closeButton_clicked);
 
     // configure layout

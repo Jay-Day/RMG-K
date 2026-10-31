@@ -86,6 +86,8 @@ public:
         qint64 startedAtMs = 0;    // match start, unix ms (0 until in-game)
         bool    broadcasting = false; // a player is streaming this match for spectators
         quint64 matchId = 0;          // current match id (set only while broadcasting)
+        int viewerCount = 0;
+        bool lateJoin = false;        // in game with a free seat a late joiner may take
     };
 
     struct LobbyMatchPeer
@@ -193,7 +195,7 @@ public:
     void reportMatchFinished(quint64 matchId);
 
     // Broadcast (one player streams the live match's .krec up to the server).
-    void sendBroadcastBegin(quint64 matchId);
+    bool sendBroadcastBegin(quint64 matchId);
     void sendBroadcastData(quint64 matchId, const QByteArray& chunk, int liveFrame); // raw krec bytes (base64'd) + broadcaster's live frame
     // Compress and upload a savestate keyframe plus the first krec record
     // index to consume after restore. Split it so each message stays under the limit.
@@ -201,11 +203,33 @@ public:
     // if another keyframe is already compressing/uploading.
     bool sendBroadcastKeyframe(quint64 matchId, const QByteArray& savestate, int frame);
     bool broadcastKeyframeUploadBusy() const;
+    // How often to upload a keyframe, from the lobby's last MATCH_BEGIN.
+    qint64 broadcastKeyframeIntervalMs() const { return m_broadcastKeyframeIntervalMs; }
     void sendBroadcastEnd(quint64 matchId);
 
     // Spectate (pull a broadcast match's krec stream back down).
     void startSpectate(quint64 matchId);
     void stopSpectate(quint64 matchId);
+    bool applySpectateManifest(const QByteArray& manifest);
+
+    // --- Late join (the lobby's MATCH_ADMIT_* hand-off) ---
+    // Controller ports the match MATCH_BEGIN started emulates; 0 when it
+    // can't take late joiners (an older server or client in the room).
+    int matchSeats() const { return m_matchSeats; }
+    // The pre-match settings this match was synced with.
+    const QByteArray& prematchManifest() const { return m_prematchManifest; }
+    // Host: add a waiting room member to the running match.
+    void sendMatchAdmit(quint64 matchId, quint64 userId);
+    // One step of the hand-off; frame, ok and reason ride on the steps that
+    // carry them.
+    void sendAdmitStep(quint64 matchId, quint64 admitId, const QString& step,
+                       int frame = 0, bool ok = false, const QString& reason = QString());
+    // Host → joiner: a compressed blob step ("manifest" or "state"), split
+    // to fit the server's message size limit.
+    void sendAdmitBlob(quint64 matchId, quint64 admitId, const QString& step, const QByteArray& raw);
+    // Connect to a room member mid-match. Only adds an agent; the match's
+    // established ones are left alone.
+    void ensureIcePeer(quint64 userId);
 
     // Moderation. sendAdminAuth claims the moderator role with a password;
     // sendModAction issues a command once authenticated. action is one of
@@ -291,12 +315,22 @@ signals:
     void pingProbeSoftFailed(quint64 targetUserId);
 
     void matchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
+    // Late join: a hand-off started (to the match's players and the joiner).
+    // peers is the roster after the join, the joiner included.
+    void matchAdmitBegin(quint64 matchId, quint64 admitId, int epoch, int seats, quint64 hostId,
+                         const LobbyClient::LobbyMatchPeer& joiner,
+                         const QList<LobbyClient::LobbyMatchPeer>& peers);
+    void matchAdmitStep(quint64 matchId, quint64 admitId, quint64 fromUserId, const QString& step,
+                        int frame, bool ok, const QString& reason);
+    // A reassembled, decompressed blob step.
+    void matchAdmitBlob(quint64 matchId, quint64 admitId, const QString& step, const QByteArray& raw);
+    void matchAdmitFailed(quint64 matchId, quint64 userId, const QString& reason);
     void matchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
 
     void quickMatchStatus(bool searching, int queueSize);
 
     // Spectate stream (server → spectator). data carries decoded krec bytes.
-    void spectateBegan(quint64 matchId);
+    void spectateBegan(quint64 matchId, const QByteArray& manifest);
     // offset is the logical byte position in this spectator's krec stream, or
     // -1 when talking to a legacy server that does not provide offsets.
     void spectateData(quint64 matchId, const QByteArray& data, int liveFrame, qint64 offset);
@@ -352,6 +386,8 @@ private:
     void handlePingProbeIncoming(const QJsonObject& data);
     void handleIceSignal(const QJsonObject& data);
     void reconcileIcePeers(const QJsonObject& roomState);
+    void removeIcePeer(quint64 userId);
+    bool iceAgentInUseByMatch(quint64 userId) const;
     void resetIceMesh();
     void resetIceTransport();
     bool restartIcePeer(quint64 userId, quint32 generation,
@@ -381,6 +417,9 @@ private:
     void writePingDiagnostic(const QString& event, const QString& details = QString());
     QString pingUserLabel(quint64 userId) const;
     void handleMatchPeerLeft(const QJsonObject& data);
+    void handleMatchAdmitBegin(const QJsonObject& data);
+    void handleMatchAdmitSignal(const QJsonObject& data);
+    void handleMatchAdmitFail(const QJsonObject& data);
     void handleQuickMatchStatus(const QJsonObject& data);
     void handleSpectateBegin(const QJsonObject& data);
     void handleSpectateData(const QJsonObject& data);
@@ -419,6 +458,14 @@ private:
     QTimer* m_anchorRetryTimer = nullptr;
     qint64  m_anchorRetryDeadlineMs = 0;
     bool m_inPrematchSync = false;
+
+    // Exact host manifest from the successful player sync, reused by live replay.
+    QByteArray m_prematchManifest;
+    int m_matchSeats = 0;
+    // Chunks of the blob step being received.
+    quint64 m_admitBlobId = 0;
+    QString m_admitBlobStep;
+    QList<QByteArray> m_admitBlobParts;
 
     // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
     int        m_kfRecvFrame = -1;
@@ -464,6 +511,7 @@ private:
     QString m_observedIp;
     QString m_region;
     bool    m_isModerator = false; // set once ADMIN_AUTH_OK is received
+    qint64  m_broadcastKeyframeIntervalMs = 30'000;
     quint64 m_currentIceRoomId = 0;
     quint64 m_currentIceHostUserId = 0;
     QSet<quint64> m_icePeerIds;
@@ -474,6 +522,8 @@ private:
     QHash<quint64, quint32> m_iceGenerations;
     QHash<quint64, int> m_iceRestartAttempts;
     bool m_matchTransportActive = false;
+    // Room members waiting beside the running match.
+    QSet<quint64> m_iceOutsideMatch;
     bool m_deferredIceMeshReset = false;
     bool m_deferredIceTransportReset = false;
     // Host-only matrix for non-host paths. To avoid duplicate reports, only

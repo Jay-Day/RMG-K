@@ -141,9 +141,13 @@ MainDialog::~MainDialog()
 
 void MainDialog::loadMappings(void)
 {
+    const bool leftTriggerAnalog = CoreSettingsGetBoolValue(SettingsID::GCAInput_LeftTriggerAnalog);
+    const bool rightTriggerAnalog = CoreSettingsGetBoolValue(SettingsID::GCAInput_RightTriggerAnalog);
     for (int i = 0; i < N64_BUTTON_COUNT; i++)
     {
         m_Mappings[i] = static_cast<GCInput>(CoreSettingsGetIntValue(m_MappingSettingsIDs[i]));
+        ApplyGCTriggerMode(m_Mappings[i], true, leftTriggerAnalog);
+        ApplyGCTriggerMode(m_Mappings[i], false, rightTriggerAnalog);
     }
 }
 
@@ -157,9 +161,13 @@ void MainDialog::saveMappings(void)
 
 void MainDialog::setDefaultMappings(void)
 {
+    const bool leftTriggerAnalog = CoreSettingsGetDefaultBoolValue(SettingsID::GCAInput_LeftTriggerAnalog);
+    const bool rightTriggerAnalog = CoreSettingsGetDefaultBoolValue(SettingsID::GCAInput_RightTriggerAnalog);
     for (int i = 0; i < N64_BUTTON_COUNT; i++)
     {
         m_Mappings[i] = static_cast<GCInput>(CoreSettingsGetDefaultIntValue(m_MappingSettingsIDs[i]));
+        ApplyGCTriggerMode(m_Mappings[i], true, leftTriggerAnalog);
+        ApplyGCTriggerMode(m_Mappings[i], false, rightTriggerAnalog);
     }
 }
 
@@ -243,7 +251,9 @@ void MainDialog::onPollTimerTimeout(void)
     double triggerThreshold = static_cast<double>(this->triggerTresholdSlider->value()) / 100.0;
     double cStickThreshold = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_CButtonTreshold)) / 100.0;
 
-    GCInput detected = DetectGCInput(m_PrevState, curr, triggerThreshold, cStickThreshold);
+    GCInput detected = DetectGCInput(m_PrevState, curr, triggerThreshold, cStickThreshold,
+        CoreSettingsGetBoolValue(SettingsID::GCAInput_LeftTriggerAnalog),
+        CoreSettingsGetBoolValue(SettingsID::GCAInput_RightTriggerAnalog));
 
     if (detected != GCInput::None)
     {
@@ -276,6 +286,8 @@ void MainDialog::on_buttonBox_clicked(QAbstractButton* button)
         CoreSettingsSetValue(SettingsID::GCAInput_Port2Enabled, this->port2CheckBox->isChecked());
         CoreSettingsSetValue(SettingsID::GCAInput_Port3Enabled, this->port3CheckBox->isChecked());
         CoreSettingsSetValue(SettingsID::GCAInput_Port4Enabled, this->port4CheckBox->isChecked());
+        // This legacy dialog assigns enabled physical ports in ascending order.
+        CoreSettingsSetValue(SettingsID::GCAInput_ControllerPorts, std::string(""));
         saveMappings();
         CoreSettingsSave();
     }

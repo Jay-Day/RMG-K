@@ -17,8 +17,23 @@ enum class LobbyIceChannel : std::uint8_t
 {
     Ping = 1,
     Prematch = 2,
+    // The match's first rollback session. Each late join moves the match to a
+    // new session on its own channel (GekkoEpochFirst + (epoch - 1) % 16), so
+    // a peer still finishing the old session never feeds its packets, sync
+    // replies included, to the new one.
     Gekko = 3,
+    GekkoEpochFirst = 0x10,
+    GekkoEpochLast = 0x1f,
 };
+
+// The channel rollback session `epoch` of a match runs on.
+inline LobbyIceChannel lobby_ice_gekko_channel(int epoch)
+{
+    if (epoch <= 0)
+        return LobbyIceChannel::Gekko;
+    return static_cast<LobbyIceChannel>(
+        static_cast<int>(LobbyIceChannel::GekkoEpochFirst) + ((epoch - 1) % 16));
+}
 
 enum class LobbyIcePeerState
 {

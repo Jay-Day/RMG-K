@@ -77,8 +77,12 @@ static constexpr std::array<float, 4> l_KailleraPortLabelCenterOffset720p = { 19
 static std::string l_CenterMessage;
 // Persistent audience badge for broadcasters and spectators. Unlike ordinary
 // system messages, it remains visible until explicitly cleared.
+static bool l_LiveReplayStatusEnabled = false;
 static std::string l_LiveReplayStatus;
 static std::mutex l_LiveReplayStatusMutex;
+// Port labels and the center message change on the UI thread during a match
+// while the emulation thread draws them.
+static std::mutex l_KailleraOverlayMutex;
 
 static float OnScreenDisplayEaseOutCubic(float t)
 {
@@ -222,6 +226,7 @@ static std::string OnScreenDisplayTruncateToWidth(std::string label, float textS
 
 static void OnScreenDisplayRenderKailleraPortLabels(void)
 {
+    std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     if (!l_KailleraPortLabelsEnabled || l_KailleraPortLabelPlayerCount <= 0)
     {
         return;
@@ -296,6 +301,7 @@ static void OnScreenDisplayRenderKailleraPortLabels(void)
 // the spectate "Stream is buffering..." banner during fast-forward catch-up.
 static void OnScreenDisplayRenderCenterMessage(void)
 {
+    std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     if (l_CenterMessage.empty())
     {
         return;
@@ -371,9 +377,12 @@ void OnScreenDisplayShutdown(void)
     l_InputPromptActive = false;
     l_InputPrompt.clear();
     l_KailleraChatEnabled = true;
-    l_KailleraPortLabelPlayerCount = 0;
-    l_KailleraPortLabelPlayerNames = {};
-    l_CenterMessage.clear();
+    {
+        std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
+        l_KailleraPortLabelPlayerCount = 0;
+        l_KailleraPortLabelPlayerNames = {};
+        l_CenterMessage.clear();
+    }
     {
         std::lock_guard<std::mutex> lock(l_LiveReplayStatusMutex);
         l_LiveReplayStatus.clear();
@@ -387,6 +396,7 @@ void OnScreenDisplayLoadSettings(void)
     l_Enabled         = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayEnabled);
     l_KailleraChatEnabled = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayChatEnabled);
     l_KailleraPortLabelsEnabled = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels);
+    l_LiveReplayStatusEnabled = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayLiveReplayStatus);
     l_MessagePosition = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayLocation);
     l_MessagePaddingX = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayPaddingX);
     l_MessagePaddingY = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayPaddingY);
@@ -592,18 +602,27 @@ void OnScreenDisplaySetInputPrompt(std::string message)
 
 void OnScreenDisplaySetKailleraPortLabels(int playerCount, const std::array<std::string, 4>& playerNames)
 {
+    std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_KailleraPortLabelPlayerCount = std::clamp(playerCount, 0, 4);
+    l_KailleraPortLabelPlayerNames = playerNames;
+}
+
+void OnScreenDisplaySetKailleraPortLabelNames(const std::array<std::string, 4>& playerNames)
+{
+    std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_KailleraPortLabelPlayerNames = playerNames;
 }
 
 void OnScreenDisplayClearKailleraPortLabels(void)
 {
+    std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_KailleraPortLabelPlayerCount = 0;
     l_KailleraPortLabelPlayerNames = {};
 }
 
 void OnScreenDisplaySetCenterMessage(const std::string& message)
 {
+    std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_CenterMessage = message;
 }
 
@@ -672,9 +691,14 @@ void OnScreenDisplayRender(void)
         std::lock_guard<std::mutex> lock(l_LiveReplayStatusMutex);
         liveReplayStatus = l_LiveReplayStatus;
     }
-    const bool hasPortLabels = l_KailleraPortLabelsEnabled && l_KailleraPortLabelPlayerCount > 0;
-    const bool hasCenterMessage = !l_CenterMessage.empty();
-    const bool hasLiveReplayStatus = !liveReplayStatus.empty();
+    bool hasPortLabels = false;
+    bool hasCenterMessage = false;
+    {
+        std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
+        hasPortLabels = l_KailleraPortLabelsEnabled && l_KailleraPortLabelPlayerCount > 0;
+        hasCenterMessage = !l_CenterMessage.empty();
+    }
+    const bool hasLiveReplayStatus = l_LiveReplayStatusEnabled && !liveReplayStatus.empty();
     const bool hasMessages = l_Enabled && (hasVisibleQueueMessage || l_InputPromptActive ||
                                            hasPortLabels || hasCenterMessage || hasLiveReplayStatus);
 

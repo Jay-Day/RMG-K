@@ -36,13 +36,12 @@ QString resolve_language()
         return "en";
     }
 
-    for (const QString& language : QLocale::system().uiLanguages())
+    // Only the primary UI language determines the default; secondary languages
+    // must not override the English fallback for an unsupported primary language.
+    const QString primaryLanguage = QLocale::system().uiLanguages().value(0).toLower().replace('_', '-');
+    if (primaryLanguage == "ja" || primaryLanguage.startsWith("ja-"))
     {
-        const QString normalizedLanguage = language.toLower().replace('_', '-');
-        if (normalizedLanguage == "ja" || normalizedLanguage.startsWith("ja-"))
-        {
-            return "ja_JP";
-        }
+        return "ja_JP";
     }
 
     return "en";

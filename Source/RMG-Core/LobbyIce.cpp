@@ -179,9 +179,13 @@ void on_recv(juice_agent_t* agent, const char* data, size_t size, void* userPtr)
         return;
     }
 
-    const auto channel = static_cast<LobbyIceChannel>(static_cast<std::uint8_t>(data[0]));
+    const auto channelByte = static_cast<std::uint8_t>(data[0]);
+    const auto channel = static_cast<LobbyIceChannel>(channelByte);
+    const bool gekkoEpoch =
+        channelByte >= static_cast<std::uint8_t>(LobbyIceChannel::GekkoEpochFirst) &&
+        channelByte <= static_cast<std::uint8_t>(LobbyIceChannel::GekkoEpochLast);
     if (channel != LobbyIceChannel::Ping && channel != LobbyIceChannel::Prematch &&
-        channel != LobbyIceChannel::Gekko)
+        channel != LobbyIceChannel::Gekko && !gekkoEpoch)
     {
         return;
     }

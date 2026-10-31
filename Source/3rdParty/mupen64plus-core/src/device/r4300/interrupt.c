@@ -91,6 +91,8 @@ struct rollback_interrupt_stats
 };
 
 static struct rollback_interrupt_stats l_RollbackInterruptStats;
+static int l_RollbackInterruptStatsEnabled = 0;
+static int l_RollbackInputActive = 0;
 
 static uint64_t rollback_interrupt_now_us(void)
 {
@@ -99,10 +101,17 @@ static uint64_t rollback_interrupt_now_us(void)
     return (counter / frequency) * 1000000ULL + ((counter % frequency) * 1000000ULL) / frequency;
 }
 
-void interrupt_rollback_stats_reset(void)
+void interrupt_rollback_stats_reset(int enabled)
 {
     memset(&l_RollbackInterruptStats, 0, sizeof(l_RollbackInterruptStats));
-    ai_rollback_stats_reset();
+    l_RollbackInterruptStatsEnabled = enabled != 0;
+    ai_rollback_stats_reset(enabled);
+}
+
+void interrupt_rollback_stats_stop(void)
+{
+    l_RollbackInterruptStatsEnabled = 0;
+    ai_rollback_stats_stop();
 }
 
 void interrupt_rollback_stats_fill(m64p_rollback_run_frame_stats* stats)
@@ -252,6 +261,11 @@ static int before_event(const struct cp0* cp0, unsigned int evt1, unsigned int e
     else return 0;
 }
 
+void interrupt_set_rollback_input_active(int active)
+{
+    l_RollbackInputActive = active != 0;
+}
+
 unsigned int add_random_interrupt_time(struct r4300_core* r4300)
 {
     if (r4300->randomize_interrupt) {
@@ -262,8 +276,11 @@ unsigned int add_random_interrupt_time(struct r4300_core* r4300)
         value = rand();
 #endif
         return value % 0x40;
-    } else
-        return 0;
+    }
+
+    /* Rollback peers need identical timing, but a zero PI/SI offset can leave
+     * Bomberman 64 waiting forever during its startup polling sequence. */
+    return l_RollbackInputActive ? 1 : 0;
 }
 
 void add_interrupt_event(struct cp0* cp0, int type, unsigned int delay)
@@ -737,7 +754,9 @@ void gen_interrupt(struct r4300_core* r4300)
     }
 
     event_type = r4300->cp0.q.first->data.type;
-    interrupt_begin = rollback_interrupt_now_us();
+    interrupt_begin = l_RollbackInterruptStatsEnabled
+        ? rollback_interrupt_now_us()
+        : 0;
 
     switch (event_type)
     {
@@ -826,7 +845,12 @@ void gen_interrupt(struct r4300_core* r4300)
             break;
     }
 
-    rollback_interrupt_record(event_type, rollback_interrupt_now_us() - interrupt_begin);
+    if (l_RollbackInterruptStatsEnabled)
+    {
+        rollback_interrupt_record(
+            event_type,
+            rollback_interrupt_now_us() - interrupt_begin);
+    }
 
     if (!r4300->cp0.interrupt_unsafe_state)
     {

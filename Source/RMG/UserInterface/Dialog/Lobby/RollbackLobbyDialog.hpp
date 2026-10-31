@@ -25,6 +25,9 @@
 #ifdef RMGK_GAME_STATS
 #include <RMG-Core/Replay.hpp>
 #endif
+#include <RMG-Core/rmgk_gekko.hpp> // LobbyRemotePeer (late join rosters)
+
+#include <vector>
 
 class QFrame;
 class QLabel;
@@ -35,6 +38,7 @@ class QLineEdit;
 class QPushButton;
 class QSplitter;
 class QStackedWidget;
+class QTabBar;
 class QComboBox;
 class QCheckBox;
 
@@ -71,6 +75,10 @@ public:
     // typed messages reach the room while a match is running.
     void sendRoomChat(const QString& message);
 
+    // Sends a chat line to the other viewers of the live replay being watched.
+    // The match's players never receive it. No-op unless spectating.
+    void sendSpectatorChat(const QString& message);
+
     // MainWindow calls this when a spectate playback session ends (emulation
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
@@ -97,9 +105,14 @@ signals:
     // to the in-game chat overlay.
     void roomChatReceived(QString nickname, QString message);
 
+    // Chat from viewers of the live replay being watched (own lines included —
+    // the server echoes them). MainWindow routes this to the in-game overlay.
+    void spectatorChatReceived(QString nickname, QString message);
+
     // Spectating: ask MainWindow to launch a streaming-playback session for a
     // broadcast match, feed it krec bytes as they arrive, and tear it down.
-    void spectateLaunch(quint64 matchId, QString gameName);
+    // romPath is the local ROM matching the match's MD5 (empty when unknown).
+    void spectateLaunch(quint64 matchId, QString gameName, QString romPath);
     void spectateStreamData(QByteArray bytes, int liveFrame, qint64 offset);
     // A savestate keyframe (raw bytes) plus the first krec record index to consume
     // after restoring it, so catch-up is bounded regardless of match length.
@@ -108,6 +121,14 @@ signals:
     // Persistent OSD audience badge. isSpectator selects the role-specific text.
     void liveReplayViewerCountChanged(int viewerCount, bool isSpectator);
     void liveReplayViewerCountCleared();
+
+    // Late join notices for the running game: a line in the OSD message
+    // stack, the centered banner shown while the game holds for a joiner
+    // (empty hides it), and a refresh of the port labels from
+    // recording_player_names for a match emulating `seats` ports.
+    void overlayMessage(QString message);
+    void overlayCenterMessage(QString message);
+    void portLabelsChanged();
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -146,12 +167,20 @@ private slots:
     void onStartGameClicked();
 
     void onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
+    void onMatchAdmitBegin(quint64 matchId, quint64 admitId, int epoch, int seats, quint64 hostId,
+                           const LobbyClient::LobbyMatchPeer& joiner,
+                           const QList<LobbyClient::LobbyMatchPeer>& peers);
+    void onMatchAdmitStep(quint64 matchId, quint64 admitId, quint64 fromUserId, const QString& step,
+                          int frame, bool ok, const QString& reason);
+    void onMatchAdmitBlob(quint64 matchId, quint64 admitId, const QString& step, const QByteArray& raw);
+    void onMatchAdmitFailed(quint64 matchId, quint64 userId, const QString& reason);
+    void onLateJoinTick();
 
     // Broadcaster: drain staged krec bytes to the WebSocket.
     void onBroadcastDrainTick();
 
     // Spectator: server stream callbacks.
-    void onSpectateBegan(quint64 matchId);
+    void onSpectateBegan(quint64 matchId, const QByteArray& manifest);
     void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset);
     void onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
     void onSpectateEnded(quint64 matchId, const QString& reason);
@@ -256,9 +285,14 @@ private:
 
     // Delay is local to this player. Auto resolves from this client's direct
     // RTTs. Prediction is room-wide and may be changed only by the host.
+    // Both stay editable while this client plays the match; the running
+    // session follows the live values handed to rmgk_gekko.
     int     worstLocalPeerPingMs() const;
     void    applyLocalFrameDelay(bool force);
     void    applyRoomPrediction(bool force);
+    bool    inLiveMatch() const;
+    void    updateRollbackSettingControls();
+    void    endLiveRollbackSettings();
 
     // Broadcaster lifecycle. startBroadcast arms the n02 recording sink + drain
     // timer and sends BROADCAST_BEGIN; stopBroadcast flushes and sends
@@ -268,8 +302,12 @@ private:
     void feedBroadcastBytes(const void* data, int len);
 
     // Begin spectating a broadcast match: tell the server and ask MainWindow to
-    // launch a streaming-playback session.
-    void beginSpectate(quint64 matchId, const QString& gameName);
+    // launch a streaming-playback session with the ROM matching romMd5.
+    void beginSpectate(quint64 matchId, const QString& gameName, const QString& romMd5);
+
+    // Shows the Spectators chat tab (and selects it) while watching a live
+    // replay; hiding it returns the column to lobby chat.
+    void setSpectatorChatVisible(bool visible);
 
     // Seat row API — 4 fixed slots rendered as a vertical player list.
     // Empty rows show a ○ dot + "Waiting…"; filled rows show ● + name + meta.
@@ -282,9 +320,11 @@ private:
         QLabel*  slotLabel = nullptr;     // "P1"
         QLabel*  nameLabel = nullptr;     // username or "Waiting…"
         QLabel*  countryLabel = nullptr;  // country flag beside player name
+        QLabel*  statusLabel = nullptr;   // "waiting to join" beside the name, mid-match
         QLabel*  metaLabel = nullptr;     // "host · Frame delay: 2f · 12ms"
         QLabel*  connectionTypeLabel = nullptr; // Wi-Fi/Ethernet icon after ping
         QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
+        QPushButton* admitButton = nullptr; // host-only: add a waiting member to the running game
         bool     isHost    = false;
         quint64  userId    = 0;           // seated user, 0 when empty
         int      slot      = 0;           // 1-4, drives the per-player accent color
@@ -333,6 +373,7 @@ private:
     // both onRoomStateChanged (seats change) and onPingMeasured (ping lands),
     // since pings arrive asynchronously after seats populate.
     void refreshStartButton();
+    void updateRecordingControls();
 
     LobbyClient* m_client = nullptr;
 
@@ -363,7 +404,11 @@ private:
     QTimer*      m_matchDurationTimer = nullptr;
     QTextEdit*   m_chatViewLobby = nullptr;
     QTextEdit*   m_chatViewRoom  = nullptr; // room chat, shown in the in-room view
-    QLineEdit*   m_chatInput     = nullptr; // lobby chat input (middle column)
+    QTextEdit*   m_chatViewSpectate = nullptr; // spectators' chat while watching
+    QLabel*      m_chatHeader    = nullptr; // "LOBBY CHAT", or "CHAT" with tabs
+    QTabBar*     m_chatTabs      = nullptr; // Lobby | Spectators, only while watching
+    QStackedWidget* m_chatStack  = nullptr; // lobby / spectator views, per tab
+    QLineEdit*   m_chatInput     = nullptr; // chat input for the selected tab (middle column)
     QLineEdit*   m_roomChatInput = nullptr; // room chat input (below the seats)
 
     // ── Stacked browse / in-room view ──
@@ -377,9 +422,9 @@ private:
 
     // In-room header card
     QLabel*    m_roomTitle      = nullptr;   // ROM title (large)
-    QLabel*    m_roomSubtitle   = nullptr;   // host · region · max
     QLabel*    m_roomStateLabel = nullptr;   // "Waiting" / "In Game"
-    QLabel*    m_roomMetaLabel  = nullptr;   // Seats 2/4 · Region NTSC
+    QLabel*    m_roomRegionLabel = nullptr;  // Region NTSC, when available
+    QLabel*    m_seatCountLabel  = nullptr;  // (2/4) beside SEATS
 
     // Delay is locally editable for every player; prediction is room-wide and
     // host-editable. Both lock once the match starts. Delay uses data -1 for
@@ -400,11 +445,9 @@ private:
     // game is Smash Remix 2.0.1 (the only game this feature currently supports).
     QCheckBox* m_replayRecordCheck = nullptr;
 
-    // When checked, this client also streams the match's .krec up to the server
-    // so others can spectate. Broadcasting implies recording (the stream is the
-    // krec bytes). Only one player per match becomes the broadcaster (server
-    // picks the first). The krec is written on the emulation thread, so bytes
-    // are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
+    // When checked, the room host streams replay bytes so others can spectate,
+    // independently of whether a local .krec file is saved. On the emulation thread,
+    // bytes are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
     // and drained to the WebSocket by m_broadcastDrainTimer on the UI thread.
     QCheckBox* m_broadcastCheck       = nullptr;
     QTimer*    m_broadcastDrainTimer  = nullptr;
@@ -413,7 +456,7 @@ private:
     bool       m_broadcasting   = false;
     quint64    m_broadcastMatchId = 0;
     // Wall-clock of the last savestate-keyframe request (0 = request one now). The
-    // drain tick requests a keyframe at a fixed interval and polls for the result.
+    // drain tick requests a keyframe at the lobby's interval and polls for the result.
     qint64     m_lastKeyframeRequestMs = 0;
 
     // Non-zero while this client is spectating a broadcast match (the match id
@@ -472,6 +515,11 @@ private:
     QString m_currentRoomState;
     int     m_currentRoomDelay      = 2;   // this client's local input delay
     int     m_currentRoomPrediction = 7;
+    int     m_livePrediction        = 0;   // window handed to this match's engine
+    // The server relays delay and prediction changes while the room is in game
+    // (ROOM_STATE "inGameSettings"). Older servers drop them, so the host can't
+    // change prediction mid-match there.
+    bool    m_serverAcceptsInGameSettings = false;
     int     m_currentRoomPacing     = 0;   // 0 = aggressive, 1 = smooth
     quint64 m_currentRoomHostId     = 0;   // seated host's user id (0 when none)
     quint64 m_currentMatchId        = 0;
@@ -482,6 +530,57 @@ private:
     // player joins (so we can flash/chime). m_roomSeatsSeen suppresses the chime
     // on the first ROOM_STATE after entering a room (those seats aren't "joins").
     QSet<quint64> m_knownSeatedUsers;
+
+    // ── Late join (see the section in the .cpp) ──
+    enum class LateJoinRole { None, Host, Player, Joiner };
+    struct LateJoin
+    {
+        LateJoinRole role = LateJoinRole::None;
+        quint64 matchId = 0;
+        quint64 admitId = 0;
+        int epoch = 0;
+        int seats = 0;
+        quint64 hostId = 0;
+        LobbyClient::LobbyMatchPeer joiner;
+        QList<LobbyClient::LobbyMatchPeer> peers; // roster after the join
+        QSet<quint64> left;                       // players who left mid hand-off
+        qint64 startedMs = 0;
+        int cutFrame = -1;
+        qint64 cutSentMs = 0;
+        QSet<quint64> awaitingCut;                // host: players yet to stop
+        bool stateSent = false;                   // host
+        bool cutReported = false;                 // player
+        bool launched = false;                    // joiner
+        bool readySent = false;                   // joiner
+        qint64 readyMs = 0;                       // joiner, host: when it was ready
+        bool stateReceived = false;               // joiner
+        bool released = false;                    // left the cut for the new session
+        qint64 releasedMs = 0;
+    };
+    LateJoin m_lateJoin;
+    QTimer* m_lateJoinTimer = nullptr;
+    // From ROOM_STATE: the running match can take late joiners, and which
+    // seated members are outside it and able to join.
+    bool m_roomLateJoin = false;
+    // From ROOM_STATE: the host may start with nobody else seated.
+    bool m_canStartAlone = false;
+    // In a match with nobody else in it yet.
+    bool m_playingAlone = false;
+    int autoFrameDelay() const;
+    QSet<quint64> m_outOfMatchUsers;
+    QSet<quint64> m_lateJoinCapableUsers;
+    quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet
+    bool m_announcedWaitingSelf = false;
+    QString lobbyUserName(quint64 userId) const;
+    void onAdmitClicked(quint64 userId);
+    void launchAsLateJoiner();
+    std::vector<LobbyRemotePeer> lateJoinRemotes() const;
+    void applyLateJoinRoster();
+    void armLateJoinCut();
+    bool connectedToLateJoiner() const;
+    void finishLateJoin(bool resumed);
+    void abortLateJoin(const QString& reason, bool tellOthers);
+    void refreshAdmitButtons();
     bool          m_roomSeatsSeen = false;
 
     // Delay Auto is local. Prediction Auto is the host-owned room selection;
@@ -489,6 +588,7 @@ private:
     bool    m_delayAuto = true;
     bool    m_predictionAuto = true;
     bool    m_localDelayPublished = false;
+    bool    m_liveReplayPreferencePublished = false;
 
     bool m_awaitingEmulationStart = false;
     bool m_emulationActive        = false;

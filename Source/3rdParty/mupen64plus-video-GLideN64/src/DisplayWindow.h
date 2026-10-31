@@ -51,6 +51,7 @@ protected:
 	bool m_bCaptureScreen = false;
 	bool m_bToggleFullscreen = false;
 	bool m_bResizeWindow = false;
+	bool m_bRestart = false;
 	bool m_bFullscreen = false;
 	bool m_bAdjustScreen = false;
 

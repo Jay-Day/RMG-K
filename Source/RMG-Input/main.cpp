@@ -15,6 +15,7 @@
 #include "Thread/HotkeysThread.hpp"
 #include "Thread/SDLThread.hpp"
 #include "common.hpp"
+#include "DeviceIdentity.hpp"
 #include "main.hpp"
 
 #define M64P_PLUGIN_PROTOTYPES 1
@@ -42,6 +43,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <mutex>
 
 //
 // Local Defines
@@ -74,6 +76,7 @@ struct InputMapping
 
 struct InputProfile
 {
+    std::string SettingsSection;
     bool PluggedIn    = false;
     double DeadzoneValue = 0.0;
     double RangeValue = 66.0;  // 0-100, default 66 to match N-Rage
@@ -84,6 +87,7 @@ struct InputProfile
     std::string DeviceName;
     std::string DevicePath;
     std::string DeviceSerial;
+    std::string DeviceGUID;
     InputDeviceType DeviceType = InputDeviceType::Invalid;
     std::chrono::time_point<std::chrono::high_resolution_clock> LastDeviceCheckTime = std::chrono::high_resolution_clock::now();
 
@@ -205,6 +209,9 @@ static bool l_KeyboardState[SDL_SCANCODE_COUNT];
 
 // config GUI state
 static bool l_IsConfigGuiOpen = false;
+// Serializes device/profile handoff with game reads and the paused-game hotkey
+// thread. Never held while a configuration dialog runs its event loop.
+static std::recursive_mutex l_InputMutex;
 
 //
 // Local Functions
@@ -329,6 +336,7 @@ static void load_settings(void)
             }
         }
 
+        profile->SettingsSection = section;
         // when the settings section doesn't exist,
         // disable profile
         if (!CoreSettingsSectionExists(section))
@@ -344,6 +352,7 @@ static void load_settings(void)
         profile->DeviceName = CoreSettingsGetStringValue(SettingsID::Input_DeviceName, section);
         profile->DevicePath = CoreSettingsGetStringValue(SettingsID::Input_DevicePath, section);
         profile->DeviceSerial = CoreSettingsGetStringValue(SettingsID::Input_DeviceSerial, section);
+        profile->DeviceGUID = CoreSettingsGetStringValue(SettingsID::Input_DeviceGUID, section);
         profile->DeviceType = static_cast<InputDeviceType>(CoreSettingsGetIntValue(SettingsID::Input_DeviceType, section));
         profile->GameboyRom = CoreSettingsGetStringValue(SettingsID::Input_GameboyRom, section);
         profile->GameboySave = CoreSettingsGetStringValue(SettingsID::Input_GameboySave, section);
@@ -623,11 +632,16 @@ static void open_controller(int index, InputProfile* profile, SDL_JoystickID* jo
     std::string debugMessage;
 
     std::string deviceName;
-    std::string devicePath;
-    std::string deviceSerial;
+
+    std::vector<InputDeviceIdentity> identities;
+    for (int i = 0; i < joysticksCount; ++i)
+        identities.push_back(ReadInputDeviceIdentity(joysticks[i]));
+    const int selected = FindInputDevice(
+        {profile->DeviceName, profile->DevicePath, profile->DeviceSerial, profile->DeviceGUID}, identities);
 
     for (int i = 0; i < joysticksCount; i++)
     {
+        if (i != selected) continue;
         joystickId = joysticks[i];
 
         if (SDL_IsGamepad(joystickId))
@@ -650,8 +664,6 @@ static void open_controller(int index, InputProfile* profile, SDL_JoystickID* jo
             }
 
             deviceName = string_from_const_char(SDL_GetGamepadName(gamepad));
-            devicePath = string_from_const_char(SDL_GetGamepadPath(gamepad));
-            deviceSerial = string_from_const_char(SDL_GetGamepadSerial(gamepad));
         }
         else
         {
@@ -666,17 +678,30 @@ static void open_controller(int index, InputProfile* profile, SDL_JoystickID* jo
             }
 
             deviceName = string_from_const_char(SDL_GetJoystickName(joystick));
-            devicePath = string_from_const_char(SDL_GetJoystickPath(joystick));
-            deviceSerial = string_from_const_char(SDL_GetJoystickSerial(joystick));
         }
 
-        if (deviceName   == profile->DeviceName &&
-            devicePath   == profile->DevicePath &&
-            deviceSerial == profile->DeviceSerial)
+        if (joystick != nullptr)
         {
             profile->SDLJoystick = joystick;
             profile->SDLGamepad = gamepad;
             foundJoystick = true;
+            // Remember resolved identity/paths without replacing an absent
+            // preference. This also upgrades legacy name/slot-only profiles.
+            const auto& identity = identities[i];
+            if (profile->DeviceGUID != identity.guid || profile->DevicePath != identity.path ||
+                profile->DeviceName != identity.name ||
+                (!identity.serial.empty() && profile->DeviceSerial != identity.serial))
+            {
+                profile->DeviceGUID = identity.guid;
+                profile->DeviceName = identity.name;
+                profile->DevicePath = identity.path;
+                if (!identity.serial.empty()) profile->DeviceSerial = identity.serial;
+                CoreSettingsSetValue(SettingsID::Input_DeviceGUID, profile->SettingsSection, profile->DeviceGUID);
+                CoreSettingsSetValue(SettingsID::Input_DeviceName, profile->SettingsSection, profile->DeviceName);
+                CoreSettingsSetValue(SettingsID::Input_DevicePath, profile->SettingsSection, profile->DevicePath);
+                CoreSettingsSetValue(SettingsID::Input_DeviceSerial, profile->SettingsSection, profile->DeviceSerial);
+                CoreSettingsSave();
+            }
             debugMessage = "open_controller(" + std::to_string(index) + "): matched configured device name=\"" + deviceName + "\"";
             PluginDebugMessage(M64MSG_VERBOSE, debugMessage);
             return;
@@ -704,10 +729,9 @@ static void open_controller(int index, InputProfile* profile, SDL_JoystickID* jo
         PluginDebugMessage(M64MSG_WARNING, debugMessageBase);
 
         profile->PluggedIn = false;
-        if (l_HasControlInfo)
-        {
-            l_ControlInfo.Controls[index].Present = 0;
-        }
+        // A missing physical device supplies neutral input. Keep the emulated
+        // port configured so selecting a powered-on device mid-game works even
+        // when it was absent at game start, without changing session topology.
 
         profile->SDLGamepad = nullptr;
         profile->SDLJoystick = nullptr;
@@ -987,6 +1011,8 @@ static unsigned char data_crc(unsigned char *data, int length)
 
 static bool check_hotkeys(int Control)
 {
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
+    if (l_IsConfigGuiOpen) return false;
     InputProfile* profile = &l_InputProfiles[Control];
 
     int state = 0;
@@ -1140,7 +1166,11 @@ EXPORT m64p_error CALL PluginShutdown(void)
         return M64ERR_NOT_INIT;
     }
 
-    close_controllers();
+    {
+        std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
+        l_IsConfigGuiOpen = true;
+        close_controllers();
+    }
 
     l_SDLThread->StopLoop();
     l_SDLThread->deleteLater();
@@ -1150,7 +1180,9 @@ EXPORT m64p_error CALL PluginShutdown(void)
     l_HotkeysThread->deleteLater();
     l_HotkeysThread = nullptr;
 
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
     sdl_quit();
+    l_IsConfigGuiOpen = false;
 
     // clear debug callback
     l_DebugCallback    = nullptr;
@@ -1208,57 +1240,73 @@ void PluginDebugMessage(int level, std::string message)
 // Custom Plugin Functions
 //
 
-EXPORT m64p_error CALL PluginConfigWithRomConfig(void* parent, int romConfig, CoreRomHeader* romHeader, CoreRomSettings* romSettings)
+static m64p_error configure_input(void (*showDialog)(void*), void* context, bool live)
 {
-    if (l_SDLThread == nullptr)
     {
-        return M64ERR_NOT_INIT;
+        std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
+        if (l_SDLThread == nullptr) return M64ERR_NOT_INIT;
+        if (l_IsConfigGuiOpen) return M64ERR_INVALID_STATE;
+        l_IsConfigGuiOpen = true;
+        close_controllers();
     }
 
-    l_IsConfigGuiOpen = true;
-    
-    // close controllers
-    close_controllers();
+    // The unified dialog updates SDL itself. The legacy editor uses SDLThread.
+    if (!live) l_SDLThread->SetAction(SDLThreadAction::SDLPumpEvents);
+    showDialog(context);
 
-    l_SDLThread->SetAction(SDLThreadAction::SDLPumpEvents);
-
-    UserInterface::MainDialog dialog(static_cast<QWidget*>(parent), l_SDLThread, romConfig, *romHeader, *romSettings);
-    dialog.exec();
-
-    // when PluginShutdown() is called during PluginConfig2(),
-    // we shouldn't do anything here anymore because
-    // l_SDLThread will be nullptr, causing a crash
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
+    // The game/application may have closed while the modal event loop ran.
     if (l_SDLThread == nullptr)
     {
+        l_IsConfigGuiOpen = false;
         return M64ERR_SUCCESS;
     }
 
-    l_SDLThread->SetAction(SDLThreadAction::None);
-
-    // wait until it's done pumping events
-    while (l_SDLThread->GetCurrentAction() == SDLThreadAction::SDLPumpEvents)
+    if (!live)
     {
-        QThread::msleep(5);
+        l_SDLThread->SetAction(SDLThreadAction::None);
+        while (l_SDLThread->GetCurrentAction() == SDLThreadAction::SDLPumpEvents)
+            QThread::msleep(5);
     }
 
-    // reload settings
+    // Live edits change local mappings/devices only. Preserve the emulated
+    // controller count and Pak capabilities negotiated when the game started.
+    const bool hadControlInfo = l_HasControlInfo;
+    if (live) l_HasControlInfo = false;
     load_settings();
-
-    // apply profiles when we're not in netplay
-    if (!CoreHasInitNetplay())
+    if (!live)
     {
-        apply_controller_profiles();
+        if (!CoreHasInitNetplay()) apply_controller_profiles();
+        apply_gameboy_settings();
     }
-
-    // apply gameboy settings
-    apply_gameboy_settings();
-
-    // open controllers
     open_controllers();
-
+    if (live) l_HasControlInfo = hadControlInfo;
+    std::fill(std::begin(l_KeyboardState), std::end(l_KeyboardState), false);
     l_IsConfigGuiOpen = false;
-    
     return M64ERR_SUCCESS;
+}
+
+EXPORT m64p_error CALL PluginConfigWithRomConfig(void* parent, int romConfig, CoreRomHeader* romHeader, CoreRomSettings* romSettings)
+{
+    struct ConfigContext {
+        void* parent;
+        int romConfig;
+        CoreRomHeader* header;
+        CoreRomSettings* settings;
+    } context{parent, romConfig, romHeader, romSettings};
+    return configure_input([](void* data)
+    {
+        const auto& config = *static_cast<ConfigContext*>(data);
+        UserInterface::MainDialog dialog(static_cast<QWidget*>(config.parent), l_SDLThread,
+            config.romConfig, *config.header, *config.settings);
+        dialog.exec();
+    }, &context, false);
+}
+
+extern "C" EXPORT m64p_error CALL RMGInputConfigureLive(void (*showDialog)(void*), void* context)
+{
+    if (!showDialog) return M64ERR_INPUT_ASSERT;
+    return configure_input(showDialog, context, true);
 }
 
 //
@@ -1267,6 +1315,8 @@ EXPORT m64p_error CALL PluginConfigWithRomConfig(void* parent, int romConfig, Co
 
 EXPORT void CALL ControllerCommand(int Control, unsigned char* Command)
 {
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
+    if (l_IsConfigGuiOpen) return;
     unsigned char* data = &Command[5];
 
     if (Control == -1)
@@ -1325,9 +1375,12 @@ EXPORT void CALL ControllerCommand(int Control, unsigned char* Command)
 
 EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
 {
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
+    Keys->Value = 0;
+    if (l_IsConfigGuiOpen) return;
     InputProfile* profile = &l_InputProfiles[Control];
 
-    if (!profile->PluggedIn || l_IsConfigGuiOpen)
+    if (!profile->PluggedIn)
     {
         return;
     }
@@ -1383,6 +1436,7 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
 
 EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
 {
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
     for (int i = 0; i < SDL_SCANCODE_COUNT; i++)
     {
         l_KeyboardState[i] = 0;
@@ -1413,6 +1467,7 @@ EXPORT int CALL RomOpen(void)
 
 EXPORT void CALL RomClosed(void)
 {
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
     l_HotkeysThread->SetState(HotkeysThreadState::RomClosed);
     l_HasControlInfo = false;
     close_controllers();
@@ -1420,10 +1475,13 @@ EXPORT void CALL RomClosed(void)
 
 EXPORT void CALL SDL_KeyDown(int keymod, int keysym)
 {
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
+    if (l_IsConfigGuiOpen) return;
     l_KeyboardState[keysym] = true;
 }
 
 EXPORT void CALL SDL_KeyUp(int keymod, int keysym)
 {
+    std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
     l_KeyboardState[keysym] = false;
 }
