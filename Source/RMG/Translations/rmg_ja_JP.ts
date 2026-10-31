@@ -1325,6 +1325,18 @@ Try connecting the adapter to a different USB port, preferably directly on your 
             <source>Replay out of sync: %1</source>
             <translation>リプレイの同期がずれました: %1</translation>
         </message>
+        <message>
+            <source>Ranked: P%1 left the set; the lobby decides the result</source>
+            <translation>ランク: P%1 がセットから退出しました。結果はロビーが判定します</translation>
+        </message>
+        <message>
+            <source>Stop &amp;Watching</source>
+            <translation>観戦をやめる(&amp;W)</translation>
+        </message>
+        <message>
+            <source>S&amp;hutdown</source>
+            <translation>シャットダウン(&amp;H)</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::SettingsDialog</name>
@@ -2789,6 +2801,14 @@ Not linked yet? Sign in with Discord, then enter your password once to link it.<
         <message>
             <source>Best of %1</source>
             <translation>Bo%1</translation>
+        </message>
+        <message>
+            <source>Log into an account to create ranked rooms.</source>
+            <translation>ランクルームを作成するにはアカウントにログインしてください。</translation>
+        </message>
+        <message>
+            <source>This game can't be played ranked on this server.</source>
+            <translation>このサーバーでは、このゲームのランク戦はプレイできません。</translation>
         </message>
     </context>
     <context><name>UserInterface::Dialog::RollbackLobbyDialog</name>
@@ -4386,6 +4406,16 @@ stop the session. Needs a logged-in account.</source>
             <source>A player left the ranked set; the lobby decides the result from the score when they left.</source>
             <translation>プレイヤーがランクセットから退出しました。退出時のスコアからロビーが結果を判定します。</translation>
         </message>
+        <message>
+            <source>Auto-match with another player searching for the selected game.
+After each match it searches again, with a new opponent, until you stop the session.
+Uses Auto frame delay unless remembering your last choice is enabled.
+Your frame delay can be changed during the warmup. Prediction defaults to 7 frames.</source>
+            <translation>選択したゲームを検索中のプレイヤーと自動的にマッチングします。
+各試合の後、セッションを停止するまで新しい対戦相手を再び検索します。
+前回のフレーム遅延を記憶する設定が有効な場合は前回の選択を、無効な場合は自動設定を使用します。
+ウォームアップ中は自分のフレーム遅延を変更できます。予測の初期値は7フレームです。</translation>
+        </message>
     </context>
         <context>
         <name>KailleraPlaybackDialog</name>
@@ -4720,6 +4750,10 @@ stop the session. Needs a logged-in account.</source>
         <message>
             <source>Remove %1? You won't be able to email yourself a reset code until you add an address again.</source>
             <translation>%1 を削除しますか？ アドレスを再登録するまで、リセットコードをメールで受け取れなくなります。</translation>
+        </message>
+        <message>
+            <source>Sending...</source>
+            <translation>送信中...</translation>
         </message>
     </context>
     <context>

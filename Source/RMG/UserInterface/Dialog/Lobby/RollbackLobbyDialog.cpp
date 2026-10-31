@@ -3933,7 +3933,12 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         (m_emulationActive || m_awaitingEmulationStart))
     {
         appendChatSystemLine(CHANNEL_ROOM, tr("Host ended the match — stopping game."));
-        emit closeMatchRequested();
+        // A ranked set is judged from this client's report of the frame the host
+        // left at; closing now would lose it and void the set.
+        if (m_rankedLeftPending)
+            m_closeMatchAfterLeftReport = true;
+        else
+            emit closeMatchRequested();
     }
 
     if (m_dropBtn)
