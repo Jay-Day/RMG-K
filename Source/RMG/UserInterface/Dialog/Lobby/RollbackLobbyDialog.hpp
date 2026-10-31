@@ -22,6 +22,9 @@
 #include <QVariant>
 
 #include <RMG-Core/RomSettings.hpp>
+#ifdef RMGK_GAME_STATS
+#include <RMG-Core/Replay.hpp>
+#endif
 #include <RMG-Core/rmgk_gekko.hpp> // LobbyRemotePeer (late join rosters)
 
 #include <vector>
@@ -434,6 +437,13 @@ private:
     // match (the player who checks it records, same as the p2p/kaillera lobbies).
     // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
     QCheckBox* m_recordCheck     = nullptr;
+
+    // Independent per-player toggle for the .rmgr replay feature (separate
+    // from .krec) - mirrors m_recordCheck's pattern exactly, driving
+    // Replay::SetEnabledOverride() instead of n02_kaillera_recording_enabled.
+    // Only constructed under RMGK_GAME_STATS, and only shown when this room's
+    // game is Smash Remix 2.0.1 (the only game this feature currently supports).
+    QCheckBox* m_replayRecordCheck = nullptr;
 
     // When checked, the room host streams replay bytes so others can spectate,
     // independently of whether a local .krec file is saved. On the emulation thread,

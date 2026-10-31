@@ -41,6 +41,11 @@ bool IsPifReplayFinished(void)
     return s_ReplayFinished;
 }
 
+int GetPifReplayFrameIndex(void)
+{
+    return s_InputFrameIndex;
+}
+
 void PifReplayCallback(struct pif* pifState)
 {
     if (s_KrecData == nullptr || pifState == nullptr || s_ReplayFinished)
