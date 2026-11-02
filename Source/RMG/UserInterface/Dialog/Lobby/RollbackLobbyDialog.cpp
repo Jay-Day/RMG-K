@@ -523,7 +523,11 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
               | Qt::WindowMinMaxButtonsHint
               | Qt::WindowCloseButtonHint)
 {
+#ifdef RMGK_TEST_BUILD
+    setWindowTitle(tr("RMG-K Lobby") + " [TEST]");
+#else
     setWindowTitle(tr("RMG-K Lobby"));
+#endif
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setWindowModality(Qt::NonModal);
     resize(1180, 720);
@@ -3546,6 +3550,12 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
                     ? tr("%1 is waiting to join. Click Add to Game on their seat to bring them in.").arg(who)
                     : tr("%1 is waiting to join. The host can add them to the game.").arg(who),
                     QStringLiteral("user-add-line"), Role::Warn);
+                constexpr qint64 kWaitingNoticeGapMs = 30000;
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                const auto last = m_waitingNoticeMs.constFind(uid);
+                if (last != m_waitingNoticeMs.constEnd() && nowMs - *last < kWaitingNoticeGapMs)
+                    continue;
+                m_waitingNoticeMs.insert(uid, nowMs);
                 emit overlayMessage(iAmHost
                     ? tr("%1 is waiting to join (Add to Game in the lobby)").arg(who)
                     : tr("%1 is waiting to join").arg(who));
@@ -3841,6 +3851,15 @@ void RollbackLobbyDialog::notifyEmulationStarted()
             (unsigned long long)m_currentMatchId);
         CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
     }
+    if (!m_matchWatchTimer)
+    {
+        m_matchWatchTimer = new QTimer(this);
+        m_matchWatchTimer->setInterval(1000);
+        connect(m_matchWatchTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onMatchWatchTick);
+    }
+    m_matchWatchEpoch = -1;
+    m_matchWatchSeenSlots.clear();
+    m_matchWatchTimer->start();
     refreshAdmitButtons();
     if (m_lateJoin.role == LateJoinRole::Joiner)
         return;
@@ -3859,6 +3878,8 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     const quint64 matchId = m_currentMatchId;
     m_emulationActive = false;
     m_awaitingEmulationStart = false;
+    if (m_matchWatchTimer)
+        m_matchWatchTimer->stop();
     endLiveRollbackSettings();
     if (m_client)
         m_client->setMatchTransportActive(false);
@@ -3899,6 +3920,79 @@ void RollbackLobbyDialog::notifyEmulationFinished()
 
 }
 
+// A game that has lost its match plays on alone, and while it runs it holds
+// on to the lobby: the player can't reconnect, or be added back. End it once
+// that has happened:
+//  - Off the lobby, the server has dropped us from the match, and the other
+//    players stop sending us input, so the game stands still. (When the lobby
+//    itself restarts, everyone keeps playing.)
+//  - Every other player has gone, after GekkoNet's long silence timeout,
+//    without the lobby saying so. The host can play on and add players.
+void RollbackLobbyDialog::onMatchWatchTick()
+{
+    if (!m_emulationActive)
+    {
+        m_matchWatchTimer->stop();
+        return;
+    }
+    if (m_lateJoin.role != LateJoinRole::None)
+        return;
+
+    RollbackLagStats stats;
+    rmgk_gekko::lag_stats(stats);
+    if (!stats.valid || !stats.active || stats.peers.empty())
+        return;
+
+    // Peers start out unconnected in every session, including the one a late
+    // join moves the match to.
+    const int epoch = rmgk_gekko::session_epoch();
+    if (epoch != m_matchWatchEpoch)
+    {
+        m_matchWatchEpoch = epoch;
+        m_matchWatchSeenSlots.clear();
+    }
+    bool anyConnected = false;
+    for (const auto& peer : stats.peers)
+    {
+        if (!peer.connected)
+            continue;
+        anyConnected = true;
+        m_matchWatchSeenSlots.insert(peer.slot);
+    }
+    const bool everyoneGone = !anyConnected && !m_matchWatchSeenSlots.isEmpty();
+
+    constexpr int kOfflineDroppedStallMs = 10000;
+    const bool lobbyUp = m_client && m_client->state() == LobbyClient::ConnectionState::Connected;
+    const bool iAmHost = m_client && m_currentRoomHostId == m_client->selfUserId();
+    if (lobbyUp && !(everyoneGone && !iAmHost))
+        return;
+    if (!lobbyUp && !everyoneGone && stats.stalledMs < kOfflineDroppedStallMs)
+        return;
+
+    {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "Lobby→match watch: closing the game lobby=%d everyone_gone=%d stalled_ms=%d",
+            int(lobbyUp), int(everyoneGone), stats.stalledMs);
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
+    }
+    m_matchWatchTimer->stop();
+    if (lobbyUp)
+    {
+        appendChatSystemLine(CHANNEL_ROOM,
+            tr("Lost the connection to every other player, so your game was closed. The host can add you back."));
+        if (m_currentMatchId != 0)
+            m_client->reportMatchFinished(m_currentMatchId);
+    }
+    else
+    {
+        // Shown by the reconnect prompt once the game has closed.
+        m_connectPromptMessage =
+            tr("You were dropped from the match when the connection to the lobby was lost. "
+               "Reconnect and the host can add you back.");
+    }
+    emit closeMatchRequested();
+}
+
 void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason)
 {
     // A late notice from an earlier match must not drop whoever holds that
@@ -3924,9 +4018,11 @@ void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int s
     if (slot > 0)
         rmgk_gekko::request_disconnect_player(slot);
 
-    // The port is empty now. The replay's header has already been written.
+    // The port is empty now. The replay's header has already been written, so
+    // the replay and its live viewers learn it from a port change record.
     if (slot >= 1 && slot <= 4)
     {
+        n02::recordingQueuePortChange(slot, recording_player_names[slot - 1], false);
         recording_player_names[slot - 1][0] = '\0';
         emit portLabelsChanged();
     }
@@ -4379,6 +4475,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_roomLateJoin = false;
     m_canStartAlone = false;
     m_outOfMatchUsers.clear();
+    m_waitingNoticeMs.clear();
     m_lateJoinCapableUsers.clear();
     m_admitRequestedUserId = 0;
     m_announcedWaitingSelf = false;
@@ -5962,7 +6059,8 @@ void RollbackLobbyDialog::onMatchAdmitBegin(quint64 matchId, quint64 admitId, in
         {
             appendChatSystemLine(CHANNEL_ROOM, tr("The host is adding %1 to the game…").arg(lateJoinNames()));
         }
-        emit overlayMessage(lateJoinBanner() + QStringLiteral("…"));
+        // The overlay font has no "…" glyph.
+        emit overlayMessage(lateJoinBanner() + QStringLiteral("..."));
     }
     else
     {
@@ -6182,14 +6280,16 @@ bool RollbackLobbyDialog::connectedToLateJoiner() const
 
 void RollbackLobbyDialog::applyLateJoinRoster()
 {
-    // Label the joiners' ports in the overlay (and, on the host, in nothing
-    // else: the replay header was written when the match began).
+    // Label the joiners' ports in the overlay. The replay header was written
+    // when the match began, so the replay and its live viewers learn the
+    // names from port change records.
     for (const auto& joiner : m_lateJoin.joiners)
     {
         const int slot = joiner.slot;
         if (slot >= 1 && slot <= 4)
         {
             n02::recordingSetPlayerName(slot - 1, joiner.username.toUtf8().constData());
+            n02::recordingQueuePortChange(slot, recording_player_names[slot - 1], true);
         }
     }
     emit portLabelsChanged();

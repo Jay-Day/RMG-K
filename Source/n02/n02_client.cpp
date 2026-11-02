@@ -132,6 +132,29 @@ static std::atomic<bool> recording_active{false};
 static std::mutex recording_chat_mutex;
 static std::vector<std::pair<std::string, std::string>> recording_chat_queue;
 
+// Port changes take the same route as chat, but are written to the stream as
+// well as the file. Guarded by recording_chat_mutex.
+struct RecordingPortChange {
+    int slot;
+    std::string name;
+    bool joined;
+};
+static std::vector<RecordingPortChange> recording_port_queue;
+
+// Emulation thread only: who held each port in the header, who holds it as of
+// the last record written, and whether to repeat the difference after the
+// next input (see recordingRepeatPortChanges).
+static char recording_header_names[4][32];
+static char recording_port_names[4][32];
+static int recording_local_player = 0;
+static bool recording_repeat_ports = false;
+
+// Set while a rollback lobby match owns the capture (recordingOpen). The
+// Kaillera state machine closes its recording whenever it sits idle, and an
+// open Kaillera or Playback window steps it every tick, so without this a
+// lobby match lost its replay and live stream when one of them was open.
+static std::atomic<bool> recording_lobby_owned{false};
+
 static std::filesystem::path pathFromUtf8String(const std::string& utf8) {
 #if defined(__cpp_char8_t)
     std::u8string converted;
@@ -251,9 +274,11 @@ public:
 
 static void close_recording() {
     const bool wasActive = recording_active.exchange(false, std::memory_order_acq_rel);
+    recording_lobby_owned.store(false, std::memory_order_release);
     {
         std::lock_guard<std::mutex> lk(recording_chat_mutex);
         recording_chat_queue.clear();
+        recording_port_queue.clear();
     }
     if (wasActive && RecordingBuffer.len() > 0)
         RecordingBuffer.write();
@@ -265,6 +290,45 @@ static void close_recording() {
             callbacks.recordingFileClosedCallback();
         }
     }
+}
+
+// The Kaillera/P2P state machine's own close: it leaves a lobby match's
+// capture alone.
+static void close_kaillera_recording() {
+    if (!recording_lobby_owned.load(std::memory_order_acquire))
+        close_recording();
+}
+
+// Emulation thread: write one port change as a 0x14 record (nick\0, then the
+// player number) to the stream and the local file.
+static void write_port_change(int slot, const char* name, bool joined) {
+    // A drop of the recording's own player ends playback in every reader.
+    if (slot < 1 || slot > 4 || (!joined && slot == recording_local_player))
+        return;
+    char nick[32] = {};
+    if (name)
+        strncpy(nick, name, sizeof(nick) - 1);
+    const int playernb = slot | (joined ? n02::KREC_PORT_JOINED : 0);
+    RecordingBuffer.put_char(0x14);
+    RecordingBuffer.put_bytes(nick, (int)strlen(nick) + 1);
+    RecordingBuffer.put_bytes((char*)&playernb, 4);
+    RecordingBuffer.write();
+    if (joined)
+        memcpy(recording_port_names[slot - 1], nick, sizeof(nick));
+    else
+        memset(recording_port_names[slot - 1], 0, sizeof(nick));
+}
+
+static void drain_recording_ports() {
+    std::vector<RecordingPortChange> pending;
+    {
+        std::lock_guard<std::mutex> lk(recording_chat_mutex);
+        if (recording_port_queue.empty())
+            return;
+        pending.swap(recording_port_queue);
+    }
+    for (const auto& change : pending)
+        write_port_change(change.slot, change.name.c_str(), change.joined);
 }
 
 // Drain queued chat into the open krec as 0x08 records (nick\0 msg\0). Called on
@@ -428,7 +492,12 @@ static void openRecordingFile(const char* appName, const char* game, int player,
     {
         std::lock_guard<std::mutex> lk(recording_chat_mutex);
         recording_chat_queue.clear();
+        recording_port_queue.clear();
     }
+    memcpy(recording_header_names, recording_player_names, sizeof(recording_header_names));
+    memcpy(recording_port_names, recording_player_names, sizeof(recording_port_names));
+    recording_local_player = player;
+    recording_repeat_ports = false;
     recording_active.store(captureEnabled, std::memory_order_release);
 }
 
@@ -450,7 +519,7 @@ static int gameCallbackWrapper(char *game, int player, int numplayers_arg) {
 }
 
 static void chatReceivedCallbackWrapper(char *nick, char *text) {
-    if (recording_file.is_open()) {
+    if (recording_file.is_open() && !recording_lobby_owned.load(std::memory_order_acquire)) {
         RecordingBuffer.put_char(8);
         {
             size_t nickLen = strlen(nick) + 1;
@@ -466,7 +535,7 @@ static void chatReceivedCallbackWrapper(char *nick, char *text) {
 }
 
 static void clientDroppedCallbackWrapper(char *nick, int playernb) {
-    if (recording_file.is_open()) {
+    if (recording_file.is_open() && !recording_lobby_owned.load(std::memory_order_acquire)) {
         RecordingBuffer.put_char(20);
         {
             size_t nickLen = strlen(nick) + 1;
@@ -541,12 +610,24 @@ public:
     std::vector<size_t> frameIndex;  // offsets of 0x12 (input) records
     int currentFrameIdx = 0;
 
+    // 0x14 records by the number of input records before them, so a seek can
+    // tell who holds each port where it lands.
+    struct PortEvent {
+        int frame;
+        int playernb;
+        char name[32];
+    };
+    std::vector<PortEvent> portEvents;
+    char headerNames[4][32] = {};
+
     void reset_all() {
         data.clear();
         pos = 0; headerSize = 0; scanPos = 0;
         streaming = false; headerParsed = false;
         streamBufferPrimed = false; streamBuffering = false;
         frameIndex.clear(); currentFrameIdx = 0;
+        portEvents.clear();
+        memset(headerNames, 0, sizeof(headerNames));
     }
 
     size_t size() const { return data.size(); }
@@ -579,6 +660,27 @@ public:
 // the other's read (use-after-free → corrupted inputs → desync).
 static std::recursive_mutex playbackMutex;
 static std::condition_variable_any playbackCondition;
+static std::function<void(const char (*)[32])> playback_port_names_callback;
+
+// Apply one 0x14 record to a port name table: a join names the port, a drop
+// empties it. Returns true when the table changed.
+static bool apply_port_event(char (*names)[32], int playernb, const char* name) {
+    const int slot = playernb & ~n02::KREC_PORT_JOINED;
+    if (slot < 1 || slot > 4)
+        return false;
+    char next[32] = {};
+    if (playernb & n02::KREC_PORT_JOINED)
+        strncpy(next, name, sizeof(next) - 1);
+    if (memcmp(names[slot - 1], next, sizeof(next)) == 0)
+        return false;
+    memcpy(names[slot - 1], next, sizeof(next));
+    return true;
+}
+
+static void notify_playback_port_names() {
+    if (playback_port_names_callback)
+        playback_port_names_callback(recording_player_names);
+}
 
 static int streamBufferedFrames(const PlayBackBufferC& pb) {
     const int buffered = static_cast<int>(pb.frameIndex.size()) - pb.currentFrameIdx;
@@ -640,6 +742,7 @@ static bool parsePlaybackHeader() {
         for (int i = 0; i < 4; i++)
             recording_player_names[i][31] = '\0';
     }
+    memcpy(pb.headerNames, recording_player_names, sizeof(pb.headerNames));
 
     pb.headerSize = hs;
     pb.pos = hs;
@@ -671,6 +774,11 @@ static void scanFrames() {
             if (z >= n) break;
             z++;
             if (z + 4 > n) break;
+            PlayBackBufferC::PortEvent event = {};
+            event.frame = static_cast<int>(pb.frameIndex.size());
+            memcpy(&event.playernb, d + z, 4);
+            strncpy(event.name, d + scan + 1, sizeof(event.name) - 1);
+            pb.portEvents.push_back(event);
             scan = z + 4;
         } else if (t == 0x08) {
             size_t z = scan + 1;
@@ -748,12 +856,23 @@ static int player_MPV(void* values, int size) {
             char playernick[100];
             pb.load_str(playernick, 100);
             int pn = pb.load_int();
+            if (pn & n02::KREC_PORT_JOINED) {
+                // A late joiner took the port (see recordingQueuePortChange).
+                const int slot = pn & ~n02::KREC_PORT_JOINED;
+                if (slot >= 1 && slot <= 16)
+                    player_was_dropped[slot - 1] = false;
+                if (apply_port_event(recording_player_names, pn, playernick))
+                    notify_playback_port_names();
+                continue;
+            }
             if (pn >= 1 && pn <= 16)
                 player_was_dropped[pn - 1] = true;
             if (pn == playerno) {
                 player_EndGame();
                 return -1;
             }
+            if (apply_port_event(recording_player_names, pn, playernick))
+                notify_playback_port_names();
             continue;
         }
         if (b == 8) {
@@ -846,6 +965,20 @@ static bool player_seekToFrame(int frameIdx) {
     if (frameIdx < 0 || frameIdx >= (int)PlayBackBuffer.frameIndex.size()) return false;
     PlayBackBuffer.pos = PlayBackBuffer.frameIndex[frameIdx];
     PlayBackBuffer.currentFrameIdx = frameIdx;
+
+    // The seek skips the port changes in between; take the ports as they
+    // stand just before input frameIdx.
+    char names[4][32];
+    memcpy(names, PlayBackBuffer.headerNames, sizeof(names));
+    for (const auto& event : PlayBackBuffer.portEvents) {
+        if (event.frame > frameIdx)
+            break;
+        apply_port_event(names, event.playernb, event.name);
+    }
+    if (memcmp(names, recording_player_names, sizeof(names)) != 0) {
+        memcpy(recording_player_names, names, sizeof(names));
+        notify_playback_port_names();
+    }
     return true;
 }
 
@@ -986,7 +1119,7 @@ void shutdown() {
     if (gamelist != 0)
         free(gamelist);
     gamelist = 0;
-    close_recording();
+    close_kaillera_recording();
 }
 
 void setInfos(kailleraInfos *infos_) {
@@ -1048,7 +1181,7 @@ bool processStateMachineStep() {
     KSSDFA.input = 0;
 
     if (prev_state == 2 && KSSDFA.state != 2) {
-        close_recording();
+        close_kaillera_recording();
     }
 
     if (KSSDFA.state == 2) {
@@ -1061,7 +1194,7 @@ bool processStateMachineStep() {
             infos.gameCallback(GAME, playerno, numplayers);
     }
     else if (KSSDFA.state == 0) {
-        close_recording();
+        close_kaillera_recording();
         // Poll network
         try {
             if (active_mod.SSDSTEP) {
@@ -1118,17 +1251,44 @@ void recordingQueueChat(const char* nick, const char* msg) {
         recording_chat_queue.emplace_back(std::move(n), std::move(m));
 }
 
+void recordingQueuePortChange(int slot, const char* name, bool joined) {
+    if (!recording_active.load(std::memory_order_acquire) || slot < 1 || slot > 4)
+        return;
+    std::string n(name ? name : "");
+    if (n.size() > 31) n.resize(31);
+    std::lock_guard<std::mutex> lk(recording_chat_mutex);
+    if (recording_port_queue.size() < 64)
+        recording_port_queue.push_back({slot, std::move(n), joined});
+}
+
+void recordingRepeatPortChanges() {
+    if (recording_active.load(std::memory_order_acquire))
+        recording_repeat_ports = true;
+}
+
 void recordingWriteInputs(const void* values, int size) {
     if (!recording_active.load(std::memory_order_acquire) || values == nullptr || size <= 0) {
         return;
     }
     drain_recording_chat(); // flush any queued chat just ahead of this frame
+    drain_recording_ports();
     const short siz = (size > 0x7FFF) ? 0x7FFF : (short)size;
     RecordingBuffer.put_char(0x12);
     RecordingBuffer.put_short(siz);
     RecordingBuffer.put_bytes((char*)values, siz);
     RecordingBuffer.write();
     recording_frame_count.fetch_add(1, std::memory_order_relaxed);
+
+    // A viewer starting from a keyframe gets the stream from this input on.
+    if (recording_repeat_ports) {
+        recording_repeat_ports = false;
+        char ports[4][32];
+        memcpy(ports, recording_port_names, sizeof(ports));
+        for (int i = 0; i < 4; i++) {
+            if (memcmp(ports[i], recording_header_names[i], sizeof(ports[i])) != 0)
+                write_port_change(i + 1, ports[i], ports[i][0] != 0);
+        }
+    }
 }
 
 int recordingFrameCount() {
@@ -1141,8 +1301,9 @@ void recordingSetPlayerName(int index, const char* utf8Name) {
     }
     const std::string name = utf8Name != nullptr ? utf8Name : "";
     const size_t length = utf8PrefixLength(name, sizeof(recording_player_names[index]) - 1);
+    // Clear the rest too: port change records compare whole names.
+    memset(recording_player_names[index], 0, sizeof(recording_player_names[index]));
     memcpy(recording_player_names[index], name.data(), length);
-    recording_player_names[index][length] = '\0';
 }
 
 void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers) {
@@ -1156,6 +1317,7 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
     }
     openRecordingFile(appName, gameName, localPlayer, numPlayers,
                       n02_kaillera_recording_enabled);
+    recording_lobby_owned.store(true, std::memory_order_release);
 }
 
 void recordingClose() {
@@ -1172,7 +1334,7 @@ void chatSend(char *text) {
 }
 
 void endGame() {
-    close_recording();
+    close_kaillera_recording();
     if (active_mod.EndGame)
         active_mod.EndGame();
 }
@@ -1222,7 +1384,7 @@ void setStateInput(int input) {
 }
 
 void resetStateMachine() {
-    close_recording();
+    close_kaillera_recording();
     KSSDFA.state = 0;
     KSSDFA.input = 0;
 }
@@ -1288,6 +1450,11 @@ bool playbackHeaderReady() {
 int playbackNumPlayers() {
     std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return numplayers;
+}
+
+void setPlaybackPortNamesCallback(std::function<void(const char (*names)[32])> callback) {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    playback_port_names_callback = std::move(callback);
 }
 
 } // namespace n02

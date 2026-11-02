@@ -177,6 +177,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     // Bounds the "stop the old game, retry in 50ms" relaunch loop so a previous
     // emulation that refuses to stop can't spin forever (hung background game).
     int  ui_RollbackRelaunchAttempts = 0;
+    // When the last lobby notice (someone waiting to join, joining, ...) went
+    // to the overlay. Notices closer together than that are skipped.
+    qint64 ui_LobbyOverlayNoticeMs = 0;
     // Spectating a broadcast match via streaming krec playback (distinct from the
     // lobby *match* flow above — the spectator runs playback, not GekkoNet).
     bool    ui_SpectateActive  = false;

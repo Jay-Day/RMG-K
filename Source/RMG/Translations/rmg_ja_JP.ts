@@ -3229,8 +3229,8 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>ゲームに参加しています...</translation>
         </message>
         <message>
-            <source>%1 is joining the game…</source>
-            <translation>%1がゲームに参加しています…</translation>
+            <source>%1 is joining the game...</source>
+            <translation>%1がゲームに参加しています...</translation>
         </message>
         <message>
             <source>%1 is joining the game</source>
@@ -3271,6 +3271,14 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         <message>
             <source>%1 couldn't join</source>
             <translation>%1は参加できませんでした</translation>
+        </message>
+        <message>
+            <source>Lost the connection to every other player, so your game was closed. The host can add you back.</source>
+            <translation>他のすべてのプレイヤーとの接続が切れたため、ゲームを終了しました。ホストがあなたを再びゲームに追加できます。</translation>
+        </message>
+        <message>
+            <source>You were dropped from the match when the connection to the lobby was lost. Reconnect and the host can add you back.</source>
+            <translation>ロビーとの接続が切れたため、対戦から外されました。再接続すると、ホストがあなたを再びゲームに追加できます。</translation>
         </message>
         <message>
             <source>they're on a different RMG-K version</source>

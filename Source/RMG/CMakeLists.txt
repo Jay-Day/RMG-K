@@ -15,6 +15,10 @@ if (PORTABLE_INSTALL)
     add_definitions(-DPORTABLE_INSTALL)
 endif(PORTABLE_INSTALL)
 
+if (RMGK_TEST_BUILD)
+    add_definitions(-DRMGK_TEST_BUILD)
+endif(RMGK_TEST_BUILD)
+
 if (UPDATER)
     find_package(Qt6 COMPONENTS Network REQUIRED)
     add_definitions(-DUPDATER)
