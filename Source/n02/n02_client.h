@@ -51,6 +51,21 @@ int recordingFrameCount();
 // No-op without an active capture. nick/msg are length-bounded.
 void recordingQueueChat(const char* nick, const char* msg);
 
+// Queue a port change for the active replay capture: `name` took controller
+// `slot` (1-based), or left it when `joined` is false. Safe from any thread;
+// written before the next input frame, to the stream and the local file, as
+// a 0x14 record. A leave is the drop record players already understand. A
+// join sets KREC_PORT_JOINED in the player number, which older readers skip.
+// No-op without an active capture.
+constexpr int KREC_PORT_JOINED = 0x100;
+void recordingQueuePortChange(int slot, const char* name, bool joined);
+
+// Emulation thread: after the next input frame, write every port whose
+// player differs from the header's. A live replay viewer who starts from a
+// keyframe only gets the stream from that frame on, so it learns the current
+// ports from these. Call it when a keyframe is confirmed.
+void recordingRepeatPortChanges();
+
 // Begin replay capture for the GekkoNet rollback lobby, closing any previous
 // capture first. Writes a KRC1 header if local saving or streaming is enabled.
 // n02_kaillera_recording_enabled controls local saving independently of the
@@ -193,6 +208,11 @@ bool playbackHeaderReady();
 
 // Player count from the parsed playback header (0 until playbackHeaderReady()).
 int playbackNumPlayers();
+
+// Called on the playback's thread with the slot-ordered player names whenever
+// a port change record (see recordingQueuePortChange) or a seek changes them.
+// The names are also copied into recording_player_names.
+void setPlaybackPortNamesCallback(std::function<void(const char (*names)[32])> callback);
 
 } // namespace n02
 

@@ -2379,6 +2379,8 @@ void commit_oldest_recorded_frame()
                 n02::recordingFrameCount() - 1 + kKeyframeNextInputOffset;
             g_GekkoKeyframeReady = true;
         }
+        // A viewer starting here doesn't see the port changes before it.
+        n02::recordingRepeatPortChanges();
         g_GekkoKeyframePending = false;
         if (g_GekkoLogEnabled)
         {

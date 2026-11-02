@@ -575,6 +575,15 @@ private:
     QSet<quint64> m_lateJoinCapableUsers;
     quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet
     bool m_announcedWaitingSelf = false;
+    // When each member's "waiting to join" last went to the overlay, so one
+    // who keeps leaving and rejoining the room shows there once in a while.
+    QHash<quint64, qint64> m_waitingNoticeMs;
+    // Ends our game once we're no longer part of the match (see
+    // onMatchWatchTick), so we can be added back instead of playing on alone.
+    QTimer* m_matchWatchTimer = nullptr;
+    int m_matchWatchEpoch = -1;
+    QSet<int> m_matchWatchSeenSlots;   // remotes connected in that session
+    void onMatchWatchTick();
     QString lobbyUserName(quint64 userId) const;
     void onAdmitClicked(quint64 userId);
     void launchAsLateJoiner();
