@@ -183,6 +183,10 @@ int g_GekkoRemoteHandle = -1;
 bool g_GekkoLobbySession = false;
 std::vector<int> g_GekkoPlayerHandles;
 std::vector<int> g_GekkoLocalHandles;
+// A lobby match with several players on this PC: for each seat, the controller
+// of this PC that plays it, or -1 for a seat that isn't ours. Empty otherwise,
+// when g_GekkoLocalPlayer alone plays on the first controller.
+std::vector<int> g_GekkoSeatControllers;
 std::vector<unsigned char> g_GekkoLatchedInput;
 bool g_GekkoHasLatchedInput = false;
 // Frame number / flags associated with the most recent latch_gekko_input
@@ -1669,12 +1673,16 @@ void step_local_delay(const std::vector<uint32_t>& sampledInputs)
 
 bool submit_local_input()
 {
-    // Several local controllers: the local testing session. A host alone in a
-    // lobby match has one, in whichever seat they sit.
-    const bool localOnlySession = g_GekkoRemoteHandle < 0 &&
+    // Several local controllers without a seat table: the local testing session.
+    // A host alone in a lobby match has one, in whichever seat they sit.
+    const bool localOnlySession = g_GekkoSeatControllers.empty() && g_GekkoRemoteHandle < 0 &&
         std::count_if(g_GekkoLocalHandles.begin(), g_GekkoLocalHandles.end(),
             [](int handle) { return handle >= 0; }) > 1;
-    const int samplePlayers = localOnlySession ? g_GekkoPlayers : 1;
+    int samplePlayers = localOnlySession ? g_GekkoPlayers : 1;
+    for (const int controller : g_GekkoSeatControllers)
+    {
+        samplePlayers = std::max(samplePlayers, controller + 1);
+    }
     std::vector<uint32_t> physicalInputs(static_cast<size_t>(std::max(samplePlayers, 1)), 0);
     if (!CoreRollbackSampleInput(physicalInputs.data(), g_GekkoInputSize, samplePlayers))
     {
@@ -1694,10 +1702,13 @@ bool submit_local_input()
             continue;
         }
 
-        uint32_t input = localOnlySession ? physicalInputs[playerIndex] : physicalInputs[0];
+        const int controller = !g_GekkoSeatControllers.empty() ? g_GekkoSeatControllers[playerIndex]
+            : localOnlySession ? static_cast<int>(playerIndex) : 0;
+        uint32_t input = physicalInputs[static_cast<size_t>(controller)];
+        const bool replayableSeat = !localOnlySession && player == g_GekkoLocalPlayer;
         {
             std::lock_guard<std::mutex> lock(g_GekkoClientReplayMutex);
-            if (!localOnlySession && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
+            if (replayableSeat && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Recording)
             {
                 g_GekkoClientReplayInputs.push_back(input);
                 if (g_GekkoClientReplayInputs.size() >= kGekkoClientReplayFrames)
@@ -1707,7 +1718,7 @@ bool submit_local_input()
                     write_gekko_log("client_input_replay mode=playing recorded_frames=600");
                 }
             }
-            else if (!localOnlySession && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
+            else if (replayableSeat && g_GekkoLocalPlayer > 1 && g_GekkoClientReplayMode == ClientInputReplayMode::Playing &&
                 !g_GekkoClientReplayInputs.empty())
             {
                 input = g_GekkoClientReplayInputs[g_GekkoClientReplayIndex++];
@@ -1742,7 +1753,7 @@ bool submit_local_input()
             std::ostringstream stream;
             stream << "add_local_input local_player=" << player
                    << " handle=" << handle
-                   << " physical_p" << (localOnlySession ? player : 1) << "=" << hex_input(input)
+                   << " physical_p" << (controller + 1) << "=" << hex_input(input)
                    << " repeat=" << g_GekkoLocalInputLogRepeats;
             write_gekko_log(stream.str());
         }
@@ -1882,6 +1893,28 @@ bool process_pending_saves()
     return true;
 }
 
+// Whether this PC plays a seat (1-indexed).
+bool is_local_seat(int slot)
+{
+    if (slot == g_GekkoLocalPlayer)
+    {
+        return true;
+    }
+    return slot >= 1 && static_cast<size_t>(slot) <= g_GekkoSeatControllers.size() &&
+        g_GekkoSeatControllers[static_cast<size_t>(slot - 1)] >= 0;
+}
+
+// How many actors this PC adds to a session.
+int local_seat_count()
+{
+    if (g_GekkoSeatControllers.empty())
+    {
+        return 1;
+    }
+    return static_cast<int>(std::count_if(g_GekkoSeatControllers.begin(), g_GekkoSeatControllers.end(),
+        [](int controller) { return controller >= 0; }));
+}
+
 // Append per-peer GekkoNet network stats (one labelled segment per remote actor)
 // to a log stream. The session only exposes counters per handle via
 // gekko_network_stats(), and the rest of this file historically logged just
@@ -1898,7 +1931,7 @@ void append_peer_network_stats(std::ostringstream& stream)
     }
     for (int player = 1; player <= g_GekkoPlayers; player++)
     {
-        if (player == g_GekkoLocalPlayer)
+        if (is_local_seat(player))
         {
             continue;
         }
@@ -2091,7 +2124,7 @@ void process_pending_disconnects()
     }
     for (int slot : slots)
     {
-        if (slot < 1 || slot > g_GekkoPlayers || slot == g_GekkoLocalPlayer)
+        if (slot < 1 || slot > g_GekkoPlayers || is_local_seat(slot))
         {
             continue;
         }
@@ -2118,7 +2151,9 @@ void log_late_join(const std::string& message)
 
 // Add one actor per occupied seat, walking seats in order so every peer hands
 // out the same handles. Empty seats get no actor; latch_gekko_input feeds them
-// zeros.
+// zeros. Seats played on the same remote PC share its address, which is how
+// GekkoNet expects them: it packs and unpacks a PC's inputs by the order those
+// actors were added, and that order is the same everywhere.
 bool add_lobby_actors(const LobbyRemotePeer* remotes, int numRemotes, int localDelay)
 {
     // GekkoNetAddress.data is a raw pointer, so the endpoint strings must
@@ -2133,7 +2168,7 @@ bool add_lobby_actors(const LobbyRemotePeer* remotes, int numRemotes, int localD
 
     for (int player = 1; player <= g_GekkoPlayers; player++)
     {
-        if (player == g_GekkoLocalPlayer)
+        if (is_local_seat(player))
         {
             const int handle = gekko_add_actor(g_GekkoSession, GekkoLocalPlayer, nullptr);
             if (handle < 0)
@@ -2141,7 +2176,10 @@ bool add_lobby_actors(const LobbyRemotePeer* remotes, int numRemotes, int localD
                 write_gekko_log("gekko_add_actor result=fail type=local");
                 return false;
             }
-            g_GekkoLocalHandle = handle;
+            if (player == g_GekkoLocalPlayer)
+            {
+                g_GekkoLocalHandle = handle;
+            }
             g_GekkoPlayerHandles[static_cast<size_t>(player - 1)] = handle;
             g_GekkoLocalHandles[static_cast<size_t>(player - 1)] = handle;
             gekko_set_local_delay(g_GekkoSession, handle, static_cast<unsigned char>(localDelay));
@@ -2232,7 +2270,7 @@ bool create_ice_session(const std::vector<LobbyRemotePeer>& remotes, int localDe
     }
 
     GekkoConfig config = {};
-    config.num_players = static_cast<unsigned char>(remotes.size() + 1);
+    config.num_players = static_cast<unsigned char>(remotes.size()) + static_cast<unsigned char>(local_seat_count());
     config.max_spectators = 0;
     config.input_prediction_window = static_cast<unsigned char>(predictionWindow);
     config.input_size = static_cast<unsigned int>(g_GekkoInputSize);
@@ -2253,7 +2291,7 @@ bool create_ice_session(const std::vector<LobbyRemotePeer>& remotes, int localDe
     // Drops stay the lobby's call, as in start_lobby_session.
     gekko_set_disconnect_timeout(g_GekkoSession, kGekkoLobbyPeerTimeoutMs);
 
-    g_GekkoActors = static_cast<int>(remotes.size()) + 1;
+    g_GekkoActors = static_cast<int>(remotes.size()) + local_seat_count();
     g_GekkoLocalHandle = -1;
     g_GekkoRemoteHandle = -1;
     g_GekkoPlayerHandles.assign(static_cast<size_t>(g_GekkoPlayers), -1);
@@ -3407,9 +3445,11 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
 CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int players, int inputSize,
     int localPlayer, unsigned short localPort,
     const LobbyRemotePeer* remotes, int numRemotes,
-    int localDelay, int predictionWindow, int joinEpoch)
+    int localDelay, int predictionWindow, int joinEpoch,
+    const std::vector<LobbyLocalSeat>& extraLocals)
 {
 #ifndef RMGK_HAVE_GEKKONET
+    (void)extraLocals;
     (void)joinEpoch;
     (void)gameName;
     (void)players;
@@ -3440,9 +3480,10 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     // be sparse (P1 + P3 with P2 empty), so numRemotes can be short of
     // players - 1. It can never exceed it: seats are unique and one is ours.
     // It can be 0: a host playing alone until someone is added.
+    const int numLocals = static_cast<int>(extraLocals.size()) + 1;
     if (gameName == nullptr || players < 2 || players > 4 || inputSize != static_cast<int>(sizeof(uint32_t)) ||
         localPlayer < 1 || localPlayer > players || (remotes == nullptr && numRemotes > 0) ||
-        numRemotes < 0 || numRemotes > players - 1 || (joinEpoch >= 0 && numRemotes < 1))
+        numRemotes < 0 || numRemotes + numLocals > players || (joinEpoch >= 0 && numRemotes < 1))
     {
         write_gekko_log("start_lobby_session result=fail reason=invalid_params");
         return false;
@@ -3452,12 +3493,29 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     // uniqueness before we touch GekkoNet.
     bool slotSeen[5] = { false, false, false, false, false }; // index 1..4
     slotSeen[localPlayer] = true;
+    if (!extraLocals.empty())
+    {
+        g_GekkoSeatControllers.assign(static_cast<size_t>(players), -1);
+        g_GekkoSeatControllers[static_cast<size_t>(localPlayer - 1)] = 0;
+    }
+    for (const LobbyLocalSeat& seat : extraLocals)
+    {
+        if (seat.slot < 1 || seat.slot > players || slotSeen[seat.slot] ||
+            seat.controller < 0 || seat.controller > 3)
+        {
+            g_GekkoSeatControllers.clear();
+            write_gekko_log("start_lobby_session result=fail reason=bad_local_seat");
+            return false;
+        }
+        slotSeen[seat.slot] = true;
+        g_GekkoSeatControllers[static_cast<size_t>(seat.slot - 1)] = seat.controller;
+    }
     bool sawIce = false;
     bool sawLegacyEndpoint = false;
     for (int i = 0; i < numRemotes; i++)
     {
         const LobbyRemotePeer& peer = remotes[i];
-        if (peer.slot < 1 || peer.slot > players || peer.slot == localPlayer ||
+        if (peer.slot < 1 || peer.slot > players ||
             slotSeen[peer.slot] ||
             (peer.userId == 0 && (peer.ip.empty() || peer.port == 0)))
         {
@@ -3517,7 +3575,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
         reset_live_settings(clampedLocalDelay, clampedPredictionWindow);
         std::ostringstream stream;
         stream << "joiner start seats=" << players << " local_player=" << localPlayer
-               << " epoch=" << joinEpoch << " remotes=" << numRemotes;
+               << " locals=" << numLocals << " epoch=" << joinEpoch << " remotes=" << numRemotes;
         log_late_join(stream.str());
         if (!install_core_input_callback())
         {
@@ -3544,7 +3602,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     // room (P1+P2+P4 with P3 empty) sits on a black screen. Seats stay sparse
     // at the PORT layer: g_GekkoPlayers keeps the seat count and
     // latch_gekko_input maps seat -> dense handle, zeroing the holes.
-    config.num_players = static_cast<unsigned char>(numRemotes + 1);
+    config.num_players = static_cast<unsigned char>(numRemotes + numLocals);
     config.max_spectators = 0;
     config.input_prediction_window = static_cast<unsigned char>(clampedPredictionWindow);
     config.input_size = static_cast<unsigned int>(inputSize);
@@ -3605,7 +3663,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     gekko_set_disconnect_timeout(g_GekkoSession, kGekkoLobbyPeerTimeoutMs);
 
     g_GekkoPlayers = players;
-    g_GekkoActors = numRemotes + 1;
+    g_GekkoActors = numRemotes + numLocals;
     g_GekkoInputSize = inputSize;
     g_GekkoLocalHandle = -1;
     g_GekkoRemoteHandle = -1;
@@ -3619,6 +3677,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
     {
         std::ostringstream stream;
         stream << "start_lobby_session game=" << gameName
+               << " locals=" << numLocals
                << " seats=" << players
                << " actors=" << g_GekkoActors
                << " input_size=" << inputSize
@@ -3833,6 +3892,7 @@ CORE_EXPORT void rmgk_gekko::close_session()
     g_GekkoRemoteHandle = -1;
     g_GekkoPlayerHandles.clear();
     g_GekkoLocalHandles.clear();
+    g_GekkoSeatControllers.clear();
     {
         std::lock_guard<std::mutex> lock(g_GekkoDisconnectMutex);
         g_GekkoPendingDisconnectSlots.clear();

@@ -145,6 +145,51 @@ static std::filesystem::path pathFromUtf8String(const std::string& utf8) {
 #endif
 }
 
+// The longest start of s, at most maxBytes long, that ends on a whole character.
+static size_t utf8PrefixLength(const std::string& s, size_t maxBytes) {
+    if (s.size() <= maxBytes) {
+        return s.size();
+    }
+    size_t length = maxBytes;
+    while (length > 0 && (static_cast<unsigned char>(s[length]) & 0xC0) == 0x80) {
+        length--;
+    }
+    return length;
+}
+
+// Copy of s with anything that isn't valid UTF-8 replaced. A path built from
+// invalid bytes throws, and nothing above openRecordingFile catches that.
+static std::string validUtf8Name(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char lead = static_cast<unsigned char>(s[i]);
+        size_t length = 0;
+        if (lead < 0x80) length = 1;
+        else if (lead >= 0xC2 && lead <= 0xDF) length = 2;
+        else if (lead >= 0xE0 && lead <= 0xEF) length = 3;
+        else if (lead >= 0xF0 && lead <= 0xF4) length = 4;
+
+        bool valid = length > 0 && i + length <= s.size();
+        for (size_t j = 1; valid && j < length; j++) {
+            valid = (static_cast<unsigned char>(s[i + j]) & 0xC0) == 0x80;
+        }
+        if (valid && length >= 3) {
+            const unsigned char second = static_cast<unsigned char>(s[i + 1]);
+            valid = !(lead == 0xE0 && second < 0xA0) && !(lead == 0xED && second > 0x9F) &&
+                    !(lead == 0xF0 && second < 0x90) && !(lead == 0xF4 && second > 0x8F);
+        }
+        if (valid) {
+            out.append(s, i, length);
+            i += length;
+        } else {
+            out += '_';
+            i++;
+        }
+    }
+    return out;
+}
+
 static std::filesystem::path pathFromUtf8String(const char* utf8) {
     if (utf8 == nullptr) {
         return std::filesystem::path();
@@ -276,7 +321,7 @@ static void openRecordingFile(const char* appName, const char* game, int player,
         {
             if (recording_player_names[i][0] != 0)
             {
-                std::string name(recording_player_names[i]);
+                std::string name = validUtf8Name(recording_player_names[i]);
                 // Replace characters unsafe for filenames
                 for (char& c : name)
                 {
@@ -343,14 +388,14 @@ static void openRecordingFile(const char* appName, const char* game, int player,
                 for (int i = 0; i < numNames; i++)
                 {
                     filename += "-";
-                    filename += names[i].substr(0, lengths[i]);
+                    filename += names[i].substr(0, utf8PrefixLength(names[i], lengths[i]));
                 }
             }
         }
 
         filename += ".krec";
 
-        std::filesystem::path recordingPath = recording_directory_path / filename;
+        std::filesystem::path recordingPath = recording_directory_path / pathFromUtf8String(filename);
         recording_file.open(recordingPath, std::ios::binary | std::ios::trunc);
 
         if (!recording_file.is_open()) {
@@ -1088,6 +1133,16 @@ void recordingWriteInputs(const void* values, int size) {
 
 int recordingFrameCount() {
     return recording_frame_count.load(std::memory_order_relaxed);
+}
+
+void recordingSetPlayerName(int index, const char* utf8Name) {
+    if (index < 0 || index >= 4) {
+        return;
+    }
+    const std::string name = utf8Name != nullptr ? utf8Name : "";
+    const size_t length = utf8PrefixLength(name, sizeof(recording_player_names[index]) - 1);
+    memcpy(recording_player_names[index], name.data(), length);
+    recording_player_names[index][length] = '\0';
 }
 
 void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers) {

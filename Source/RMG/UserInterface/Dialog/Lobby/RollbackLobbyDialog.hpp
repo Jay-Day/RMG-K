@@ -10,10 +10,13 @@
 #ifdef NETPLAY
 
 #include "LobbyClient.hpp"
+#include "LobbyTheme.hpp"
 
 #include <QDialog>
 #include <QHash>
+#include <QList>
 #include <QMap>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QByteArray>
@@ -28,29 +31,54 @@
 
 class QFrame;
 class QLabel;
+class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTextEdit;
 class QLineEdit;
+class QVBoxLayout;
 class QPushButton;
 class QSplitter;
 class QStackedWidget;
 class QTabBar;
 class QComboBox;
-class QCheckBox;
 
 namespace UserInterface
 {
 namespace Dialog
 {
 
+class CartridgeTile;
+class ChallengeCard;
+class ChatView;
+class CountryFlag;
+class ElidedLabel;
+class FrameStepper;
+class IconBadge;
+class IconLabel;
+class LedDot;
+class LiveGallery;
+class LobbyBand;
+class LobbyButton;
+class LobbyCard;
+class MentionPopup;
+class ModerationDialog;
+class PortCard;
+class PrivateMessagesPanel;
+class RoomsColumn;
+class Spinner;
+class StatePill;
+class StatusTag;
+class ToggleSwitch;
+class UndoToast;
+class UserAvatar;
+
 // Top-level rollback lobby UI. Owns a LobbyClient and renders presence /
 // rooms / chat. Modeless — opened from the main window menu.
 //
-// Visual approach matches the Kaillera launcher: palette-based colors,
-// bold section-header labels with hairline dividers (no bordered group
-// boxes), native widget styling. Sizes standardized across the dialog
-// via the constants block in the .cpp.
+// Visual approach: its own charcoal or cream theme, picked from the application
+// palette (see LobbyTheme.hpp). Running matches get the biggest part of the
+// window, as a gallery of cards beside the open rooms.
 class RollbackLobbyDialog : public QDialog
 {
     Q_OBJECT
@@ -72,13 +100,18 @@ public:
     // typed messages reach the room while a match is running.
     void sendRoomChat(const QString& message);
 
-    // Sends a chat line to the other viewers of the live replay being watched.
-    // The match's players never receive it. No-op unless spectating.
+    // Sends a chat line to a live replay's chat: its viewers and, on a server that
+    // shares it, the match's players. No-op unless watching, or playing a match
+    // being broadcast.
     void sendSpectatorChat(const QString& message);
 
     // MainWindow calls this when a spectate playback session ends (emulation
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
+
+    // MainWindow calls this once a spectate session is fully torn down, so a
+    // switch to another match can start its new session.
+    void notifySpectateSessionClosed();
 
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
@@ -130,6 +163,7 @@ signals:
 protected:
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override;
     // Clears the players-list selection when the user clicks empty space in it,
     // so a highlighted name can be dismissed by clicking off it.
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -146,8 +180,8 @@ private slots:
 
     void onRoomListChanged();
     void onCreateRoomClicked();
-    void onRoomDoubleClicked(QTreeWidgetItem* item, int column);
-    void onMatchDoubleClicked(QTreeWidgetItem* item, int column); // spectate a broadcast match
+    void onRoomJoinRequested(quint64 roomId);
+    void onMatchWatchRequested(quint64 roomId); // spectate a broadcast match
     void onRoomCreateRequested();
     void onRoomCreated(quint64 roomId);
     void onRoomCreateFailed(const QString& reason);
@@ -166,6 +200,7 @@ private slots:
     void onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason);
     void onMatchAdmitBegin(quint64 matchId, quint64 admitId, int epoch, int seats, quint64 hostId,
                            const LobbyClient::LobbyMatchPeer& joiner,
+                           const QList<LobbyClient::LobbyMatchPeer>& joiners,
                            const QList<LobbyClient::LobbyMatchPeer>& peers);
     void onMatchAdmitStep(quint64 matchId, quint64 admitId, quint64 fromUserId, const QString& step,
                           int frame, bool ok, const QString& reason);
@@ -185,7 +220,6 @@ private slots:
     void onBroadcastViewerCount(quint64 matchId, int viewerCount);
 
     void onChatSendClicked();
-    void onRoomChatSendClicked();
     void onChatMessageReceived(const LobbyClient::ChatMessage& msg);
     void onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers);
 
@@ -215,19 +249,26 @@ private slots:
     // transient: drop any retry text and let the seat fall back to the last
     // measurement instead of flashing unreachable.
     void onPingProbeSoftFailed(quint64 userId);
-    // Repaint one seat's right-hand meta cell (ping / retry / unreachable).
-    void refreshSeatMeta(quint64 userId, const QString& statusHtml);
+    // Put one seat's Link stat back to its ping or connection attempt, or show
+    // a status in it (retrying, unreachable).
+    void refreshSeatLink(quint64 userId);
+    void setSeatLinkStatus(quint64 userId, const QString& text, LobbyTheme::Role role);
     void onPingMeasured(quint64 userId, int rttMs);
 
 private:
     void buildUi();
     QWidget* buildLobbyView();
     QWidget* buildMarquee();
+    QWidget* buildPlayBar();
     QWidget* buildBrowseView();
     QWidget* buildInRoomView();
+    QWidget* buildSidebar();
     QWidget* buildChatColumn();
     QWidget* buildPlayersColumn();
     void     applyStylesheet();
+
+    void     showUserMenu();
+    void     updateUserChip();
 
     // Repopulate the browse-view ROM picker from m_roms (RMG-K library).
     void     populateBrowseRoms();
@@ -238,6 +279,9 @@ private:
     // Create Room. Empty map when nothing valid is selected.
     QVariantMap selectedBrowseRom() const;
     void refreshSameGameFilter();
+    void refreshPickerInfo();
+    // The local cover art for a game in the library, or empty. Cached per MD5.
+    QString coverPathForMd5(const QString& md5);
 
     // Show the disconnected lobby behind a compact modal username prompt.
     // No server connection is attempted until the prompt is accepted.
@@ -247,15 +291,84 @@ private:
     void     showMatchConnectionLostNotice();
 
     void refreshPlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
-    void refreshRoomRow(QTreeWidgetItem* item, const LobbyClient::LobbyRoomSummary& r);
-    // Right-click menu on the rooms / matches lists; moderator-only "closeroom".
-    void showAdminRoomMenu(QTreeWidget* tree, const QPoint& pos);
-    // Ticks the Ongoing Matches "Duration" cells once a second.
+    void clearPlayerRows();
+    QTreeWidgetItem* playerGroupForState(const QString& state) const;
+    void placePlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
+    void refreshPlayerGroups();
+    // Right-click menu on rooms and matches; moderator-only "closeroom".
+    void showAdminRoomMenu(quint64 roomId, const QPoint& globalPos);
+
+    // ── Social (RollbackLobbySocial.cpp) ──
+    // The menu on any player's name, everywhere a name appears.
+    void showPlayerMenu(quint64 userId, const QPoint& globalPos);
+    void showPlayerMenuForName(const QString& name, const QPoint& globalPos);
+    quint64 userIdForName(const QString& name) const;
+    void connectChatView(ChatView* view);
+    void connectSocialSignals();
+    void resetSocialState();
+    bool socialEventFilter(QObject* watched, QEvent* event);
+    void refreshChatTabIcons();
+    // Anything that plays a sound or flashes the taskbar goes through this, so
+    // Do not disturb and the per-sender limit apply to all of it.
+    void alertFrom(quint64 userId);
+
+    // Ignoring is per name and per PC; the server isn't involved.
+    bool isIgnored(const QString& name) const;
+    void setIgnored(const QString& name, bool ignored);
+    void showIgnoredPlayers();
+
+    // Challenges
+    void startChallenge(quint64 userId);
+    void onChallengeSent(const LobbyClient::Challenge& challenge);
+    void onChallengeIncoming(const LobbyClient::Challenge& challenge);
+    void onChallengeEnded(quint64 challengeId, quint64 toUserId, const QString& result);
+    void showNextChallenge();
+    void answerChallenge(bool accept);
+    void expireChallengeLater(quint64 challengeId, qint64 expiresAtMs);
+    void setChallengeOutcome(const QString& title, const QString& detail, const QColor& color, const QString& icon);
+    void stopWatchingForRoom();
+    void positionStageOverlays();
+
+    // Private messages
+    void openPrivateMessage(quint64 userId);
+    void onPrivateMessage(const LobbyClient::ChatMessage& msg);
+    void onPrivateMessageFailed(quint64 toUserId, const QString& reason);
+    void refreshPrivateMessageStatus(quint64 userId);
+    void sendCurrentPrivateMessage(const QString& text);
+
+    // Mentions
+    // A message as chat HTML: escaped, with @names as links. mentionsMe says
+    // whether it names someone on this PC.
+    QString chatBodyHtml(const QString& message, bool* mentionsMe) const;
+    QString chatMentionLineHtml(const QString& line) const;
+    void    noteMention(const QString& channel, const LobbyClient::ChatMessage& msg);
+    void    startMention(const QString& name);
+    void    refreshMentionPopup();
+    void    insertMention(const QString& name);
+    void    refreshMentionJump();
+    void    positionChatOverlays();
+    // An icon inside a chat line; registers it with every chat view's document.
+    QString chatIconHtml(const QString& icon, const QColor& color, int px) const;
+
+    // Moderation
+    void openSanctionDialog(bool ban, const QString& name);
+    void showModerationDialog();
+    void onModResult(const QString& action, const QString& target, const QString& ip, qint64 untilMs);
+    // Ticks the running durations once a second.
     void updateMatchDurations();
 
     QString stateGlyph(const QString& state) const;
     void    appendChatLine(const QString& channel, const QString& text);
-    void    appendChatSystemLine(const QString& channel, const QString& text);
+    void    appendChatSystemLine(const QString& channel, const QString& text,
+                                 const QString& icon = QString(),
+                                 LobbyTheme::Role role = LobbyTheme::Role::Muted);
+    // One line of chat. bodyHtml is from chatBodyHtml. mine marks this PC's own
+    // lines in a private conversation.
+    QString chatMessageHtml(const QString& time, quint64 userId, const QString& who, const QString& bodyHtml,
+                            bool fromAdmin, bool mine = false, bool fromPlayer = false) const;
+    void    refreshChatInput();
+    void    setChatUnread(int tab, int count);
+    void    setRoomChatVisible(bool visible);
 
     // Parse and execute a chat slash command (/login, /kick, /mute, /timeout,
     // /ban, /unban, /unmute, /modlist, /modhelp). Returns true if text was a
@@ -274,11 +387,14 @@ private:
     void    clearServerRoomSnapshot();
     void    enterRoom(quint64 roomId, const QString& greetingChatLine);
     void    updateStatusIndicator(LobbyClient::ConnectionState s);
-    // Render the in-room state label as a colored pill (Waiting / Connecting /
-    // In Game / failure). colorHex drives both the text and the soft fill.
+    // Render the in-room state as a colored pill (Waiting / Connecting /
+    // In Game / failure). A running match's pill also shows its duration.
     void    applyRoomStateBadge(const QString& text, const QString& colorHex);
+    void    refreshRoomBadge();
     void    updateServerMeta();
-    void    updateInRoomBanner();   // refresh "you're in: X" banner in browse view
+    // The play bar's state: choosing a game, searching, watching, or in a room.
+    void    refreshPlayBar();
+    void    onPlayBarActionClicked();
 
     // Delay is local to this player. Auto resolves from this client's direct
     // RTTs. Prediction is room-wide and may be changed only by the host.
@@ -289,6 +405,7 @@ private:
     void    applyRoomPrediction(bool force);
     bool    inLiveMatch() const;
     void    updateRollbackSettingControls();
+    void    refreshSettingHints();
     void    endLiveRollbackSettings();
 
     // Broadcaster lifecycle. startBroadcast arms the n02 recording sink + drain
@@ -305,25 +422,22 @@ private:
     // Shows the Spectators chat tab (and selects it) while watching a live
     // replay; hiding it returns the column to lobby chat.
     void setSpectatorChatVisible(bool visible);
+    // Opens and closes the spectators' chat for this client as a player.
+    void refreshPlayerSpectatorChat();
+    void refreshSpectatorTab();
+    void showSpectatorCommentOverGame(const LobbyClient::ChatMessage& msg);
 
-    // Seat row API — 4 fixed slots rendered as a vertical player list.
-    // Empty rows show a ○ dot + "Waiting…"; filled rows show ● + name + meta.
-    // Only rows 1..maxPlayers are visible (others hidden via setVisible).
+    // Seat API — 4 fixed slots rendered as port cards. Only cards 1..maxPlayers
+    // are visible (others hidden via setVisible).
     struct SeatRow
     {
-        QWidget* row       = nullptr;
-        QLabel*  dragHandle = nullptr;    // ⋮⋮ — host-only drag grip (reorder)
-        QLabel*  dotLabel  = nullptr;     // ● filled, ○ empty
-        QLabel*  slotLabel = nullptr;     // "P1"
-        QLabel*  nameLabel = nullptr;     // username or "Waiting…"
-        QLabel*  countryLabel = nullptr;  // country flag beside player name
-        QLabel*  statusLabel = nullptr;   // "waiting to join" beside the name, mid-match
-        QLabel*  metaLabel = nullptr;     // "host · Frame delay: 2f · 12ms"
-        QLabel*  connectionTypeLabel = nullptr; // Wi-Fi/Ethernet icon after ping
-        QPushButton* kickButton = nullptr; // ✕ — host-only, removes the seated player
-        QPushButton* admitButton = nullptr; // host-only: add a waiting member to the running game
+        PortCard* row      = nullptr;
         bool     isHost    = false;
+        bool     isSelf    = false;
+        bool     canKick   = false;
+        QString  username;
         quint64  userId    = 0;           // seated user, 0 when empty
+        quint64  peerId    = 0;           // the connection they play through, 0 when empty
         int      slot      = 0;           // 1-4, drives the per-player accent color
         int      frameDelay = -1;          // published local input delay
         int      iceAttempt = 1;            // current ICE generation, one-based
@@ -342,16 +456,6 @@ private:
     // seat is a supported move, not something to guard against.
     void startSeatDrag(int slot, QWidget* card);
     int  seatSlotAtPos(const QPoint& pos) const;
-
-    // Hand-rolled column fill shared by the players, rooms, and matches
-    // trees: the column right of a dragged divider absorbs the change (so
-    // every column is resizable, the last one via the divider on its left),
-    // column 0 absorbs viewport resizes, minimum widths keep squeezed
-    // dividers grabbable, and the header always spans the viewport exactly
-    // so a horizontal scrollbar is never needed. Called on sectionResized
-    // (pass the index) and viewport resizes (pass -1). Re-entrant-safe via
-    // m_clampingTreeColumns.
-    void clampTreeColumns(QTreeWidget* tree, int resizedIndex);
 
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
     // empty if the user doesn't have that ROM. Gates joining a room and resolves
@@ -378,68 +482,164 @@ private:
     QString m_connectPromptMessage;
     bool    m_matchConnectionLostNoticeShown = false;
 
-    // ── Marquee bar ──
-    QFrame*  m_marquee     = nullptr;
+    // ── Top bar ──
+    LobbyBand* m_marquee   = nullptr;
     QLabel*  m_brandLabel  = nullptr;
-    QFrame*  m_statusPill  = nullptr;   // rounded pill holding the LED + text
-    QLabel*  m_statusLed   = nullptr;
+    LedDot*  m_statusLed   = nullptr;
     QLabel*  m_statusText  = nullptr;
+    QLabel*  m_regionChip  = nullptr;
     QLabel*  m_serverMeta  = nullptr;
-    QLabel*  m_userLabel   = nullptr;
+    QPushButton* m_userChip = nullptr;
+    UserAvatar*  m_userAvatar = nullptr;
+    QLabel*      m_userName = nullptr;
+    CountryFlag* m_userFlag = nullptr;
+    IconLabel*   m_userRoleIcon = nullptr;
+    QLabel*      m_userRole = nullptr;
 
     // ── Main panels ──
     QSplitter*   m_splitter      = nullptr;
-    QSplitter*   m_browseSplitter = nullptr; // Active Rooms / Ongoing Matches divider
+    QSplitter*   m_browseSplitter = nullptr; // Live gallery / open rooms divider
+    QSplitter*   m_sideSplitter  = nullptr;  // players / chat divider
     QTreeWidget* m_playersTree   = nullptr;
+    QLabel*      m_playersCount  = nullptr;
+    QLineEdit*   m_playersSearch = nullptr;
+    // This client's own row, fixed above the scrolling list, then the other
+    // players on this PC. Each plays on their own controller; see
+    // LobbyClient::LocalPlayer.
+    QTreeWidget* m_selfRow = nullptr;
+    void buildLocalRoster();
+    void refreshLocalRoster();
+    void openRosterEditor();
+    void closeRosterEditor();
+    void submitRosterEditor();
+    void onLocalPlayerFailed(const QString& name, const QString& reason);
+    void onQuickMatchRefused(const QString& reason);
+    void fillControllerCombo(QComboBox* combo, int current, quint64 exceptUserId) const;
+    int nextFreeController() const;
+    QString nextRememberedLocalName() const;
+    void warnAboutLocalControllers();
+    QWidget*     m_rosterBox      = nullptr;
+    QVBoxLayout* m_rosterRows     = nullptr;
+    QWidget*     m_rosterEditor   = nullptr;
+    QLineEdit*   m_rosterName     = nullptr;
+    QComboBox*   m_rosterController = nullptr;
+    QLabel*      m_rosterError    = nullptr;
+    LobbyButton* m_rosterAdd      = nullptr;
+    QString      m_rosterSubmittedName; // sent to the server, not answered yet
+    int          m_rosterSeatsShown = 1; // the room list was last drawn for this many
+    QList<QTreeWidgetItem*> m_playerGroups; // one heading per state
     // Last on-demand probe per user id, for probeOnDemand's throttle.
     QHash<quint64, qint64> m_lastOnDemandProbe;
     // Peers we've already posted an "couldn't reach" notice about, so the 3s
     // seat refresh doesn't repeat it every tick. Cleared on a measurement.
     QSet<quint64> m_probeFailureAnnounced;
-    QTreeWidget* m_roomsTree     = nullptr;
-    QTreeWidget* m_matchesTree   = nullptr;
+    LiveGallery* m_liveGallery   = nullptr;
+    RoomsColumn* m_roomsColumn   = nullptr;
     QTimer*      m_matchDurationTimer = nullptr;
-    QTextEdit*   m_chatViewLobby = nullptr;
-    QTextEdit*   m_chatViewRoom  = nullptr; // room chat, shown in the in-room view
-    QTextEdit*   m_chatViewSpectate = nullptr; // spectators' chat while watching
-    QLabel*      m_chatHeader    = nullptr; // "LOBBY CHAT", or "CHAT" with tabs
-    QTabBar*     m_chatTabs      = nullptr; // Lobby | Spectators, only while watching
-    QStackedWidget* m_chatStack  = nullptr; // lobby / spectator views, per tab
-    QLineEdit*   m_chatInput     = nullptr; // chat input for the selected tab (middle column)
-    QLineEdit*   m_roomChatInput = nullptr; // room chat input (below the seats)
+    ChatView*    m_chatViewLobby = nullptr;
+    ChatView*    m_chatViewRoom  = nullptr; // room chat, the Room tab
+    ChatView*    m_chatViewSpectate = nullptr; // spectators' chat, watching or playing
+    // Above that chat for a player: how many are watching, and the overlay switch.
+    QWidget*     m_spectatorStrip = nullptr;
+    IconLabel*   m_spectatorEye   = nullptr;
+    QLabel*      m_spectatorCount = nullptr;
+    ToggleSwitch* m_spectatorOverlayToggle = nullptr;
+    QTabBar*     m_chatTabs      = nullptr; // Lobby | Room | Spectators | mail
+    QStackedWidget* m_chatStack  = nullptr; // one view per tab
+    QLineEdit*   m_chatInput     = nullptr; // sends to the selected tab
+    QWidget*     m_chatCard      = nullptr;
+    StatusTag*   m_composeAs     = nullptr; // who on this PC a private reply is from
+    // Room only shows while seated, Spectators only while watching, mail only on
+    // a server that relays private messages.
+    enum ChatTab { kChatTabLobby, kChatTabRoom, kChatTabSpectators, kChatTabMail, kChatTabCount };
+    int          m_chatUnread[kChatTabCount] = {};
+    bool         m_chatMentioned[kChatTabCount] = {}; // an unseen line in that tab names this PC
+    // Lines naming this PC below where the reader has scrolled, as block numbers.
+    QList<int>   m_pendingMentions[kChatTabCount];
+    MentionPopup* m_mentionPopup = nullptr;
+    QPushButton* m_mentionJump   = nullptr;
+    PrivateMessagesPanel* m_pmPanel = nullptr;
+    quint64      m_lastPmLocal   = 0; // who /r answers: this PC's side...
+    quint64      m_lastPmRemote  = 0; // ...and theirs
+
+    QStringList  m_ignored;
+    bool         m_doNotDisturb = false;
+    QHash<quint64, qint64> m_lastAlertMs; // per sender
+
+    // ── Challenges ──
+    ChallengeCard* m_challengeCard = nullptr;
+    QList<LobbyClient::Challenge> m_incomingChallenges; // the first is on the card
+    LobbyClient::Challenge m_outgoingChallenge;         // id 0 when there's none
+    QPointer<QDialog> m_challengeDialog;
+    QPointer<QDialog> m_sanctionDialog;
+    QString      m_challengeTargetName;
+    // What this PC last said yes to, for the line in the room chat once it's in.
+    quint64      m_acceptedChallengeId = 0;
+    QString      m_acceptedChallengeFrom;
+    bool         m_acceptedChallengeInvite = false;
+    struct ChallengeOutcome
+    {
+        QString title;
+        QString detail;
+        QColor color;
+        QString icon;
+        int generation = 0;
+    };
+    ChallengeOutcome m_challengeOutcome; // shown on the play bar until dismissed
+
+    // ── Moderation ──
+    UndoToast*   m_toast = nullptr;
+    ModerationDialog* m_moderationDialog = nullptr;
+    QString      m_moderatorName;
+    QString      m_undoAction;
+    QString      m_undoIp;
+    bool         m_appliedDarkTheme = false;
 
     // ── Stacked browse / in-room view ──
     QStackedWidget* m_roomsStack = nullptr;
 
-    // ── Persistent "you're in a room" banner shown in browse view when
-    //    the user is in a room (so they can flip back without losing their seat). ──
-    QFrame*    m_inRoomBanner    = nullptr;
-    QLabel*    m_bannerText      = nullptr;
-    QPushButton* m_bannerReturn  = nullptr;
+    // ── Play bar: one fixed height whatever it's showing ──
+    LobbyCard*      m_playBar      = nullptr;
+    QStackedWidget* m_playBarStack = nullptr; // game picker / ticket
+    CartridgeTile*  m_pickerTile   = nullptr;
+    QLabel*         m_pickerInfo   = nullptr;
+    IconBadge*      m_ticketBadge  = nullptr;
+    Spinner*        m_ticketSpinner = nullptr;
+    QLabel*         m_ticketTitle  = nullptr;
+    ElidedLabel*    m_ticketSub    = nullptr;
+    QWidget*        m_ticketValueBoxes[2] = {};
+    QLabel*         m_ticketValues[2] = {};
+    QLabel*         m_ticketCaptions[2] = {};
+    LobbyButton*    m_ticketAction = nullptr;
 
-    // In-room header card
-    QLabel*    m_roomTitle      = nullptr;   // ROM title (large)
-    QLabel*    m_roomStateLabel = nullptr;   // "Waiting" / "In Game"
-    QLabel*    m_roomRegionLabel = nullptr;  // Region NTSC, when available
-    QLabel*    m_seatCountLabel  = nullptr;  // (2/4) beside SEATS
+    // In-room header
+    ElidedLabel* m_roomTitle     = nullptr;   // the room's name
+    ElidedLabel* m_roomSubLabel  = nullptr;   // game, seats, who's hosting
+    StatePill*   m_roomStatePill = nullptr;   // "Waiting" / "In Game"
+    QString      m_roomBadgeText;
+    QString      m_roomBadgeColor;
 
     // Delay is locally editable for every player; prediction is room-wide and
-    // host-editable. Both lock once the match starts. Delay uses data -1 for
-    // Auto; prediction uses data 0 for Default.
-    QComboBox* m_delayCombo      = nullptr;
-    QComboBox* m_predictionCombo = nullptr;
-    bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setCurrentIndex echo
+    // host-editable. Both stay editable during this client's own match.
+    FrameStepper* m_delayStepper      = nullptr;
+    FrameStepper* m_predictionStepper = nullptr;
+    QLabel*       m_delayHint         = nullptr;
+    QLabel*       m_predictionHint    = nullptr;
+    IconLabel*    m_predictionLock    = nullptr;
+    StatusTag*    m_delayLiveTag      = nullptr;
+    StatusTag*    m_predictionLiveTag = nullptr;
+    bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setChecked echo
 
     // Per-player local toggle: when checked, this client writes a .krec of the
     // match (the player who checks it records, same as the p2p/kaillera lobbies).
     // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
-    QCheckBox* m_recordCheck     = nullptr;
+    ToggleSwitch* m_recordCheck  = nullptr;
 
     // When checked, the room host streams replay bytes so others can spectate,
     // independently of whether a local .krec file is saved. On the emulation thread,
     // bytes are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
     // and drained to the WebSocket by m_broadcastDrainTimer on the UI thread.
-    QCheckBox* m_broadcastCheck       = nullptr;
+    ToggleSwitch* m_broadcastCheck    = nullptr;
     QTimer*    m_broadcastDrainTimer  = nullptr;
     QMutex     m_broadcastMutex;
     QByteArray m_broadcastBuf;
@@ -452,6 +652,12 @@ private:
     // Non-zero while this client is spectating a broadcast match (the match id
     // we asked the server to stream). Cleared when the spectate session ends.
     quint64    m_spectatingMatchId = 0;
+    // The match whose spectators this client, as a player, last chatted with. It
+    // stays set after that chat closes, so the lines stay readable until the next
+    // match or leaving the room. Live means it can still be posted to.
+    quint64    m_playerChatMatchId = 0;
+    bool       m_playerChatLive = false;
+    QString    m_roomSubText; // the room's subtitle, without its audience
     // Session boundary guard. The persistent lobby socket can still deliver krec
     // chunks from a PREVIOUS watch of the same match after we re-subscribe (same
     // matchId, so they'd otherwise pass the filter and corrupt the new replay).
@@ -460,11 +666,14 @@ private:
     // see the BEGIN for the current subscribe. Reset false in beginSpectate.
     bool       m_spectateStreamArmed = false;
 
-    // Guards clampTreeColumns against re-entering itself: the setColumnWidth
-    // calls it makes emit sectionResized, which is what invokes it. One flag
-    // covers all three trees: the corrections are synchronous, so they never
-    // interleave.
-    bool       m_clampingTreeColumns = false;
+    // A switch to another match, held until the current session has shut down.
+    struct PendingSpectate
+    {
+        quint64 matchId = 0;
+        QString gameName;
+        QString romMd5;
+    };
+    PendingSpectate m_pendingSpectate;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
@@ -479,18 +688,23 @@ private:
     QTimer*    m_pingProbeTimer = nullptr;
 
     // In-room action bar
-    QPushButton* m_startBtn      = nullptr;
-    QPushButton* m_dropBtn       = nullptr;
-    QPushButton* m_leaveBtn      = nullptr;
+    LobbyButton* m_startBtn      = nullptr;
+    LobbyButton* m_dropBtn       = nullptr;
+    LobbyButton* m_leaveBtn      = nullptr;
+    Spinner*     m_whySpinner    = nullptr;
+    IconBadge*   m_whyBadge      = nullptr;
+    ElidedLabel* m_whyTitle      = nullptr;
+    ElidedLabel* m_whyDetail     = nullptr;
 
-    // Hero / browse-view action buttons
-    QPushButton* m_quickMatchBtn = nullptr;   // primary CTA (blue)
-    QPushButton* m_createRoomBtn = nullptr;
+    // Browse-view action buttons
+    LobbyButton* m_quickMatchBtn = nullptr;   // primary CTA
+    LobbyButton* m_createRoomBtn = nullptr;
     QComboBox*   m_browseRomCombo = nullptr;   // library game picker (feeds Create Room)
-    QCheckBox*   m_sameGameFilterCheck = nullptr;
+    qint64       m_searchStartedMs = 0;
+    int          m_searchQueueSize = 0;
+    QString      m_searchingGame;
 
     QHash<quint64, QTreeWidgetItem*> m_userItems;
-    QHash<quint64, QTreeWidgetItem*> m_roomItems;
 
     class CreateRoomDialog* m_createRoomDialog = nullptr;
 
@@ -503,6 +717,7 @@ private:
     QString m_currentRoomMd5;
     QString m_currentRoomRegion;
     QString m_currentRoomState;
+    QString m_currentRoomHostName;
     int     m_currentRoomDelay      = 2;   // this client's local input delay
     int     m_currentRoomPrediction = 7;
     int     m_livePrediction        = 0;   // window handed to this match's engine
@@ -531,7 +746,8 @@ private:
         int epoch = 0;
         int seats = 0;
         quint64 hostId = 0;
-        LobbyClient::LobbyMatchPeer joiner;
+        LobbyClient::LobbyMatchPeer joiner;       // whose client speaks for the PC joining
+        QList<LobbyClient::LobbyMatchPeer> joiners; // every player it adds, joiner first
         QList<LobbyClient::LobbyMatchPeer> peers; // roster after the join
         QSet<quint64> left;                       // players who left mid hand-off
         qint64 startedMs = 0;
@@ -562,6 +778,10 @@ private:
     quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet
     bool m_announcedWaitingSelf = false;
     QString lobbyUserName(quint64 userId) const;
+    // Who a late join adds: "Mira", or "Mira and Sam".
+    QString lateJoinNames() const;
+    // The banner above a running match while they're added.
+    QString lateJoinBanner() const;
     void onAdmitClicked(quint64 userId);
     void launchAsLateJoiner();
     std::vector<LobbyRemotePeer> lateJoinRemotes() const;
@@ -585,6 +805,7 @@ private:
     bool m_quickMatchActive       = false;
 
     QMap<QString, CoreRomSettings> m_roms;
+    QHash<QString, QString> m_coverPaths; // by MD5; empty when there's no cover
 };
 
 } // namespace Dialog

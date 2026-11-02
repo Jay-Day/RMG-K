@@ -147,11 +147,12 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
 // 3-/4-player rollback sessions can wire each remote actor to a distinct peer.
 // Format: LOBBY|<delay>|<prediction>|<slot>,<ip>,<port>|<slot>,<ip>,<port>...
 static bool parse_lobby_address(const std::string& address, int& frameDelay, int& predictionWindow,
-    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch)
+    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch, std::vector<LobbyLocalSeat>& extraLocals)
 {
     remotes.clear();
     seats = 0;
     joinEpoch = -1;
+    extraLocals.clear();
 
     constexpr const char* prefix = "LOBBY|";
     if (address.rfind(prefix, 0) != 0)
@@ -198,13 +199,25 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
     {
         const std::string& tok = tokens[i];
         // Options ride as key=value tokens among the peers: seats=<ports the
-        // match emulates> and join=<epoch> for a late joiner.
+        // match emulates>, join=<epoch> for a late joiner, and one
+        // local=<slot>:<controller> per other player on this PC.
         const size_t equals = tok.find('=');
         if (equals != std::string::npos)
         {
             const std::string key = tok.substr(0, equals);
             try
             {
+                if (key == "local")
+                {
+                    const size_t colon = tok.find(':', equals);
+                    if (colon == std::string::npos)
+                        return false;
+                    LobbyLocalSeat seat{};
+                    seat.slot = std::stoi(tok.substr(equals + 1, colon - equals - 1));
+                    seat.controller = std::stoi(tok.substr(colon + 1));
+                    extraLocals.push_back(seat);
+                    continue;
+                }
                 const int value = std::stoi(tok.substr(equals + 1));
                 if (key == "seats" && value >= 2 && value <= 4)
                     seats = value;
@@ -1116,7 +1129,8 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             std::vector<LobbyRemotePeer> remotes;
             int seats = 0;
             int joinEpoch = -1;
-            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch))
+            std::vector<LobbyLocalSeat> extraLocals;
+            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch, extraLocals))
             {
                 CoreSetError("CoreStartEmulation: invalid Lobby session parameters");
                 m64p_ret = M64ERR_INPUT_INVALID;
@@ -1144,11 +1158,16 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                     if (remote.slot > totalSeats)
                         totalSeats = remote.slot;
                 }
+                for (const auto& seat : extraLocals)
+                {
+                    if (seat.slot > totalSeats)
+                        totalSeats = seat.slot;
+                }
                 netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
                     totalSeats, static_cast<int>(sizeof(uint32_t)),
                     player, static_cast<unsigned short>(port),
                     remotes.data(), static_cast<int>(remotes.size()),
-                    frameDelay, predictionWindow, joinEpoch);
+                    frameDelay, predictionWindow, joinEpoch, extraLocals);
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())

@@ -2275,6 +2275,10 @@ Use Default mode anyway?</source>
     </context>
     <context><name>UserInterface::Dialog::LobbyConnectDialog</name>
         <message>
+            <source>That name is too long. The limit is 15 Greek or Cyrillic characters, or 10 Japanese, Chinese or Korean characters.</source>
+            <translation>名前が長すぎます。上限はギリシャ文字・キリル文字で15文字、日本語・中国語・韓国語で10文字です。</translation>
+        </message>
+        <message>
             <source>Welcome to Netplay!</source>
             <translation>ネットプレイへようこそ！</translation>
         </message>
@@ -2695,8 +2699,12 @@ A local replay is saved only if Record locally is checked.</source>
             <translation>接続中…</translation>
         </message>
         <message>
-            <source>That username is already in use.</source>
-            <translation>そのユーザー名はすでに使用されています。</translation>
+            <source>That username is already in use, or looks too much like one that is.</source>
+            <translation>そのユーザー名はすでに使用されているか、使用中の名前と紛らわしすぎます。</translation>
+        </message>
+        <message>
+            <source>That name can&apos;t be used. Names are 2 to 20 letters, numbers, or _ - . in one alphabet, and at most 10 Japanese, Chinese or Korean characters.</source>
+            <translation>その名前は使用できません。名前は1種類の文字体系で2〜20文字の文字・数字または _ - . です（日本語・中国語・韓国語は10文字まで）。</translation>
         </message>
         <message>
             <source>Server rejected the connection handshake.</source>
@@ -3341,4 +3349,1675 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>問題が発生しました（%1）</translation>
         </message>
     </context>
-    </TS>
+    <context>
+        <name>RollbackLobbyDialog</name>
+        <message>
+            <source>(you)</source>
+            <translation>（自分）</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>Guest</source>
+            <translation>ゲスト</translation>
+        </message>
+        <message>
+            <source>Change username…</source>
+            <translation>ユーザー名を変更…</translation>
+        </message>
+        <message>
+            <source>Search your games</source>
+            <translation>ゲームを検索</translation>
+        </message>
+        <message>
+            <source>All your games</source>
+            <translation>すべてのゲーム</translation>
+        </message>
+        <message>
+            <source>Quick Match</source>
+            <translation>クイックマッチ</translation>
+        </message>
+        <message>
+            <source>Your delay · this game</source>
+            <translation>前回の遅延 · このゲーム</translation>
+        </message>
+        <message>
+            <source>Auto delay · this game</source>
+            <translation>自動遅延 · このゲーム</translation>
+        </message>
+        <message>
+            <source>Create Room</source>
+            <translation>ルームを作成</translation>
+        </message>
+        <message>
+            <source>Applies now</source>
+            <translation>すぐ反映</translation>
+        </message>
+        <message>
+            <source>Your input delay</source>
+            <translation>入力遅延</translation>
+        </message>
+        <message>
+            <source>Rollback prediction</source>
+            <translation>ロールバック予測</translation>
+        </message>
+        <message>
+            <source>Default</source>
+            <translation>既定</translation>
+        </message>
+        <message>
+            <source>Custom</source>
+            <translation>カスタム</translation>
+        </message>
+        <message>
+            <source>Session</source>
+            <translation>セッション</translation>
+        </message>
+        <message>
+            <source>Save replay</source>
+            <translation>リプレイを保存</translation>
+        </message>
+        <message>
+            <source>Writes a .krec on this PC</source>
+            <translation>このPCに .krec を保存します</translation>
+        </message>
+        <message>
+            <source>Live replay for spectators</source>
+            <translation>観戦者向けライブリプレイ</translation>
+        </message>
+        <message>
+            <source>Anyone who joins can be added</source>
+            <translation>参加した人をゲームに追加できます</translation>
+        </message>
+        <message>
+            <source>Waiting for a player…</source>
+            <translation>プレイヤーを待っています…</translation>
+        </message>
+        <message>
+            <source>Room</source>
+            <translation>ルーム</translation>
+        </message>
+        <message>
+            <source>Everyone in your room.</source>
+            <translation>ルームにいる全員。</translation>
+        </message>
+        <message>
+            <source>Send</source>
+            <translation>送信</translation>
+        </message>
+        <message>
+            <source>Find a player</source>
+            <translation>プレイヤーを検索</translation>
+        </message>
+        <message>
+            <source>Player name…</source>
+            <translation>プレイヤー名…</translation>
+        </message>
+        <message>
+            <source>Playing</source>
+            <translation>対戦中</translation>
+        </message>
+        <message>
+            <source>In rooms</source>
+            <translation>ルーム内</translation>
+        </message>
+        <message>
+            <source> · %1 of %2 seats</source>
+            <translation> · %2席中%1席</translation>
+        </message>
+        <message>
+            <source> · you keep your seat while you browse · leave the room to watch a match</source>
+            <translation> · 閲覧中も席は確保されます · 観戦するにはルームを退出してください</translation>
+        </message>
+        <message>
+            <source>Return to room</source>
+            <translation>ルームに戻る</translation>
+        </message>
+        <message>
+            <source>Searching…</source>
+            <translation>検索中…</translation>
+        </message>
+        <message>
+            <source> · keep browsing, you'll be moved in automatically</source>
+            <translation> · 閲覧を続けられます。見つかると自動で移動します</translation>
+        </message>
+        <message>
+            <source>elapsed</source>
+            <translation>経過</translation>
+        </message>
+        <message>
+            <source>in queue</source>
+            <translation>待機中</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source> · the match plays in the game window · pick another card to switch</source>
+            <translation> · 対戦はゲーム画面で再生されます · 他のカードを選ぶと切り替えます</translation>
+        </message>
+        <message>
+            <source>live</source>
+            <translation>対戦中</translation>
+        </message>
+        <message>
+            <source>watching</source>
+            <translation>視聴中</translation>
+        </message>
+        <message>
+            <source>Stop watching</source>
+            <translation>観戦をやめる</translation>
+        </message>
+        <message>
+            <source>Pick a game from your library</source>
+            <translation>ライブラリからゲームを選択</translation>
+        </message>
+        <message>
+            <source>room</source>
+            <translation>ルーム</translation>
+        </message>
+        <message>
+            <source>rooms</source>
+            <translation>ルーム</translation>
+        </message>
+        <message>
+            <source>player</source>
+            <translation>人</translation>
+        </message>
+        <message>
+            <source>players</source>
+            <translation>人</translation>
+        </message>
+        <message>
+            <source>in game</source>
+            <translation>対戦中</translation>
+        </message>
+        <message>
+            <source>%1 of %2 seats</source>
+            <translation>%2席中%1席</translation>
+        </message>
+        <message>
+            <source>hosted by you</source>
+            <translation>あなたがホスト</translation>
+        </message>
+        <message>
+            <source>host %1</source>
+            <translation>ホスト %1</translation>
+        </message>
+        <message>
+            <source>Host's choice · on</source>
+            <translation>ホストの設定 · オン</translation>
+        </message>
+        <message>
+            <source>Host's choice · off</source>
+            <translation>ホストの設定 · オフ</translation>
+        </message>
+        <message>
+            <source>On for this match</source>
+            <translation>この対戦ではオン</translation>
+        </message>
+        <message>
+            <source>Off for this match</source>
+            <translation>この対戦ではオフ</translation>
+        </message>
+        <message>
+            <source>Let others in the lobby watch this match live.
+A local replay is saved only if Save replay is on.</source>
+            <translation>ロビーの他のプレイヤーがこの対戦をライブで観戦できます。
+ローカルのリプレイは「リプレイを保存」がオンの場合のみ保存されます。</translation>
+        </message>
+        <message>
+            <source>Anyone in the lobby can watch</source>
+            <translation>ロビーの誰でも観戦できます</translation>
+        </message>
+        <message>
+            <source>Off, nobody can watch</source>
+            <translation>オフ（観戦できません）</translation>
+        </message>
+        <message>
+            <source>Start alone</source>
+            <translation>1人で開始</translation>
+        </message>
+        <message>
+            <source>A match is in progress</source>
+            <translation>対戦が進行中です</translation>
+        </message>
+        <message>
+            <source>The host can add you to the game. It starts on its own when they do.</source>
+            <translation>ホストがあなたをゲームに追加できます。追加されると自動で始まります。</translation>
+        </message>
+        <message>
+            <source>Add them and everyone pauses for a moment while they load in.</source>
+            <translation>追加すると、読み込みの間全員が少し一時停止します。</translation>
+        </message>
+        <message>
+            <source>You're in the match</source>
+            <translation>対戦中です</translation>
+        </message>
+        <message>
+            <source>Dropping ends the match for everyone in the room.</source>
+            <translation>抜けるとルーム全員の対戦が終了します。</translation>
+        </message>
+        <message>
+            <source>Dropping takes you out. The other players keep playing.</source>
+            <translation>抜けるのはあなただけで、他のプレイヤーは続行します。</translation>
+        </message>
+        <message>
+            <source>It's playing without you. You'll be back here when it ends.</source>
+            <translation>あなた抜きで進行中です。終わるとここに戻ります。</translation>
+        </message>
+        <message>
+            <source>Starting…</source>
+            <translation>開始中…</translation>
+        </message>
+        <message>
+            <source>Getting everyone connected.</source>
+            <translation>全員を接続しています。</translation>
+        </message>
+        <message>
+            <source>Waiting for players</source>
+            <translation>プレイヤーを待っています</translation>
+        </message>
+        <message>
+            <source>Start unlocks when someone joins.</source>
+            <translation>誰かが参加すると開始できます。</translation>
+        </message>
+        <message>
+            <source>Measuring connections</source>
+            <translation>接続を測定中</translation>
+        </message>
+        <message>
+            <source>Waiting for %1's connection</source>
+            <translation>%1の接続を待っています</translation>
+        </message>
+        <message>
+            <source>Start unlocks when every player-to-player path has a ping.</source>
+            <translation>全プレイヤー間のPingが測定されると開始できます。</translation>
+        </message>
+        <message>
+            <source>You can start now and warm up</source>
+            <translation>今すぐ開始してウォームアップできます</translation>
+        </message>
+        <message>
+            <source>Anyone who joins the room can be added to the running game.</source>
+            <translation>ルームに参加した人を進行中のゲームに追加できます。</translation>
+        </message>
+        <message>
+            <source>Everyone's connected</source>
+            <translation>全員接続しました</translation>
+        </message>
+        <message>
+            <source>Start when you're ready.</source>
+            <translation>準備ができたら開始してください。</translation>
+        </message>
+        <message>
+            <source>Waiting for the match to start</source>
+            <translation>対戦の開始を待っています</translation>
+        </message>
+        <message>
+            <source>It launches by itself when it does.</source>
+            <translation>開始されると自動で起動します。</translation>
+        </message>
+        <message>
+            <source>You changed this mid-match. Auto re-reads your ping if you pick it.</source>
+            <translation>対戦中に変更しました。自動を選ぶとPingを再度読み取ります。</translation>
+        </message>
+        <message>
+            <source>Your pick. Only affects you.</source>
+            <translation>手動設定です。自分にのみ影響します。</translation>
+        </message>
+        <message>
+            <source>Auto stays at 0 while you're alone, then reads real pings when someone's added.</source>
+            <translation>1人の間は自動で0になり、誰かが追加されると実際のPingを読み取ります。</translation>
+        </message>
+        <message>
+            <source>From your worst ping, %1 ms to %2. Only affects you.</source>
+            <translation>最大Ping（%2まで%1 ms）から算出。自分にのみ影響します。</translation>
+        </message>
+        <message>
+            <source>Auto reads your ping once someone joins. Only affects you.</source>
+            <translation>誰かが参加するとPingから自動設定します。自分にのみ影響します。</translation>
+        </message>
+        <message>
+            <source>Changes reach every player mid-match.</source>
+            <translation>変更は対戦中に全プレイヤーへ反映されます。</translation>
+        </message>
+        <message>
+            <source>Room-wide. You're the host, so you set it.</source>
+            <translation>ルーム共通の設定です。ホストのあなたが設定します。</translation>
+        </message>
+        <message>
+            <source>Set by the host</source>
+            <translation>ホストが設定</translation>
+        </message>
+        <message>
+            <source>Set by the host (%1)</source>
+            <translation>ホストが設定（%1）</translation>
+        </message>
+        <message>
+            <source>This PC</source>
+            <translation>このPC</translation>
+        </message>
+        <message>
+            <source>That room doesn't have a free seat for everyone on this PC.</source>
+            <translation>このPCの全員が座れる空席がそのルームにはありません。</translation>
+        </message>
+        <message>
+            <source>That room needs a newer version of RMG-K.</source>
+            <translation>そのルームには新しいバージョンのRMG-Kが必要です。</translation>
+        </message>
+        <message>
+            <source>Someone in that room is on an older RMG-K that can't play with several players on one PC. Remove the other players on this PC to join.</source>
+            <translation>そのルームに、1台のPCで複数人がプレイすることに対応していない古いRMG-Kの参加者がいます。参加するには、このPCの他のプレイヤーを外してください。</translation>
+        </message>
+        <message>
+            <source>Quick Match pairs two players, one on each PC. Remove the other players on this PC, or create a room to play together.</source>
+            <translation>クイックマッチは各PCから1人ずつ、2人をマッチさせます。このPCの他のプレイヤーを外すか、ルームを作成して一緒にプレイしてください。</translation>
+        </message>
+        <message>
+            <source>The controller they play on. Set controllers up in Input settings.</source>
+            <translation>このプレイヤーが使うコントローラーです。コントローラーは入力設定で設定できます。</translation>
+        </message>
+        <message>
+            <source>Add</source>
+            <translation>追加</translation>
+        </message>
+        <message>
+            <source>Add a player on this PC</source>
+            <translation>このPCにプレイヤーを追加</translation>
+        </message>
+        <message>
+            <source>Controller %1</source>
+            <translation>コントローラー%1</translation>
+        </message>
+        <message>
+            <source>Controller %1 (off)</source>
+            <translation>コントローラー%1（オフ）</translation>
+        </message>
+        <message>
+            <source>Names are 2 to 20 letters, numbers, or _ - . in one alphabet, at most 10 Japanese, Chinese or Korean characters, and can&apos;t be offensive.</source>
+            <translation>名前は1種類の文字体系で2〜20文字の文字・数字または _ - . です（日本語・中国語・韓国語は10文字まで）。不快な内容は使えません。</translation>
+        </message>
+        <message>
+            <source>Someone in the lobby already has that name.</source>
+            <translation>その名前はロビーの他のプレイヤーが使用中です。</translation>
+        </message>
+        <message>
+            <source>One PC can have up to %1 players.</source>
+            <translation>1台のPCでプレイできるのは%1人までです。</translation>
+        </message>
+        <message>
+            <source>Leave the room to change who's playing on this PC.</source>
+            <translation>このPCのプレイヤーを変更するには、ルームを退出してください。</translation>
+        </message>
+        <message>
+            <source>Stop searching to change who's playing on this PC.</source>
+            <translation>このPCのプレイヤーを変更するには、検索を停止してください。</translation>
+        </message>
+        <message>
+            <source>That's a lot of changes at once. Try again in a moment.</source>
+            <translation>一度に変更が多すぎます。少し待ってからもう一度お試しください。</translation>
+        </message>
+        <message>
+            <source>The lobby refused that (%1).</source>
+            <translation>ロビーに拒否されました（%1）。</translation>
+        </message>
+        <message>
+            <source>The controller %1 plays on.</source>
+            <translation>%1が使うコントローラーです。</translation>
+        </message>
+        <message>
+            <source>This controller is off. Turn it on in Input settings before playing.</source>
+            <translation>このコントローラーはオフです。プレイする前に入力設定でオンにしてください。</translation>
+        </message>
+        <message>
+            <source>Remove %1 from this PC</source>
+            <translation>%1をこのPCから外す</translation>
+        </message>
+        <message>
+            <source>Play with someone else on this PC. They join every room with you, on their own controller.</source>
+            <translation>このPCで他の人と一緒にプレイします。その人は自分のコントローラーで、あなたと一緒にすべてのルームに参加します。</translation>
+        </message>
+        <message>
+            <source>%1 can't play yet: controller %2 is off. Turn it on in Input settings.</source>
+            <translation>%1はまだプレイできません。コントローラー%2がオフです。入力設定でオンにしてください。</translation>
+        </message>
+        <message>
+            <source>%1 and %2</source>
+            <translation>%1と%2</translation>
+        </message>
+        <message>
+            <source>%1 are joining the game</source>
+            <translation>%1がゲームに参加します</translation>
+        </message>
+        <message>
+            <source>You've signed out of moderation.</source>
+            <translation>モデレーターからサインアウトしました。</translation>
+        </message>
+        <message>
+            <source>In your room</source>
+            <translation>あなたのルーム内</translation>
+        </message>
+        <message>
+            <source>Playing %1</source>
+            <translation>%1をプレイ中</translation>
+        </message>
+        <message>
+            <source> · %1 ms</source>
+            <translation> · %1 ms</translation>
+        </message>
+        <message>
+            <source> · ~%1 ms</source>
+            <translation> · ~%1 ms</translation>
+        </message>
+        <message>
+            <source>Invite to your room</source>
+            <translation>ルームに招待</translation>
+        </message>
+        <message>
+            <source>Challenge…</source>
+            <translation>対戦を申し込む…</translation>
+        </message>
+        <message>
+            <source>Needs an update</source>
+            <translation>更新が必要</translation>
+        </message>
+        <message>
+            <source>In a match</source>
+            <translation>対戦中</translation>
+        </message>
+        <message>
+            <source>You're playing</source>
+            <translation>プレイ中</translation>
+        </message>
+        <message>
+            <source>One at a time</source>
+            <translation>一度に1件まで</translation>
+        </message>
+        <message>
+            <source>Send a message</source>
+            <translation>メッセージを送る</translation>
+        </message>
+        <message>
+            <source>Mention in chat</source>
+            <translation>チャットでメンション</translation>
+        </message>
+        <message>
+            <source>Watch match</source>
+            <translation>対戦を観戦</translation>
+        </message>
+        <message>
+            <source>Join room</source>
+            <translation>ルームに参加</translation>
+        </message>
+        <message>
+            <source>Stop ignoring</source>
+            <translation>無視を解除</translation>
+        </message>
+        <message>
+            <source>Ignore</source>
+            <translation>無視</translation>
+        </message>
+        <message>
+            <source>Remove from room</source>
+            <translation>ルームから外す</translation>
+        </message>
+        <message>
+            <source>Moderator</source>
+            <translation>モデレーター</translation>
+        </message>
+        <message>
+            <source>Kick from lobby</source>
+            <translation>ロビーからキック</translation>
+        </message>
+        <message>
+            <source>Is a moderator</source>
+            <translation>モデレーターです</translation>
+        </message>
+        <message>
+            <source>Mute</source>
+            <translation>ミュート</translation>
+        </message>
+        <message>
+            <source>Ban…</source>
+            <translation>BAN…</translation>
+        </message>
+        <message>
+            <source>10 minutes</source>
+            <translation>10分</translation>
+        </message>
+        <message>
+            <source>1 hour</source>
+            <translation>1時間</translation>
+        </message>
+        <message>
+            <source>1 day</source>
+            <translation>1日</translation>
+        </message>
+        <message>
+            <source>Permanent</source>
+            <translation>無期限</translation>
+        </message>
+        <message>
+            <source>With a reason…</source>
+            <translation>理由を付けて…</translation>
+        </message>
+        <message>
+            <source>Do not disturb</source>
+            <translation>応答不可</translation>
+        </message>
+        <message>
+            <source>No challenges or sounds</source>
+            <translation>対戦の申し込みと通知音をオフ</translation>
+        </message>
+        <message>
+            <source>Ignored players…</source>
+            <translation>無視中のプレイヤー…</translation>
+        </message>
+        <message>
+            <source>Moderation…</source>
+            <translation>モデレーション…</translation>
+        </message>
+        <message>
+            <source>Sign out of moderation</source>
+            <translation>モデレーターからサインアウト</translation>
+        </message>
+        <message>
+            <source>Invited &lt;b&gt;%1&lt;/b&gt; to the room</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;をルームに招待しました</translation>
+        </message>
+        <message>
+            <source>%1 challenges you. Open the lobby to answer.</source>
+            <translation>%1から対戦の申し込みです。ロビーを開いて返答してください。</translation>
+        </message>
+        <message>
+            <source>You</source>
+            <translation>自分</translation>
+        </message>
+        <message>
+            <source>%1 plays too</source>
+            <translation>%1も参加します</translation>
+        </message>
+        <message>
+            <source>%1 play too</source>
+            <translation>%1も参加します</translation>
+        </message>
+        <message>
+            <source>%1 invites you to their room</source>
+            <translation>%1があなたをルームに招待しています</translation>
+        </message>
+        <message>
+            <source>You don't have this game</source>
+            <translation>このゲームを持っていません</translation>
+        </message>
+        <message>
+            <source>Accepting leaves %1</source>
+            <translation>受けると%1から退出します</translation>
+        </message>
+        <message>
+            <source>Accepting leaves your room</source>
+            <translation>受けるとルームから退出します</translation>
+        </message>
+        <message>
+            <source>Accepting stops your search</source>
+            <translation>受けると検索を停止します</translation>
+        </message>
+        <message>
+            <source>Accepting stops watching</source>
+            <translation>受けると観戦を停止します</translation>
+        </message>
+        <message>
+            <source>You accepted &lt;b&gt;%1&lt;/b&gt;'s invite</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;の招待を受けました</translation>
+        </message>
+        <message>
+            <source>You accepted &lt;b&gt;%1&lt;/b&gt;'s challenge</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;の対戦を受けました</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;%1&lt;/b&gt;'s challenge can't go ahead any more.</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;の対戦は開始できなくなりました。</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;%1&lt;/b&gt; accepted your invite</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;が招待を受けました</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;%1&lt;/b&gt; accepted your challenge</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;が対戦を受けました</translation>
+        </message>
+        <message>
+            <source>%1 declined</source>
+            <translation>%1が断りました</translation>
+        </message>
+        <message>
+            <source>You can challenge them again in a minute.</source>
+            <translation>1分後にもう一度申し込めます。</translation>
+        </message>
+        <message>
+            <source>%1 declined a moment ago</source>
+            <translation>%1は先ほど断りました</translation>
+        </message>
+        <message>
+            <source>No answer</source>
+            <translation>応答なし</translation>
+        </message>
+        <message>
+            <source>%1 didn't answer in time.</source>
+            <translation>%1から時間内に応答がありませんでした。</translation>
+        </message>
+        <message>
+            <source>%1 is busy</source>
+            <translation>%1は対戦中です</translation>
+        </message>
+        <message>
+            <source>They've just started a match. You can watch it from Live now.</source>
+            <translation>対戦が始まったところです。進行中の対戦から観戦できます。</translation>
+        </message>
+        <message>
+            <source>%1 doesn't have that game</source>
+            <translation>%1はそのゲームを持っていません</translation>
+        </message>
+        <message>
+            <source>Try a game you both have.</source>
+            <translation>お互いが持っているゲームを選んでください。</translation>
+        </message>
+        <message>
+            <source>Message blocked</source>
+            <translation>メッセージがブロックされました</translation>
+        </message>
+        <message>
+            <source>The chat filter blocked your message. Try again without it.</source>
+            <translation>チャットフィルターがメッセージをブロックしました。メッセージなしでもう一度お試しください。</translation>
+        </message>
+        <message>
+            <source>%1 needs an update</source>
+            <translation>%1は更新が必要です</translation>
+        </message>
+        <message>
+            <source>Their version of RMG-K can't receive challenges.</source>
+            <translation>相手のRMG-Kは対戦の申し込みに対応していません。</translation>
+        </message>
+        <message>
+            <source>That's a lot of challenges</source>
+            <translation>申し込みが多すぎます</translation>
+        </message>
+        <message>
+            <source>Try again in a moment.</source>
+            <translation>少し待ってからお試しください。</translation>
+        </message>
+        <message>
+            <source>Can't challenge right now</source>
+            <translation>今は申し込めません</translation>
+        </message>
+        <message>
+            <source>%1 can't take a challenge at the moment.</source>
+            <translation>%1は今、対戦の申し込みを受けられません。</translation>
+        </message>
+        <message>
+            <source>You: %1</source>
+            <translation>自分: %1</translation>
+        </message>
+        <message>
+            <source>%1 (private): %2</source>
+            <translation>%1（プライベート）: %2</translation>
+        </message>
+        <message>
+            <source>That message couldn't be delivered.</source>
+            <translation>メッセージを届けられませんでした。</translation>
+        </message>
+        <message>
+            <source>They've left the lobby, so that message went nowhere.</source>
+            <translation>相手がロビーを退出したため、メッセージは届きませんでした。</translation>
+        </message>
+        <message>
+            <source>Their version of RMG-K can't receive private messages.</source>
+            <translation>相手のRMG-Kはプライベートメッセージに対応していません。</translation>
+        </message>
+        <message>
+            <source>%1: %2</source>
+            <translation>%1: %2</translation>
+        </message>
+        <message>
+            <source>In this room</source>
+            <translation>このルーム内</translation>
+        </message>
+        <message>
+            <source>@ 1 mention below ↓</source>
+            <translation>@ 下にメンション1件 ↓</translation>
+        </message>
+        <message>
+            <source>@ %1 mentions below ↓</source>
+            <translation>@ 下にメンション%1件 ↓</translation>
+        </message>
+        <message>
+            <source>%1 min</source>
+            <translation>%1分</translation>
+        </message>
+        <message>
+            <source>%1 h</source>
+            <translation>%1時間</translation>
+        </message>
+        <message>
+            <source>%1 days</source>
+            <translation>%1日</translation>
+        </message>
+        <message>
+            <source>Kicked &lt;b&gt;%1&lt;/b&gt;</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;をキックしました</translation>
+        </message>
+        <message>
+            <source>Muted &lt;b&gt;%1&lt;/b&gt;</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;をミュートしました</translation>
+        </message>
+        <message>
+            <source>Muted &lt;b&gt;%1&lt;/b&gt; for %2</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;を%2ミュートしました</translation>
+        </message>
+        <message>
+            <source>Banned &lt;b&gt;%1&lt;/b&gt;</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;をBANしました</translation>
+        </message>
+        <message>
+            <source>Banned &lt;b&gt;%1&lt;/b&gt; for %2</source>
+            <translation>&lt;b&gt;%1&lt;/b&gt;を%2 BANしました</translation>
+        </message>
+        <message>
+            <source>Challenge sent</source>
+            <translation>対戦を申し込みました</translation>
+        </message>
+        <message>
+            <source>Waiting for %1</source>
+            <translation>%1の応答を待っています</translation>
+        </message>
+        <message>
+            <source> · %1 · keep browsing, you'll be moved in if they accept</source>
+            <translation> · %1 · 相手が受けると自動で移動します</translation>
+        </message>
+        <message>
+            <source>seconds</source>
+            <translation>秒</translation>
+        </message>
+        <message>
+            <source>OK</source>
+            <translation>OK</translation>
+        </message>
+        <message>
+            <source>That room is private.</source>
+            <translation>そのルームはプライベートです。</translation>
+        </message>
+        <message>
+            <source>Private</source>
+            <translation>プライベート</translation>
+        </message>
+        <message>
+            <source>Private messages</source>
+            <translation>プライベートメッセージ</translation>
+        </message>
+        <message>
+            <source>As %1</source>
+            <translation>%1として</translation>
+        </message>
+        <message>
+            <source>Type /w and a name to start a conversation</source>
+            <translation>/w と名前を入力して会話を始めます</translation>
+        </message>
+        <message>
+            <source>%1 left the lobby</source>
+            <translation>%1はロビーを退出しました</translation>
+        </message>
+        <message>
+            <source>%1 left this PC</source>
+            <translation>%1はこのPCから離れました</translation>
+        </message>
+        <message>
+            <source>Whoever they wrote to has left this PC.</source>
+            <translation>メッセージの宛先のプレイヤーはこのPCから離れました。</translation>
+        </message>
+        <message>
+            <source>Reply…</source>
+            <translation>返信…</translation>
+        </message>
+        <message>
+            <source>Message %1…</source>
+            <translation>%1にメッセージ…</translation>
+        </message>
+        <message>
+            <source>There's nobody to reply to yet.</source>
+            <translation>まだ返信できる相手がいません。</translation>
+        </message>
+        <message>
+            <source>Usage: /w &amp;lt;player&amp;gt; [message]</source>
+            <translation>使い方: /w &amp;lt;プレイヤー&amp;gt; [メッセージ]</translation>
+        </message>
+        <message>
+            <source>They've left the lobby.</source>
+            <translation>相手はロビーを退出しました。</translation>
+        </message>
+        <message>
+            <source>Nobody called %1 is here.</source>
+            <translation>%1というプレイヤーはいません。</translation>
+        </message>
+        <message>
+            <source>They're on this PC.</source>
+            <translation>そのプレイヤーはこのPCにいます。</translation>
+        </message>
+        <message>
+            <source>✓ Moderator access granted (%1). Right-click a player to moderate, or type /modhelp.</source>
+            <translation>✓ モデレーター権限を取得しました（%1）。プレイヤーを右クリックして操作するか、/modhelp と入力してください。</translation>
+        </message>
+        <message>
+            <source>Over the game</source>
+            <translation>ゲーム画面に表示</translation>
+        </message>
+        <message>
+            <source>Show spectators' comments over the game while you play.</source>
+            <translation>プレイ中、観戦者のコメントをゲーム画面に表示します。</translation>
+        </message>
+        <message>
+            <source>Message the spectators…</source>
+            <translation>観戦者にメッセージ…</translation>
+        </message>
+        <message>
+            <source>Closed until your next match</source>
+            <translation>次の対戦まで利用できません</translation>
+        </message>
+        <message>
+            <source>Message the spectators and players…</source>
+            <translation>観戦者とプレイヤーにメッセージ…</translation>
+        </message>
+        <message>
+            <source>The players can read this chat too.</source>
+            <translation>プレイヤーもこのチャットを読めます。</translation>
+        </message>
+        <message>
+            <source>Spectators' comments show up here, and they can see your replies.</source>
+            <translation>観戦者のコメントがここに表示されます。あなたの返信も観戦者に見えます。</translation>
+        </message>
+        <message>
+            <source>Spectator chat is closed until your next match.</source>
+            <translation>観戦者チャットは次の対戦まで閉じています。</translation>
+        </message>
+        <message>
+            <source>%1 watching</source>
+            <translation>%1人が観戦中</translation>
+        </message>
+        <message>
+            <source>Everyone watching your match. They can see your replies.</source>
+            <translation>あなたの対戦を観戦している人たちです。返信は観戦者に見えます。</translation>
+        </message>
+        <message>
+            <source>Everyone watching this match, and its players.</source>
+            <translation>この対戦の観戦者とプレイヤーです。</translation>
+        </message>
+        <message>
+            <source>%1 (watching): %2</source>
+            <translation>%1（観戦中）: %2</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::CreateRoomDialog</name>
+        <message>
+            <source>Room name</source>
+            <translation>ルーム名</translation>
+        </message>
+        <message>
+            <source>Players</source>
+            <translation>プレイヤー数</translation>
+        </message>
+        <message>
+            <source>Who can join</source>
+            <translation>参加できる人</translation>
+        </message>
+        <message>
+            <source>Anyone</source>
+            <translation>誰でも</translation>
+        </message>
+        <message>
+            <source>Password</source>
+            <translation>パスワード</translation>
+        </message>
+        <message>
+            <source>Live replay for spectators</source>
+            <translation>観戦者向けライブリプレイ</translation>
+        </message>
+        <message>
+            <source>Shows in Live now for anyone to watch, with spectator chat</source>
+            <translation>進行中の対戦に表示され、誰でも観戦チャット付きで観戦できます</translation>
+        </message>
+        <message>
+            <source>You can start alone and add people as they join.</source>
+            <translation>1人で開始して、参加した人を後から追加できます。</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>You have %1 players on this PC.</source>
+            <translation>このPCには%1人のプレイヤーがいます。</translation>
+        </message>
+        <message>
+            <source>It needs a seat for everyone on this PC.</source>
+            <translation>このPCの全員分の席が必要です。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::LobbyConnectDialog</name>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::PortCard</name>
+        <message>
+            <source>HOST</source>
+            <translation>ホスト</translation>
+        </message>
+        <message>
+            <source>Drag onto another seat to swap players</source>
+            <translation>別の席にドラッグしてプレイヤーを入れ替えます</translation>
+        </message>
+        <message>
+            <source>Remove this player from the match</source>
+            <translation>このプレイヤーを対戦から外します</translation>
+        </message>
+        <message>
+            <source>Remove player</source>
+            <translation>プレイヤーを外す</translation>
+        </message>
+        <message>
+            <source>OPEN</source>
+            <translation>空き</translation>
+        </message>
+        <message>
+            <source>You</source>
+            <translation>自分</translation>
+        </message>
+        <message>
+            <source>Waiting to join</source>
+            <translation>参加待ち</translation>
+        </message>
+        <message>
+            <source>Link</source>
+            <translation>接続</translation>
+        </message>
+        <message>
+            <source>Delay</source>
+            <translation>遅延</translation>
+        </message>
+        <message>
+            <source>Status</source>
+            <translation>状態</translation>
+        </message>
+        <message>
+            <source>WAITING</source>
+            <translation>待機中</translation>
+        </message>
+        <message>
+            <source>Add to Game</source>
+            <translation>ゲームに追加</translation>
+        </message>
+        <message>
+            <source>LOCAL</source>
+            <translation>ローカル</translation>
+        </message>
+        <message>
+            <source>Retrying…</source>
+            <translation>再試行中…</translation>
+        </message>
+        <message>
+            <source>Connecting…</source>
+            <translation>接続中…</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::MatchCardBase</name>
+        <message>
+            <source>Stop</source>
+            <translation>停止</translation>
+        </message>
+        <message>
+            <source>Stop watching this match.</source>
+            <translation>この対戦の観戦をやめます。</translation>
+        </message>
+        <message>
+            <source>Watch</source>
+            <translation>観戦</translation>
+        </message>
+        <message>
+            <source>Leave your room to watch a match.</source>
+            <translation>観戦するにはルームを退出してください。</translation>
+        </message>
+        <message>
+            <source>Switch</source>
+            <translation>切替</translation>
+        </message>
+        <message>
+            <source>Stop what you're watching and watch this match instead.</source>
+            <translation>今の観戦をやめて、この対戦を観戦します。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::MatchCard</name>
+        <message>
+            <source>No ROM</source>
+            <translation>ROMなし</translation>
+        </message>
+        <message>
+            <source>You don't have the ROM this match is using.</source>
+            <translation>この対戦のROMを持っていません。</translation>
+        </message>
+        <message>
+            <source>Watch</source>
+            <translation>観戦</translation>
+        </message>
+        <message>
+            <source>Join</source>
+            <translation>参加</translation>
+        </message>
+        <message>
+            <source>Take the free seat. The host can then add you to the game.</source>
+            <translation>空き席に座ります。ホストがゲームに追加できます。</translation>
+        </message>
+        <message>
+            <source>Watching</source>
+            <translation>観戦中</translation>
+        </message>
+        <message>
+            <source>No replay</source>
+            <translation>配信なし</translation>
+        </message>
+        <message>
+            <source>Live</source>
+            <translation>ライブ</translation>
+        </message>
+        <message>
+            <source>1 seat open</source>
+            <translation>1席空き</translation>
+        </message>
+        <message>
+            <source>%1 seats open</source>
+            <translation>%1席空き</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::FeaturedMatchCard</name>
+        <message>
+            <source>Most watched</source>
+            <translation>最多視聴</translation>
+        </message>
+        <message>
+            <source>watching</source>
+            <translation>視聴中</translation>
+        </message>
+        <message>
+            <source>Watch</source>
+            <translation>観戦</translation>
+        </message>
+        <message>
+            <source>Watching</source>
+            <translation>観戦中</translation>
+        </message>
+        <message>
+            <source>Live</source>
+            <translation>ライブ</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::LiveGallery</name>
+        <message>
+            <source>Live now</source>
+            <translation>進行中の対戦</translation>
+        </message>
+        <message>
+            <source>Only show matches of the game selected in the picker.</source>
+            <translation>選択中のゲームの対戦のみ表示します。</translation>
+        </message>
+        <message>
+            <source>Most watched</source>
+            <translation>視聴者順</translation>
+        </message>
+        <message>
+            <source>Newest</source>
+            <translation>新しい順</translation>
+        </message>
+        <message>
+            <source>Longest running</source>
+            <translation>長時間順</translation>
+        </message>
+        <message>
+            <source>watching</source>
+            <translation>視聴中</translation>
+        </message>
+        <message>
+            <source>All</source>
+            <translation>すべて</translation>
+        </message>
+        <message>
+            <source>This game</source>
+            <translation>同じゲーム</translation>
+        </message>
+        <message>
+            <source>Not connected</source>
+            <translation>未接続</translation>
+        </message>
+        <message>
+            <source>Connect to the lobby to see running matches.</source>
+            <translation>ロビーに接続すると進行中の対戦が表示されます。</translation>
+        </message>
+        <message>
+            <source>Nothing live for this game</source>
+            <translation>このゲームの対戦はありません</translation>
+        </message>
+        <message>
+            <source>Nothing live right now</source>
+            <translation>進行中の対戦はありません</translation>
+        </message>
+        <message>
+            <source>New matches appear here as they start. Rooms with Live replay on can be watched by anyone.</source>
+            <translation>新しい対戦は開始されるとここに表示されます。ライブリプレイがオンのルームは誰でも観戦できます。</translation>
+        </message>
+        <message>
+            <source>That's everything live right now</source>
+            <translation>進行中の対戦は以上です</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RoomRow</name>
+        <message>
+            <source>In game</source>
+            <translation>対戦中</translation>
+        </message>
+        <message>
+            <source>Join</source>
+            <translation>参加</translation>
+        </message>
+        <message>
+            <source>Your measured ping to the host</source>
+            <translation>ホストまでの測定済みPing</translation>
+        </message>
+        <message>
+            <source>Estimated from regions — click the row to measure</source>
+            <translation>地域からの推定値 — 行をクリックして測定</translation>
+        </message>
+        <message>
+            <source>Click the row to measure your ping to the host</source>
+            <translation>行をクリックしてホストまでのPingを測定</translation>
+        </message>
+        <message>
+            <source>Return</source>
+            <translation>戻る</translation>
+        </message>
+        <message>
+            <source>Back to your room.</source>
+            <translation>自分のルームに戻ります。</translation>
+        </message>
+        <message>
+            <source>No ROM</source>
+            <translation>ROMなし</translation>
+        </message>
+        <message>
+            <source>You don't have the ROM this room is using.</source>
+            <translation>このルームのROMを持っていません。</translation>
+        </message>
+        <message>
+            <source>Full</source>
+            <translation>満席</translation>
+        </message>
+        <message>
+            <source>Match in progress. Join, and the host can add you to the game.</source>
+            <translation>対戦中です。参加すると、ホストがゲームに追加できます。</translation>
+        </message>
+        <message>
+            <source>Needs %1 seats</source>
+            <translation>%1席必要</translation>
+        </message>
+        <message>
+            <source>You have %1 players on this PC, and this room has 1 free seat.</source>
+            <translation>このPCには%1人のプレイヤーがいますが、このルームの空席は1席です。</translation>
+        </message>
+        <message>
+            <source>You have %1 players on this PC, and this room has %2 free seats.</source>
+            <translation>このPCには%1人のプレイヤーがいますが、このルームの空席は%2席です。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RoomsColumn</name>
+        <message>
+            <source>Open rooms</source>
+            <translation>ルーム一覧</translation>
+        </message>
+        <message>
+            <source>Filter and sort rooms</source>
+            <translation>ルームの絞り込みと並べ替え</translation>
+        </message>
+        <message>
+            <source>Search rooms</source>
+            <translation>ルームを検索</translation>
+        </message>
+        <message>
+            <source>Room, host or game…</source>
+            <translation>ルーム、ホスト、ゲーム…</translation>
+        </message>
+        <message>
+            <source>This game only</source>
+            <translation>このゲームのみ</translation>
+        </message>
+        <message>
+            <source>Sort: this game first</source>
+            <translation>並べ替え: このゲーム優先</translation>
+        </message>
+        <message>
+            <source>Sort: lowest ping</source>
+            <translation>並べ替え: Pingが低い順</translation>
+        </message>
+        <message>
+            <source>Sort: most players</source>
+            <translation>並べ替え: 人数が多い順</translation>
+        </message>
+        <message>
+            <source>Sort: name</source>
+            <translation>並べ替え: 名前順</translation>
+        </message>
+        <message>
+            <source>Not connected</source>
+            <translation>未接続</translation>
+        </message>
+        <message>
+            <source>No rooms match</source>
+            <translation>該当するルームはありません</translation>
+        </message>
+        <message>
+            <source>Clear the search or filter to see every room.</source>
+            <translation>検索や絞り込みを解除すると全ルームが表示されます。</translation>
+        </message>
+        <message>
+            <source>That's all for now</source>
+            <translation>現在は以上です</translation>
+        </message>
+        <message>
+            <source>Create a room, or Quick Match finds you a player.</source>
+            <translation>ルームを作成するか、クイックマッチで相手を探しましょう。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::ChallengeCard</name>
+        <message>
+            <source>Decline</source>
+            <translation>断る</translation>
+        </message>
+        <message>
+            <source>Accept</source>
+            <translation>受ける</translation>
+        </message>
+        <message>
+            <source>Room invite</source>
+            <translation>ルーム招待</translation>
+        </message>
+        <message>
+            <source>New challenger</source>
+            <translation>新たな挑戦者</translation>
+        </message>
+        <message>
+            <source>+%1 more</source>
+            <translation>他%1件</translation>
+        </message>
+        <message>
+            <source>%1 of %2 seats</source>
+            <translation>%1/%2席</translation>
+        </message>
+        <message>
+            <source>%1 sec</source>
+            <translation>%1秒</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::UndoToast</name>
+        <message>
+            <source>Undo</source>
+            <translation>元に戻す</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::MentionPopup</name>
+        <message>
+            <source>↑↓ choose   Tab insert   Esc close</source>
+            <translation>↑↓ 選択   Tab 挿入   Esc 閉じる</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::PrivateMessagesPanel</name>
+        <message>
+            <source>Private messages</source>
+            <translation>プライベートメッセージ</translation>
+        </message>
+        <message>
+            <source>New message</source>
+            <translation>新規メッセージ</translation>
+        </message>
+        <message>
+            <source>Nothing yet. Right-click a player to send them a message.</source>
+            <translation>まだありません。プレイヤーを右クリックしてメッセージを送れます。</translation>
+        </message>
+        <message>
+            <source>All conversations</source>
+            <translation>すべての会話</translation>
+        </message>
+        <message>
+            <source>Challenge</source>
+            <translation>対戦を申し込む</translation>
+        </message>
+        <message>
+            <source>More</source>
+            <translation>その他</translation>
+        </message>
+        <message>
+            <source>Only the two of you see this. It's gone when either of you leaves the lobby.</source>
+            <translation>2人だけに表示されます。どちらかがロビーを退出すると消えます。</translation>
+        </message>
+        <message>
+            <source>%1 left the lobby. Messages can't reach them.</source>
+            <translation>%1はロビーを退出しました。メッセージは届きません。</translation>
+        </message>
+        <message>
+            <source>%1 left this PC</source>
+            <translation>%1はこのPCから離れました</translation>
+        </message>
+        <message>
+            <source>%1 left this PC. Nobody can answer as them any more.</source>
+            <translation>%1はこのPCから離れました。%1として返信することはできません。</translation>
+        </message>
+        <message>
+            <source>Left the lobby</source>
+            <translation>ロビーを退出</translation>
+        </message>
+        <message>
+            <source>To %1</source>
+            <translation>%1宛</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::ChallengeDialog</name>
+        <message>
+            <source>Challenge</source>
+            <translation>対戦を申し込む</translation>
+        </message>
+        <message>
+            <source>Challenge %1</source>
+            <translation>%1に対戦を申し込む</translation>
+        </message>
+        <message>
+            <source>If they accept, you're both moved into a private room.</source>
+            <translation>相手が受けると、2人ともプライベートルームに移動します。</translation>
+        </message>
+        <message>
+            <source>Game</source>
+            <translation>ゲーム</translation>
+        </message>
+        <message>
+            <source>All your games</source>
+            <translation>すべてのゲーム</translation>
+        </message>
+        <message>
+            <source>Message (optional)</source>
+            <translation>メッセージ（任意）</translation>
+        </message>
+        <message>
+            <source>Live replay for spectators</source>
+            <translation>観戦者向けライブリプレイ</translation>
+        </message>
+        <message>
+            <source>Shows in Live now for anyone to watch, with spectator chat</source>
+            <translation>進行中の対戦に表示され、誰でも観戦できます（観戦者チャット付き）</translation>
+        </message>
+        <message>
+            <source>They have 30 seconds to answer.</source>
+            <translation>相手は30秒以内に返答できます。</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>Send</source>
+            <translation>送信</translation>
+        </message>
+        <message>
+            <source>✓ %1 has this game</source>
+            <translation>✓ %1はこのゲームを持っています</translation>
+        </message>
+        <message>
+            <source>%1 doesn't have this game</source>
+            <translation>%1はこのゲームを持っていません</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::SanctionDialog</name>
+        <message>
+            <source>Ban player</source>
+            <translation>プレイヤーをBAN</translation>
+        </message>
+        <message>
+            <source>Mute player</source>
+            <translation>プレイヤーをミュート</translation>
+        </message>
+        <message>
+            <source>Ban %1</source>
+            <translation>%1をBAN</translation>
+        </message>
+        <message>
+            <source>Mute %1</source>
+            <translation>%1をミュート</translation>
+        </message>
+        <message>
+            <source>Disconnects them now and blocks their IP.</source>
+            <translation>すぐに切断し、IPをブロックします。</translation>
+        </message>
+        <message>
+            <source>Stops chat and private messages from their IP.</source>
+            <translation>そのIPからのチャットとプライベートメッセージを止めます。</translation>
+        </message>
+        <message>
+            <source>For how long</source>
+            <translation>期間</translation>
+        </message>
+        <message>
+            <source>Reason</source>
+            <translation>理由</translation>
+        </message>
+        <message>
+            <source>Why? They'll see this.</source>
+            <translation>理由（相手に表示されます）</translation>
+        </message>
+        <message>
+            <source>They'll see the reason.</source>
+            <translation>理由は相手に表示されます。</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>10 min</source>
+            <translation>10分</translation>
+        </message>
+        <message>
+            <source>1 hour</source>
+            <translation>1時間</translation>
+        </message>
+        <message>
+            <source>1 day</source>
+            <translation>1日</translation>
+        </message>
+        <message>
+            <source>7 days</source>
+            <translation>7日</translation>
+        </message>
+        <message>
+            <source>Permanent</source>
+            <translation>無期限</translation>
+        </message>
+        <message>
+            <source>Harassment</source>
+            <translation>嫌がらせ</translation>
+        </message>
+        <message>
+            <source>Slurs</source>
+            <translation>差別的な発言</translation>
+        </message>
+        <message>
+            <source>Spam</source>
+            <translation>スパム</translation>
+        </message>
+        <message>
+            <source>Quitting matches</source>
+            <translation>対戦の放棄</translation>
+        </message>
+        <message>
+            <source>Cheating</source>
+            <translation>チート</translation>
+        </message>
+        <message>
+            <source>%1 on the same PC goes too.</source>
+            <translation>同じPCの%1も対象になります。</translation>
+        </message>
+        <message>
+            <source>%1 on the same PC is muted too.</source>
+            <translation>同じPCの%1もミュートされます。</translation>
+        </message>
+        <message>
+            <source>Anyone else on this IP can't connect until the ban ends.</source>
+            <translation>BANが終わるまで、このIPの他の人も接続できません。</translation>
+        </message>
+        <message>
+            <source>Anyone else on this IP is muted too.</source>
+            <translation>このIPの他の人もミュートされます。</translation>
+        </message>
+        <message>
+            <source>Ban permanently</source>
+            <translation>無期限でBAN</translation>
+        </message>
+        <message>
+            <source>Mute permanently</source>
+            <translation>無期限でミュート</translation>
+        </message>
+        <message>
+            <source>Ban for %1</source>
+            <translation>%1 BAN</translation>
+        </message>
+        <message>
+            <source>Mute for %1</source>
+            <translation>%1 ミュート</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::ModerationDialog</name>
+        <message>
+            <source>Moderation</source>
+            <translation>モデレーション</translation>
+        </message>
+        <message>
+            <source>Active bans and mutes. Signed in as %1.</source>
+            <translation>有効なBANとミュート。%1としてサインイン中。</translation>
+        </message>
+        <message>
+            <source>Active</source>
+            <translation>有効</translation>
+        </message>
+        <message>
+            <source>Active %1</source>
+            <translation>有効 %1</translation>
+        </message>
+        <message>
+            <source>This session's log</source>
+            <translation>このセッションの記録</translation>
+        </message>
+        <message>
+            <source>This session's log %1</source>
+            <translation>このセッションの記録 %1</translation>
+        </message>
+        <message>
+            <source>Player</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>Reason</source>
+            <translation>理由</translation>
+        </message>
+        <message>
+            <source>By</source>
+            <translation>実行者</translation>
+        </message>
+        <message>
+            <source>Ends</source>
+            <translation>終了</translation>
+        </message>
+        <message>
+            <source>Nobody is banned or muted.</source>
+            <translation>BANやミュートされた人はいません。</translation>
+        </message>
+        <message>
+            <source>Nothing yet this session.</source>
+            <translation>このセッションではまだありません。</translation>
+        </message>
+        <message>
+            <source>Ban</source>
+            <translation>BAN</translation>
+        </message>
+        <message>
+            <source>Mute</source>
+            <translation>ミュート</translation>
+        </message>
+        <message>
+            <source>Name not recorded</source>
+            <translation>名前の記録なし</translation>
+        </message>
+        <message>
+            <source>None given</source>
+            <translation>なし</translation>
+        </message>
+        <message>
+            <source>Unban</source>
+            <translation>BAN解除</translation>
+        </message>
+        <message>
+            <source>Unmute</source>
+            <translation>ミュート解除</translation>
+        </message>
+        <message>
+            <source>Permanent</source>
+            <translation>無期限</translation>
+        </message>
+        <message>
+            <source>In %1 min</source>
+            <translation>%1分後</translation>
+        </message>
+        <message>
+            <source>In %1 h</source>
+            <translation>%1時間後</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::IgnoredPlayersDialog</name>
+        <message>
+            <source>Ignored players</source>
+            <translation>無視中のプレイヤー</translation>
+        </message>
+        <message>
+            <source>You don't see their chat, messages or challenges.</source>
+            <translation>チャット、メッセージ、対戦の申し込みが表示されません。</translation>
+        </message>
+        <message>
+            <source>You aren't ignoring anyone.</source>
+            <translation>無視しているプレイヤーはいません。</translation>
+        </message>
+        <message>
+            <source>Stop ignoring</source>
+            <translation>無視を解除</translation>
+        </message>
+    </context>
+</TS>

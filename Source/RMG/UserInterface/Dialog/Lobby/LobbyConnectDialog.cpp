@@ -8,16 +8,16 @@
 
 #include "LobbyConnectDialog.hpp"
 
+#include "LobbyWidgets.hpp"
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QSettings>
-#include <QDialogButtonBox>
 #include <QFont>
 #include <QIcon>
 
@@ -42,13 +42,36 @@ QString LobbyConnectDialog::defaultServerUrl()
     return QString::fromUtf8(kDefaultLobbyUrl);
 }
 
+QRegularExpression LobbyConnectDialog::usernameCharacters()
+{
+    return QRegularExpression(QStringLiteral(R"([\p{L}\p{Mn}0-9_\-\.\x{30FB}]{1,20})"));
+}
+
+bool LobbyConnectDialog::usernameFits(const QString& username)
+{
+    return username.toUtf8().size() <= 31;
+}
+
+QString LobbyConnectDialog::fitUsername(QString username)
+{
+    username = username.normalized(QString::NormalizationForm_C);
+    static const QRegularExpression notInName(QStringLiteral(R"([^\p{L}\p{Mn}0-9_\-\.\x{30FB}])"));
+    username.remove(notInName);
+    username.truncate(20);
+    if (!username.isEmpty() && username.back().isHighSurrogate())
+        username.chop(1);
+    while (!username.isEmpty() && !usernameFits(username))
+        username.chop(username.back().isLowSurrogate() ? 2 : 1);
+    return username;
+}
+
 LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Join Rollback Netplay"));
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setModal(true);
-    setMinimumWidth(380);
+    setFixedWidth(420);
     buildUi();
     loadSettings();
     validateInput();
@@ -57,38 +80,81 @@ LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
 void LobbyConnectDialog::buildUi()
 {
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(24, 20, 24, 20);
-    root->setSpacing(14);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
 
-    auto* heading = new QLabel(tr("Welcome to Netplay!"), this);
-    QFont headingFont = heading->font();
-    headingFont.setBold(true);
-    headingFont.setPointSizeF(headingFont.pointSizeF() + 2.0);
-    heading->setFont(headingFont);
-    root->addWidget(heading);
+    auto* header = new LobbyBand(this);
+    auto* headerLay = new QVBoxLayout(header);
+    headerLay->setContentsMargins(22, 18, 22, 14);
+    headerLay->setSpacing(10);
+    auto* brand = new QHBoxLayout;
+    brand->setSpacing(10);
+    brand->addWidget(new BrandMark(header));
+    auto* words = new QVBoxLayout;
+    words->setSpacing(1);
+    auto* word = new QLabel(QStringLiteral("RMG-K"), header);
+    word->setFont(LobbyTheme::pixelFont(18, 0.3));
+    words->addWidget(word);
+    auto* tagline = new QLabel(tr("ROLLBACK NETPLAY"), header);
+    QFont taglineFont = LobbyTheme::uiFont(8, QFont::Bold);
+    taglineFont.setLetterSpacing(QFont::AbsoluteSpacing, 2.2);
+    tagline->setFont(taglineFont);
+    tagline->setProperty("role", "muted");
+    words->addWidget(tagline);
+    brand->addLayout(words);
+    brand->addStretch(1);
+    headerLay->addLayout(brand);
+    auto* heading = new QLabel(tr("Welcome to Netplay!"), header);
+    heading->setFont(LobbyTheme::uiFont(13));
+    heading->setProperty("role", "ink2");
+    headerLay->addWidget(heading);
+    root->addWidget(header);
 
-    auto* form = new QFormLayout;
+    auto* rule = new QFrame(this);
+    rule->setObjectName("FieldRule");
+    root->addWidget(rule);
+
+    auto* body = new QVBoxLayout;
+    body->setContentsMargins(22, 16, 22, 4);
+    body->setSpacing(6);
+    auto* label = new QLabel(tr("Enter a username:").toUpper(), this);
+    QFont labelFont = LobbyTheme::uiFont(10, QFont::DemiBold);
+    labelFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.9);
+    label->setFont(labelFont);
+    label->setProperty("role", "muted");
+    body->addWidget(label);
 
     m_usernameEdit = new QLineEdit(this);
     m_usernameEdit->setMaxLength(20);
+    m_usernameEdit->setMinimumHeight(38);
     m_usernameEdit->setPlaceholderText(tr("2-20 characters: letters, numbers, _ - ."));
-    auto* validator = new QRegularExpressionValidator(
-        QRegularExpression(R"([A-Za-z0-9_\-\.]{1,20})"), this);
-    m_usernameEdit->setValidator(validator);
-    form->addRow(tr("Enter a username:"), m_usernameEdit);
-
-    root->addLayout(form);
+    m_usernameEdit->setValidator(new QRegularExpressionValidator(usernameCharacters(), this));
+    body->addWidget(m_usernameEdit);
 
     m_validationLbl = new QLabel(this);
-    m_validationLbl->setStyleSheet("color: gray;");
-    root->addWidget(m_validationLbl);
+    m_validationLbl->setFont(LobbyTheme::uiFont(11));
+    m_validationLbl->setProperty("role", "bad");
+    m_validationLbl->setWordWrap(true);
+    body->addWidget(m_validationLbl);
+    root->addLayout(body);
 
-    auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
-    m_connectButton = btnBox->addButton(tr("Connect"), QDialogButtonBox::AcceptRole);
-    connect(btnBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    auto* footer = new QHBoxLayout;
+    footer->setContentsMargins(22, 12, 22, 18);
+    footer->setSpacing(10);
+    auto* cancel = new LobbyButton(tr("Cancel"), LobbyButton::Kind::Ghost, this);
+    cancel->setButtonSize(LobbyButton::Size::Large);
+    m_connectButton = new LobbyButton(tr("Connect"), LobbyButton::Kind::Primary, this);
+    m_connectButton->setObjectName("ConnectButton");
+    m_connectButton->setButtonSize(LobbyButton::Size::Large);
+    m_connectButton->setPixelLabel(true);
+    m_connectButton->setDefault(true);
+    m_connectButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    footer->addWidget(cancel);
+    footer->addWidget(m_connectButton, 1);
+    root->addLayout(footer);
+
+    connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_connectButton, &QPushButton::clicked, this, &LobbyConnectDialog::onConnect);
-
-    root->addWidget(btnBox);
 
     connect(m_usernameEdit, &QLineEdit::textChanged, this, [this]() {
         m_statusMessage.clear();
@@ -103,12 +169,20 @@ void LobbyConnectDialog::validateInput()
     QString reason;
     if (user.length() < 2)
         reason = tr("Username must be at least 2 characters.");
+    else if (!usernameFits(user))
+        reason = tr("That name is too long. The limit is 15 Greek or Cyrillic characters, "
+                    "or 10 Japanese, Chinese or Korean characters.");
 
     const QString message = reason.isEmpty() ? m_statusMessage : reason;
-    m_validationLbl->setStyleSheet(
-        message.isEmpty() ? "color: gray;" : "color: #c0392b;");
     m_validationLbl->setText(message);
     m_connectButton->setEnabled(reason.isEmpty());
+    // The message can wrap, which the dialog has to grow for. The label only marks
+    // the top layout dirty, so its own stays stale without the activate.
+    if (isVisible())
+    {
+        layout()->activate();
+        adjustSize();
+    }
 }
 
 void LobbyConnectDialog::onConnect()

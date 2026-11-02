@@ -51,6 +51,10 @@ int recordingFrameCount();
 // No-op without an active capture. nick/msg are length-bounded.
 void recordingQueueChat(const char* nick, const char* msg);
 
+// Sets a player's name for the next capture, cut at a character boundary to fit
+// the replay header. index is 0-based.
+void recordingSetPlayerName(int index, const char* utf8Name);
+
 // Begin replay capture for the GekkoNet rollback lobby, closing any previous
 // capture first. Writes a KRC1 header if local saving or streaming is enabled.
 // n02_kaillera_recording_enabled controls local saving independently of the
