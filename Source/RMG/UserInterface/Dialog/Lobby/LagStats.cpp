@@ -1,9 +1,4 @@
 /*
- * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 3.
- *
  * Lag stats for rollback matches. Every client measures its own frames (see
  * rmgk_gekko::lag_stats) and sends the numbers to the other players once a
  * second. With everyone's numbers in hand, any player can tell who is holding
