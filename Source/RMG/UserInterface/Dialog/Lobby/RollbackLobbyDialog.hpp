@@ -10,6 +10,7 @@
 #ifdef NETPLAY
 
 #include "LobbyClient.hpp"
+#include "LagStats.hpp"
 
 #include <QDialog>
 #include <QHash>
@@ -79,6 +80,13 @@ public:
     // MainWindow calls this when a spectate playback session ends (emulation
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
+
+    // Lag stats for the running rollback match (or the last one), built from
+    // our own numbers and the other players' reports. /lagstat in the in-game
+    // chat shows this on the overlay and adds it to the room chat.
+    LagReport lagReport(bool wholeMatch) const;
+    void appendLagReport(const LagReport& report);
+    void showLagStats();
 
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
@@ -482,6 +490,12 @@ private:
     QPushButton* m_startBtn      = nullptr;
     QPushButton* m_dropBtn       = nullptr;
     QPushButton* m_leaveBtn      = nullptr;
+    QPushButton* m_lagStatsBtn   = nullptr;
+
+    // Trades lag numbers with the other players during a match, for /lagstat
+    // and the Lag Stats window.
+    LagStatsExchange* m_lagStats = nullptr;
+    class LagStatsDialog* m_lagStatsDialog = nullptr;
 
     // Hero / browse-view action buttons
     QPushButton* m_quickMatchBtn = nullptr;   // primary CTA (blue)

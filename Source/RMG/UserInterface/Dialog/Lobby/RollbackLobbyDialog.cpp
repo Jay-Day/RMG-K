@@ -27,6 +27,7 @@
 #include "RollbackLobbyDialog.hpp"
 #include "LobbyConnectDialog.hpp"
 #include "CreateRoomDialog.hpp"
+#include "LagStatsDialog.hpp"
 #include "LobbyRegions.hpp"
 
 #include <RMG-Core/Callback.hpp>
@@ -668,6 +669,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     }
 
     m_client = new LobbyClient(this);
+    m_lagStats = new LagStatsExchange([this](quint64 userId) { return m_client->measuredPingMs(userId); }, this);
 
     buildUi();
     applyStylesheet();
@@ -1391,8 +1393,18 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_leaveBtn->setToolTip(tr("Leave the room and return to the lobby."));
     connect(m_leaveBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onLeaveRoomClicked);
 
+    m_lagStatsBtn = new QPushButton(tr("Lag Stats"), this);
+    m_lagStatsBtn->setObjectName("LagStatsBtn");
+    m_lagStatsBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
+    m_lagStatsBtn->setAutoDefault(false);
+    m_lagStatsBtn->setDefault(false);
+    m_lagStatsBtn->setCursor(Qt::PointingHandCursor);
+    m_lagStatsBtn->setToolTip(tr("See who is holding the match up: every player's frame rate, frame time, waits and ping. Or type /lagstat in the chat."));
+    connect(m_lagStatsBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::showLagStats);
+
     actionRow->addWidget(m_startBtn, 1);
     actionRow->addStretch(0);
+    actionRow->addWidget(m_lagStatsBtn);
     actionRow->addWidget(m_dropBtn);
     actionRow->addWidget(m_leaveBtn);
     lay->addLayout(actionRow);
@@ -1870,16 +1882,17 @@ void RollbackLobbyDialog::applyStylesheet()
 
         // Active Rooms / Ongoing Matches — styled as tables: square 1px outline,
         // a distinct header row, and light column / row separators.
-        "QTreeWidget#RoomsTree, QTreeWidget#MatchesTree {"
+        "QTreeWidget#RoomsTree, QTreeWidget#MatchesTree, QTreeWidget#LagTree {"
         "  border: 1px solid %1;"
         "  background-color: palette(base);"
         "}"
-        "QTreeWidget#RoomsTree::item, QTreeWidget#MatchesTree::item {"
+        "QTreeWidget#RoomsTree::item, QTreeWidget#MatchesTree::item, QTreeWidget#LagTree::item {"
         "  padding: 3px 4px;"
         "  border-bottom: 1px solid rgba(127, 127, 127, 0.12);"
         "}"
         "QTreeWidget#RoomsTree QHeaderView::section,"
-        " QTreeWidget#MatchesTree QHeaderView::section {"
+        " QTreeWidget#MatchesTree QHeaderView::section,"
+        " QTreeWidget#LagTree QHeaderView::section {"
         "  background-color: rgba(127, 127, 127, 0.12);"
         "  color: palette(text);"
         "  border: none;"
@@ -1889,7 +1902,8 @@ void RollbackLobbyDialog::applyStylesheet()
         "  font-weight: 600;"
         "}"
         "QTreeWidget#RoomsTree QHeaderView::section:last,"
-        " QTreeWidget#MatchesTree QHeaderView::section:last {"
+        " QTreeWidget#MatchesTree QHeaderView::section:last,"
+        " QTreeWidget#LagTree QHeaderView::section:last {"
         "  border-right: none;"
         "}"
 
@@ -1941,7 +1955,8 @@ void RollbackLobbyDialog::applyStylesheet()
 
         // Secondary action buttons — Create Room / Drop / Leave read as a set,
         // matching the P2P hosting screen's secondary buttons.
-        "QPushButton#CreateRoomBtn, QPushButton#DropBtn, QPushButton#LeaveBtn {"
+        "QPushButton#CreateRoomBtn, QPushButton#DropBtn, QPushButton#LeaveBtn,"
+        " QPushButton#LagStatsBtn, QPushButton#LagCopyBtn {"
         "  border: 1px solid %1;"
         "  border-radius: 7px;"
         "  padding: 4px 14px;"
@@ -1949,15 +1964,16 @@ void RollbackLobbyDialog::applyStylesheet()
         "  background-color: palette(button);"
         "}"
         "QPushButton#CreateRoomBtn:hover, QPushButton#DropBtn:hover,"
-        " QPushButton#LeaveBtn:hover {"
+        " QPushButton#LeaveBtn:hover, QPushButton#LagStatsBtn:hover, QPushButton#LagCopyBtn:hover {"
         "  border-color: palette(dark);"
         "  background-color: palette(light);"
         "}"
         "QPushButton#CreateRoomBtn:pressed, QPushButton#DropBtn:pressed,"
-        " QPushButton#LeaveBtn:pressed {"
+        " QPushButton#LeaveBtn:pressed, QPushButton#LagStatsBtn:pressed, QPushButton#LagCopyBtn:pressed {"
         "  background-color: palette(midlight);"
         "}"
-        "QPushButton#CreateRoomBtn:disabled, QPushButton#DropBtn:disabled {"
+        "QPushButton#CreateRoomBtn:disabled, QPushButton#DropBtn:disabled,"
+        " QPushButton#LagCopyBtn:disabled {"
         "  color: palette(mid);"
         "}"
 
@@ -4544,6 +4560,30 @@ void RollbackLobbyDialog::sendSpectatorChat(const QString& message)
     m_client->sendChat(CHANNEL_SPECTATE, text);
 }
 
+LagReport RollbackLobbyDialog::lagReport(bool wholeMatch) const
+{
+    const quint64 selfId = m_client ? m_client->selfUserId() : 0;
+    const QList<LagPlayer> players = m_lagStats->players(selfId, [this, selfId](quint64 userId) {
+        return userId == selfId && !m_username.isEmpty() ? m_username : lobbyUserName(userId);
+    });
+    return LagStats::build(players, wholeMatch);
+}
+
+void RollbackLobbyDialog::appendLagReport(const LagReport& report)
+{
+    if (report.severity != LagReport::Severity::None)
+        appendChatLine(CHANNEL_ROOM, LagStats::chatHtml(report, isDarkTheme()));
+}
+
+void RollbackLobbyDialog::showLagStats()
+{
+    if (m_lagStatsDialog == nullptr)
+        m_lagStatsDialog = new LagStatsDialog([this](bool wholeMatch) { return lagReport(wholeMatch); }, this);
+    m_lagStatsDialog->show();
+    m_lagStatsDialog->raise();
+    m_lagStatsDialog->activateWindow();
+}
+
 void RollbackLobbyDialog::appendChatLine(const QString& channel, const QString& text)
 {
     QTextEdit* target = m_chatViewLobby;
@@ -4584,6 +4624,17 @@ bool RollbackLobbyDialog::handleSlashCommand(const QString& channel, const QStri
             m_client->sendAdminAuth(pw);
             sysline(tr("Authenticating…"));
         }
+        return true;
+    }
+
+    bool lagWholeMatch = false;
+    if (LagStats::parseCommand(text, &lagWholeMatch))
+    {
+        const LagReport report = lagReport(lagWholeMatch);
+        if (report.severity == LagReport::Severity::None)
+            sysline(tr("Lag stats need a rollback match: try /lagstat while one is running, or right after it."));
+        else
+            appendChatLine(channel, LagStats::chatHtml(report, isDarkTheme()));
         return true;
     }
 
@@ -5119,6 +5170,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     m_currentMatchId = matchId;
     m_awaitingEmulationStart = true;
+    m_lagStats->reset();
     updateRecordingControls();
 
     // The engine follows these live values for the whole match. Seeding them

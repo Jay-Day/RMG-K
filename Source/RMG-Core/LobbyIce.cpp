@@ -185,7 +185,7 @@ void on_recv(juice_agent_t* agent, const char* data, size_t size, void* userPtr)
         channelByte >= static_cast<std::uint8_t>(LobbyIceChannel::GekkoEpochFirst) &&
         channelByte <= static_cast<std::uint8_t>(LobbyIceChannel::GekkoEpochLast);
     if (channel != LobbyIceChannel::Ping && channel != LobbyIceChannel::Prematch &&
-        channel != LobbyIceChannel::Gekko && !gekkoEpoch)
+        channel != LobbyIceChannel::Gekko && channel != LobbyIceChannel::LagStats && !gekkoEpoch)
     {
         return;
     }

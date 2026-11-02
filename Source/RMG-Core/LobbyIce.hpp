@@ -22,6 +22,9 @@ enum class LobbyIceChannel : std::uint8_t
     // a peer still finishing the old session never feeds its packets, sync
     // replies included, to the new one.
     Gekko = 3,
+    // Each player's lag report, sent to the others once a second during a
+    // match. Older clients drop the channel, so they just show no report.
+    LagStats = 4,
     GekkoEpochFirst = 0x10,
     GekkoEpochLast = 0x1f,
 };

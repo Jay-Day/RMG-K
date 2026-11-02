@@ -13,6 +13,7 @@
 #include "Emulation.hpp"
 #include "RollbackNetcode.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -27,6 +28,89 @@ struct LobbyRemotePeer
     std::uint64_t userId = 0;  // lobby identity used by the ICE adapter
     std::string ip;            // IPv4 dotted quad
     unsigned short port = 0;
+};
+
+// Lag diagnostics for a rollback match (see rmgk_gekko::lag_stats). Each frame's
+// time splits into waiting for remote input, the presentation pacer's sleep,
+// and the rest: this PC's own work (emulating, re-simulating rollbacks,
+// rendering).
+struct RollbackLagTotals
+{
+    int seconds = 0;              // wall-clock seconds covered
+    int frames = 0;               // frames the game advanced
+    int timedFrames = 0;          // frames whose own work was measured
+    int slowFrames = 0;           // own work took longer than one frame
+    int hitches = 0;              // frames shown 2.5 or more frames late
+    int localHitches = 0;         // ...that were mostly this PC's own work
+    long long freezeUs = 0;       // own work of those, past one frame
+    long long busyUs = 0;         // own work over timedFrames
+    long long busyMaxUs = 0;
+    long long waitUs = 0;         // standing still for remote input
+    long long longestWaitUs = 0;
+    int rollbacks = 0;
+    int rollbackFrames = 0;       // frames re-simulated
+    int maxRollbackFrames = 0;
+    // By controller port: standing still for that player's input, and time
+    // nothing arrived from them past a short grace (a gap in their packets).
+    long long waitOnSlotUs[4] = {};
+    long long silentOnSlotUs[4] = {};
+    long long longestSilenceOnSlotUs[4] = {};
+
+    void add(const RollbackLagTotals& other)
+    {
+        seconds += other.seconds;
+        frames += other.frames;
+        timedFrames += other.timedFrames;
+        slowFrames += other.slowFrames;
+        hitches += other.hitches;
+        localHitches += other.localHitches;
+        freezeUs += other.freezeUs;
+        busyUs += other.busyUs;
+        busyMaxUs = std::max(busyMaxUs, other.busyMaxUs);
+        waitUs += other.waitUs;
+        longestWaitUs = std::max(longestWaitUs, other.longestWaitUs);
+        rollbacks += other.rollbacks;
+        rollbackFrames += other.rollbackFrames;
+        maxRollbackFrames = std::max(maxRollbackFrames, other.maxRollbackFrames);
+        for (int i = 0; i < 4; i++)
+        {
+            waitOnSlotUs[i] += other.waitOnSlotUs[i];
+            silentOnSlotUs[i] += other.silentOnSlotUs[i];
+            longestSilenceOnSlotUs[i] = std::max(longestSilenceOnSlotUs[i], other.longestSilenceOnSlotUs[i]);
+        }
+    }
+};
+
+// How this client's session sees one remote player.
+struct RollbackLagPeer
+{
+    int slot = 0;                 // 1-indexed N64 controller slot
+    std::uint64_t userId = 0;     // lobby identity, 0 outside lobby matches
+    bool connected = false;
+    // Round trips of the game's own packets. Each end reads them once a
+    // frame, which adds up to a frame each way.
+    int pingMs = -1;
+    float avgPingMs = 0.0f;
+    float jitterMs = 0.0f;
+    float framesAhead = 0.0f;     // positive while this client runs ahead of them
+    int directPingMs = -1;        // the lobby's own measurement; the engine leaves it -1
+};
+
+struct RollbackLagStats
+{
+    static constexpr int RecentSeconds = 20;
+
+    bool valid = false;           // there's a match to report on
+    bool active = false;          // it's still running (false: the last one)
+    int localSlot = 0;
+    int delay = 0;
+    int prediction = 0;
+    double frameHz = 60.0;
+    int stalledMs = 0;            // standing still for input right now
+    int stalledOnSlot = 0;        // ...waiting on this port (0 if unknown)
+    RollbackLagTotals recent;     // the last RecentSeconds
+    RollbackLagTotals match;      // since the match started
+    std::vector<RollbackLagPeer> peers;
 };
 
 // Where a late join's cut stands on this client (see rmgk_gekko::arm_admit_cut).
@@ -85,6 +169,9 @@ class rmgk_gekko
     // ahead, so peers may run with different windows.
     static void set_live_prediction_window(int predictionWindow);
     static bool is_netplay_session_active();
+    // Thread-safe: lag diagnostics for the running match, or the last one once
+    // it has ended. The emulation thread refreshes them once a second.
+    static void lag_stats(RollbackLagStats& out);
 
     // --- Late join ---
     // A late join moves the match to a new session that includes the joiner.
