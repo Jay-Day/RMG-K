@@ -48,8 +48,10 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <ctime>
 #include <cstdio>
 #include <cstdlib>
@@ -478,6 +480,339 @@ void reset_rollback_present_pacer()
         std::chrono::steady_clock::time_point{};
     g_RollbackPresentTargetTime =
         std::chrono::steady_clock::time_point{};
+}
+
+// ---------------------------------------------------------------------------
+// Lag meter (rmgk_gekko::lag_stats). Always on: it costs a few clock reads per
+// frame. The time between two real frames splits into waiting for remote
+// input, the presentation pacer's sleep, and the rest, which is this PC's own
+// work. Totals collect per wall-clock second; when a second closes, the
+// emulation thread publishes the recent window, the match totals and its view
+// of every peer for the UI thread.
+// ---------------------------------------------------------------------------
+// A frame shown this many frame periods after the previous one is a stutter.
+constexpr double kLagHitchPeriods = 2.5;
+// A running peer sends every frame; waiting on one that has sent nothing for
+// longer than this means its packets are missing, not just behind.
+constexpr long long kLagSilenceGraceUs = 100000;
+// Not reading the network this long (a freeze here) leaves packets waiting
+// unread, so silence measured across it isn't the peer's.
+constexpr auto kLagDeafAfter = std::chrono::milliseconds(50);
+
+struct LagMeter
+{
+    std::array<RollbackLagTotals, RollbackLagStats::RecentSeconds> seconds{};
+    int filledSeconds = 0;
+    int nextSecond = 0;
+    RollbackLagTotals current; // the second being filled
+    RollbackLagTotals match;   // every closed second
+    std::chrono::steady_clock::time_point secondEnd;
+    std::chrono::steady_clock::time_point lastFrame;
+    bool haveLastFrame = false;
+    // The session has run a frame. The wait while it first syncs with its
+    // peers is the match starting, not lag.
+    bool sessionRunning = false;
+    long long pacerSleepUs = 0; // since the last real frame
+    bool pacerRan = false;
+    long long frameWaitUs = 0;  // waited for input since the last real frame
+    bool stalled = false;
+    long long stallUs = 0;
+    int stallSlot = 0;
+    std::chrono::steady_clock::time_point lastListen;
+    std::chrono::steady_clock::time_point listeningSince;
+    std::uint64_t slotUserIds[4] = {};
+};
+LagMeter g_LagMeter; // emulation thread
+std::mutex g_LagStatsMutex;
+RollbackLagStats g_LagStats; // guarded by g_LagStatsMutex
+
+void lag_meter_set_peers(const LobbyRemotePeer* remotes, int numRemotes)
+{
+    std::fill(std::begin(g_LagMeter.slotUserIds), std::end(g_LagMeter.slotUserIds), 0);
+    for (int i = 0; i < numRemotes; i++)
+    {
+        if (remotes[i].slot >= 1 && remotes[i].slot <= 4)
+        {
+            g_LagMeter.slotUserIds[remotes[i].slot - 1] = remotes[i].userId;
+        }
+    }
+}
+
+// A new match: forget the last one.
+void lag_meter_reset(const LobbyRemotePeer* remotes, int numRemotes)
+{
+    g_LagMeter = LagMeter{};
+    lag_meter_set_peers(remotes, numRemotes);
+    std::lock_guard<std::mutex> lock(g_LagStatsMutex);
+    g_LagStats = RollbackLagStats{};
+}
+
+#ifdef NETPLAY
+// The game held on purpose (a late join's cut): the gap before its next frame
+// is neither a stutter nor a wait.
+void lag_meter_gap()
+{
+    g_LagMeter.haveLastFrame = false;
+    g_LagMeter.stalled = false;
+    g_LagMeter.frameWaitUs = 0;
+    g_LagMeter.pacerSleepUs = 0;
+    g_LagMeter.pacerRan = false;
+}
+
+// The match goes on in a new session (a late join), which syncs first.
+void lag_meter_new_session(const std::vector<LobbyRemotePeer>& remotes)
+{
+    lag_meter_set_peers(remotes.data(), static_cast<int>(remotes.size()));
+    lag_meter_gap();
+    g_LagMeter.sessionRunning = false;
+}
+#endif // NETPLAY
+
+// Calls fn(slot, stats) for every connected remote player.
+template <typename Fn>
+void lag_for_each_remote(Fn fn)
+{
+    const int seats = std::min<int>(g_GekkoPlayers, static_cast<int>(g_GekkoPlayerHandles.size()));
+    for (int player = 1; player <= seats; player++)
+    {
+        const int handle = g_GekkoPlayerHandles[static_cast<size_t>(player - 1)];
+        if (handle < 0 || g_GekkoLocalHandles[static_cast<size_t>(player - 1)] >= 0)
+        {
+            continue;
+        }
+        GekkoPeerStats peer = {};
+        if (gekko_peer_stats(g_GekkoSession, handle, &peer) && peer.connected)
+        {
+            fn(player, peer);
+        }
+    }
+}
+
+// Called whenever the session has just read the network, to know how long
+// it has been reading without a break.
+void lag_meter_listen(std::chrono::steady_clock::time_point now)
+{
+    LagMeter& meter = g_LagMeter;
+    if (meter.lastListen == std::chrono::steady_clock::time_point{} || now - meter.lastListen > kLagDeafAfter)
+    {
+        meter.listeningSince = now;
+    }
+    meter.lastListen = now;
+}
+
+void lag_meter_publish()
+{
+    LagMeter& meter = g_LagMeter;
+    RollbackLagStats stats;
+    stats.valid = true;
+    stats.active = true;
+    stats.localSlot = g_GekkoLocalPlayer;
+    stats.localSlots.push_back(g_GekkoLocalPlayer);
+    for (int player = 1; player <= static_cast<int>(g_GekkoLocalHandles.size()); player++)
+    {
+        if (player != g_GekkoLocalPlayer && g_GekkoLocalHandles[static_cast<size_t>(player - 1)] >= 0)
+        {
+            stats.localSlots.push_back(player);
+        }
+    }
+    stats.delay = g_GekkoLocalDelay;
+    stats.prediction = g_GekkoPredictionWindow;
+    stats.frameHz = g_RollbackPresentBaseHz;
+    if (meter.stalled)
+    {
+        stats.stalledMs = static_cast<int>(meter.stallUs / 1000);
+        stats.stalledOnSlot = meter.stallSlot;
+    }
+    for (int i = 0; i < meter.filledSeconds; i++)
+    {
+        stats.recent.add(meter.seconds[static_cast<size_t>(i)]);
+    }
+    stats.match = meter.match;
+
+    const int seats = std::min<int>(g_GekkoPlayers, static_cast<int>(g_GekkoPlayerHandles.size()));
+    for (int player = 1; player <= seats; player++)
+    {
+        const int handle = g_GekkoPlayerHandles[static_cast<size_t>(player - 1)];
+        if (handle < 0 || g_GekkoLocalHandles[static_cast<size_t>(player - 1)] >= 0)
+        {
+            continue;
+        }
+        RollbackLagPeer peer;
+        peer.slot = player;
+        peer.userId = meter.slotUserIds[player - 1];
+        GekkoNetworkStats network = {};
+        gekko_network_stats(g_GekkoSession, handle, &network);
+        GekkoPeerStats session = {};
+        if (gekko_peer_stats(g_GekkoSession, handle, &session))
+        {
+            peer.connected = session.connected;
+            peer.framesAhead = session.frames_ahead;
+        }
+        peer.pingMs = network.last_ping;
+        peer.avgPingMs = network.avg_ping;
+        peer.jitterMs = network.jitter;
+        stats.peers.push_back(peer);
+    }
+
+    std::lock_guard<std::mutex> lock(g_LagStatsMutex);
+    g_LagStats = std::move(stats);
+}
+
+// Close the current second once it's over.
+void lag_meter_tick(std::chrono::steady_clock::time_point now)
+{
+    LagMeter& meter = g_LagMeter;
+    if (meter.secondEnd == std::chrono::steady_clock::time_point{})
+    {
+        meter.secondEnd = now + std::chrono::seconds(1);
+        return;
+    }
+    if (now < meter.secondEnd)
+    {
+        return;
+    }
+
+    meter.current.seconds = 1;
+    meter.match.add(meter.current);
+    meter.seconds[static_cast<size_t>(meter.nextSecond)] = meter.current;
+    meter.nextSecond = (meter.nextSecond + 1) % RollbackLagStats::RecentSeconds;
+    meter.filledSeconds = std::min(meter.filledSeconds + 1, RollbackLagStats::RecentSeconds);
+    meter.current = RollbackLagTotals{};
+    meter.secondEnd += std::chrono::seconds(1);
+    if (meter.secondEnd <= now)
+    {
+        // Nothing ran for a while (a late join's hold); start over from now.
+        meter.secondEnd = now + std::chrono::seconds(1);
+    }
+    lag_meter_publish();
+}
+
+// One spin of the wait for remote input, `us` long.
+void lag_meter_waited(long long us)
+{
+    LagMeter& meter = g_LagMeter;
+    if (!meter.sessionRunning)
+    {
+        return;
+    }
+    if (!meter.stalled)
+    {
+        meter.stalled = true;
+        meter.stallUs = 0;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    lag_meter_listen(now);
+
+    // The remotes whose input is furthest behind hold the frame up; several
+    // can be equally far behind, and share the wait.
+    int oldest = INT_MAX;
+    long long silenceUs[4] = {-1, -1, -1, -1};
+    bool blocking[4] = {};
+    lag_for_each_remote([&](int player, const GekkoPeerStats& peer) {
+        if (peer.last_received_frame < oldest)
+        {
+            oldest = peer.last_received_frame;
+            std::fill(std::begin(blocking), std::end(blocking), false);
+        }
+        if (peer.last_received_frame == oldest)
+        {
+            blocking[player - 1] = true;
+            silenceUs[player - 1] = static_cast<long long>(peer.silent_ms) * 1000;
+        }
+    });
+    // Seats on one PC send together, so a PC's seats each take its whole share;
+    // only different PCs split the wait.
+    int count = 0;
+    for (int i = 0; i < 4; i++)
+    {
+        if (!blocking[i])
+            continue;
+        bool samePcCounted = false;
+        for (int j = 0; j < i && meter.slotUserIds[i] != 0; j++)
+            samePcCounted = samePcCounted || (blocking[j] && meter.slotUserIds[j] == meter.slotUserIds[i]);
+        if (!samePcCounted)
+            count++;
+    }
+    // Packets that came in while this client wasn't reading (it froze) only
+    // count from when it read again.
+    const long long listeningUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(now - meter.listeningSince).count();
+    meter.stallSlot = 0;
+    for (int i = 0; i < 4 && count > 0; i++)
+    {
+        if (!blocking[i])
+            continue;
+        if (meter.stallSlot == 0)
+            meter.stallSlot = i + 1;
+        meter.current.waitOnSlotUs[i] += us / count;
+        // A peer that's merely behind still sends acks and resends; one whose
+        // packets are lost, or that froze, sends nothing at all.
+        const long long silentUs = std::min(silenceUs[i], listeningUs);
+        if (silentUs > kLagSilenceGraceUs)
+        {
+            meter.current.silentOnSlotUs[i] += us / count;
+            meter.current.longestSilenceOnSlotUs[i] = std::max(meter.current.longestSilenceOnSlotUs[i], silentUs);
+        }
+    }
+    meter.stallUs += us;
+    meter.frameWaitUs += us;
+    meter.current.waitUs += us;
+    lag_meter_tick(now);
+}
+
+// A real frame is ready to run. `loads` rollbacks re-simulated `resimFrames`
+// frames on the way to it.
+void lag_meter_frame(int loads, int resimFrames)
+{
+    LagMeter& meter = g_LagMeter;
+    const auto now = std::chrono::steady_clock::now();
+    meter.sessionRunning = true;
+    if (meter.haveLastFrame)
+    {
+        const double periodUs = 1000000.0 / g_RollbackPresentBaseHz;
+        const long long intervalUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(now - meter.lastFrame).count();
+        const long long busyUs = std::max(0LL, intervalUs - meter.frameWaitUs - meter.pacerSleepUs);
+        meter.current.frames++;
+        // Without the pacer the core's own limiter slept, and that sleep
+        // would read as work.
+        if (meter.pacerRan)
+        {
+            meter.current.timedFrames++;
+            meter.current.busyUs += busyUs;
+            meter.current.busyMaxUs = std::max(meter.current.busyMaxUs, busyUs);
+            if (static_cast<double>(busyUs) > periodUs)
+            {
+                meter.current.slowFrames++;
+            }
+        }
+        if (static_cast<double>(intervalUs) >= periodUs * kLagHitchPeriods)
+        {
+            meter.current.hitches++;
+            if (meter.frameWaitUs * 2 < intervalUs)
+            {
+                meter.current.localHitches++;
+                meter.current.freezeUs += std::max(0LL, busyUs - static_cast<long long>(periodUs));
+            }
+        }
+    }
+    if (meter.stalled)
+    {
+        meter.current.longestWaitUs = std::max(meter.current.longestWaitUs, meter.stallUs);
+        meter.stalled = false;
+    }
+    if (loads > 0)
+    {
+        meter.current.rollbacks += loads;
+        meter.current.rollbackFrames += resimFrames;
+        meter.current.maxRollbackFrames = std::max(meter.current.maxRollbackFrames, resimFrames / loads);
+    }
+    meter.lastFrame = now;
+    meter.haveLastFrame = true;
+    meter.frameWaitUs = 0;
+    meter.pacerSleepUs = 0;
+    meter.pacerRan = false;
+    lag_meter_tick(now);
 }
 
 void record_rollback_present_pacing(
@@ -2302,6 +2637,7 @@ bool create_ice_session(const std::vector<LobbyRemotePeer>& remotes, int localDe
     g_GekkoLatchedRunningAhead = false;
     g_GekkoPendingSaves.clear();
     reset_live_settings(localDelay, predictionWindow);
+    lag_meter_new_session(remotes);
 
     std::ostringstream stream;
     stream << "session start epoch=" << epoch
@@ -2539,6 +2875,7 @@ int run_admit_cut()
                 g_GekkoAdmitState.clear();
                 gekko_set_advance_limit(g_GekkoSession, -1);
                 g_RollbackPresentPacerInitialized = false;
+                lag_meter_gap();
                 log_late_join("cut cancelled while holding");
                 return 1;
             }
@@ -2707,6 +3044,7 @@ int rollback_execute_begin_frame(void* userData)
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
     gekko_network_poll(g_GekkoSession);
+    lag_meter_listen(std::chrono::steady_clock::now());
     // Live delay / prediction changes land on the frame boundary, before this
     // frame's local input is added.
     apply_live_settings();
@@ -3164,23 +3502,22 @@ int rollback_execute_begin_frame(void* userData)
                 summaryWaitUs,
                 summaryMaxWaitUs);
 
+            lag_meter_frame(summaryLoadCount, summaryRollbackAdvanceCount);
             write_gekko_log("begin_frame result=real_frame");
             return 1;
         }
 
         //std::this_thread::sleep_for(std::chrono::microseconds(kGekkoWaitSleepUs)); // Not accurate enough in windows
-        const auto traceWaitBegin = timingEnabled
-            ? std::chrono::steady_clock::now()
-            : std::chrono::steady_clock::time_point{};
+        const auto traceWaitBegin = std::chrono::steady_clock::now();
 
         rmgk::timing::PreciseWaitFor(
             std::chrono::microseconds{kGekkoWaitSleepUs},
             std::chrono::microseconds{kGekkoWaitSleepUs});
 
-        const long long traceWaitUs = timingEnabled
-            ? std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - traceWaitBegin).count()
-            : 0;
+        const long long traceWaitUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - traceWaitBegin).count();
+        lag_meter_waited(traceWaitUs);
 
         summaryWaitUs += traceWaitUs;
         summaryMaxWaitUs =
@@ -3295,6 +3632,7 @@ CORE_EXPORT bool rmgk_gekko::start_p2p_session(const char* gameName, int players
 
     const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
     const int clampedPredictionWindow = std::clamp(predictionWindow, 1, 10);
+    lag_meter_reset(nullptr, 0);
 
     GekkoConfig config = {};
     config.num_players = static_cast<unsigned char>(players);
@@ -3553,6 +3891,7 @@ CORE_EXPORT bool rmgk_gekko::start_lobby_session(const char* gameName, int playe
 
     const int clampedLocalDelay = std::clamp(localDelay, 0, 10);
     const int clampedPredictionWindow = std::clamp(predictionWindow, 1, 10);
+    lag_meter_reset(remotes, numRemotes);
 
 #ifdef NETPLAY
     if (joinEpoch >= 0)
@@ -3942,6 +4281,13 @@ CORE_EXPORT void rmgk_gekko::close_session()
 #ifdef RMGK_HAVE_P2P_TRANSPORT
     g_GekkoP2PRemoteAddress.clear();
 #endif
+    {
+        // The last match's numbers stay readable until the next one starts.
+        std::lock_guard<std::mutex> lock(g_LagStatsMutex);
+        g_LagStats.active = false;
+        g_LagStats.stalledMs = 0;
+        g_LagStats.stalledOnSlot = 0;
+    }
 #endif
 }
 
@@ -4002,6 +4348,16 @@ CORE_EXPORT bool rmgk_gekko::is_netplay_session_active()
         g_GekkoJoinHoldPhase != JoinHoldPhase::None;
 #else
     return false;
+#endif
+}
+
+CORE_EXPORT void rmgk_gekko::lag_stats(RollbackLagStats& out)
+{
+#ifdef RMGK_HAVE_GEKKONET
+    std::lock_guard<std::mutex> lock(g_LagStatsMutex);
+    out = g_LagStats;
+#else
+    out = RollbackLagStats{};
 #endif
 }
 
@@ -4131,6 +4487,7 @@ CORE_EXPORT void rmgk_gekko::pace_before_present()
     {
         return;
     }
+    g_LagMeter.pacerRan = true;
 
     /*
      * The core publishes the exact nominal VI rate before the first bypassed
@@ -4225,6 +4582,7 @@ CORE_EXPORT void rmgk_gekko::pace_before_present()
         const auto waitBegin = g_RmgkPacingTraceEnabled
             ? std::chrono::steady_clock::now()
             : std::chrono::steady_clock::time_point{};
+        const auto sleepBegin = now;
 
         rmgk::timing::PreciseWaitFor(
             std::chrono::microseconds{
@@ -4235,6 +4593,9 @@ CORE_EXPORT void rmgk_gekko::pace_before_present()
                     100)});
 
         now = std::chrono::steady_clock::now();
+        g_LagMeter.pacerSleepUs +=
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                now - sleepBegin).count();
 
         if (g_RmgkPacingTraceEnabled)
         {

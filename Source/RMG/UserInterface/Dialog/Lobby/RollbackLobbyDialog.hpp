@@ -11,6 +11,7 @@
 
 #include "LobbyClient.hpp"
 #include "LobbyTheme.hpp"
+#include "LagStats.hpp"
 
 #include <QDialog>
 #include <QHash>
@@ -112,6 +113,14 @@ public:
     // MainWindow calls this once a spectate session is fully torn down, so a
     // switch to another match can start its new session.
     void notifySpectateSessionClosed();
+
+    // Lag stats for the running rollback match (or the last one), built from
+    // our own numbers and the other players' reports. /lagstat in the in-game
+    // chat shows this on the overlay and adds it to the room chat.
+    LagReport lagReport(bool wholeMatch) const;
+    // Adds the report to a chat for this player only (the room chat by default).
+    void appendLagReport(const LagReport& report, const QString& channel = QString());
+    void showLagStats();
 
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
@@ -695,6 +704,13 @@ private:
     IconBadge*   m_whyBadge      = nullptr;
     ElidedLabel* m_whyTitle      = nullptr;
     ElidedLabel* m_whyDetail     = nullptr;
+    LobbyButton* m_lagStatsBtn   = nullptr;
+
+    // Trades lag numbers with the other players during a match, for /lagstat
+    // and the Lag Stats window.
+    LagStatsExchange* m_lagStats = nullptr;
+    class LagStatsDialog* m_lagStatsDialog = nullptr;
+    quint64 m_lagStatsRoomId = 0; // the room the last match with lag stats was played in
 
     // Browse-view action buttons
     LobbyButton* m_quickMatchBtn = nullptr;   // primary CTA

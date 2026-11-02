@@ -291,6 +291,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void closeNetplayChatPrompt(void);
     void on_InputMethodFilter_Query(QInputMethodQueryEvent *event);
     void on_InputMethodFilter_Event(QInputMethodEvent *event);
+    // /lagstat typed in the in-game chat: the lag report on the overlay.
+    void showLagReportOverlay(bool wholeMatch);
 #endif // NETPLAY
 
     void on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state);

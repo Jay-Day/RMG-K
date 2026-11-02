@@ -5020,4 +5020,472 @@ A local replay is saved only if Save replay is on.</source>
             <translation>無視を解除</translation>
         </message>
     </context>
+    <context>
+        <name>LagStats</name>
+        <message>
+            <source>%1 and %2</source>
+            <translation>%1と%2</translation>
+        </message>
+        <message>
+            <source>%1 ms</source>
+            <translation>%1 ms</translation>
+        </message>
+        <message>
+            <source>%1 s</source>
+            <translation>%1秒</translation>
+        </message>
+        <message>
+            <source>P%1</source>
+            <translation>P%1</translation>
+        </message>
+        <message>
+            <source>this match</source>
+            <translation>この対戦</translation>
+        </message>
+        <message>
+            <source>the last %1 s</source>
+            <translation>直近%1秒</translation>
+        </message>
+        <message>
+            <source>A higher frame delay or prediction window hides short delays; a wired connection helps with dropouts and jitter.</source>
+            <translation>フレーム遅延や予測を増やすと短い遅れは目立たなくなります。途切れやジッターには有線接続が効果的です。</translation>
+        </message>
+        <message>
+            <source>%1 can't keep the game at full speed.</source>
+            <translation>%1はゲームを通常速度で動かせていません。</translation>
+        </message>
+        <message>
+            <source>%1's PC needs %2 ms to run a frame on average, against the %3 ms a frame allows; %4% of frames ran long.</source>
+            <translation>%1のPCは1フレームの処理に平均%2 msかかっています（許容は%3 ms）。%4%のフレームが時間内に終わっていません。</translation>
+        </message>
+        <message>
+            <source>The others spent up to %1 of %2 waiting for %3's inputs.</source>
+            <translation>他のプレイヤーは%2のうち最大%1、%3の入力を待っていました。</translation>
+        </message>
+        <message>
+            <source>Lower graphics settings (resolution, anti-aliasing) or close background programs on that PC.</source>
+            <translation>そのPCでグラフィック設定（解像度、アンチエイリアス）を下げるか、バックグラウンドのプログラムを閉じてください。</translation>
+        </message>
+        <message>
+            <source>%1's PC keeps freezing.</source>
+            <translation>%1のPCが何度もフリーズしています。</translation>
+        </message>
+        <message>
+            <source>Freezes like these usually come from shaders compiling, programs running in the background, or a PC running too hot.</source>
+            <translation>このようなフリーズは、シェーダーのコンパイル、バックグラウンドのプログラム、PCの過熱が原因であることが多いです。</translation>
+        </message>
+        <message>
+            <source>The connection between %1 and %2 keeps dropping out.</source>
+            <translation>%1と%2の間の接続が何度も途切れています。</translation>
+        </message>
+        <message>
+            <source>%1's connection keeps dropping out.</source>
+            <translation>%1の接続が何度も途切れています。</translation>
+        </message>
+        <message>
+            <source>The others waited on %1 for up to %2 in %3 while nothing at all arrived from them, %4 at the worst.</source>
+            <translation>%3のうち最大%2、他のプレイヤーは%1から何も届かないまま待っていました（最長%4）。</translation>
+        </message>
+        <message>
+            <source>%1's PC keeps up (%2 ms per frame), so their packets are going missing on the way.</source>
+            <translation>%1のPCは処理が間に合っている（1フレーム%2 ms）ため、パケットが途中で失われています。</translation>
+        </message>
+        <message>
+            <source>A wired connection, or pausing downloads and streams on that network, usually fixes dropouts.</source>
+            <translation>有線接続にするか、そのネットワークでのダウンロードや配信を止めると、途切れはたいてい解消します。</translation>
+        </message>
+        <message>
+            <source>The connection between %1 and %2 is too slow for these settings.</source>
+            <translation>%1と%2の間の接続は、この設定には遅すぎます。</translation>
+        </message>
+        <message>
+            <source>They waited on each other's inputs: %1 waited %2 and %3 waited %4 in %5.</source>
+            <translation>%5の間、互いの入力を待っていました: %1は%2、%3は%4待ちました。</translation>
+        </message>
+        <message>
+            <source>Ping between them is %1 ms.</source>
+            <translation>2人の間のPingは%1 msです。</translation>
+        </message>
+        <message>
+            <source>Everyone is waiting on %1.</source>
+            <translation>全員が%1を待っています。</translation>
+        </message>
+        <message>
+            <source>%1 is waiting on %2.</source>
+            <translation>%1が%2を待っています。</translation>
+        </message>
+        <message>
+            <source>%1 is holding the game up.</source>
+            <translation>%1がゲームを止めています。</translation>
+        </message>
+        <message>
+            <source>%1's inputs arrived late and held the game up for %2 in %3.</source>
+            <translation>%1の入力が遅れて届き、%3のうち%2ゲームが止まりました。</translation>
+        </message>
+        <message>
+            <source>There are no lag stats from %1, so it can't tell whether their PC or their connection is the cause.</source>
+            <translation>%1からラグ統計が届いていないため、原因がPCか接続かは判断できません。</translation>
+        </message>
+        <message>
+            <source>%1's PC keeps up (%2 ms per frame) and their packets arrive, only late: their ping is up to %3 ms.</source>
+            <translation>%1のPCは処理が間に合っており（1フレーム%2 ms）、パケットも届いていますが遅れています。Pingは最大%3 msです。</translation>
+        </message>
+        <message>
+            <source>The longest freeze took %1. Short freezes like these usually come from shaders compiling or programs running in the background on that PC.</source>
+            <translation>最長のフリーズは%1でした。このような短いフリーズは、そのPCでのシェーダーのコンパイルやバックグラウンドのプログラムが原因であることが多いです。</translation>
+        </message>
+        <message>
+            <source>No one is lagging.</source>
+            <translation>誰もラグを起こしていません。</translation>
+        </message>
+        <message>
+            <source>Everyone ran at full speed and nobody waited on anyone's inputs.</source>
+            <translation>全員が通常速度で動作し、誰も入力待ちになっていません。</translation>
+        </message>
+        <message>
+            <source>The round trip between %1 varies by %2 ms, which points to Wi-Fi or a busy line.</source>
+            <translation>%1の間の往復時間のぶれ（ジッター）が%2 msあります。Wi-Fiや混雑した回線が原因と考えられます。</translation>
+        </message>
+        <message>
+            <source>Rollbacks went up to %1 frames. That comes from ping, not lag: a higher frame delay means fewer and shorter rollbacks.</source>
+            <translation>ロールバックは最大%1フレームでした。これはラグではなくPingによるものです。フレーム遅延を増やすと、ロールバックは少なく短くなります。</translation>
+        </message>
+        <message>
+            <source>The game is frozen right now: it has waited %1 for %2.</source>
+            <translation>現在ゲームが止まっています: %2を%1待っています。</translation>
+        </message>
+        <message>
+            <source>the other players</source>
+            <translation>他のプレイヤー</translation>
+        </message>
+        <message>
+            <source>No lag stats from %1: they may be on an older RMG-K, or their connection to you is down.</source>
+            <translation>%1からラグ統計が届いていません。古いRMG-Kを使っているか、あなたとの接続が切れている可能性があります。</translation>
+        </message>
+        <message>
+            <source>%1's numbers are %2 old.</source>
+            <translation>%1の数値は%2前のものです。</translation>
+        </message>
+        <message>
+            <source>The match has ended; these are its final numbers.</source>
+            <translation>対戦は終了しました。これは最終的な数値です。</translation>
+        </message>
+        <message>
+            <source>The match just started, so there's little to go on yet.</source>
+            <translation>対戦が始まったばかりのため、まだ判断材料がほとんどありません。</translation>
+        </message>
+        <message>
+            <source>no stats</source>
+            <translation>統計なし</translation>
+        </message>
+        <message>
+            <source>%1 fps</source>
+            <translation>%1 fps</translation>
+        </message>
+        <message>
+            <source>%1 ms/frame (%2% long)</source>
+            <translation>%1 ms/フレーム（超過%2%）</translation>
+        </message>
+        <message>
+            <source>others waited %1</source>
+            <translation>待たせた時間 %1</translation>
+        </message>
+        <message>
+            <source>dropouts %1</source>
+            <translation>途切れ %1</translation>
+        </message>
+        <message>
+            <source>waited on others %1</source>
+            <translation>待った時間 %1</translation>
+        </message>
+        <message>
+            <source>ping %1 ms</source>
+            <translation>Ping %1 ms</translation>
+        </message>
+        <message>
+            <source>Player</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>FPS</source>
+            <translation>FPS</translation>
+        </message>
+        <message>
+            <source>ms/frame</source>
+            <translation>ms/フレーム</translation>
+        </message>
+        <message>
+            <source>Others waited</source>
+            <translation>待たせた時間</translation>
+        </message>
+        <message>
+            <source>Dropouts</source>
+            <translation>途切れ</translation>
+        </message>
+        <message>
+            <source>Waited on others</source>
+            <translation>待った時間</translation>
+        </message>
+        <message>
+            <source>Ping</source>
+            <translation>Ping</translation>
+        </message>
+        <message>
+            <source>RMG-K lag check, %1</source>
+            <translation>RMG-K ラグチェック（%1）</translation>
+        </message>
+        <message>
+            <source>long</source>
+            <translation>超過</translation>
+        </message>
+        <message>
+            <source>stutters</source>
+            <translation>カクつき</translation>
+        </message>
+        <message>
+            <source>others waited</source>
+            <translation>待たせた時間</translation>
+        </message>
+        <message>
+            <source>dropouts</source>
+            <translation>途切れ</translation>
+        </message>
+        <message>
+            <source>waited on others</source>
+            <translation>待った時間</translation>
+        </message>
+        <message>
+            <source>ping</source>
+            <translation>Ping</translation>
+        </message>
+        <message>
+            <source>rollbacks</source>
+            <translation>ロールバック</translation>
+        </message>
+        <message>
+            <source>%1/s, max %2</source>
+            <translation>%1回/秒、最大%2</translation>
+        </message>
+        <message>
+            <source>%1: ping %2 ms, jitter %3 ms</source>
+            <translation>%1: Ping %2 ms、ジッター %3 ms</translation>
+        </message>
+        <message>
+            <source>%3's game froze once, for %2, and everyone else waited for %3 meanwhile.</source>
+            <translation>%3のゲームが1回（%2）フリーズし、その間ほかの全員が%3を待ちました。</translation>
+        </message>
+        <message>
+            <source>%3's game froze %1 times, for up to %2, and everyone else waited for %3 meanwhile.</source>
+            <translation>%3のゲームが%1回（最長%2）フリーズし、その間ほかの全員が%3を待ちました。</translation>
+        </message>
+        <message>
+            <source>%2's game stuttered once.</source>
+            <translation>%2のゲームが1回カクつきました。</translation>
+        </message>
+        <message>
+            <source>%2's game stuttered %1 times.</source>
+            <translation>%2のゲームが%1回カクつきました。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::LagStatsDialog</name>
+        <message>
+            <source>Lag Stats</source>
+            <translation>ラグ統計</translation>
+        </message>
+        <message>
+            <source>Each player's RMG-K measures its own frames and shares them once a second.</source>
+            <translation>各プレイヤーのRMG-Kが自分のフレームを計測し、1秒ごとに共有します。</translation>
+        </message>
+        <message>
+            <source>Last %1 s</source>
+            <translation>直近%1秒</translation>
+        </message>
+        <message>
+            <source>Whole match</source>
+            <translation>対戦全体</translation>
+        </message>
+        <message>
+            <source>The stretch of the match the numbers cover.</source>
+            <translation>数値の対象となる対戦の範囲です。</translation>
+        </message>
+        <message>
+            <source>Players</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>Connections</source>
+            <translation>接続</translation>
+        </message>
+        <message>
+            <source>Copy Report</source>
+            <translation>レポートをコピー</translation>
+        </message>
+        <message>
+            <source>Copy the report as text, to paste into a chat or a bug report.</source>
+            <translation>レポートをテキストとしてコピーし、チャットや不具合報告に貼り付けられます。</translation>
+        </message>
+        <message>
+            <source>Copied</source>
+            <translation>コピーしました</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>閉じる</translation>
+        </message>
+        <message>
+            <source>No rollback match to check yet.</source>
+            <translation>まだチェックするロールバック対戦がありません。</translation>
+        </message>
+        <message>
+            <source>Lag stats appear once a rollback match is running. You can also type /lagstat in the room chat or the in-game chat.</source>
+            <translation>ロールバック対戦が始まるとラグ統計が表示されます。ルームチャットやゲーム内チャットで /lagstat と入力しても確認できます。</translation>
+        </message>
+        <message>
+            <source>Player</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>FPS</source>
+            <translation>FPS</translation>
+        </message>
+        <message>
+            <source>Frame time</source>
+            <translation>フレーム時間</translation>
+        </message>
+        <message>
+            <source>Long frames</source>
+            <translation>超過フレーム</translation>
+        </message>
+        <message>
+            <source>Stutters</source>
+            <translation>カクつき</translation>
+        </message>
+        <message>
+            <source>Others waited</source>
+            <translation>待たせた時間</translation>
+        </message>
+        <message>
+            <source>Dropouts</source>
+            <translation>途切れ</translation>
+        </message>
+        <message>
+            <source>Waited on others</source>
+            <translation>待った時間</translation>
+        </message>
+        <message>
+            <source>Ping</source>
+            <translation>Ping</translation>
+        </message>
+        <message>
+            <source>Rollbacks</source>
+            <translation>ロールバック</translation>
+        </message>
+        <message>
+            <source>Frames the game ran per second. Full speed is about 60.</source>
+            <translation>1秒間にゲームが進んだフレーム数です。通常速度は約60です。</translation>
+        </message>
+        <message>
+            <source>How long this player's PC took to run a frame (emulation, rollbacks and drawing), not counting waits. It has to stay under the frame time, about 16.7 ms.</source>
+            <translation>このプレイヤーのPCが1フレームの処理（エミュレーション、ロールバック、描画）にかかった時間です。待ち時間は含みません。1フレームの時間（約16.7 ms）以内に収まる必要があります。</translation>
+        </message>
+        <message>
+            <source>Share of frames this player's PC took longer to run than a frame allows.</source>
+            <translation>このプレイヤーのPCで、処理が1フレームの時間を超えたフレームの割合です。</translation>
+        </message>
+        <message>
+            <source>Times the picture froze for 2.5 frames or more. In brackets: how many came from this player's own PC rather than waiting on someone.</source>
+            <translation>画面が2.5フレーム以上止まった回数です。かっこ内は、他のプレイヤー待ちではなくこのプレイヤー自身のPCが原因だった回数です。</translation>
+        </message>
+        <message>
+            <source>The longest any other player's game stood still waiting for this player's inputs. A player held up by someone else falls behind and shows up here too, so read it with the verdict above.</source>
+            <translation>他のプレイヤーのゲームが、このプレイヤーの入力を待って止まっていた時間の最大値です。他の誰かに足止めされて遅れたプレイヤーもここに表れるため、上の判定と合わせて読んでください。</translation>
+        </message>
+        <message>
+            <source>Of that wait, the time nothing at all arrived from this player: lost packets, a connection dropping out, or a frozen PC. A player who is only behind keeps sending.</source>
+            <translation>その待ち時間のうち、このプレイヤーから何も届かなかった時間です。パケットの消失、接続の途切れ、PCのフリーズが原因です。遅れているだけのプレイヤーは送信を続けます。</translation>
+        </message>
+        <message>
+            <source>How long this player's game stood still waiting for the others' inputs.</source>
+            <translation>このプレイヤーのゲームが、他のプレイヤーの入力を待って止まっていた時間です。</translation>
+        </message>
+        <message>
+            <source>Worst ping between this player and anyone else.</source>
+            <translation>このプレイヤーと他のプレイヤーの間で最も悪いPingです。</translation>
+        </message>
+        <message>
+            <source>Rollbacks per second, and the most frames one rollback replayed.</source>
+            <translation>1秒あたりのロールバック回数と、1回のロールバックでやり直した最大フレーム数です。</translation>
+        </message>
+        <message>
+            <source>you</source>
+            <translation>あなた</translation>
+        </message>
+        <message>
+            <source>no stats</source>
+            <translation>統計なし</translation>
+        </message>
+        <message>
+            <source>This player hasn't sent lag stats: they may be on an older RMG-K, or their connection to you is down.</source>
+            <translation>このプレイヤーからラグ統計が届いていません。古いRMG-Kを使っているか、あなたとの接続が切れている可能性があります。</translation>
+        </message>
+        <message>
+            <source>%1 ms</source>
+            <translation>%1 ms</translation>
+        </message>
+        <message>
+            <source>Longest: %1 ms</source>
+            <translation>最長: %1 ms</translation>
+        </message>
+        <message>
+            <source>%1 (%2 own)</source>
+            <translation>%1（自分のPC %2）</translation>
+        </message>
+        <message>
+            <source>%1/s · max %2 f</source>
+            <translation>%1回/秒 · 最大%2フレーム</translation>
+        </message>
+        <message>
+            <source>Longest: %1</source>
+            <translation>最長: %1</translation>
+        </message>
+        <message>
+            <source>Between</source>
+            <translation>区間</translation>
+        </message>
+        <message>
+            <source>Jitter</source>
+            <translation>ジッター</translation>
+        </message>
+        <message>
+            <source>How much the game packets' round trip varies. Each game reads packets once a frame, so up to about 15 ms is normal on any connection; much more points to Wi-Fi or a busy line.</source>
+            <translation>ゲームのパケットの往復時間のぶれです。各ゲームは1フレームに1回パケットを読み取るため、どの接続でも約15 msまでは普通です。それより大きい場合は、Wi-Fiや混雑した回線が考えられます。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>Lag Stats</source>
+            <translation>ラグ統計</translation>
+        </message>
+        <message>
+            <source>See who is holding the match up: every player's frame rate, frame time, waits and ping. Or type /lagstat in the chat.</source>
+            <translation>対戦を止めているのが誰かを確認します。全プレイヤーのフレームレート、フレーム時間、待ち時間、Pingを表示します。チャットで /lagstat と入力しても確認できます。</translation>
+        </message>
+        <message>
+            <source>Lag stats need a rollback match: try /lagstat while one is running, or right after it.</source>
+            <translation>ラグ統計にはロールバック対戦が必要です。対戦中か対戦の直後に /lagstat を試してください。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::MainWindow</name>
+        <message>
+            <source>Lag stats need a rollback match.</source>
+            <translation>ラグ統計にはロールバック対戦が必要です。</translation>
+        </message>
+        <message>
+            <source>Lag check, %1: %2</source>
+            <translation>ラグチェック（%1）: %2</translation>
+        </message>
+    </context>
 </TS>

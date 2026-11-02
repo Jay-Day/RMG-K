@@ -5447,7 +5447,13 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
             if (!message.isEmpty())
             {
                 const QString normalizedMessage = NormalizeOsdKailleraChatMessage(message);
-                if (this->ui_SpectateActive)
+                bool lagWholeMatch = false;
+                if (Dialog::LagStats::parseCommand(normalizedMessage, &lagWholeMatch))
+                {
+                    // Answered here; it never goes out as chat.
+                    this->showLagReportOverlay(lagWholeMatch);
+                }
+                else if (this->ui_SpectateActive)
                 {
                     // Live replay viewers chat only among themselves; the
                     // match's players never see it. The server echoes our own
@@ -5686,6 +5692,37 @@ void MainWindow::on_InputMethodFilter_Event(QInputMethodEvent *event)
     this->ui_NetplayChatPreedit = event->preeditString();
     this->updateNetplayChatPrompt();
     event->accept();
+}
+
+void MainWindow::showLagReportOverlay(bool wholeMatch)
+{
+    Dialog::LagReport report;
+    if (this->ui_LobbyNetplaySession && this->rollbackLobbyDialog != nullptr)
+    {
+        // Also kept in the room chat, to read after the match.
+        report = this->rollbackLobbyDialog->lagReport(wholeMatch);
+        this->rollbackLobbyDialog->appendLagReport(report);
+    }
+    else
+    {
+        // Outside the lobby nobody sends us their numbers; this side's view
+        // of the match still tells who it waited on.
+        const std::array<std::string, 4> labels = GetLiveKailleraPortLabelNames();
+        report = Dialog::LagStats::build(
+            Dialog::LagStats::localPlayers(0, [&labels](int slot, quint64) {
+                return slot >= 1 && slot <= 4 ? QString::fromStdString(labels[static_cast<size_t>(slot - 1)]) : QString();
+            }),
+            wholeMatch);
+    }
+
+    if (report.severity == Dialog::LagReport::Severity::None)
+    {
+        OnScreenDisplaySetMessage(tr("Lag stats need a rollback match.").toStdString());
+        return;
+    }
+    const QString headline = tr("Lag check, %1: %2").arg(report.window, report.headline);
+    OnScreenDisplaySetLagReport(headline.toStdString(), report.details.value(0).toStdString(),
+                                Dialog::LagStats::overlayTable(report), 12);
 }
 #endif // NETPLAY
 

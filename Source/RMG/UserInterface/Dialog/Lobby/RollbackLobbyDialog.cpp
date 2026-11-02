@@ -34,6 +34,7 @@
 #include "LobbyTheme.hpp"
 #include "LobbyWidgets.hpp"
 #include "CreateRoomDialog.hpp"
+#include "LagStatsDialog.hpp"
 #include "LobbyRegions.hpp"
 #include "LobbySocialDialogs.hpp"
 #include "LobbySocialWidgets.hpp"
@@ -538,6 +539,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     }
 
     m_client = new LobbyClient(this);
+    m_lagStats = new LagStatsExchange([this](quint64 userId) { return m_client->measuredPingMs(userId); }, this);
 
     buildUi();
     applyStylesheet();
@@ -1286,6 +1288,14 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_whyDetail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     whyText->addWidget(m_whyDetail);
     actionRow->addLayout(whyText, 1);
+
+    m_lagStatsBtn = new LobbyButton(tr("Lag Stats"), LobbyButton::Kind::Secondary, actions);
+    m_lagStatsBtn->setObjectName("LagStatsBtn");
+    m_lagStatsBtn->setButtonSize(LobbyButton::Size::Large);
+    m_lagStatsBtn->setIconName(QStringLiteral("pulse-line"));
+    m_lagStatsBtn->setToolTip(tr("See who is holding the match up: every player's frame rate, frame time, waits and ping. Or type /lagstat in the chat."));
+    connect(m_lagStatsBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::showLagStats);
+    actionRow->addWidget(m_lagStatsBtn);
 
     m_dropBtn = new LobbyButton(tr("Drop Game"), LobbyButton::Kind::Danger, actions);
     m_dropBtn->setObjectName("DropBtn");
@@ -3695,6 +3705,8 @@ void RollbackLobbyDialog::refreshStartButton()
     // Once this client is in the match, Drop is the call to action and leaving
     // steps back; before that, leaving is the only thing here that costs you.
     m_dropBtn->setVisible(inGame && playing);
+    // Lag stats stay up after the match, for a look back at what happened.
+    m_lagStatsBtn->setVisible((inGame && playing) || (m_currentRoomId != 0 && m_lagStatsRoomId == m_currentRoomId));
     m_leaveBtn->setKind(inGame && playing ? LobbyButton::Kind::Ghost : LobbyButton::Kind::Danger);
 
     const Tokens& t = LobbyTheme::tokens();
@@ -4576,6 +4588,42 @@ void RollbackLobbyDialog::sendSpectatorChat(const QString& message)
     m_client->sendChat(CHANNEL_SPECTATE, text);
 }
 
+LagReport RollbackLobbyDialog::lagReport(bool wholeMatch) const
+{
+    const quint64 selfId = m_client ? m_client->selfUserId() : 0;
+    // Seats are named by who sits in them: a PC with several players has one
+    // connection, so its user id names only the first of them.
+    const QList<LagPlayer> players = m_lagStats->players(selfId, [this](int slot, quint64 userId) {
+        if (slot >= 1 && slot <= 4 && !m_seats[slot - 1].username.isEmpty())
+            return m_seats[slot - 1].username;
+        return lobbyUserName(userId);
+    });
+    return LagStats::build(players, wholeMatch);
+}
+
+void RollbackLobbyDialog::appendLagReport(const LagReport& report, const QString& channel)
+{
+    if (report.severity == LagReport::Severity::None)
+        return;
+    // Shown to this player only, as a system line with the verdict's colour.
+    const Tokens& t = LobbyTheme::tokens();
+    const auto ts = QDateTime::currentDateTime().toString("hh:mm");
+    appendChatLine(channel.isEmpty() ? QString(CHANNEL_ROOM) : channel,
+                   QString("<span style='color:%1; font-size:9px;'>%2</span>&nbsp; %3&nbsp;%4")
+                       .arg(t.muted.name(), ts,
+                            chatIconHtml(QStringLiteral("pulse-line"), LagStats::severityColor(report.severity), 13),
+                            LagStats::chatHtml(report)));
+}
+
+void RollbackLobbyDialog::showLagStats()
+{
+    if (m_lagStatsDialog == nullptr)
+        m_lagStatsDialog = new LagStatsDialog([this](bool wholeMatch) { return lagReport(wholeMatch); }, this);
+    m_lagStatsDialog->show();
+    m_lagStatsDialog->raise();
+    m_lagStatsDialog->activateWindow();
+}
+
 QString RollbackLobbyDialog::chatMessageHtml(const QString& time, quint64 userId, const QString& who,
                                              const QString& bodyHtml, bool fromAdmin, bool mine, bool fromPlayer) const
 {
@@ -4700,6 +4748,17 @@ bool RollbackLobbyDialog::handleSlashCommand(const QString& channel, const QStri
             m_client->sendAdminAuth(pw);
             sysline(tr("Authenticating…"));
         }
+        return true;
+    }
+
+    bool lagWholeMatch = false;
+    if (LagStats::parseCommand(text, &lagWholeMatch))
+    {
+        const LagReport report = lagReport(lagWholeMatch);
+        if (report.severity == LagReport::Severity::None)
+            sysline(tr("Lag stats need a rollback match: try /lagstat while one is running, or right after it."));
+        else
+            appendLagReport(report, channel);
         return true;
     }
 
@@ -5590,6 +5649,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     m_currentMatchId = matchId;
     m_awaitingEmulationStart = true;
+    m_lagStats->reset();
+    m_lagStatsRoomId = m_currentRoomId;
     updateRecordingControls();
 
     // The engine follows these live values for the whole match. Seeding them

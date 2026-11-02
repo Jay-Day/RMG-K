@@ -16,6 +16,7 @@
   <file alias="icons/edit-line.svg">Resource/lobby/icons/edit-line.svg</file>
   <file alias="icons/error-warning-line.svg">Resource/lobby/icons/error-warning-line.svg</file>
   <file alias="icons/eye-line.svg">Resource/lobby/icons/eye-line.svg</file>
+  <file alias="icons/file-copy-line.svg">Resource/lobby/icons/file-copy-line.svg</file>
   <file alias="icons/filter-3-line.svg">Resource/lobby/icons/filter-3-line.svg</file>
   <file alias="icons/flashlight-fill.svg">Resource/lobby/icons/flashlight-fill.svg</file>
   <file alias="icons/forbid-line.svg">Resource/lobby/icons/forbid-line.svg</file>
@@ -34,6 +35,7 @@
   <file alias="icons/more-2-fill.svg">Resource/lobby/icons/more-2-fill.svg</file>
   <file alias="icons/notification-off-line.svg">Resource/lobby/icons/notification-off-line.svg</file>
   <file alias="icons/play-fill.svg">Resource/lobby/icons/play-fill.svg</file>
+  <file alias="icons/pulse-line.svg">Resource/lobby/icons/pulse-line.svg</file>
   <file alias="icons/router-line.svg">Resource/lobby/icons/router-line.svg</file>
   <file alias="icons/search-line.svg">Resource/lobby/icons/search-line.svg</file>
   <file alias="icons/send-plane-2-line.svg">Resource/lobby/icons/send-plane-2-line.svg</file>
