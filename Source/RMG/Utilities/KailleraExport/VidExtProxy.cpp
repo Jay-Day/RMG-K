@@ -1,7 +1,6 @@
 #include "VidExtProxy.hpp"
 
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_opengl.h>
 
 namespace KailleraExport
 {
@@ -256,7 +255,8 @@ static m64p_error vidExtGlGetAttr(m64p_GLattr attr, int* value)
 
 static m64p_error vidExtGlSwapBuf(void)
 {
-    glFinish();
+    // Nothing is shown, and the frame capture's glReadPixels already waits
+    // for rendering to finish.
     return M64ERR_SUCCESS;
 }
 

@@ -1201,6 +1201,14 @@ Try connecting the adapter to a different USB port, preferably directly on your 
             <source>Input Settings</source>
             <translation>入力設定</translation>
         </message>
+        <message>
+            <source>Stop &amp;Watching</source>
+            <translation>観戦をやめる(&amp;W)</translation>
+        </message>
+        <message>
+            <source>S&amp;hutdown</source>
+            <translation>シャットダウン(&amp;H)</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::SettingsDialog</name>

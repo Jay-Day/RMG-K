@@ -23,10 +23,16 @@
 #include <stddef.h>
 
 static pif_sync_callback_t g_pif_sync_callback = NULL;
+static int g_pif_sync_replay_players = 0;
 
 EXPORT void CALL set_pif_sync_callback(pif_sync_callback_t callback)
 {
     g_pif_sync_callback = callback;
+}
+
+EXPORT void CALL set_pif_sync_replay_players(int players)
+{
+    g_pif_sync_replay_players = players > 0 ? players : 0;
 }
 
 void call_pif_sync_callback(struct pif* pif)
@@ -34,4 +40,9 @@ void call_pif_sync_callback(struct pif* pif)
     if (g_pif_sync_callback != NULL) {
         g_pif_sync_callback(pif);
     }
+}
+
+int pif_sync_drives_channel(size_t channel)
+{
+    return g_pif_sync_callback != NULL && channel < (size_t)g_pif_sync_replay_players;
 }

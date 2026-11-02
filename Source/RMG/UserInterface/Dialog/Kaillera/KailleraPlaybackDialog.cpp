@@ -1390,7 +1390,6 @@ void KailleraPlaybackDialog::resetExportUi()
     m_exportPendingOutput.clear();
     m_exportStatusLine.clear();
     m_exportVideoEncoder.clear();
-    m_exportTargetSpeed.clear();
     m_exportCapturedFrames = 0;
     m_exportTotalFrames = 0;
     m_exportCaptureCompleteElapsedMs = -1;
@@ -1429,7 +1428,6 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
     m_exportPendingOutput.clear();
     m_exportStatusLine = "Starting export...";
     m_exportVideoEncoder.clear();
-    m_exportTargetSpeed.clear();
     m_exportCapturedFrames = 0;
     m_exportTotalFrames = std::max(0, totalFrames);
     m_exportCaptureCompleteElapsedMs = -1;
@@ -1836,12 +1834,6 @@ void KailleraPlaybackDialog::processExportOutputLine(const QString& rawLine)
         return;
     }
 
-    if (line.startsWith("Using replay export speed target: "))
-    {
-        m_exportTargetSpeed = normalizeStatusLine(line.mid(QString("Using replay export speed target: ").size()));
-        return;
-    }
-
     if (line.startsWith("Replay export finished: "))
     {
         m_exportStatusLine = "Finalizing MP4...";
@@ -1981,11 +1973,6 @@ QString KailleraPlaybackDialog::buildExportProgressSummary() const
     if (!m_exportVideoEncoder.isEmpty())
     {
         lines << "Encoder: " + m_exportVideoEncoder;
-    }
-
-    if (!m_exportTargetSpeed.isEmpty())
-    {
-        lines << "Target emu speed: " + m_exportTargetSpeed;
     }
 
     QString statusLine = m_exportStatusLine;
