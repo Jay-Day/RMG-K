@@ -10,6 +10,7 @@
 #include <windows.h>
 #else
 #include <cstdlib>
+#include <poll.h>
 #endif
 
 namespace KailleraExport
@@ -45,90 +46,6 @@ static bool fail(std::string* errorMessage, const std::string& message)
     }
     return false;
 }
-
-#ifndef _WIN32
-static bool runCommandWithCapturedOutputPosix(const char* command,
-                                         const vector<const char*> arguments,
-                                         int timeoutMs,
-                                         bool requireOutput,
-                                         int* exitCode)
-{
-    int rwPipe[2];
-    
-    if (pipe(rwPipe) == -1)
-    {
-        return false;
-    }
-    
-    pid_t childPid = fork();
-    
-    if (childPid == -1)
-    {
-        return false;
-    }
-    
-    if (childPid == 0)
-    {
-        //Replace stdout and stderr in the child with the pipes
-        dup2(rwPipe[WRITE_PIPE], STDOUT_FILENO);
-        dup2(rwPipe[WRITE_PIPE], STDERR_FILENO);
-        close(rwPipe[READ_PIPE]);
-        close(rwPipe[WRITE_PIPE]);
-        
-        //The first element in arguments must always be the program name (same as command), and the last argument must be NULL
-        if (execvp(command, const_cast<char* const*>(arguments.data())) == -1) {
-            return false;
-        }
-    }
-    //Parent process
-    else {
-        int childStatus;
-        
-        //Close unused write pipe
-        close(rwPipe[WRITE_PIPE]);
-        
-        //Wait for the child process to exit
-        if (waitpid(childPid, &childStatus, 0) == -1) {
-            if (exitCode != nullptr)
-            {
-                *exitCode = childStatus;
-            }
-            
-            return false;
-        }
-        
-        echo << *exitCode << endl;
-        
-        bool gotOutput = false;
-        
-        //Read from the pipe
-        char output[256];
-        const int readBytes = read(rwPipe[READ_PIPE], &output, sizeof(output));
-        
-        if (readBytes > 0)
-        {
-            gotOutput = true;
-        }
- 
-        //Close no longer needed pipe
-        close(rwPipe[READ_PIPE]);
-        
-        if (exitCode != nullptr)
-        {
-            *exitCode = childStatus;
-        }
-        
-        if (requireOutput && !gotOutput)
-        {
-            return false;
-        }
- 
-        return *exitCode == 0;
-    }
-    
-    return true;
-}
-#endif
 
 #ifdef _WIN32
 static bool runCommandWithCapturedOutput(const std::string& command,
@@ -217,6 +134,105 @@ static bool runCommandWithCapturedOutput(const std::string& command,
 }
 #endif
 
+#ifndef _WIN32
+static bool runCommandWithCapturedOutputPosix(const char* command,
+                                         const vector<const char*> arguments,
+                                         int timeoutMs,
+                                         bool requireOutput,
+                                         int* exitCode)
+{
+    int rwPipe[2];
+    
+    if (pipe(rwPipe) == -1)
+    {
+        return false;
+    }
+    
+    pid_t childPid = fork();
+    
+    if (childPid == -1)
+    {
+        return false;
+    }
+    
+    if (childPid == 0)
+    {
+        //Replace stdout and stderr in the child with the pipes
+        dup2(rwPipe[WRITE_PIPE], STDOUT_FILENO);
+        dup2(rwPipe[WRITE_PIPE], STDERR_FILENO);
+        close(rwPipe[READ_PIPE]);
+        close(rwPipe[WRITE_PIPE]);
+        
+        //The first element in arguments must always be the program name (same as command), and the last argument must be NULL
+        if (execvp(command, const_cast<char* const*>(arguments.data())) == -1)
+        {
+            return false;
+        }
+    }
+    //Parent process
+    else {
+        //Close unused write pipe
+        close(rwPipe[WRITE_PIPE]);
+        
+        int fd = syscall(SYS_pidfd_open, childPid, 0);
+        struct pollfd pfd = {fd, POLL_IN, 0};
+        
+        //Wait for the child process to exit in the given time
+        int pollVal = poll(&pfd, 1, timeoutMs);
+        
+        //Timeout
+        if (pollVal == 0)
+        {
+            //Kill process
+            kill(childPid, SIGTERM);
+            return false;
+        }
+        //Error
+        else if (pollVal == -1)
+        {
+            return false;
+        }
+        
+        //Wait for the child process to exit
+        int exitCode;
+        waitpid(childPid, &exitCode, 0);
+        
+        if (WIFEXITED(exitCode))
+        {
+            int exitStatus = WEXITSTATUS(exitCode);
+         
+            if (exitCode != nullptr)
+            {
+                *exitCode = exitStatus;
+            }
+        }
+        
+        bool gotOutput = false;
+        
+        //Read from the pipe
+        char output[256];
+        const int readBytes = read(rwPipe[READ_PIPE], &output, sizeof(output));
+        
+        if (readBytes > 0)
+        {
+            gotOutput = true;
+        }
+ 
+        //Close no longer needed pipe
+        close(rwPipe[READ_PIPE]);
+        
+        if (requireOutput && !gotOutput)
+        {
+            return false;
+        }
+ 
+        return *exitCode == 0;
+    }
+    
+    return true;
+}
+#endif
+
 static bool probeVideoEncoder(const std::string& ffmpegPath, const char* codec)
 {
 #ifdef _WIN32
@@ -274,20 +290,28 @@ static std::vector<const char*> buildVideoEncoderFlagsPosix(const std::string& v
     
     if (videoEncoder == "h264_nvenc")
     {
-        return { "-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", crfStr, "-pix_fmt", "yuv420p" };
+        return
+        {
+            "-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", crfStr,
+            "-pix_fmt", "yuv420p", NULL
+        };
     }
     
     if (videoEncoder == "h264_amf")
     {
-        return { "-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", crfStr, "qp_p", crfStr, "-pix_fmt", "yuv420p" };
+        return
+        {
+            "-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", crfStr,
+            "qp_p", crfStr, "-pix_fmt", "yuv420p", NULL
+        };
     }
     
     if (videoEncoder == "h264_qsv")
     {
-        return { "-c:v", "h264_qsv", "-global_quality", crfStr, "-look_ahead", "0" };
+        return { "-c:v", "h264_qsv", "-global_quality", crfStr, "-look_ahead", "0", NULL };
     }
     
-    return { "-c:v", "libx264", "-preset", "ultrafast", "-crf", crfStr, "-pix_fmt", "yuv420p" };
+    return { "-c:v", "libx264", "-preset", "ultrafast", "-crf", crfStr, "-pix_fmt", "yuv420p", NULL };
 }
 #endif
 
@@ -359,9 +383,9 @@ bool CheckFfmpegExecutable(const std::string& ffmpegPath, std::string* errorMess
     return true;
 }
 
+#ifdef _WIN32
 static bool runFfmpegCommand(const std::string& command, std::string* errorMessage)
 {
-#ifdef _WIN32
     STARTUPINFOA startupInfo = {};
     startupInfo.cb = sizeof(startupInfo);
     startupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -399,11 +423,43 @@ static bool runFfmpegCommand(const std::string& command, std::string* errorMessa
     }
 
     return true;
-#else
-    (void)command;
-    return fail(errorMessage, "Replay export is only supported on Windows");
-#endif
 }
+#endif
+
+#ifndef _WIN32
+static bool runFfmpegCommandPosix(const std::vector<const char*> arguments, std::string* errorMessage)
+{
+    pid_t childPid = fork();
+    
+    if (childPid == -1)
+    {
+        return fail(errorMessage, "Failed to create fork for FFmpeg process");
+    }
+    
+    if (childPid == 0)
+    {
+        if (execvp(arguments[0], const_cast<char* const*>(arguments.data())) == -1)
+        {
+            return fail(errorMessage, "Error executing FFmpeg process");
+        }
+    }
+    else
+    {
+        int exitCode;
+        if (waitpid(childPid, &exitCode, 0) == -1)
+        {
+            return fail(errorMessage, "Error waiting for FFmpeg process");
+        }
+        
+        if (exitCode != 0)
+        {
+            return fail(errorMessage, "FFmpeg exited with an error");
+        }
+    }
+    
+    return true;
+}
+#endif
 
 bool MuxVideoAndAudio(const std::string& ffmpegPath,
                       const std::string& videoPath,
@@ -422,6 +478,7 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
         ? audioDuration / videoDuration
         : 1.0;
 
+#ifdef _WIN32
     char command[4096];
     snprintf(command,
              sizeof(command),
@@ -435,6 +492,18 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
              outputPath.c_str());
 
     return runFfmpegCommand(command, errorMessage);
+#else
+    std::vector<const char*> arguments =
+    {
+        ffmpegPath.c_str(), "-v", "error", "-y", "-itsscale", std::to_string(timestampScale).c_str(),
+        "-i", std::format("\"{}\"", videoPath.c_str()).c_str(), "-f", "s16le", "-ar",
+        std::to_string(audioFrequency).c_str(), "-ac", "2", "-i",
+        std::format("\"{}\"", audioPath.c_str()).c_str(), "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
+        "-b:a", "192k", "-shortest", std::format("\"{}\"", outputPath.c_str()), NULL
+    };
+    
+    return runFfmpegCommandPosix(arguments, errorMessage);
+#endif
 }
 
 bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMessage)
@@ -541,8 +610,6 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
     }
 
     setvbuf(m_Pipe, nullptr, _IOFBF, 1 << 20);
-
-    return true;
 #else
     const std::vector<const char*> encoderFlags = buildVideoEncoderFlagsPosix(m_SelectedVideoEncoder, config.crf);
     fprintf(stderr,
@@ -587,15 +654,14 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
         close(rwPipe[READ_PIPE]);
         close(rwPipe[WRITE_PIPE]);
         
-        if (execvp(command, const_cast<char* const*>(arguments.data())) == -1) {
+        if (execvp(command, const_cast<char* const*>(arguments.data())) == -1)
+        {
             return fail(errorMessage, "Failed to launch FFmpeg encoder");
         }
     }
     //Parent
     else
-    {   
-        int childStatus;
-        
+    {
         //Close unused read pipe
         close(rwPipe[READ_PIPE]);
         
@@ -608,20 +674,10 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
         }
         
         setvbuf(m_Pipe, nullptr, _IOFBF, 1 << 20);
-        
-        //Wait for the child process to exit
-        if (waitpid(childPid, &childStatus, 0) == -1) {
-            if (exitCode != nullptr)
-            {
-                *exitCode = childStatus;
-            }
-            
-            return fail(errorMessage, "Failed to launch FFmpeg encoder");
-        }
     }
+#endif
     
     return true;
-#endif
 }
 
 bool FfmpegEncoder::writeFrame(const uint8_t* rgbData, int width, int height, std::string* errorMessage)
