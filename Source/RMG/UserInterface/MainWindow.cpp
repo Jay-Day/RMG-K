@@ -1663,6 +1663,14 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->configureUI(app, showUI);
 #ifdef NETPLAY
     this->refreshKailleraRecordingStorageStatus(true);
+    // A replay or live replay relabels its ports when a player leaves or joins
+    // mid-match. Called on the playback's thread; the labels have a lock.
+    n02::setPlaybackPortNamesCallback([](const char (*names)[32]) {
+        std::array<std::string, 4> labels;
+        for (size_t i = 0; i < labels.size(); ++i)
+            labels[i] = names[i];
+        OnScreenDisplaySetKailleraPortLabelNames(labels);
+    });
 #endif // NETPLAY
 
     this->connectActionSignals();
@@ -4986,11 +4994,19 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_LiveReplayViewerCountChanged);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountCleared,
             this, []() { OnScreenDisplaySetLiveReplayStatus(""); });
-    // Late join notices for the running game.
+    // Late join notices for the running game. Someone joining and leaving the
+    // room over and over sends one after another; the lobby's chat keeps them
+    // all, so the overlay shows at most one every few seconds.
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::overlayMessage,
             this, [this](const QString& message) {
-                if (this->emulationThread && this->emulationThread->isRunning())
-                    OnScreenDisplaySetMessage(message.toStdString());
+                if (!this->emulationThread || !this->emulationThread->isRunning())
+                    return;
+                constexpr qint64 kNoticeGapMs = 3000;
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                if (nowMs - this->ui_LobbyOverlayNoticeMs < kNoticeGapMs)
+                    return;
+                this->ui_LobbyOverlayNoticeMs = nowMs;
+                OnScreenDisplaySetMessage(message.toStdString());
             });
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::overlayCenterMessage,
             this, [](const QString& message) { OnScreenDisplaySetCenterMessage(message.toStdString()); });
