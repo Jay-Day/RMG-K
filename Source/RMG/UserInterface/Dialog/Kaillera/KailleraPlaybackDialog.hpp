@@ -20,6 +20,11 @@
 #include <QProcess>
 #include <QProgressDialog>
 #include <QElapsedTimer>
+#include <QCheckBox>
+#include <QList>
+
+class QProgressBar;
+class QListWidget;
 
 class KailleraPlaybackDialog : public QDialog
 {
@@ -38,6 +43,9 @@ private slots:
     void onPlaybackRefresh();
     void onPlaybackOpenFolder();
     void onPlaybackExport();
+#ifdef RMGK_GAME_STATS
+    void onPlaybackExportReplay();
+#endif
     void onPlaybackDoubleClicked(int row, int column);
     void onPlaybackTimer();
     void onExportProcessOutput();
@@ -53,8 +61,25 @@ private:
         bool labelPorts = false;
     };
 
+#ifdef RMGK_GAME_STATS
+    // One queued-but-not-yet-started .rmgr export - see onPlaybackExportReplay()/
+    // enqueueReplayExport(). displayName is purely for the queue/history panel
+    // (the source .krec's file name), not used to derive any path.
+    struct ReplayExportQueueItem
+    {
+        QString displayName;
+        QString recordingPath;
+        QString romPath;
+        QString outputPath;
+        int     totalFrames = 0;
+    };
+#endif
+
     void setupUI();
     void updatePlaybackControls();
+#ifdef RMGK_GAME_STATS
+    void updateExportReplayVisibility();
+#endif
     void populatePlaybackList();
     QString getSelectedRecordingPath() const;
     QString getSelectedRecordingGameName(QString* recordingPath = nullptr, int* totalFrames = nullptr) const;
@@ -62,7 +87,7 @@ private:
     QString resolveExportFfmpegPath();
     QString promptForFfmpegPath();
     QString downloadManagedFfmpeg();
-    void showExportFinishedDialog(const QString& outputPath);
+    void showExportFinishedDialog(const QString& outputPath, const QString& logText);
     void resetExportUi();
     void startExportProcess(const QString& recordingPath,
                             const QString& romPath,
@@ -73,6 +98,25 @@ private:
                             bool includeKailleraChat,
                             bool labelPorts,
                             int totalFrames);
+#ifdef RMGK_GAME_STATS
+    void startReplayFileExportProcess(const QString& recordingPath,
+                                      const QString& romPath,
+                                      const QString& outputPath,
+                                      int totalFrames,
+                                      const QString& displayName);
+    // Validates nothing (onPlaybackExportReplay already did) - starts the
+    // export immediately if idle, otherwise appends to m_replayExportQueue.
+    // De-dupes against the in-flight export and the queue by recordingPath.
+    void enqueueReplayExport(const ReplayExportQueueItem& item);
+    // Pops the front of m_replayExportQueue (if any) and starts it. Called
+    // once a replay export finishes (or fails to even start), so the queue
+    // keeps draining without further user action.
+    void startNextQueuedReplayExportIfAny();
+    void ensureReplayExportPanelVisible();
+    void updateReplayExportQueueLabel();
+    void appendReplayExportLogLine(const QString& text);
+#endif
+    QString exportDialogTitle() const;
     void processExportOutputText(const QString& text, bool finalizePartialLine = false);
     void processExportOutputLine(const QString& line);
     void updateExportProgressDialog();
@@ -90,11 +134,42 @@ private:
     QPushButton* m_btnPBDelete = nullptr;
     QPushButton* m_btnPBRefresh = nullptr;
     QPushButton* m_btnExport = nullptr;
+#ifdef RMGK_GAME_STATS
+    // Headless/fast .rmgr-only export, sharing m_exportProcess/
+    // m_exportProgressDialog with Export MP4 below (mutually exclusive,
+    // never both running at once) but its own button and CLI dispatch -
+    // only shown when the selected recording's stored game name is Smash
+    // Remix 2.0.1, and Windows-only like Export MP4 (see
+    // onPlaybackExportReplay()).
+    QPushButton* m_btnExportReplay = nullptr;
+#endif
     QPushButton* m_btnOpenFolder = nullptr;
     QLabel* m_frameLabel = nullptr;
     bool m_playbackWasActive = false;
     bool m_isPaused = false;
     bool m_exportCanceled = false;
+    // Which of Export MP4 / Export Replays is in flight - only meaningful
+    // while m_exportProcess is non-null. Used purely for dialog/message
+    // wording (see exportDialogTitle()); the two share every other bit of
+    // export-process state below since they're mutually exclusive.
+    bool m_exportIsReplayFile = false;
+#ifdef RMGK_GAME_STATS
+    // Export Replays only: a FIFO of exports waiting for m_exportProcess to
+    // free up, plus the in-flight export's display name/source path (for
+    // the history line once it finishes, and for de-dup checks against new
+    // Export Replays clicks) - see enqueueReplayExport().
+    QList<ReplayExportQueueItem> m_replayExportQueue;
+    QString m_exportDisplayName;
+    QString m_replayExportInFlightPath;
+    // Non-modal panel shown in place of Export MP4's modal QProgressDialog
+    // for this path, so queuing more exports doesn't require closing
+    // anything - see setupUI() and updateExportProgressDialog().
+    QWidget* m_replayExportPanel = nullptr;
+    QLabel* m_replayExportStatusLabel = nullptr;
+    QProgressBar* m_replayExportProgressBar = nullptr;
+    QLabel* m_replayExportQueueLabel = nullptr;
+    QListWidget* m_replayExportHistoryList = nullptr;
+#endif
     QString m_exportOutputPath;
     QString m_exportLog;
     QString m_exportPendingOutput;

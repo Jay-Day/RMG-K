@@ -573,6 +573,9 @@ enum class SettingsID
     // raphnetraw Input Plugin Settings
     RaphnetRaw_Player1AdapterPort,
 
+    // Game Stats / Replay Settings
+    GameStats_ReplayEnabled,
+
     Invalid
 };
 

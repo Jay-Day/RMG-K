@@ -19,6 +19,7 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.          *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+#include <stdio.h> /* sprintf() below - not pulled in transitively by old SDL2 headers under SDL3 */
 #include <SDL.h>
 #include <SDL_thread.h>
 

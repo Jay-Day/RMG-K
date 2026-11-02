@@ -71,6 +71,7 @@ static std::vector<std::string> l_keyList;
 #define SETTING_SECTION_INPUT           SETTING_SECTION_GUI  " - Input Plugin"
 #define SETTING_SECTION_GCA             SETTING_SECTION_GUI  " - GameCube Adapter Input Plugin"
 #define SETTING_SECTION_KAILLERA        SETTING_SECTION_GUI  " Kaillera"
+#define SETTING_SECTION_GAMESTATS       SETTING_SECTION_GUI  " GameStats"
 #define SETTING_SECTION_ROLLBACK        SETTING_SECTION_GUI  " Rollback"
 #define SETTING_SECTION_RAPHNET_INPUT   "Input-RaphnetRaw"
 #define SETTING_SECTION_RSP             "Rsp-HLE"
@@ -1680,6 +1681,11 @@ static l_Setting get_setting(SettingsID settingId)
 
     case SettingsID::RaphnetRaw_Player1AdapterPort:
         setting = {SETTING_SECTION_RAPHNET_INPUT, "Player1AdapterPort", 1};
+        break;
+
+    // Game Stats / Replay Settings
+    case SettingsID::GameStats_ReplayEnabled:
+        setting = {SETTING_SECTION_GAMESTATS, "ReplayEnabled", false};
         break;
 
     }
