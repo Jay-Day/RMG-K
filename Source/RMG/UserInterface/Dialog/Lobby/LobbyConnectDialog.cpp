@@ -25,17 +25,21 @@ using namespace UserInterface::Dialog;
 
 namespace
 {
-    // Production lobby server hosted on Vultr Chicago. Update here when DNS
-    // is set up (e.g. ws://lobby.rmgk.net:8080/ws). The dialog no longer
-    // exposes server choice — every client connects here.
+    // Lobby servers hosted on Vultr. Update here when DNS is set up (e.g.
+    // ws://lobby.rmgk.net:8080/ws). The dialog no longer exposes server
+    // choice — tagged releases connect to prod, everything else to test.
+#ifdef RMGK_TEST_BUILD
+    constexpr const char* kDefaultLobbyUrl = "ws://64.177.116.159:8080/ws";
+#else
     constexpr const char* kDefaultLobbyUrl = "ws://216.128.157.98:8080/ws";
+#endif
 } // namespace
 
 QString LobbyConnectDialog::defaultServerUrl()
 {
     // Allow overriding the lobby server without a rebuild — handy for local
     // testing. e.g. set RMGK_LOBBY_URL=ws://127.0.0.1:8080/ws to point at a
-    // server running on this machine. Falls back to the production server.
+    // server running on this machine. Falls back to the build's default server.
     const QString override = qEnvironmentVariable("RMGK_LOBBY_URL");
     if (!override.trimmed().isEmpty())
         return override.trimmed();

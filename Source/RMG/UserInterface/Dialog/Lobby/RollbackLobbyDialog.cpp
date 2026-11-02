@@ -653,7 +653,11 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
               | Qt::WindowMinMaxButtonsHint
               | Qt::WindowCloseButtonHint)
 {
+#ifdef RMGK_TEST_BUILD
+    setWindowTitle(tr("RMG-K Lobby") + " [TEST]");
+#else
     setWindowTitle(tr("RMG-K Lobby"));
+#endif
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setWindowModality(Qt::NonModal);
     resize(1180, 720);

@@ -15,7 +15,7 @@ SHARUN_URL="https://github.com/VHSgunzo/sharun/releases/latest/download/sharun-$
 
 export ARCH="$arch"
 export APPIMAGE_EXTRACT_AND_RUN=1
-export VERSION="$(git describe --tags --always)"
+export VERSION="$(git describe --tags --always --match "v*")"
 export OUTPUT="$bin_dir/../RMG-K-Portable-Linux64-$VERSION.AppImage"
 export LD_LIBRARY_PATH="$toplvl_dir/Build/AppImage/Source/RMG-Core" # hack
 export SHARUN="$script_dir/sharun"

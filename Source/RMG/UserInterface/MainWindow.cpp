@@ -2221,6 +2221,9 @@ QString MainWindow::getWindowTitle(void)
     windowTitle += " (";
     windowTitle += QString::fromStdString(CoreGetVersion());
     windowTitle += ")";
+#ifdef RMGK_TEST_BUILD
+    windowTitle += " [TEST]";
+#endif
 
     return windowTitle;
 }
