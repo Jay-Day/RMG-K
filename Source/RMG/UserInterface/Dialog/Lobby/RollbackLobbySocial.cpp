@@ -1,9 +1,4 @@
 /*
- * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 3.
- *
  * The parts of the rollback lobby that are about other people: the menu on a
  * player's name, challenges, private messages, @mentions and moderation. They all
  * hang off that one menu, so whatever a name shows up in can offer all of them.

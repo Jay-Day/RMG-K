@@ -1,9 +1,3 @@
-/*
- * Rosalie's Mupen GUI - https://github.com/Rosalie241/RMG
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 3.
- */
 #ifdef NETPLAY
 
 #include "LobbySocialWidgets.hpp"
