@@ -1030,9 +1030,22 @@ bool processStateMachineStep() {
     return (KSSDFA.state != 3);
 }
 
-int modifyPlayValues(void *values, int size) {
+int modifyPlayValues(void *values, int size, int capacity) {
     if (KSSDFA.state == 2) {
-        short siz = active_mod.MPV(values, size);
+        // The modules copy as many bytes as a recording, live stream or server
+        // says a record holds (up to 64 KB), so they write into a scratch buffer
+        // and only data that fits the caller's buffer is copied back.
+        static thread_local std::vector<char> scratch(0x10000 + 16);
+        if (size < 0 || size > capacity)
+            return -1;
+        memcpy(scratch.data(), values, size);
+        int siz = active_mod.MPV(scratch.data(), size);
+        if (siz > capacity) {
+            n02_TRACE();
+            return -1;
+        }
+        if (siz > 0)
+            memcpy(values, scratch.data(), siz);
 
         if (recording_file.is_open()) {
             RecordingBuffer.put_char(0x12);

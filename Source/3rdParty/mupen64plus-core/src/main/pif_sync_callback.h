@@ -24,6 +24,8 @@
 
 #include "api/m64p_types.h"
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,8 +40,16 @@ typedef void (*pif_sync_callback_t)(struct pif* pif);
 /* Set PIF sync callback (call this from RMG-Core) */
 EXPORT void CALL set_pif_sync_callback(pif_sync_callback_t callback);
 
+/* Set how many controller channels the sync callback drives on its own, as it
+ * does for a recording being played back (0 = none). A raw input plugin isn't
+ * polled for those channels: the callback overwrites them anyway. */
+EXPORT void CALL set_pif_sync_replay_players(int players);
+
 /* Call the PIF sync callback if set (called from pif.c) */
 void call_pif_sync_callback(struct pif* pif);
+
+/* Whether the sync callback drives controller channel `channel` on its own */
+int pif_sync_drives_channel(size_t channel);
 
 #ifdef __cplusplus
 }

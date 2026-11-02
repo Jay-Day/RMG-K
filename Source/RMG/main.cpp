@@ -37,6 +37,16 @@
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
+#ifdef _WIN32
+// Laptops with two GPUs run apps they don't know on the integrated one: ask
+// the NVIDIA (Optimus) and AMD (PowerXpress) drivers for the discrete GPU.
+extern "C"
+{
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 //
 // Local Functions
 //

@@ -100,7 +100,6 @@ private:
     QString m_exportPendingOutput;
     QString m_exportStatusLine;
     QString m_exportVideoEncoder;
-    QString m_exportTargetSpeed;
     int m_exportCapturedFrames = 0;
     int m_exportTotalFrames = 0;
     qint64 m_exportCaptureCompleteElapsedMs = -1;
