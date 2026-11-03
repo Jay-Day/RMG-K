@@ -149,19 +149,15 @@ if (NETPLAY)
         UserInterface/Widget/Netplay/CreateNetplaySessionWidget.cpp
         UserInterface/Widget/Netplay/CreateNetplaySessionEmptyWidget.cpp
         UserInterface/Widget/Netplay/CreateNetplaySessionEmptyWidget.ui
+        Utilities/KailleraExport/ChatOverlay.cpp
         Utilities/KailleraExport/KrecParser.cpp
+        Utilities/KailleraExport/KrecMp4Export.cpp
+        Utilities/KailleraExport/EmulatorProxy.cpp
+        Utilities/KailleraExport/PifReplay.cpp
+        Utilities/KailleraExport/FrameCapture.cpp
+        Utilities/KailleraExport/FfmpegEncoder.cpp
+        Utilities/KailleraExport/VidExtProxy.cpp
     )
-    if (WIN32)
-        list(APPEND RMG_SOURCES
-            Utilities/KailleraExport/KrecMp4Export.cpp
-            Utilities/KailleraExport/ChatOverlay.cpp
-            Utilities/KailleraExport/EmulatorProxy.cpp
-            Utilities/KailleraExport/PifReplay.cpp
-            Utilities/KailleraExport/FrameCapture.cpp
-            Utilities/KailleraExport/FfmpegEncoder.cpp
-            Utilities/KailleraExport/VidExtProxy.cpp
-        )
-    endif(WIN32)
 endif(NETPLAY)
 
 set_source_files_properties(${IMGUI_SOURCES} PROPERTIES GENERATED TRUE)

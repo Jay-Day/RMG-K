@@ -117,8 +117,8 @@ static std::filesystem::path resolveFfmpegPath(const QCommandLineParser& parser)
         return std::filesystem::path(parser.value(kExportFfmpegOption).toStdString());
     }
 
-    const QString applicationDirectory = QCoreApplication::applicationDirPath();
 #ifdef _WIN32
+    const QString applicationDirectory = QCoreApplication::applicationDirPath();
     const QString localFfmpeg = QDir(applicationDirectory).filePath("ffmpeg.exe");
     if (QFileInfo::exists(localFfmpeg))
     {
@@ -280,16 +280,25 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
 
     prepareConfigDirectory(std::filesystem::path(temporaryConfigDirectory.path().toStdString()));
 
-    const std::filesystem::path corePath = CoreGetCoreDirectory() / "mupen64plus.dll";
-    const std::filesystem::path inputPluginPath = getPluginPath("Input", "RMG-Input.dll");
-    const std::filesystem::path rspPluginPath = getPluginPath("RSP", "mupen64plus-rsp-hle.dll");
-    const std::filesystem::path gfxPluginPath = getPluginPath("GFX", "mupen64plus-video-GLideN64.dll");
-    const std::filesystem::path audioPluginPath = getPluginPath("Audio", "RMG-Audio-Capture.dll");
+#ifdef _WIN32
+    const std::string coreLibFileName = "mupen64plus";
+    const std::string fileExt = ".dll";
+#else
+    const std::string coreLibFileName = "libmupen64plus";
+    const std::string fileExt = ".so";
+#endif
+    
+    const std::filesystem::path corePath = CoreGetCoreDirectory() / (coreLibFileName + fileExt);
+    const std::filesystem::path inputPluginPath = getPluginPath("Input", std::format("RMG-Input{}", fileExt).c_str());
+    const std::filesystem::path rspPluginPath = getPluginPath("RSP", std::format("mupen64plus-rsp-hle{}", fileExt).c_str());
+    const std::filesystem::path gfxPluginPath = getPluginPath("GFX", std::format("mupen64plus-video-GLideN64{}", fileExt).c_str());
+    const std::filesystem::path audioPluginPath = getPluginPath("Audio", std::format("RMG-Audio-Capture{}", fileExt).c_str());
+    
     const std::filesystem::path dataDirectory = CoreGetSharedDataDirectory();
 
     if (!requireExistingFile(options.krecPath, "recording", errorMessage) ||
         !requireExistingFile(options.romPath, "ROM", errorMessage) ||
-        !requireExistingFile(corePath, "core DLL", errorMessage) ||
+        !requireExistingFile(corePath, "core DLL/lib", errorMessage) ||
         !requireExistingFile(inputPluginPath, "input plugin", errorMessage) ||
         !requireExistingFile(rspPluginPath, "RSP plugin", errorMessage) ||
         !requireExistingFile(gfxPluginPath, "graphics plugin", errorMessage) ||
@@ -334,7 +343,7 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
         getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_frequency"));
         getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_bytes_written"));
 #else
-        setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn(dlsym(audioHandle, "audio_capture_set_output"));
+        setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn>(dlsym(audioHandle, "audio_capture_set_output"));
         getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(dlsym(audioHandle, "audio_capture_get_frequency"));
         getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(dlsym(audioHandle, "audio_capture_get_bytes_written"));
 #endif
@@ -427,7 +436,7 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     const m64p_error executeResult = emulator.execute();
     FlushFrameCapture();
     ShutdownChatOverlay();
-    encoder.close();
+    encoder.closeEncoder();
 
     std::string frameCaptureError;
     if (GetFrameCaptureError(&frameCaptureError))

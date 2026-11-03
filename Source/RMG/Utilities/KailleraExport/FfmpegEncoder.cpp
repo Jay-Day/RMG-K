@@ -4,6 +4,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <format>
 
 #ifdef _WIN32
 #include <io.h>
@@ -11,6 +12,9 @@
 #else
 #include <cstdlib>
 #include <poll.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #endif
 
 namespace KailleraExport
@@ -135,8 +139,7 @@ static bool runCommandWithCapturedOutput(const std::string& command,
 #endif
 
 #ifndef _WIN32
-static bool runCommandWithCapturedOutputPosix(const char* command,
-                                         const vector<const char*> arguments,
+static bool runCommandWithCapturedOutputPosix(const std::vector<const char*> arguments,
                                          int timeoutMs,
                                          bool requireOutput,
                                          int* exitCode)
@@ -164,7 +167,7 @@ static bool runCommandWithCapturedOutputPosix(const char* command,
         close(rwPipe[WRITE_PIPE]);
         
         //The first element in arguments must always be the program name (same as command), and the last argument must be NULL
-        if (execvp(command, const_cast<char* const*>(arguments.data())) == -1)
+        if (execvp(arguments[0], const_cast<char* const*>(arguments.data())) == -1)
         {
             return false;
         }
@@ -194,12 +197,12 @@ static bool runCommandWithCapturedOutputPosix(const char* command,
         }
         
         //Wait for the child process to exit
-        int exitCode;
-        waitpid(childPid, &exitCode, 0);
+        int childExitCode;
+        waitpid(childPid, &childExitCode, 0);
         
-        if (WIFEXITED(exitCode))
+        if (WIFEXITED(childExitCode))
         {
-            int exitStatus = WEXITSTATUS(exitCode);
+            int exitStatus = WEXITSTATUS(childExitCode);
          
             if (exitCode != nullptr)
             {
@@ -226,7 +229,7 @@ static bool runCommandWithCapturedOutputPosix(const char* command,
             return false;
         }
  
-        return *exitCode == 0;
+        return childExitCode == 0;
     }
     
     return true;
@@ -254,11 +257,13 @@ static bool probeVideoEncoder(const std::string& ffmpegPath, const char* codec)
 #else
     std::vector<const char*> args =
     { 
-      "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:r=30:d=0.1", "-frames:v", "1",
-      "-pix_fmt", "yuv420p", "-c:v", codec, "-f", "null", "-", NULL
+      ffmpegPath.c_str(), "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:r=30:d=0.1", "-frames:v", "1",
+      "-pix_fmt", "yuv420p", "-c:v", codec, "-f", "null", "-"
     };
     
-    return runCommandWithCapturedOutputPosix(args[0], args, 10000, false, nullptr);
+    args.push_back(NULL);
+    
+    return runCommandWithCapturedOutputPosix(args, 10000, false, nullptr);
 #endif
 }
 
@@ -290,28 +295,40 @@ static std::vector<const char*> buildVideoEncoderFlagsPosix(const std::string& v
     
     if (videoEncoder == "h264_nvenc")
     {
-        return
+        std::vector<const char*> args =
         {
             "-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", crfStr,
-            "-pix_fmt", "yuv420p", NULL
+            "-pix_fmt", "yuv420p"
         };
+        
+        args.push_back(NULL);
+        return args;
     }
     
     if (videoEncoder == "h264_amf")
     {
-        return
+        std::vector<const char*> args =
         {
             "-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", crfStr,
-            "qp_p", crfStr, "-pix_fmt", "yuv420p", NULL
+            "qp_p", crfStr, "-pix_fmt", "yuv420p"
         };
+        
+        args.push_back(NULL);
+        return args;
     }
     
     if (videoEncoder == "h264_qsv")
     {
-        return { "-c:v", "h264_qsv", "-global_quality", crfStr, "-look_ahead", "0", NULL };
+        std::vector<const char*> args = { "-c:v", "h264_qsv", "-global_quality", crfStr, "-look_ahead", "0" };
+        
+        args.push_back(NULL);
+        return args;
     }
     
-    return { "-c:v", "libx264", "-preset", "ultrafast", "-crf", crfStr, "-pix_fmt", "yuv420p", NULL };
+    std::vector<const char*> args = { "-c:v", "libx264", "-preset", "ultrafast", "-crf", crfStr, "-pix_fmt", "yuv420p" };
+    args.push_back(NULL);
+    
+    return args;
 }
 #endif
 
@@ -366,10 +383,11 @@ bool CheckFfmpegExecutable(const std::string& ffmpegPath, std::string* errorMess
     DWORD exitCode = 1;
     if (!runCommandWithCapturedOutput(command, 5000, true, &exitCode) || exitCode != 0)
 #else
-    const std::vector<const char*> args = { "ffmpeg", "-version" };
+    std::vector<const char*> args = { ffmpegPath.c_str(), "-version" };
+    args.push_back(NULL);
     
     int exitCode = 1;
-    if (!runCommandWithCapturedOutputPosix(args[0], args, 5000, true, &exitCode) || exitCode != 0)
+    if (!runCommandWithCapturedOutputPosix(args, 5000, true, &exitCode) || exitCode != 0)
 #endif
     {
         return fail(errorMessage, "FFmpeg was not found");
@@ -499,14 +517,16 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
         "-i", std::format("\"{}\"", videoPath.c_str()).c_str(), "-f", "s16le", "-ar",
         std::to_string(audioFrequency).c_str(), "-ac", "2", "-i",
         std::format("\"{}\"", audioPath.c_str()).c_str(), "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
-        "-b:a", "192k", "-shortest", std::format("\"{}\"", outputPath.c_str()), NULL
+        "-b:a", "192k", "-shortest", std::format("\"{}\"", outputPath.c_str()).c_str()
     };
+    
+    arguments.push_back(NULL);
     
     return runFfmpegCommandPosix(arguments, errorMessage);
 #endif
 }
 
-bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMessage)
+bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* errorMessage)
 {
     m_FrameWidth = config.width;
     m_FrameHeight = config.height;
@@ -618,7 +638,8 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
             m_HardwareAccelerated ? " (hardware)" : " (CPU)");
     
     std::vector<const char*> command =
-        { "ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
+        {
+          config.ffmpegPath.c_str(), "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
           std::format("{}x{}", config.width, config.height).c_str(), "-framerate",
           std::to_string(config.fps).c_str(), "-i", "pipe:0"
         };
@@ -654,7 +675,7 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
         close(rwPipe[READ_PIPE]);
         close(rwPipe[WRITE_PIPE]);
         
-        if (execvp(command, const_cast<char* const*>(arguments.data())) == -1)
+        if (execvp(command[0], const_cast<char* const*>(command.data())) == -1)
         {
             return fail(errorMessage, "Failed to launch FFmpeg encoder");
         }
@@ -696,7 +717,7 @@ bool FfmpegEncoder::writeFrame(const uint8_t* rgbData, int width, int height, st
     return true;
 }
 
-void FfmpegEncoder::close()
+void FfmpegEncoder::closeEncoder()
 {
     if (m_Pipe != nullptr)
     {

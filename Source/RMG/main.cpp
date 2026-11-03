@@ -9,7 +9,7 @@
  */
 #include <UserInterface/MainWindow.hpp>
 #include <Utilities/Translation.hpp>
-#if defined(_WIN32) && defined(NETPLAY)
+#if defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
 #endif
 
@@ -309,10 +309,10 @@ int main(int argc, char **argv)
 
     if (parser.isSet(exportKrecOption))
     {
-#if defined(_WIN32) && defined(NETPLAY)
+#if defined(NETPLAY)
         return KailleraExport::RunReplayExportFromCommandLine(parser);
 #else
-        std::cerr << "Replay export is only supported on Windows" << std::endl;
+        std::cerr << "Replay export is only supported when built with netplay features" << std::endl;
         return 1;
 #endif
     }
