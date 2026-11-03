@@ -145,6 +145,8 @@ public:
     void leaveRoom();
     void startRoom();
     void updateRoomLiveReplay(bool enabled);
+    // Host-only, waiting room: whether the next match can take players mid-game.
+    void updateRoomLateJoin(bool enabled);
     void kickFromRoom(quint64 userId);
 
     // Host-only: swap two seats (P1-P4) to re-order players before the match.

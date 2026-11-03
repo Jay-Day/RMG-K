@@ -379,6 +379,8 @@ private:
     // since pings arrive asynchronously after seats populate.
     void refreshStartButton();
     void updateRecordingControls();
+    // Host turning late join on: warns that other players won't record locally.
+    bool confirmLateJoin();
 
     LobbyClient* m_client = nullptr;
 
@@ -442,6 +444,15 @@ private:
     // match (the player who checks it records, same as the p2p/kaillera lobbies).
     // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
     QCheckBox* m_recordCheck     = nullptr;
+    // The player's own choice. While late join keeps non-hosts from recording,
+    // the box shows off and this keeps what to restore.
+    bool       m_recordLocallyChoice = false;
+
+    // Host-only room option: the next match can take players mid-game. While
+    // it's on, only the host records locally (see updateRecordingControls).
+    // Hidden on servers without the option.
+    QCheckBox* m_lateJoinCheck = nullptr;
+    QLabel*    m_lateJoinNote  = nullptr;   // the recording warning, while on
 
     // When checked, the room host streams replay bytes so others can spectate,
     // independently of whether a local .krec file is saved. On the emulation thread,
@@ -568,6 +579,12 @@ private:
     bool m_roomLateJoin = false;
     // From ROOM_STATE: the host may start with nobody else seated.
     bool m_canStartAlone = false;
+    // From ROOM_STATE "lateJoinEnabled": the host turned late join on. Older
+    // servers don't send it; their matches take late joiners whenever every
+    // player's client can.
+    bool m_roomHasLateJoinOption = false;
+    bool m_roomLateJoinEnabled = false;
+    bool m_lateJoinEnabledSeen = false;   // this room's first ROOM_STATE arrived
     // In a match with nobody else in it yet.
     bool m_playingAlone = false;
     int autoFrameDelay() const;
