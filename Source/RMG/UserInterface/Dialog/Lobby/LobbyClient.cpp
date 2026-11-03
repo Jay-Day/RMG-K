@@ -3637,6 +3637,13 @@ void LobbyClient::updateRoomLiveReplay(bool enabled)
     sendEnvelope("ROOM_UPDATE_LIVE_REPLAY", d);
 }
 
+void LobbyClient::updateRoomLateJoin(bool enabled)
+{
+    QJsonObject d;
+    d["enabled"] = enabled;
+    sendEnvelope("ROOM_UPDATE_LATE_JOIN", d);
+}
+
 void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)
 {
     QJsonObject d;

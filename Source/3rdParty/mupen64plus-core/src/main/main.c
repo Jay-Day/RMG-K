@@ -39,6 +39,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
+#include <zlib.h>
 
 #define M64P_CORE_PROTOTYPES 1
 #include "api/callbacks.h"
@@ -436,6 +438,193 @@ static uint32_t l_RollbackResumeProbeCurrentFrame = 0;
 static int32_t l_RollbackResumeProbeCycleCount = 0;
 static int32_t l_RollbackResumeProbePendingException = 0;
 static int32_t l_RollbackResumeProbeStop = 0;
+
+/* Written synchronously from the emulation thread, including before entering
+ * the CPU, so a hard hang still leaves the last entered operation on disk.
+ * These are diagnostic fingerprints, not GekkoNet desync checksums: predicted
+ * states must only be compared after accounting for inputs and replay history. */
+static FILE* l_EmulationDiagnosticFile = NULL;
+static uint64_t l_EmulationDiagnosticSequence = 0;
+static uint64_t l_EmulationDiagnosticStartUs = 0;
+static uint64_t l_EmulationDiagnosticRenders = 0;
+static uint64_t l_EmulationDiagnosticRedraws = 0;
+static uint64_t rollback_profile_now_us(void);
+
+static uint32_t emulation_diagnostic_crc(const void* data, size_t size)
+{
+    return data != NULL ? (uint32_t)crc32(0L, (const Bytef*)data, (uInt)size) : 0;
+}
+
+static uint32_t emulation_diagnostic_eeprom_crc(void)
+{
+    const struct eeprom* eeprom = &g_dev.cart.eeprom;
+    if (eeprom->storage == NULL || eeprom->istorage == NULL ||
+        eeprom->istorage->data == NULL || eeprom->istorage->size == NULL)
+        return 0;
+    return emulation_diagnostic_crc(eeprom->istorage->data(eeprom->storage),
+        eeprom->istorage->size(eeprom->storage));
+}
+
+static void emulation_diagnostic_prefix(const char* event)
+{
+    fprintf(l_EmulationDiagnosticFile,
+        "seq=%" PRIu64 " elapsed_us=%" PRIu64 " event=%s core_frame=%d hidden=%d ",
+        ++l_EmulationDiagnosticSequence,
+        rollback_profile_now_us() - l_EmulationDiagnosticStartUs,
+        event, l_CurrentFrame, l_RollbackHiddenStepActive);
+}
+
+static void emulation_diagnostic_execution_state(void)
+{
+    const struct node* node;
+    unsigned int n;
+    fprintf(l_EmulationDiagnosticFile,
+        " gpr_crc=%08" PRIx32 " cp0_crc=%08" PRIx32 " fpr_crc=%08" PRIx32
+        " pif_crc=%08" PRIx32 " hi=%016" PRIx64 " lo=%016" PRIx64
+        " fcr31=%08" PRIx32 " rounding=%08" PRIx32
+        " last_addr=%08" PRIx32 " cycle_count=%d delay_slot=%u llbit=%u"
+        " vi_delay=%u ai_status=%08" PRIx32 " ai_dacrate=%" PRIu32
+        " ai_fifo0=%08" PRIx32 ":%" PRIu32 ":%u"
+        " ai_fifo1=%08" PRIx32 ":%" PRIu32 ":%u"
+        " ai_carry=%" PRIu32 " sp_pc=%08" PRIx32
+        " rsp_status=%08" PRIx32 " rsp_wait=%08" PRIx32 " rsp_first=%" PRIu32,
+        emulation_diagnostic_crc(r4300_regs(&g_dev.r4300), 32 * sizeof(int64_t)),
+        emulation_diagnostic_crc(r4300_cp0_regs(&g_dev.r4300.cp0), CP0_REGS_COUNT * sizeof(uint32_t)),
+        emulation_diagnostic_crc(r4300_cp1_regs(&g_dev.r4300.cp1), 32 * sizeof(cp1_reg)),
+        emulation_diagnostic_crc(g_dev.pif.ram, PIF_RAM_SIZE),
+        (uint64_t)*r4300_mult_hi(&g_dev.r4300), (uint64_t)*r4300_mult_lo(&g_dev.r4300),
+        *r4300_cp1_fcr31(&g_dev.r4300.cp1), g_dev.r4300.cp1.rounding_mode,
+        *r4300_cp0_last_addr(&g_dev.r4300.cp0), *r4300_cp0_cycle_count(&g_dev.r4300.cp0),
+        g_dev.r4300.delay_slot, *r4300_llbit(&g_dev.r4300),
+        g_dev.vi.delay, g_dev.ai.regs[AI_STATUS_REG], g_dev.ai.regs[AI_DACRATE_REG],
+        g_dev.ai.fifo[0].address, g_dev.ai.fifo[0].length, g_dev.ai.fifo[0].duration,
+        g_dev.ai.fifo[1].address, g_dev.ai.fifo[1].length, g_dev.ai.fifo[1].duration,
+        g_dev.ai.delayed_carry, g_dev.sp.regs2[SP_PC_REG],
+        g_dev.sp.rsp_status, g_dev.sp.rsp_wait, g_dev.sp.first_run);
+
+    /* Traverse without updating Count or the queue. Record event type AND due
+     * time: next_interrupt alone cannot tell which device first diverged. */
+    fputs(" irq_queue=", l_EmulationDiagnosticFile);
+    for (node = g_dev.r4300.cp0.q.first, n = 0;
+         node != NULL && n < INTERRUPT_NODES_POOL_CAPACITY; node = node->next, ++n)
+        fprintf(l_EmulationDiagnosticFile, "%s%04x:%08x", n ? "," : "",
+            (unsigned int)node->data.type, node->data.count);
+    if (n == 0)
+        fputs("empty", l_EmulationDiagnosticFile);
+    if (node != NULL)
+        fputs(",truncated", l_EmulationDiagnosticFile);
+}
+
+void main_rollback_log_state(const char* event, int state_frame, int result, int hash_rdram)
+{
+    uint32_t* cp0;
+    if (l_EmulationDiagnosticFile == NULL)
+        return;
+
+    cp0 = r4300_cp0_regs(&g_dev.r4300.cp0);
+    emulation_diagnostic_prefix(event);
+    fprintf(l_EmulationDiagnosticFile,
+        "state_frame=%d result=%d pc=%08" PRIx32 " count=%08" PRIx32
+        " next_interrupt=%08" PRIx32 " cause=%08" PRIx32 " status=%08" PRIx32
+        " epc=%08" PRIx32 " stop=%d eeprom_crc=%08" PRIx32
+        " sp_crc=%08" PRIx32 " sp_status=%08" PRIx32 " dp_status=%08" PRIx32
+        " mi_intr=%08" PRIx32 " si_status=%08" PRIx32 " pi_status=%08" PRIx32
+        " vi_status=%08" PRIx32 " vi_origin=%08" PRIx32 " vi_width=%" PRIu32
+        " renders=%" PRIu64 " redraws=%" PRIu64 " video=%d audio=%d",
+        state_frame, result, *r4300_pc(&g_dev.r4300), cp0[CP0_COUNT_REG],
+        *r4300_cp0_next_interrupt(&g_dev.r4300.cp0), cp0[CP0_CAUSE_REG],
+        cp0[CP0_STATUS_REG], cp0[CP0_EPC_REG], *r4300_stop(&g_dev.r4300),
+        emulation_diagnostic_eeprom_crc(),
+        emulation_diagnostic_crc(g_dev.sp.mem, SP_MEM_SIZE),
+        g_dev.sp.regs[SP_STATUS_REG], g_dev.dp.dpc_regs[DPC_STATUS_REG],
+        g_dev.mi.regs[MI_INTR_REG], g_dev.si.regs[SI_STATUS_REG], g_dev.pi.regs[PI_STATUS_REG],
+        g_dev.vi.regs[VI_STATUS_REG], g_dev.vi.regs[VI_ORIGIN_REG], g_dev.vi.regs[VI_WIDTH_REG],
+        l_EmulationDiagnosticRenders, l_EmulationDiagnosticRedraws, l_FrameOutputVideo, l_FrameOutputAudio);
+    emulation_diagnostic_execution_state();
+    if (hash_rdram)
+        fprintf(l_EmulationDiagnosticFile, " rdram_bytes=%zu rdram_crc=%08" PRIx32,
+            g_dev.rdram.dram_size,
+            emulation_diagnostic_crc(g_dev.rdram.dram, g_dev.rdram.dram_size));
+    fputc('\n', l_EmulationDiagnosticFile);
+    fflush(l_EmulationDiagnosticFile);
+}
+
+void main_rollback_log_eeprom(const char* event, uint8_t block, const uint8_t* data, int status)
+{
+    size_t i;
+    if (l_EmulationDiagnosticFile == NULL)
+        return;
+    emulation_diagnostic_prefix(event);
+    fprintf(l_EmulationDiagnosticFile, "block=%u status=%d pc=%08" PRIx32
+        " eeprom_crc=%08" PRIx32 " data=", (unsigned)block, status,
+        *r4300_pc(&g_dev.r4300), emulation_diagnostic_eeprom_crc());
+    if (data != NULL)
+        for (i = 0; i < 8; ++i)
+            fprintf(l_EmulationDiagnosticFile, "%02x", (unsigned)data[i]);
+    else
+        fputs("unavailable", l_EmulationDiagnosticFile);
+    fputc('\n', l_EmulationDiagnosticFile);
+    fflush(l_EmulationDiagnosticFile);
+}
+
+void main_rollback_log_inputs(const uint32_t* values, int players)
+{
+    int i;
+    if (l_EmulationDiagnosticFile == NULL)
+        return;
+    emulation_diagnostic_prefix("inputs");
+    for (i = 0; i < players; ++i)
+        fprintf(l_EmulationDiagnosticFile, "p%d=%08" PRIx32 " ", i + 1, values[i]);
+    fputc('\n', l_EmulationDiagnosticFile);
+    fflush(l_EmulationDiagnosticFile);
+}
+
+static void emulation_diagnostic_open(void)
+{
+    const char* enabled = getenv("RMGK_EMULATION_DIAGNOSTICS");
+    const char* directory = getenv("RMGK_ROLLBACK_LOG_DIR");
+    const char* prefix = getenv("RMGK_ROLLBACK_LOG_PREFIX");
+    char path[PATH_MAX];
+    int written;
+
+    if (!l_RollbackExecuteActive || enabled == NULL || strcmp(enabled, "1") != 0)
+        return;
+    if (directory == NULL || directory[0] == '\0')
+        directory = "Logs";
+    if (prefix == NULL || prefix[0] == '\0')
+        prefix = "rollback";
+    osal_mkdirp(directory, 0700);
+    written = snprintf(path, sizeof(path), "%s/%s_emulation.log", directory, prefix);
+    if (written <= 0 || (size_t)written >= sizeof(path))
+        return;
+    l_EmulationDiagnosticFile = fopen(path, "w");
+    if (l_EmulationDiagnosticFile == NULL) {
+        DebugMessage(M64MSG_WARNING, "Could not open emulation diagnostics: %s", path);
+        return;
+    }
+    l_EmulationDiagnosticSequence = 0;
+    l_EmulationDiagnosticStartUs = rollback_profile_now_us();
+    l_EmulationDiagnosticRenders = 0;
+    l_EmulationDiagnosticRedraws = 0;
+    fprintf(l_EmulationDiagnosticFile,
+        "RMG-K emulation diagnostics v2 rom_md5=%s cpu=%u rdram_bytes=%zu"
+        " save_loading_disabled=%d eeprom_type=%04x count_per_op=%u count_per_op_denom_pot=%u"
+        " si_dma_duration=%u randomize_interrupt=%u rollback_code_cache=invalidate_all\n",
+        ROM_SETTINGS.MD5, g_dev.r4300.emumode, g_dev.rdram.dram_size,
+        ConfigGetParamBool(g_CoreConfig, "DisableSaveFileLoading"), (unsigned)g_dev.cart.eeprom.type,
+        g_dev.r4300.cp0.count_per_op, g_dev.r4300.cp0.count_per_op_denom_pot,
+        g_dev.si.dma_duration, g_dev.r4300.randomize_interrupt);
+    main_rollback_log_state("session_start", -1, 1, 1);
+}
+
+static void emulation_diagnostic_close(void)
+{
+    if (l_EmulationDiagnosticFile != NULL) {
+        main_rollback_log_state("session_end", -1, 1, 1);
+        fclose(l_EmulationDiagnosticFile);
+        l_EmulationDiagnosticFile = NULL;
+    }
+}
 
 static osd_message_t *l_msgVol = NULL;
 static osd_message_t *l_msgFF = NULL;
@@ -1032,6 +1221,7 @@ void main_rollback_visible_frame_begin(void)
     l_RollbackVisibleStepActive = 1;
     l_RollbackVisibleStepCompleted = 0;
     l_RollbackPresentPacedThisFrame = 0;
+    main_rollback_log_state("visible_begin", -1, -1, 0);
 
     if (l_RmgkPacingEnabled)
     {
@@ -1051,6 +1241,7 @@ void main_rollback_visible_frame_begin(void)
 int main_rollback_visible_frame_completed(void)
 {
     int completed = l_RollbackVisibleStepCompleted;
+    main_rollback_log_state("visible_end", -1, completed, l_CurrentFrame % 60 == 0);
 
     if (l_RmgkPacingEnabled && l_RollbackVisibleFrameBeginUs != 0)
     {
@@ -1259,6 +1450,7 @@ int main_rollback_run_frame(int output_flags)
     main_rollback_hidden_frame_begin();
     if (profile_active)
         r4300_begin = rollback_profile_now_us();
+    main_rollback_log_state("replay_begin", -1, -1, 0);
     result = run_r4300_current(&g_dev.r4300);
     if (profile_active)
         l_RollbackRunFrameStats.r4300_us = rollback_profile_now_us() - r4300_begin;
@@ -1266,6 +1458,7 @@ int main_rollback_run_frame(int output_flags)
     interrupt_rollback_stats_stop();
     if (!main_rollback_hidden_frame_completed())
         result = 0;
+    main_rollback_log_state("replay_end", -1, result, l_CurrentFrame % 60 == 0);
     l_RollbackRunFrameStats.cp0_count_after = cp0_regs[CP0_COUNT_REG];
     l_RollbackRunFrameStats.next_interrupt_after = *r4300_cp0_next_interrupt(&g_dev.r4300.cp0);
     l_RollbackRunFrameStats.pc_after = *r4300_pc(&g_dev.r4300);
@@ -1660,6 +1853,12 @@ static void video_plugin_render_callback(int bScreenRedrawn)
 #ifdef M64P_OSD
     int bOSD = ConfigGetParamBool(g_CoreConfig, "OnScreenDisplay");
 #endif /* M64P_OSD */
+
+    if (l_EmulationDiagnosticFile != NULL) {
+        ++l_EmulationDiagnosticRenders;
+        if (bScreenRedrawn)
+            ++l_EmulationDiagnosticRedraws;
+    }
 
     // if the flag is set to take a screenshot, then grab it now
     if (l_TakeScreenshot != 0)
@@ -2957,7 +3156,9 @@ m64p_error main_run(void)
         l_RollbackExecuteCallbacks.pacing_trace_enabled);
     poweron_device(&g_dev);
     pif_bootrom_hle_execute(&g_dev.r4300);
+    emulation_diagnostic_open();
     run_device(&g_dev);
+    emulation_diagnostic_close();
     rmgk_pacing_trace_flush();
 
     /* now begin to shut down */

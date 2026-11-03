@@ -3356,6 +3356,112 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <source>something went wrong (%1)</source>
             <translation>問題が発生しました（%1）</translation>
         </message>
+        <message>
+            <source>Late join</source>
+            <translation>途中参加</translation>
+        </message>
+        <message>
+            <source>Late join is on in this room. Only the host saves a local replay, so Record locally is off for you.</source>
+            <translation>このルームでは途中参加がオンです。ローカルにリプレイを保存するのはホストだけなので、あなたの「ローカルに保存」はオフになります。</translation>
+        </message>
+        <message>
+            <source>Late join is on. Players can join while a game is running, and only you save a local replay.</source>
+            <translation>途中参加をオンにしました。ゲーム中でもプレイヤーが参加でき、ローカルにリプレイを保存するのはあなただけです。</translation>
+        </message>
+        <message>
+            <source>Late join is off.</source>
+            <translation>途中参加をオフにしました。</translation>
+        </message>
+        <message>
+            <source>The host turned on late join. Only the host saves a local replay, so Record locally is off for you.</source>
+            <translation>ホストが途中参加をオンにしました。ローカルにリプレイを保存するのはホストだけなので、あなたの「ローカルに保存」はオフになります。</translation>
+        </message>
+        <message>
+            <source>The host turned off late join.</source>
+            <translation>ホストが途中参加をオフにしました。</translation>
+        </message>
+        <message>
+            <source>Late join is on, so only the host saves a local replay.</source>
+            <translation>途中参加がオンのため、ローカルにリプレイを保存するのはホストだけです。</translation>
+        </message>
+        <message>
+            <source>The host turned on late join: players can join while a game is running.</source>
+            <translation>ホストが途中参加をオンにしています。ゲーム中でもプレイヤーが参加できます。</translation>
+        </message>
+        <message>
+            <source>The host has late join turned off.</source>
+            <translation>ホストが途中参加をオフにしています。</translation>
+        </message>
+        <message>
+            <source>Late join can't be changed during a match.</source>
+            <translation>対戦中は途中参加の設定を変更できません。</translation>
+        </message>
+        <message>
+            <source>Let players join while a game is running. You add them with Add to Game.
+While it's on, only you save a local replay.</source>
+            <translation>ゲーム中でもプレイヤーが参加できるようにします。参加したプレイヤーは「ゲームに追加」で追加します。
+オンの間、ローカルにリプレイを保存するのはあなただけです。</translation>
+        </message>
+        <message>
+            <source>Late join is on.</source>
+            <translation>途中参加がオンです。</translation>
+        </message>
+        <message>
+            <source>Local recording is off for everyone but you.</source>
+            <translation>あなた以外の全員のローカル保存はオフです。</translation>
+        </message>
+        <message>
+            <source>Only the host saves a local replay, so Record locally is off for you.</source>
+            <translation>ローカルにリプレイを保存するのはホストだけなので、あなたの「ローカルに保存」はオフです。</translation>
+        </message>
+        <message>
+            <source>Turn on late join?</source>
+            <translation>途中参加をオンにしますか？</translation>
+        </message>
+        <message>
+            <source>Turning on late join turns off local recording for everyone in this room except you.</source>
+            <translation>途中参加をオンにすると、このルームのあなた以外の全員のローカル保存がオフになります。</translation>
+        </message>
+        <message>
+            <source>Players can then join while a game is running, and you add them with Add to Game. Only your replay (.krec) is saved, since you're the one player sure to be in the whole game. Live Replay isn't affected.</source>
+            <translation>ゲーム中でもプレイヤーが参加できるようになり、「ゲームに追加」で追加できます。ゲームの最初から最後まで必ずいるのはあなただけなので、保存されるのはあなたのリプレイ（.krec）のみです。ライブリプレイには影響しません。</translation>
+        </message>
+        <message>
+            <source>Turn On Late Join</source>
+            <translation>途中参加をオンにする</translation>
+        </message>
+        <message>
+            <source>Need at least 2 players to start, or turn on Late join to start alone.</source>
+            <translation>開始するには2人以上のプレイヤーが必要です。1人で開始するには途中参加をオンにしてください。</translation>
+        </message>
+        <message>
+            <source>Late join is on, so this game isn't saved to your PC. The host's replay covers it.</source>
+            <translation>途中参加がオンのため、このゲームはあなたのPCに保存されません。ホストのリプレイに記録されます。</translation>
+        </message>
+        <message>
+            <source>Late join is on in this room. Only the host saves a local replay, so Save replay is off for you.</source>
+            <translation>このルームでは途中参加がオンです。ローカルにリプレイを保存するのはホストだけなので、あなたの「リプレイを保存」はオフになります。</translation>
+        </message>
+        <message>
+            <source>The host turned on late join. Only the host saves a local replay, so Save replay is off for you.</source>
+            <translation>ホストが途中参加をオンにしました。ローカルにリプレイを保存するのはホストだけなので、あなたの「リプレイを保存」はオフになります。</translation>
+        </message>
+        <message>
+            <source>Only the host saves a local replay, so Save replay is off for you.</source>
+            <translation>ローカルにリプレイを保存するのはホストだけなので、あなたの「リプレイを保存」はオフになります。</translation>
+        </message>
+        <message>
+            <source>Off: with late join on, only the host saves</source>
+            <translation>オフ（途中参加中はホストだけが保存）</translation>
+        </message>
+        <message>
+            <source>You can add players mid-game</source>
+            <translation>対戦中にプレイヤーを追加できます</translation>
+        </message>
+        <message>
+            <source>Off, nobody joins mid-game</source>
+            <translation>オフ（途中参加できません）</translation>
+        </message>
     </context>
     <context>
         <name>RollbackLobbyDialog</name>

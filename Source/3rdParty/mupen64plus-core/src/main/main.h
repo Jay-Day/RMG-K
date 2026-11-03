@@ -94,6 +94,10 @@ int main_rollback_hidden_frame_active(void);
 void main_rollback_capture_load_before_probe(void);
 void main_rollback_capture_load_probe(void);
 void main_rollback_capture_resume_probe(void);
+/* Opt-in, emulation-thread-only diagnostics. No device state is changed. */
+void main_rollback_log_state(const char* event, int state_frame, int result, int hash_rdram);
+void main_rollback_log_eeprom(const char* event, uint8_t block, const uint8_t* data, int status);
+void main_rollback_log_inputs(const uint32_t* values, int players);
 
 void main_speedup(int percent);
 void main_speeddown(int percent);

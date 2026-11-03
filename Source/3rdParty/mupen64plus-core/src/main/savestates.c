@@ -851,11 +851,10 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             rollback_tlb_end = SDL_GetPerformanceCounter();
     }
 
-    /* A rollback returns to this machine's own recent past, so its compiled code stays
-     * valid. A FULL buffer comes from another machine (a late joiner, a spectator): code
-     * compiled here before the load no longer matches the RDRAM it was compiled from. */
-    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t),
-                           memory_data == NULL || !rollback_tlb_lut_omitted);
+    /* RAM was replaced directly, so compiled instructions can still reflect the
+     * discarded timeline, including for this machine's own rollback buffers.
+     * Invalidation also rebuilds dynarec address mappings from the restored TLB. */
+    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t), 1);
 
     *r4300_cp0_next_interrupt(&dev->r4300.cp0) = GETDATA(curr, uint32_t);
     curr += 4; /* here there used to be next_vi */
@@ -2870,7 +2869,9 @@ int savestates_save_rollback_buffer(unsigned char **buffer, int *len, int *check
     rollback_save_prealloc_data = prealloc_data;
     rollback_save_prealloc_capacity = prealloc_capacity;
 
+    main_rollback_log_state("save_begin", frame, -1, 0);
     result = savestates_save_m64p(dev, "ROLLBACK");
+    main_rollback_log_state("save_end", frame, result, frame % 60 == 0);
 
     rollback_save_buffer = NULL;
     rollback_save_buffer_len = NULL;
@@ -2900,14 +2901,24 @@ int savestates_save_full_buffer(unsigned char **buffer, int *len, int *checksum,
 int savestates_load_rollback_buffer(unsigned char *buffer, int len)
 {
     int result;
+    int state_frame = -1;
+    int header[6];
 
     if (buffer == NULL || len <= 0)
         return 0;
 
+    if ((size_t)len >= sizeof(header)) {
+        memcpy(header, buffer, sizeof(header));
+        if (header[0] == rollback_state_header_magic || header[0] == rollback_state_legacy_header_magic)
+            state_frame = header[3];
+    }
+
     rollback_load_buffer = buffer;
     rollback_load_buffer_size = (size_t)len;
     main_rollback_capture_load_before_probe();
+    main_rollback_log_state("restore_begin", state_frame, -1, 0);
     result = savestates_load_m64p(&g_dev, "ROLLBACK");
+    main_rollback_log_state("restore_end", state_frame, result, state_frame >= 0 && state_frame % 60 == 0);
     if (result)
     {
         main_rollback_capture_load_probe();
