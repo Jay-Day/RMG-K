@@ -175,6 +175,11 @@ static std::filesystem::path pathFromUtf8String(const char* utf8) {
     return pathFromUtf8String(std::string(utf8));
 }
 
+// The save the next lobby capture starts from (recordingSetSaveData), and the
+// one a loaded file's match started from.
+static std::string recording_save_data;
+static std::string playback_save_data;
+
 // Local saving and live streaming are independent destinations for the same
 // replay bytes. A stream-only session never opens a file or creates a directory.
 static void writeRecordingBytes(const void* data, int size) {
@@ -441,6 +446,16 @@ static void openRecordingFile(const char* appName, const char* game, int player,
         memcpy(header + 272, recording_player_names, 128);// [272,400) player names
 
         writeRecordingBytes(header, static_cast<int>(sizeof(header)));
+
+        // The match's starting save, file only (see recordingSetSaveData).
+        if (recording_file.is_open() && !recording_save_data.empty()) {
+            const char type = static_cast<char>(n02::KREC_SAVE_DATA_RECORD);
+            const uint32_t length = static_cast<uint32_t>(recording_save_data.size());
+            recording_file.write(&type, 1);
+            recording_file.write(reinterpret_cast<const char*>(&length), 4);
+            recording_file.write(recording_save_data.data(), static_cast<std::streamsize>(length));
+            recording_file.flush();
+        }
     }
 
     // Fresh capture: drop old chat and enable capture for either destination.
@@ -903,6 +918,20 @@ static bool player_play(const char* fn) {
         pb.reset_all();
         return false;
     }
+    // A match that started from save data has it right after the header.
+    playback_save_data.clear();
+    if (pb.pos + 5 <= pb.size() &&
+        static_cast<unsigned char>(pb.data[pb.pos]) == n02::KREC_SAVE_DATA_RECORD) {
+        uint32_t length = 0;
+        memcpy(&length, pb.data.data() + pb.pos + 1, 4);
+        if (pb.pos + 5 + length > pb.size()) {
+            pb.reset_all();
+            return false;
+        }
+        playback_save_data.assign(pb.data.data() + pb.pos + 5, length);
+        pb.pos += 5 + length;
+        pb.scanPos = pb.pos;
+    }
     scanFrames(); // whole file present → indexes every frame
 
     pb.streaming = false;
@@ -1268,6 +1297,10 @@ void recordingClose() {
     close_recording();
 }
 
+void recordingSetSaveData(const std::string& saveData) {
+    recording_save_data = saveData;
+}
+
 void setRecordingStreamSink(std::function<void(const void*, int)> sink) {
     recording_stream_sink = std::move(sink);
 }
@@ -1394,6 +1427,16 @@ bool playbackHeaderReady() {
 int playbackNumPlayers() {
     std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return numplayers;
+}
+
+std::string playbackSaveData() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    return PlayBackBuffer.streaming ? std::string() : playback_save_data;
+}
+
+bool playbackIsStream() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    return PlayBackBuffer.streaming;
 }
 
 void setPlaybackPortNamesCallback(std::function<void(const char (*names)[32])> callback) {

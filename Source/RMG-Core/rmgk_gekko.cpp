@@ -27,6 +27,7 @@
 #include "Directories.hpp"
 #include "Error.hpp"
 #include "Library.hpp"
+#include "NetplaySave.hpp"
 #include "Settings.hpp"
 #ifdef NETPLAY
 #include "LobbyIce.hpp"
@@ -1766,6 +1767,7 @@ bool save_gekko_state(const PendingGekkoSave& save)
     {
         *save.checksum = static_cast<unsigned int>(state.checksum);
     }
+    CoreNetplaySaveTrackStateSaved(save.frame);
 
     g_GekkoLastSaveStateUs = timingEnabled
         ? std::chrono::duration_cast<std::chrono::microseconds>(
@@ -2611,6 +2613,8 @@ bool start_next_session(const std::vector<LobbyRemotePeer>& remotes, int epoch)
     }
 #endif
     g_GekkoMaxObservedFrame = -1;
+    // The new session's frame numbers start over too.
+    CoreNetplaySaveTrackReset();
     if (g_GekkoKeyframePending)
     {
         // A snapshot with no replay frame left to confirm it against; take a
@@ -2961,6 +2965,7 @@ int rollback_execute_begin_frame(void* userData)
     if (g_GekkoStopRequested.load(std::memory_order_relaxed))
     {
         write_gekko_log("begin_frame result=stop_requested");
+        CoreNetplaySaveTrackSessionEnd(gekko_confirmed_frame(g_GekkoSession));
         return 0;
     }
     if (g_GekkoDebugBeginFrame != nullptr)
@@ -3038,6 +3043,7 @@ int rollback_execute_begin_frame(void* userData)
         if (g_GekkoStopRequested.load(std::memory_order_relaxed))
         {
             write_gekko_log("begin_frame result=stop_requested");
+            CoreNetplaySaveTrackSessionEnd(gekko_confirmed_frame(g_GekkoSession));
             return 0;
         }
 
@@ -3485,6 +3491,10 @@ int rollback_execute_end_frame(void* userData)
     {
         write_gekko_log("end_frame result=fail reason=save");
         return 0;
+    }
+    if (g_GekkoSession != nullptr)
+    {
+        CoreNetplaySaveTrackEndFrame(gekko_confirmed_frame(g_GekkoSession));
     }
     const auto pendingSaveUs = timingEnabled
         ? std::chrono::duration_cast<std::chrono::microseconds>(

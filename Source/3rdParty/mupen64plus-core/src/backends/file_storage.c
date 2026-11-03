@@ -47,8 +47,10 @@ int open_file_storage(struct file_storage* fstorage, size_t size, const char* fi
         return -1;
     }
 
-    /* Check if save file loading is disabled (e.g., for Kaillera netplay) */
-    if (ConfigGetParamBool(g_CoreConfig, "DisableSaveFileLoading"))
+    /* Check if save file loading is disabled (e.g., for Kaillera netplay).
+     * The netplay save sandbox never reads disk either: main.c copies the
+     * host's save over the blank contents. */
+    if (main_save_sandbox_active() || ConfigGetParamBool(g_CoreConfig, "DisableSaveFileLoading"))
     {
         /* Return empty/zeroed data - all players start fresh */
         memset(fstorage->data, 0, fstorage->size);
@@ -104,6 +106,14 @@ static size_t file_storage_size(const void* storage)
 
 static void file_storage_save(void* storage, size_t start, size_t size)
 {
+    /* The netplay save sandbox keeps the game's writes in memory. Counting
+     * them lets the frontend notice a changed save without diffing it. */
+    if (main_save_sandbox_active())
+    {
+        main_save_data_written();
+        return;
+    }
+
     if (netplay_is_init() && netplay_get_controller(0) == -1)
         return;
 

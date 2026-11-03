@@ -640,6 +640,18 @@ static size_t l_pak_type_idx[6];
 /* PRNG state - used for Mempaks ID generation */
 static struct xoshiro256pp_state l_mpk_idgen;
 
+/* Netplay save data sandbox: the starting bytes for each cartridge save, and
+ * a count of the game's writes since. While it's set, no save is read from
+ * or written to disk. */
+static int l_save_sandbox = 0;
+static uint8_t* l_save_sandbox_data[M64SAVEDATA_KINDS];
+static size_t l_save_sandbox_size[M64SAVEDATA_KINDS];
+static unsigned int l_save_generation = 0;
+
+/* FlashRAM as the match started, for a rollback load back past the game's
+ * first use of it (see savestates.c). */
+static uint8_t* l_flashram_boot = NULL;
+
 /*********************************************************************************************************
 * static functions
 */
@@ -2322,6 +2334,20 @@ static void open_mpk_file(struct file_storage* fstorage)
     }
 }
 
+/* With the netplay sandbox on, a save the host gave replaces the blank
+ * contents open_file_storage left (it reads nothing from disk then). A short
+ * buffer keeps the blank tail; a long one is cut to the storage's size. */
+static void apply_save_sandbox(m64p_save_data_kind kind, struct file_storage* fstorage, size_t capacity)
+{
+    if (!l_save_sandbox || l_save_sandbox_data[kind] == NULL || fstorage->data == NULL)
+        return;
+
+    size_t size = l_save_sandbox_size[kind];
+    if (size > capacity)
+        size = capacity;
+    memcpy(fstorage->data, l_save_sandbox_data[kind], size);
+}
+
 static void open_fla_file(struct file_storage* fstorage)
 {
     int ret = open_file_storage(fstorage, FLASHRAM_SIZE, get_flashram_path());
@@ -2330,6 +2356,7 @@ static void open_fla_file(struct file_storage* fstorage)
         /* if file doesn't exists provide default content */
         format_flashram(fstorage->data);
     }
+    apply_save_sandbox(M64SAVEDATA_FLASHRAM, fstorage, FLASHRAM_SIZE);
 }
 
 static void open_sra_file(struct file_storage* fstorage)
@@ -2340,6 +2367,7 @@ static void open_sra_file(struct file_storage* fstorage)
         /* if file doesn't exists provide default content */
         format_sram(fstorage->data);
     }
+    apply_save_sandbox(M64SAVEDATA_SRAM, fstorage, SRAM_SIZE);
 }
 
 static void open_eep_file(struct file_storage* fstorage)
@@ -2355,11 +2383,95 @@ static void open_eep_file(struct file_storage* fstorage)
         /* if file doesn't exists provide default content */
         format_eeprom(fstorage->data, EEPROM_MAX_SIZE);
     }
+    apply_save_sandbox(M64SAVEDATA_EEPROM, fstorage, EEPROM_MAX_SIZE);
 
     /* Truncate to 4k bit if necessary */
     if (ROM_SETTINGS.savetype != SAVETYPE_EEPROM_16K) {
         fstorage->size = 0x200;
     }
+}
+
+m64p_error main_set_save_data(const m64p_save_data* save)
+{
+    size_t i;
+
+    if (g_EmulatorRunning)
+        return M64ERR_INVALID_STATE;
+
+    for (i = 0; i < M64SAVEDATA_KINDS; ++i) {
+        free(l_save_sandbox_data[i]);
+        l_save_sandbox_data[i] = NULL;
+        l_save_sandbox_size[i] = 0;
+    }
+    l_save_sandbox = (save != NULL);
+    if (save == NULL)
+        return M64ERR_SUCCESS;
+
+    for (i = 0; i < M64SAVEDATA_KINDS; ++i) {
+        if (save->data[i] == NULL || save->size[i] <= 0)
+            continue;
+        l_save_sandbox_data[i] = malloc((size_t)save->size[i]);
+        if (l_save_sandbox_data[i] == NULL)
+            return M64ERR_NO_MEMORY;
+        memcpy(l_save_sandbox_data[i], save->data[i], (size_t)save->size[i]);
+        l_save_sandbox_size[i] = (size_t)save->size[i];
+    }
+    return M64ERR_SUCCESS;
+}
+
+static void copy_save_storage(void* storage, const struct storage_backend_interface* istorage,
+                              unsigned char* out, int* size)
+{
+    size_t length = 0;
+
+    if (storage != NULL && istorage != NULL && istorage->data != NULL && istorage->size != NULL)
+        length = istorage->size(storage);
+    if (out == NULL || length > (size_t)*size) {
+        *size = 0;
+        return;
+    }
+    memcpy(out, istorage->data(storage), length);
+    *size = (int)length;
+}
+
+m64p_error main_get_save_data(m64p_save_data* save)
+{
+    if (!g_EmulatorRunning)
+        return M64ERR_INVALID_STATE;
+
+    copy_save_storage(g_dev.cart.eeprom.storage, g_dev.cart.eeprom.istorage,
+        save->data[M64SAVEDATA_EEPROM], &save->size[M64SAVEDATA_EEPROM]);
+    copy_save_storage(g_dev.cart.sram.storage, g_dev.cart.sram.istorage,
+        save->data[M64SAVEDATA_SRAM], &save->size[M64SAVEDATA_SRAM]);
+    copy_save_storage(g_dev.cart.flashram.storage, g_dev.cart.flashram.istorage,
+        save->data[M64SAVEDATA_FLASHRAM], &save->size[M64SAVEDATA_FLASHRAM]);
+    save->generation = l_save_generation;
+    return M64ERR_SUCCESS;
+}
+
+int main_save_sandbox_active(void)
+{
+    return l_save_sandbox;
+}
+
+void main_save_data_written(void)
+{
+    ++l_save_generation;
+}
+
+unsigned int main_get_save_generation(void)
+{
+    return l_save_generation;
+}
+
+void main_set_save_generation(unsigned int generation)
+{
+    l_save_generation = generation;
+}
+
+const uint8_t* main_flashram_boot_data(void)
+{
+    return l_flashram_boot;
 }
 
 static void load_dd_rom(uint8_t* rom, size_t* rom_size, uint8_t* disk_region)
@@ -2798,8 +2910,10 @@ m64p_error main_run(void)
             break;
     }
 
-    /* Seed MPK ID gen using current time */
-    uint64_t mpk_seed = !netplay_is_init() ? (uint64_t)time(NULL) : 0;
+    /* Seed MPK ID gen using current time. Netplay peers must format blank
+     * paks alike, so they use a fixed seed. */
+    uint64_t mpk_seed = (!netplay_is_init() && !l_save_sandbox) ? (uint64_t)time(NULL) : 0;
+    l_save_generation = 0;
     l_mpk_idgen = xoshiro256pp_seed(mpk_seed);
 
     /* take the r4300 emulator mode from the config file at this point and cache it in a global variable */
@@ -2893,6 +3007,10 @@ m64p_error main_run(void)
     open_mpk_file(&mpk);
     open_eep_file(&eep);
     open_fla_file(&fla);
+    free(l_flashram_boot);
+    l_flashram_boot = malloc(FLASHRAM_SIZE);
+    if (l_flashram_boot != NULL)
+        memcpy(l_flashram_boot, fla.data, FLASHRAM_SIZE);
     open_sra_file(&sra);
 
     /* Load 64DD IPL ROM and Disk */
@@ -3183,6 +3301,8 @@ m64p_error main_run(void)
 
     close_file_storage(&sra);
     close_file_storage(&fla);
+    free(l_flashram_boot);
+    l_flashram_boot = NULL;
     close_file_storage(&eep);
     close_file_storage(&mpk);
     close_dd_disk(&dd_disk);
@@ -3229,6 +3349,8 @@ on_gfx_open_failure:
     /* release storage files */
     close_file_storage(&sra);
     close_file_storage(&fla);
+    free(l_flashram_boot);
+    l_flashram_boot = NULL;
     close_file_storage(&eep);
     close_file_storage(&mpk);
     close_dd_disk(&dd_disk);

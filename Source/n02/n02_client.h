@@ -75,6 +75,15 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
 // Flush and end replay capture, closing the local file if one was opened.
 void recordingClose();
 
+// The save data the next lobby capture's match starts from (RMG-Core's
+// serialized form), or empty for a blank save. recordingOpen() writes it
+// right after the header as a 0x16 record, in the local file only: a live
+// replay viewer gets the save from the match's manifest instead. Readers
+// before save data stop at that record, which beats replaying the match
+// from a blank save and drifting.
+constexpr unsigned char KREC_SAVE_DATA_RECORD = 0x16;
+void recordingSetSaveData(const std::string& saveData);
+
 // Register a sink for replay bytes (header + every flushed record), independent
 // of local file saving. Pass nullptr to clear. Set/clear only while emulation
 // is stopped; the sink is invoked on the emulation thread during play.
@@ -208,6 +217,13 @@ bool playbackHeaderReady();
 
 // Player count from the parsed playback header (0 until playbackHeaderReady()).
 int playbackNumPlayers();
+
+// The save data a loaded .krec's match started from (its 0x16 record), empty
+// when it started blank. Valid from playbackLoad() until playback ends.
+std::string playbackSaveData();
+
+// True while the playback is a live stream rather than a file.
+bool playbackIsStream();
 
 // Called on the playback's thread with the slot-ordered player names whenever
 // a port change record (see recordingQueuePortChange) or a seek changes them.
