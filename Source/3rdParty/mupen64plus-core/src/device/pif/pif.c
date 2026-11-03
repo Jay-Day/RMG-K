@@ -43,6 +43,7 @@
 #include "device/rcp/si/si_controller.h"
 #include "plugin/plugin.h"
 #include "main/netplay.h"
+#include "main/main.h"
 #include "main/pif_sync_callback.h"
 #include "osal/files.h"
 
@@ -393,6 +394,7 @@ static void rollback_sync_input(struct pif* pif)
 
     memcpy(l_rollback_input_values, input_values, sizeof(l_rollback_input_values));
     l_rollback_input_valid = 1;
+    main_rollback_log_inputs(input_values, l_rollback_input_players);
 
     for (k = 0; k < (size_t)l_rollback_input_players && k < PIF_CHANNELS_COUNT; ++k) {
         struct pif_channel* channel = &pif->channels[k];

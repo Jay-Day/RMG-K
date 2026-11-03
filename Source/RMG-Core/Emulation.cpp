@@ -47,12 +47,15 @@ static void setRollbackLoggingEnvironment(void)
 {
     const bool pifLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_VerbosePifInputLogging);
     const bool glideLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging);
+    const bool emulationLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_EmulationDiagnostics);
 #ifdef _WIN32
     _putenv_s("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0");
     _putenv_s("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0");
+    _putenv_s("RMGK_EMULATION_DIAGNOSTICS", emulationLogging ? "1" : "0");
 #else
     setenv("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0", 1);
     setenv("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0", 1);
+    setenv("RMGK_EMULATION_DIAGNOSTICS", emulationLogging ? "1" : "0", 1);
 #endif
 }
 

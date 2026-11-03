@@ -110,6 +110,7 @@ enum class SettingsID
     Rollback_VerbosePifInputLogging,
     Rollback_VerboseGlideInputLogging,
     Rollback_StallDiagnostics,
+    Rollback_EmulationDiagnostics,
     Rollback_PacingTrace,
     Rollback_PacingMode,
     Rollback_PingDiagnostics,
