@@ -24,6 +24,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace KailleraExport
@@ -116,6 +118,7 @@ static std::filesystem::path resolveFfmpegPath(const QCommandLineParser& parser)
     }
 
     const QString applicationDirectory = QCoreApplication::applicationDirPath();
+#ifdef _WIN32
     const QString localFfmpeg = QDir(applicationDirectory).filePath("ffmpeg.exe");
     if (QFileInfo::exists(localFfmpeg))
     {
@@ -128,6 +131,7 @@ static std::filesystem::path resolveFfmpegPath(const QCommandLineParser& parser)
     {
         return std::filesystem::path(savedFfmpeg.toStdString());
     }
+#endif
 
     const QString foundExecutable = QStandardPaths::findExecutable("ffmpeg");
     if (!foundExecutable.isEmpty())
@@ -135,11 +139,13 @@ static std::filesystem::path resolveFfmpegPath(const QCommandLineParser& parser)
         return std::filesystem::path(foundExecutable.toStdString());
     }
 
+#ifdef _WIN32
     const QString foundExecutableExe = QStandardPaths::findExecutable("ffmpeg.exe");
     if (!foundExecutableExe.isEmpty())
     {
         return std::filesystem::path(foundExecutableExe.toStdString());
     }
+#endif
 
     return {};
 }
@@ -194,7 +200,11 @@ static bool parseOptions(const QCommandLineParser& parser,
     {
         if (errorMessage != nullptr)
         {
+#ifdef _WIN32
             *errorMessage = "FFmpeg was not found. Install FFmpeg or place ffmpeg.exe next to RMG-K.exe.";
+#else
+            *errorMessage = "ffmpeg was not found. Install ffmpeg in your distribution packages.";
+#endif
         }
         return false;
     }
@@ -323,6 +333,10 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
         setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_set_output"));
         getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_frequency"));
         getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_bytes_written"));
+#else
+        setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn(dlsym(audioHandle, "audio_capture_set_output"));
+        getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(dlsym(audioHandle, "audio_capture_get_frequency"));
+        getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(dlsym(audioHandle, "audio_capture_get_bytes_written"));
 #endif
     }
 
@@ -529,11 +543,6 @@ bool IsReplayExportRequested(const QCommandLineParser& parser)
 
 int RunReplayExportFromCommandLine(const QCommandLineParser& parser)
 {
-#ifndef _WIN32
-    (void)parser;
-    printExportError("Replay export is only supported on Windows");
-    return 1;
-#else
     ReplayExportOptions options;
     std::string errorMessage;
     if (!parseOptions(parser, options, &errorMessage))
@@ -550,7 +559,6 @@ int RunReplayExportFromCommandLine(const QCommandLineParser& parser)
 
     fprintf(stderr, "Replay export finished: %s\n", options.outputPath.string().c_str());
     return 0;
-#endif
 }
 
 } // namespace KailleraExport
