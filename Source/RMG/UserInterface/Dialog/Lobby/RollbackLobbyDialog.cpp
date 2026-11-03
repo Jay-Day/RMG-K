@@ -175,6 +175,13 @@ namespace
             : StatusColors{ "#2E7D32", "#F9A825", "#C62828", "#9E9E9E" };
     }
 
+    // Amber for warning text. The light theme's wait color is too pale to read
+    // as a sentence, so it uses the deeper goldenrod of the P3 accent.
+    QString warnTextHex()
+    {
+        return isDarkTheme() ? QString(statusColors().wait) : QStringLiteral("#b5790a");
+    }
+
     QString humanState(LobbyClient::ConnectionState s)
     {
         switch (s)
@@ -1256,8 +1263,10 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_recordCheck = new QCheckBox(tr("Record locally"), this);
     const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
     n02_kaillera_recording_enabled = recordingDefault;
+    m_recordLocallyChoice = recordingDefault;
     m_recordCheck->setChecked(recordingDefault);
-    connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
+    connect(m_recordCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_recordLocallyChoice = checked;
         n02_kaillera_recording_enabled = checked;
     });
     toggleRow->addWidget(m_recordCheck);
@@ -1276,10 +1285,34 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         }
     });
     toggleRow->addWidget(m_broadcastCheck);
+
+    // Off in every new room. The server repeats the host and waiting checks.
+    m_lateJoinCheck = new QCheckBox(tr("Late join"), this);
+    m_lateJoinCheck->setVisible(false);
+    connect(m_lateJoinCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_suppressSettingsSignal) return;
+        if (m_currentRoomId == 0 || !m_client || m_currentRoomHostId != m_client->selfUserId())
+            return;
+        if (checked && !confirmLateJoin())
+        {
+            m_suppressSettingsSignal = true;
+            m_lateJoinCheck->setChecked(false);
+            m_suppressSettingsSignal = false;
+            return;
+        }
+        m_client->updateRoomLateJoin(checked);
+    });
+    toggleRow->addWidget(m_lateJoinCheck);
     toggleRow->addStretch(1);
-    updateRecordingControls();
 
     lay->addLayout(toggleRow);
+
+    m_lateJoinNote = new QLabel(this);
+    m_lateJoinNote->setTextFormat(Qt::RichText);
+    m_lateJoinNote->setWordWrap(true);
+    m_lateJoinNote->setVisible(false);
+    lay->addWidget(m_lateJoinNote);
+    updateRecordingControls();
 
     // Delay is local to each player and is published for the seat display.
     auto applyDelay = [this]() {
@@ -3323,6 +3356,10 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     CoreRefreshKailleraRecordingStorageStatus();
     const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
     n02_kaillera_recording_enabled = recordingDefault;
+    m_recordLocallyChoice = recordingDefault;
+    m_roomHasLateJoinOption = false;
+    m_roomLateJoinEnabled = false;
+    m_lateJoinEnabledSeen = false;
     if (m_recordCheck)
         m_recordCheck->setChecked(recordingDefault);
 
@@ -3526,6 +3563,40 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_serverAcceptsInGameSettings = roomState.value("inGameSettings").toBool(false);
     m_roomLateJoin = roomState.value("lateJoin").toBool(false);
     m_canStartAlone = roomState.value("canStartAlone").toBool(false);
+
+    // Late join is the host's choice per room. Everyone hears when it changes,
+    // and a player entering a room with it on hears it too, because it turns
+    // their local recording off.
+    m_roomHasLateJoinOption = roomState.contains("lateJoinEnabled");
+    {
+        const bool lateJoinEnabled = roomState.value("lateJoinEnabled").toBool(false);
+        if (!m_lateJoinEnabledSeen)
+        {
+            if (lateJoinEnabled && !iAmHost)
+                appendChatSystemLine(CHANNEL_ROOM,
+                    tr("Late join is on in this room. Only the host saves a local replay, so Record locally is off for you."));
+        }
+        else if (lateJoinEnabled != m_roomLateJoinEnabled)
+        {
+            if (iAmHost)
+                appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
+                    ? tr("Late join is on. Players can join while a game is running, and only you save a local replay.")
+                    : tr("Late join is off."));
+            else
+                appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
+                    ? tr("The host turned on late join. Only the host saves a local replay, so Record locally is off for you.")
+                    : tr("The host turned off late join."));
+        }
+        m_lateJoinEnabledSeen = true;
+        m_roomLateJoinEnabled = lateJoinEnabled;
+    }
+    if (m_lateJoinCheck)
+    {
+        m_suppressSettingsSignal = true;
+        m_lateJoinCheck->setChecked(m_roomLateJoinEnabled);
+        m_suppressSettingsSignal = false;
+        m_lateJoinCheck->setVisible(m_roomHasLateJoinOption);
+    }
 
     // Pacing is host-authoritative and applies to every seat. Mirror it into the
     // engine setting now (host included) so the match starts on the room's model;
@@ -3794,8 +3865,21 @@ void RollbackLobbyDialog::updateRecordingControls()
     const bool liveReplayEnabled = m_broadcastCheck->isChecked();
     const bool editable = m_currentRoomState == "waiting" && !matchTransportInProgress();
 
-    m_recordCheck->setEnabled(editable);
-    if (!editable)
+    // With late join on, only the host records: the host is the one player
+    // sure to be in the whole game. The box shows off meanwhile and goes back
+    // to the player's own choice afterwards.
+    const bool hostOnlyRecording = m_roomLateJoinEnabled && !iAmHost;
+    {
+        const QSignalBlocker blocker(m_recordCheck);
+        m_recordCheck->setChecked(!hostOnlyRecording && m_recordLocallyChoice);
+    }
+    m_recordCheck->setEnabled(editable && !hostOnlyRecording);
+    if (hostOnlyRecording)
+    {
+        m_recordCheck->setToolTip(
+            tr("Late join is on, so only the host saves a local replay."));
+    }
+    else if (!editable)
     {
         m_recordCheck->setToolTip(
             tr("Recording can't be changed during a match."));
@@ -3825,6 +3909,52 @@ void RollbackLobbyDialog::updateRecordingControls()
             tr("Let others in the lobby watch this match live.\n"
                            "A local replay is saved only if Record locally is checked."));
     }
+
+    if (!m_lateJoinCheck || !m_lateJoinNote)
+        return;
+    m_lateJoinCheck->setEnabled(iAmHost && editable);
+    if (!iAmHost)
+    {
+        m_lateJoinCheck->setToolTip(m_roomLateJoinEnabled
+            ? tr("The host turned on late join: players can join while a game is running.")
+            : tr("The host has late join turned off."));
+    }
+    else if (!editable)
+    {
+        m_lateJoinCheck->setToolTip(
+            tr("Late join can't be changed during a match."));
+    }
+    else
+    {
+        m_lateJoinCheck->setToolTip(
+            tr("Let players join while a game is running. You add them with Add to Game.\n"
+               "While it's on, only you save a local replay."));
+    }
+    m_lateJoinNote->setVisible(m_roomLateJoinEnabled);
+    if (m_roomLateJoinEnabled)
+    {
+        m_lateJoinNote->setText(QString("<span style='color:%1; font-weight:600;'>⚠ %2</span> %3")
+            .arg(warnTextHex(), tr("Late join is on."),
+                 iAmHost ? tr("Local recording is off for everyone but you.")
+                         : tr("Only the host saves a local replay, so Record locally is off for you.")));
+    }
+}
+
+bool RollbackLobbyDialog::confirmLateJoin()
+{
+    QMessageBox box(QMessageBox::Warning, tr("Turn on late join?"),
+        tr("Turning on late join turns off local recording for everyone in this room except you."),
+        QMessageBox::Cancel, this);
+    box.setInformativeText(
+        tr("Players can then join while a game is running, and you add them with Add to Game. "
+           "Only your replay (.krec) is saved, since you're the one player sure to be in the whole game. "
+           "Live Replay isn't affected."));
+    QPushButton* turnOn = box.addButton(tr("Turn On Late Join"), QMessageBox::AcceptRole);
+    box.setDefaultButton(QMessageBox::Cancel);
+    box.exec();
+    // The room may have moved on while the box was open.
+    return box.clickedButton() == turnOn && m_currentRoomId != 0 && m_client &&
+        m_currentRoomHostId == m_client->selfUserId() && m_currentRoomState == "waiting";
 }
 
 void RollbackLobbyDialog::refreshStartButton()
@@ -3863,7 +3993,9 @@ void RollbackLobbyDialog::refreshStartButton()
     m_startBtn->setToolTip(
         !iAmHost         ? tr("Only the host can start the game.")
         : !waiting       ? tr("Already in a match.")
-        : !enoughPlayers ? tr("Need at least 2 players to start.")
+        : !enoughPlayers ? (seated == 1 && m_roomHasLateJoinOption && !m_roomLateJoinEnabled
+                              ? tr("Need at least 2 players to start, or turn on Late join to start alone.")
+                              : tr("Need at least 2 players to start."))
         : !pingsReady    ? tr("Measuring every player-to-player path…")
         : alone          ? tr("Start playing now. You can add anyone who joins the room to the game.")
                          : QString());
@@ -4476,6 +4608,10 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
         abortLateJoin(QStringLiteral("left_room"), false);
     m_roomLateJoin = false;
     m_canStartAlone = false;
+    m_roomHasLateJoinOption = false;
+    m_roomLateJoinEnabled = false;
+    m_lateJoinEnabledSeen = false;
+    if (m_lateJoinCheck) m_lateJoinCheck->setVisible(false);
     m_outOfMatchUsers.clear();
     m_waitingNoticeMs.clear();
     m_lateJoinCapableUsers.clear();
@@ -4505,6 +4641,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_knownSeatedUsers.clear();
     m_roomSeatsSeen = false;
     m_localDelayPublished = false;
+    updateRecordingControls();
 
     if (m_chatViewRoom) m_chatViewRoom->clear();
     if (m_roomChatInput) m_roomChatInput->setEnabled(false);
@@ -5328,6 +5465,15 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     if (m_recordCheck)
     {
         n02_kaillera_recording_enabled = m_recordCheck->isChecked();
+    }
+    // A match open to late joiners is recorded by the host alone, including
+    // one an older server opened without asking the host.
+    if (m_client->matchSeats() > 0 && m_currentRoomHostId != selfId)
+    {
+        if (m_recordLocallyChoice)
+            appendChatSystemLine(CHANNEL_ROOM,
+                tr("Late join is on, so this game isn't saved to your PC. The host's replay covers it."));
+        n02_kaillera_recording_enabled = false;
     }
 
     // Capture seated player names (slot-indexed) for the .krec header, the same
