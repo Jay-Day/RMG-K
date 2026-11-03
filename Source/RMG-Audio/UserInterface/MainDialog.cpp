@@ -22,6 +22,7 @@ MainDialog::MainDialog(QWidget* parent) : QDialog(parent)
     this->setIconsForEmulationInfoText();
 
     this->volumeSlider->setValue(CoreSettingsGetIntValue(SettingsID::Audio_Volume));
+    this->on_volumeSlider_valueChanged(this->volumeSlider->value());
     this->muteCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Audio_Muted));
 
     this->defaultFrequencySpinBox->setValue(CoreSettingsGetIntValue(SettingsID::Audio_DefaultFrequency));
