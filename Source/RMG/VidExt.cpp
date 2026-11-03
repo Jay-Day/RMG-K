@@ -460,7 +460,7 @@ static bool VidExt_NativeWglSetup(void)
     HWND hwnd = CreateWindowExW(
         WS_EX_TOPMOST,
         L"RMGKNativeWglFullscreen",
-        L"RMG-K",
+        L"Dale64",
         WS_POPUP | WS_VISIBLE,
         rect.left,
         rect.top,

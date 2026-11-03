@@ -822,7 +822,7 @@ void RollbackLobbyDialog::onChallengeEnded(quint64 challengeId, quint64 toUserId
     else if (result == QLatin1String("needs_update"))
     {
         title = tr("%1 needs an update").arg(name);
-        detail = tr("Their version of RMG-K can't receive challenges.");
+        detail = tr("Their version of Dale64 can't receive challenges.");
     }
     else if (result == QLatin1String("too_fast"))
     {
@@ -920,7 +920,7 @@ void RollbackLobbyDialog::onPrivateMessageFailed(quint64 toUserId, const QString
     if (reason == QLatin1String("user_gone"))
         why = tr("They've left the lobby, so that message went nowhere.");
     else if (reason == QLatin1String("needs_update"))
-        why = tr("Their version of RMG-K can't receive private messages.");
+        why = tr("Their version of Dale64 can't receive private messages.");
     view->addLine(QString("<i style='color:%1;'>%2</i>").arg(LobbyTheme::tokens().muted.name(), why.toHtmlEscaped()));
 }
 

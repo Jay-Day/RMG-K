@@ -659,7 +659,7 @@ LagReport LagStats::build(const QList<LagPlayer>& players, bool wholeMatch)
         if (player.self)
             continue;
         if (!player.reported)
-            report.notes << tr("No lag stats from %1: they may be on an older RMG-K, or their connection to you is down.").arg(player.name);
+            report.notes << tr("No lag stats from %1: they may be on an older Dale64, or their connection to you is down.").arg(player.name);
         else if (report.active && player.ageMs > kStaleReportMs)
             report.notes << tr("%1's numbers are %2 old.").arg(player.name, formatDuration(player.ageMs));
     }
@@ -759,7 +759,7 @@ std::vector<std::vector<std::string>> LagStats::overlayTable(const LagReport& re
 QString LagStats::plainText(const LagReport& report)
 {
     QStringList lines;
-    lines << tr("RMG-K lag check, %1").arg(report.window);
+    lines << tr("Dale64 lag check, %1").arg(report.window);
     lines << report.headline;
     for (const QString& line : report.details)
         lines << QStringLiteral("- ") + line;

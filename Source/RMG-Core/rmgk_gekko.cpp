@@ -2955,7 +2955,7 @@ int run_join_hold()
     if (state.empty() || !CoreRollbackLoadGameState(loadState))
     {
         log_late_join("joiner load result=fail");
-        CoreSetError("Couldn't load the game state from the host. Your ROM or RMG-K version may differ from theirs.");
+        CoreSetError("Couldn't load the game state from the host. Your ROM or Dale64 version may differ from theirs.");
         return 0;
     }
     {

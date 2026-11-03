@@ -1812,8 +1812,8 @@ USB %2
             <translation>Raphnetのrawアクセス対応アダプターが見つかりませんでした。</translation>
         </message>
         <message>
-            <source>Could not start the raphnet input test. Close other apps using the adapter; RMG-K will retry automatically.</source>
-            <translation>Raphnet入力テストを開始できませんでした。アダプターを使用中の他のアプリを閉じてください。RMG-Kが自動的に再試行します。</translation>
+            <source>Could not start the raphnet input test. Close other apps using the adapter; Dale64 will retry automatically.</source>
+            <translation>Raphnet入力テストを開始できませんでした。アダプターを使用中の他のアプリを閉じてください。Dale64が自動的に再試行します。</translation>
         </message>
         <message>
             <source>No valid controller response. Check the selected adapter port and connection.</source>
@@ -2467,8 +2467,8 @@ Local setting — each player may choose a different value.</source>
 ローカル設定です。各プレイヤーが異なる値を選択できます。</translation>
         </message>
         <message>
-            <source>Your RMG-K client is out of date. This lobby requires RMG-K 0.9.13 or vdev-2367 or newer.</source>
-            <translation>RMG-Kクライアントが古いため接続できません。このロビーにはRMG-K 0.9.13、またはvdev-2367以降が必要です。</translation>
+            <source>Your Dale64 client is out of date. This lobby requires version 0.9.13 or vdev-2367 or newer.</source>
+            <translation>Dale64クライアントが古いため接続できません。このロビーにはバージョン0.9.13、またはvdev-2367以降が必要です。</translation>
         </message>
         <message>
             <source>That username isn't allowed.</source>
@@ -2487,8 +2487,8 @@ Local setting — each player may choose a different value.</source>
             <translation>モデレーターによりルームが閉じられました。</translation>
         </message>
         <message>
-            <source>RMG-K Lobby</source>
-            <translation>RMG-K ロビー</translation>
+            <source>Dale64 Lobby</source>
+            <translation>Dale64 ロビー</translation>
         </message>
         <message>
             <source>RMG-K · Rollback Netplay</source>
@@ -3281,16 +3281,16 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>ロビーとの接続が切れたため、対戦から外されました。再接続すると、ホストがあなたを再びゲームに追加できます。</translation>
         </message>
         <message>
-            <source>they're on a different RMG-K version</source>
-            <translation>相手のRMG-Kのバージョンが異なります</translation>
+            <source>they're on a different Dale64 version</source>
+            <translation>相手のDale64のバージョンが異なります</translation>
         </message>
         <message>
             <source>another player is joining right now</source>
             <translation>別のプレイヤーが参加中です</translation>
         </message>
         <message>
-            <source>this match or their RMG-K can't add players mid-game</source>
-            <translation>この対戦または相手のRMG-Kは途中参加に対応していません</translation>
+            <source>this match or their Dale64 can't add players mid-game</source>
+            <translation>この対戦または相手のDale64は途中参加に対応していません</translation>
         </message>
         <message>
             <source>they're not waiting to join any more</source>
@@ -3819,12 +3819,12 @@ A local replay is saved only if Save replay is on.</source>
             <translation>このPCの全員が座れる空席がそのルームにはありません。</translation>
         </message>
         <message>
-            <source>That room needs a newer version of RMG-K.</source>
-            <translation>そのルームには新しいバージョンのRMG-Kが必要です。</translation>
+            <source>That room needs a newer version of Dale64.</source>
+            <translation>そのルームには新しいバージョンのDale64が必要です。</translation>
         </message>
         <message>
-            <source>Someone in that room is on an older RMG-K that can't play with several players on one PC. Remove the other players on this PC to join.</source>
-            <translation>そのルームに、1台のPCで複数人がプレイすることに対応していない古いRMG-Kの参加者がいます。参加するには、このPCの他のプレイヤーを外してください。</translation>
+            <source>Someone in that room is on an older Dale64 that can't play with several players on one PC. Remove the other players on this PC to join.</source>
+            <translation>そのルームに、1台のPCで複数人がプレイすることに対応していない古いDale64の参加者がいます。参加するには、このPCの他のプレイヤーを外してください。</translation>
         </message>
         <message>
             <source>Quick Match pairs two players, one on each PC. Remove the other players on this PC, or create a room to play together.</source>
@@ -4151,8 +4151,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>%1は更新が必要です</translation>
         </message>
         <message>
-            <source>Their version of RMG-K can't receive challenges.</source>
-            <translation>相手のRMG-Kは対戦の申し込みに対応していません。</translation>
+            <source>Their version of Dale64 can't receive challenges.</source>
+            <translation>相手のDale64は対戦の申し込みに対応していません。</translation>
         </message>
         <message>
             <source>That's a lot of challenges</source>
@@ -4187,8 +4187,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>相手がロビーを退出したため、メッセージは届きませんでした。</translation>
         </message>
         <message>
-            <source>Their version of RMG-K can't receive private messages.</source>
-            <translation>相手のRMG-Kはプライベートメッセージに対応していません。</translation>
+            <source>Their version of Dale64 can't receive private messages.</source>
+            <translation>相手のDale64はプライベートメッセージに対応していません。</translation>
         </message>
         <message>
             <source>%1: %2</source>
@@ -4489,7 +4489,23 @@ A local replay is saved only if Save replay is on.</source>
         </message>
     </context>
     <context>
-        <name>UserInterface::Dialog::MatchCardBase</name>
+        <name>UserInterface::Dialog::LiveMatchBase</name>
+        <message>
+            <source>No replay</source>
+            <translation>配信なし</translation>
+        </message>
+        <message>
+            <source>No ROM</source>
+            <translation>ROMなし</translation>
+        </message>
+        <message>
+            <source>Live replay is off in this room, so the match can't be watched.</source>
+            <translation>このルームはライブリプレイがオフのため、観戦できません。</translation>
+        </message>
+        <message>
+            <source>You don't have the ROM this match is using.</source>
+            <translation>この対戦のROMを持っていません。</translation>
+        </message>
         <message>
             <source>Stop</source>
             <translation>停止</translation>
@@ -4516,18 +4532,14 @@ A local replay is saved only if Save replay is on.</source>
         </message>
     </context>
     <context>
-        <name>UserInterface::Dialog::MatchCard</name>
+        <name>UserInterface::Dialog::LiveMatchRow</name>
         <message>
-            <source>No ROM</source>
-            <translation>ROMなし</translation>
+            <source>Watching</source>
+            <translation>観戦中</translation>
         </message>
         <message>
-            <source>You don't have the ROM this match is using.</source>
-            <translation>この対戦のROMを持っていません。</translation>
-        </message>
-        <message>
-            <source>Watch</source>
-            <translation>観戦</translation>
+            <source>No replay</source>
+            <translation>配信なし</translation>
         </message>
         <message>
             <source>Join</source>
@@ -4538,16 +4550,12 @@ A local replay is saved only if Save replay is on.</source>
             <translation>空き席に座ります。ホストがゲームに追加できます。</translation>
         </message>
         <message>
-            <source>Watching</source>
-            <translation>観戦中</translation>
+            <source>Watch</source>
+            <translation>観戦</translation>
         </message>
         <message>
-            <source>No replay</source>
-            <translation>配信なし</translation>
-        </message>
-        <message>
-            <source>Live</source>
-            <translation>ライブ</translation>
+            <source>Show details</source>
+            <translation>詳細を表示</translation>
         </message>
         <message>
             <source>1 seat open</source>
@@ -4557,17 +4565,25 @@ A local replay is saved only if Save replay is on.</source>
             <source>%1 seats open</source>
             <translation>%1席空き</translation>
         </message>
+        <message>
+            <source>%1 watching</source>
+            <translation>%1人が観戦中</translation>
+        </message>
+        <message>
+            <source>hosted by %1</source>
+            <translation>ホスト: %1</translation>
+        </message>
+        <message>
+            <source>started %1</source>
+            <translation>%1に開始</translation>
+        </message>
+        <message>
+            <source>Hide details</source>
+            <translation>詳細を隠す</translation>
+        </message>
     </context>
     <context>
-        <name>UserInterface::Dialog::FeaturedMatchCard</name>
-        <message>
-            <source>Most watched</source>
-            <translation>最多視聴</translation>
-        </message>
-        <message>
-            <source>watching</source>
-            <translation>視聴中</translation>
-        </message>
+        <name>UserInterface::Dialog::FeaturedMatch</name>
         <message>
             <source>Watch</source>
             <translation>観戦</translation>
@@ -4577,8 +4593,12 @@ A local replay is saved only if Save replay is on.</source>
             <translation>観戦中</translation>
         </message>
         <message>
-            <source>Live</source>
-            <translation>ライブ</translation>
+            <source>Most watched</source>
+            <translation>最多視聴</translation>
+        </message>
+        <message>
+            <source>%1 watching</source>
+            <translation>%1人が観戦中</translation>
         </message>
     </context>
     <context>
@@ -4604,8 +4624,16 @@ A local replay is saved only if Save replay is on.</source>
             <translation>長時間順</translation>
         </message>
         <message>
-            <source>watching</source>
-            <translation>視聴中</translation>
+            <source>1 match</source>
+            <translation>1件の対戦</translation>
+        </message>
+        <message>
+            <source>%1 matches</source>
+            <translation>%1件の対戦</translation>
+        </message>
+        <message>
+            <source>%1 watching</source>
+            <translation>%1人が観戦中</translation>
         </message>
         <message>
             <source>All</source>
@@ -5273,8 +5301,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>他のプレイヤー</translation>
         </message>
         <message>
-            <source>No lag stats from %1: they may be on an older RMG-K, or their connection to you is down.</source>
-            <translation>%1からラグ統計が届いていません。古いRMG-Kを使っているか、あなたとの接続が切れている可能性があります。</translation>
+            <source>No lag stats from %1: they may be on an older Dale64, or their connection to you is down.</source>
+            <translation>%1からラグ統計が届いていません。古いDale64を使っているか、あなたとの接続が切れている可能性があります。</translation>
         </message>
         <message>
             <source>%1's numbers are %2 old.</source>
@@ -5345,8 +5373,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>Ping</translation>
         </message>
         <message>
-            <source>RMG-K lag check, %1</source>
-            <translation>RMG-K ラグチェック（%1）</translation>
+            <source>Dale64 lag check, %1</source>
+            <translation>Dale64 ラグチェック（%1）</translation>
         </message>
         <message>
             <source>long</source>
@@ -5408,8 +5436,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>ラグ統計</translation>
         </message>
         <message>
-            <source>Each player's RMG-K measures its own frames and shares them once a second.</source>
-            <translation>各プレイヤーのRMG-Kが自分のフレームを計測し、1秒ごとに共有します。</translation>
+            <source>Each player's Dale64 measures its own frames and shares them once a second.</source>
+            <translation>各プレイヤーのDale64が自分のフレームを計測し、1秒ごとに共有します。</translation>
         </message>
         <message>
             <source>Last %1 s</source>
@@ -5540,8 +5568,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>統計なし</translation>
         </message>
         <message>
-            <source>This player hasn't sent lag stats: they may be on an older RMG-K, or their connection to you is down.</source>
-            <translation>このプレイヤーからラグ統計が届いていません。古いRMG-Kを使っているか、あなたとの接続が切れている可能性があります。</translation>
+            <source>This player hasn't sent lag stats: they may be on an older Dale64, or their connection to you is down.</source>
+            <translation>このプレイヤーからラグ統計が届いていません。古いDale64を使っているか、あなたとの接続が切れている可能性があります。</translation>
         </message>
         <message>
             <source>%1 ms</source>

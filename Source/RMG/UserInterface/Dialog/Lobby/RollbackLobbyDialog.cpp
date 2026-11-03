@@ -11,7 +11,7 @@
  * because people come here to find something to watch.
  *
  *   ┌───────────────────────────────────────────────────────────────┐
- *   │ RMG-K  ● ONLINE  NA EAST  42 players · 14 rooms         Mira  │ ← top bar
+ *   │ Dale64  ● ONLINE  NA EAST  42 players · 14 rooms        Mira  │ ← top bar
  *   ├───────────────────────────────────────────┬───────────────────┤
  *   │ [ game picker ] [Quick Match] [Create]    │ Players           │ ← play bar
  *   │ ┌Live now──────────────────┐┌Open rooms─┐ │ ● searching...    │
@@ -531,9 +531,9 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
               | Qt::WindowCloseButtonHint)
 {
 #ifdef RMGK_TEST_BUILD
-    setWindowTitle(tr("RMG-K Lobby") + " [TEST]");
+    setWindowTitle(tr("Dale64 Lobby") + " [TEST]");
 #else
-    setWindowTitle(tr("RMG-K Lobby"));
+    setWindowTitle(tr("Dale64 Lobby"));
 #endif
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setWindowModality(Qt::NonModal);
@@ -720,7 +720,7 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     auto* words = new QVBoxLayout;
     words->setSpacing(1);
     words->setAlignment(Qt::AlignVCenter);
-    m_brandLabel = new QLabel(QStringLiteral("RMG-K"), m_marquee);
+    m_brandLabel = new QLabel(QStringLiteral("Dale64"), m_marquee);
     m_brandLabel->setObjectName("LobbyBrand");
     m_brandLabel->setFont(LobbyTheme::pixelFont(18, 0.3));
     words->addWidget(m_brandLabel);
@@ -2350,7 +2350,7 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
     else if (reason == "invalid_hello") human = tr("Server rejected the connection handshake.");
     else if (reason == "invalid_payload") human = tr("That username isn't allowed.");
     else if (reason == "version_mismatch") human =
-        tr("Your RMG-K client is out of date. This lobby requires RMG-K 0.9.13 "
+        tr("Your Dale64 client is out of date. This lobby requires version 0.9.13 "
         "or vdev-2367 or newer.");
     else if (reason == "server_full") human = tr("The lobby is currently full.");
 
@@ -2886,12 +2886,15 @@ void RollbackLobbyDialog::onRoomListChanged()
 
     // Rows are matched to players by name, the only key playerNames offers.
     QHash<QString, QString> countries;
+    QHash<QString, QString> connections;
     if (connected)
     {
         for (const auto& user : m_client->users())
         {
             if (!user.anonymous && !user.country.isEmpty())
                 countries.insert(user.username, user.country);
+            if (!user.connection.isEmpty())
+                connections.insert(user.username, user.connection);
         }
     }
 
@@ -2920,6 +2923,7 @@ void RollbackLobbyDialog::onRoomListChanged()
             match.matchId = r.broadcasting ? r.matchId : 0;
             match.game = r.romName;
             match.roomName = r.name;
+            match.host = r.hostName;
             match.coverPath = coverPathForMd5(r.romMd5);
             match.startedAtMs = r.startedAtMs;
             match.viewers = r.viewerCount;
@@ -2931,7 +2935,7 @@ void RollbackLobbyDialog::onRoomListChanged()
             match.watchingOther = m_spectatingMatchId != 0 && !match.watching;
             match.inRoom = m_currentRoomId != 0;
             for (const QString& name : r.playerNames)
-                match.players.append({ name, countries.value(name) });
+                match.players.append({ name, countries.value(name), connections.value(name) });
             matches.append(match);
             if (!r.lateJoin)
                 continue;
@@ -3168,9 +3172,9 @@ void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
     else if (reason == "private_room") human =
         tr("That room is private.");
     else if (reason == "needs_update") human =
-        tr("That room needs a newer version of RMG-K.");
+        tr("That room needs a newer version of Dale64.");
     else if (reason == "peer_needs_update") human =
-        tr("Someone in that room is on an older RMG-K that can't play with several players on one PC. "
+        tr("Someone in that room is on an older Dale64 that can't play with several players on one PC. "
            "Remove the other players on this PC to join.");
     QMessageBox::warning(this, tr("Couldn't join room"), human);
 }
@@ -6148,11 +6152,11 @@ void RollbackLobbyDialog::onMatchAdmitFailed(quint64 matchId, quint64 userId, co
     const QString name = lobbyUserName(userId);
     QString why;
     if (reason == QStringLiteral("version_mismatch"))
-        why = tr("they're on a different RMG-K version");
+        why = tr("they're on a different Dale64 version");
     else if (reason == QStringLiteral("admit_busy"))
         why = tr("another player is joining right now");
     else if (reason == QStringLiteral("late_join_unsupported"))
-        why = tr("this match or their RMG-K can't add players mid-game");
+        why = tr("this match or their Dale64 can't add players mid-game");
     else if (reason == QStringLiteral("not_waiting"))
         why = tr("they're not waiting to join any more");
     else

@@ -410,14 +410,14 @@ private:
     QString m_connection;
 };
 
-// A game's tile: its cover art when the library has one, otherwise a cartridge
-// with the game's initials on the label.
+// A game's tile: an N64 Game Pak whose label is the game's cover art when the
+// library has one, otherwise its initials.
 class CartridgeTile : public QWidget
 {
     Q_OBJECT
 
 public:
-    enum class Size { Small, Normal, Large }; // 30x38, 46x60, 58x76
+    enum class Size { Small, Normal, Large }; // 42x29, 64x44, 84x56
 
     explicit CartridgeTile(Size size = Size::Normal, QWidget* parent = nullptr);
 
@@ -429,6 +429,25 @@ protected:
 
 private:
     Size m_size;
+    QString m_game;
+    QString m_coverPath;
+};
+
+// A game as a small rounded square, for lists: its cover art, or its initials
+// on its colour.
+class GameBadge : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit GameBadge(int side, QWidget* parent = nullptr);
+
+    void setGame(const QString& gameName, const QString& coverPath = QString());
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
     QString m_game;
     QString m_coverPath;
 };

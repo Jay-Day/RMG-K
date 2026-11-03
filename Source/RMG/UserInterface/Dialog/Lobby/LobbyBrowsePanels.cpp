@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLinearGradient>
+#include <QLocale>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -36,9 +37,8 @@ using LobbyTheme::Tokens;
 
 namespace
 {
-    constexpr int kCardMinWidth = 250;
-    constexpr int kCardHeight = 120;
-    constexpr int kCardGap = 10;
+    constexpr int kListMargin = 12;        // where rows start their content, and the featured match its panel
+    constexpr int kFeaturedMinWidth = 460; // narrower, the most watched match is just the first row
 
     QString formatDuration(qint64 startedAtMs)
     {
@@ -77,7 +77,7 @@ namespace
     }
 } // namespace
 
-// ── Match cards ──────────────────────────────────────────────────────
+// ── Live matches ─────────────────────────────────────────────────────
 
 namespace
 {
@@ -93,15 +93,157 @@ namespace
         }
         return QString();
     }
+
+    QString countryName(const QString& code)
+    {
+        if (code.isEmpty())
+            return QString();
+        const QLocale::Territory territory = QLocale::codeToTerritory(code);
+        return territory != QLocale::AnyTerritory ? QLocale::territoryToString(territory) : code;
+    }
 } // namespace
 
-// Chrome and behaviour shared by the regular and the featured card.
-class MatchCardBase : public QFrame
+// A player's flag and name.
+class PlayerTag : public QWidget
+{
+public:
+    explicit PlayerTag(QWidget* parent)
+        : QWidget(parent)
+    {
+        auto* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(5);
+        m_flag = new CountryFlag(this);
+        m_name = new ElidedLabel(Role::Ink, this);
+        layout->addWidget(m_flag);
+        layout->addWidget(m_name);
+    }
+
+    void set(const LiveMatchView::Player& player, const QFont& font)
+    {
+        m_flag->setCountry(player.country);
+        m_hasFlag = !m_flag->isHidden();
+        m_flag->setVisible(m_hasFlag && m_flagShown);
+        m_name->setFont(font);
+        m_name->setText(player.name);
+        m_name->setToolTip(player.name);
+        setProperty("playerName", player.name);
+    }
+
+    void setFlagShown(bool shown)
+    {
+        m_flagShown = shown;
+        m_flag->setVisible(m_hasFlag && shown);
+    }
+
+    // The width that shows the whole name and the flag.
+    int fullWidth() const
+    {
+        return (m_hasFlag ? m_flag->width() + layout()->spacing() : 0) + m_name->sizeHint().width();
+    }
+
+private:
+    CountryFlag* m_flag;
+    ElidedLabel* m_name;
+    bool m_hasFlag = false;
+    bool m_flagShown = true;
+};
+
+// Everyone in a match on one line: "Ann vs Bo" for two players, the names side
+// by side for more. Long names elide rather than widen the list.
+class PlayersLine : public QWidget
+{
+public:
+    explicit PlayersLine(QWidget* parent)
+        : QWidget(parent)
+    {
+        auto* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        layout->setSizeConstraint(QLayout::SetNoConstraint);
+        for (int i = 0; i < 4; ++i)
+        {
+            if (i > 0)
+            {
+                QLabel*& gap = m_gaps[i - 1];
+                gap = new QLabel(this);
+                gap->setFont(LobbyTheme::pixelFont(10));
+                gap->setProperty("role", "faint");
+                gap->setAlignment(Qt::AlignCenter);
+                layout->addWidget(gap);
+            }
+            m_tags[i] = new PlayerTag(this);
+            layout->addWidget(m_tags[i]);
+        }
+        m_fallback = new ElidedLabel(Role::Ink, this);
+        layout->addWidget(m_fallback);
+        layout->addStretch(1);
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    }
+
+    // fallback stands in when the room lists no players.
+    void set(const QList<LiveMatchView::Player>& players, const QString& fallback, const QFont& font)
+    {
+        const int shown = std::min<int>(players.size(), 4);
+        for (int i = 0; i < 4; ++i)
+        {
+            m_tags[i]->setVisible(i < shown);
+            if (i < shown)
+                m_tags[i]->set(players.at(i), font);
+            if (i > 0)
+            {
+                m_gaps[i - 1]->setVisible(i < shown);
+                m_gaps[i - 1]->setText(shown == 2 ? QStringLiteral("vs") : QString());
+                m_gaps[i - 1]->setFixedWidth(shown == 2 ? 28 : 12);
+            }
+        }
+        m_fallback->setFont(font);
+        m_fallback->setText(fallback);
+        m_fallback->setVisible(shown == 0);
+        m_lineHeight = std::max(16, QFontMetrics(font).height());
+        updateGeometry();
+        fitFlags();
+    }
+
+    QSize sizeHint() const override { return QSize(40, m_lineHeight); }
+    QSize minimumSizeHint() const override { return QSize(0, m_lineHeight); }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QWidget::resizeEvent(event);
+        fitFlags();
+    }
+
+private:
+    // The names matter more: when the line is too short for both, the flags go.
+    void fitFlags()
+    {
+        int needed = 0;
+        for (int i = 0; i < 4; ++i)
+        {
+            if (m_tags[i]->isHidden())
+                continue;
+            needed += m_tags[i]->fullWidth() + (i > 0 ? m_gaps[i - 1]->maximumWidth() : 0);
+        }
+        for (auto* tag : m_tags)
+            tag->setFlagShown(needed <= width());
+    }
+
+    PlayerTag* m_tags[4] = {};
+    QLabel* m_gaps[3] = {};
+    ElidedLabel* m_fallback = nullptr;
+    int m_lineHeight = 16;
+};
+
+// What a row and the featured match share: the watch button, fading out a
+// match there's nothing to do with, and the mouse.
+class LiveMatchBase : public QFrame
 {
     Q_OBJECT
 
 public:
-    explicit MatchCardBase(QWidget* parent)
+    explicit LiveMatchBase(QWidget* parent)
         : QFrame(parent)
     {
         setAttribute(Qt::WA_Hover);
@@ -131,47 +273,73 @@ protected:
         return m_view.matchId != 0 && m_view.hasRom && !m_view.inRoom && !m_view.watching;
     }
 
-    // The watch button's face for this match's state, shared so the two cards
-    // can't disagree. Returns false when there's nothing to watch.
-    bool applyWatchButton(LobbyButton* button, bool compact) const
+    bool canJoin() const
     {
-        if (m_view.matchId == 0 || !m_view.hasRom)
-        {
-            button->setVisible(false);
-            return false;
-        }
+        return m_view.openSeats > 0 && m_view.openSeats >= m_view.seatsNeeded && m_view.hasRom && !m_view.inRoom &&
+               !m_view.watching && !m_view.watchingOther;
+    }
+
+    // The watch button's face for this match's state, shared so the row and the
+    // featured match can't disagree. A match that can't be watched says why,
+    // unless there's a seat to take instead.
+    void applyWatchButton(LobbyButton* button) const
+    {
         button->setVisible(true);
         button->setEnabled(true);
+        button->setDashed(false);
+        button->setKind(LobbyButton::Kind::Secondary);
+        button->setIconName(QStringLiteral("eye-line"));
         button->setToolTip(QString());
-        if (m_view.watching)
+        if (m_view.matchId == 0 || !m_view.hasRom)
+        {
+            const bool noReplay = m_view.matchId == 0;
+            button->setVisible(!canJoin());
+            button->setText(noReplay ? tr("No replay") : tr("No ROM"));
+            button->setIconName(QString());
+            button->setEnabled(false);
+            button->setDashed(true);
+            button->setToolTip(noReplay ? tr("Live replay is off in this room, so the match can't be watched.")
+                                        : tr("You don't have the ROM this match is using."));
+        }
+        else if (m_view.watching)
         {
             button->setText(tr("Stop"));
-            button->setKind(LobbyButton::Kind::Secondary);
             button->setIconName(QStringLiteral("stop-fill"));
             button->setToolTip(tr("Stop watching this match."));
         }
         else if (m_view.inRoom)
         {
             button->setText(tr("Watch"));
-            button->setKind(LobbyButton::Kind::Secondary);
-            button->setIconName(QStringLiteral("eye-line"));
             button->setEnabled(false);
             button->setToolTip(tr("Leave your room to watch a match."));
         }
         else if (m_view.watchingOther)
         {
             button->setText(tr("Switch"));
-            button->setKind(LobbyButton::Kind::Secondary);
-            button->setIconName(QStringLiteral("eye-line"));
             button->setToolTip(tr("Stop what you're watching and watch this match instead."));
         }
         else
         {
             button->setText(tr("Watch"));
-            button->setKind(LobbyButton::Kind::Primary);
-            button->setIconName(compact ? QString() : QStringLiteral("eye-line"));
         }
-        return true;
+    }
+
+    // Wide enough for every face applyWatchButton gives it, so the columns
+    // beside it line up from row to row.
+    int widestWatchFace(LobbyButton* button) const
+    {
+        const std::pair<QString, QString> faces[] = {
+            {tr("Watch"), QStringLiteral("eye-line")}, {tr("Switch"), QStringLiteral("eye-line")},
+            {tr("Stop"), QStringLiteral("stop-fill")}, {tr("No replay"), QString()}, {tr("No ROM"), QString()},
+        };
+        int widest = 0;
+        for (const auto& [text, icon] : faces)
+        {
+            button->setText(text);
+            button->setIconName(icon);
+            widest = std::max(widest, button->sizeHint().width());
+        }
+        return widest;
     }
 
     void onWatchClicked()
@@ -182,50 +350,19 @@ protected:
             emit watchRequested(m_view.roomId);
     }
 
-    void applyDim(QWidget* content)
+    void applyDim()
     {
-        const bool dim = m_view.matchId == 0;
-        if (dim && !content->graphicsEffect())
+        const bool dim = (m_view.matchId == 0 || !m_view.hasRom) && !canJoin();
+        if (dim && !graphicsEffect())
         {
-            auto* effect = new QGraphicsOpacityEffect(content);
-            effect->setOpacity(0.68);
-            content->setGraphicsEffect(effect);
+            auto* effect = new QGraphicsOpacityEffect(this);
+            effect->setOpacity(0.6);
+            setGraphicsEffect(effect);
         }
-        else if (!dim && content->graphicsEffect())
+        else if (!dim && graphicsEffect())
         {
-            content->setGraphicsEffect(nullptr);
+            setGraphicsEffect(nullptr);
         }
-    }
-
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-        const Tokens& t = LobbyTheme::tokens();
-        const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-
-        QColor clear = t.tint;
-        clear.setAlpha(0);
-        QLinearGradient fill(box.topLeft(), box.bottomLeft());
-        fill.setColorAt(0, m_view.watching ? t.watchTint : t.tint);
-        fill.setColorAt(1, clear);
-        painter.setBrush(fill);
-
-        QColor border = t.line;
-        qreal width = 1.0;
-        if (m_view.watching)
-        {
-            border = t.stateWatch;
-            width = 2.0;
-        }
-        else if (m_view.matchId != 0)
-        {
-            border = LobbyTheme::mix(t.live, t.line, 0.28);
-        }
-        if (underMouse() && canWatch())
-            border = t.line2.lighter(t.dark ? 130 : 90);
-        painter.setPen(QPen(border, width));
-        painter.drawRoundedRect(box.adjusted(width / 2 - 0.5, width / 2 - 0.5, 0.5 - width / 2, 0.5 - width / 2), 10, 10);
     }
 
     void mouseDoubleClickEvent(QMouseEvent* event) override
@@ -246,210 +383,206 @@ protected:
     LiveMatchView m_view;
 };
 
-// A port chip, a name and a flag on one line.
-class PlayerLine : public QWidget
-{
-public:
-    explicit PlayerLine(QWidget* parent)
-        : QWidget(parent)
-    {
-        auto* layout = new QHBoxLayout(this);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(5);
-        m_chip = new PortChip(1, this);
-        m_name = new ElidedLabel(Role::Ink, this);
-        m_flag = new CountryFlag(this);
-        layout->addWidget(m_chip);
-        layout->addWidget(m_name);
-        layout->addWidget(m_flag);
-        layout->addStretch(1);
-        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    }
-
-    void set(int slot, const LiveMatchView::Player& player, bool compact)
-    {
-        m_chip->setSlot(slot);
-        m_name->setFont(LobbyTheme::uiFont(compact ? 12 : 13, QFont::DemiBold));
-        m_name->setText(player.name);
-        m_name->setToolTip(player.name);
-        setProperty("playerName", player.name);
-        m_flag->setCountry(compact ? QString() : player.country);
-    }
-
-    QSize sizeHint() const override
-    {
-        return QSize(40, std::max(15, QFontMetrics(LobbyTheme::uiFont(13, QFont::DemiBold)).height()));
-    }
-
-private:
-    PortChip* m_chip;
-    ElidedLabel* m_name;
-    CountryFlag* m_flag;
-};
-
-class MatchCard : public MatchCardBase
+// One match as a compact row: the game, who's playing, for how long and to how
+// many. A click opens the rest: the room, each player's country and
+// connection, and when it started.
+class LiveMatchRow : public LiveMatchBase
 {
     Q_OBJECT
 
 public:
-    explicit MatchCard(QWidget* parent)
-        : MatchCardBase(parent)
+    explicit LiveMatchRow(QWidget* parent)
+        : LiveMatchBase(parent)
     {
-        auto* outer = new QHBoxLayout(this);
-        outer->setContentsMargins(10, 9, 10, 9);
-        outer->setSpacing(10);
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
-        m_tile = new CartridgeTile(CartridgeTile::Size::Normal, this);
-        outer->addWidget(m_tile, 0, Qt::AlignTop);
+        auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(kListMargin, 8, kListMargin - 4, 8);
+        root->setSpacing(0);
 
-        m_content = new QWidget(this);
-        auto* column = new QVBoxLayout(m_content);
-        column->setContentsMargins(0, 0, 0, 0);
-        column->setSpacing(0);
+        auto* line = new QHBoxLayout;
+        line->setSpacing(10);
+        m_badge = new GameBadge(32, this);
+        line->addWidget(m_badge);
 
-        auto* top = new QHBoxLayout;
-        top->setSpacing(5);
-        m_game = new ElidedLabel(Role::Muted, m_content);
+        auto* text = new QVBoxLayout;
+        text->setSpacing(1);
+        m_players = new PlayersLine(this);
+        text->addWidget(m_players);
+        auto* sub = new QHBoxLayout;
+        sub->setSpacing(6);
+        m_watchingTag = new StatusTag(StatusTag::Kind::Purple, this);
+        m_watchingTag->setTag(StatusTag::Kind::Purple, tr("Watching"));
+        m_game = new ElidedLabel(Role::Muted, this);
         m_game->setFont(LobbyTheme::uiFont(11));
-        m_game->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_status = new StatusTag(StatusTag::Kind::Live, m_content);
-        top->addWidget(m_game, 1);
-        top->addWidget(m_status);
-        column->addLayout(top);
+        m_noReplayTag = new StatusTag(StatusTag::Kind::Neutral, this);
+        m_noReplayTag->setTag(StatusTag::Kind::Neutral, tr("No replay"));
+        m_seats = new ElidedLabel(Role::Ok, this);
+        m_seats->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
+        sub->addWidget(m_watchingTag);
+        sub->addWidget(m_game);
+        sub->addWidget(m_noReplayTag);
+        sub->addWidget(m_seats);
+        sub->addStretch(1);
+        text->addLayout(sub);
+        line->addLayout(text, 1);
 
-        m_players = new QGridLayout;
-        m_players->setContentsMargins(0, 0, 0, 0);
-        m_players->setHorizontalSpacing(8);
-        m_players->setVerticalSpacing(2);
-        for (auto& line : m_lines)
-            line = new PlayerLine(m_content);
-        m_openSeats = new ElidedLabel(Role::Muted, m_content);
-        QFont openFont = LobbyTheme::uiFont(13);
-        openFont.setItalic(true);
-        m_openSeats->setFont(openFont);
-        m_openSeats->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        m_fallbackName = new ElidedLabel(Role::Ink, m_content);
-        m_fallbackName->setFont(LobbyTheme::uiFont(13, QFont::DemiBold));
-        m_fallbackName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        column->addStretch(1);
-        column->addLayout(m_players);
-        column->addStretch(1);
-
-        auto* footer = new QHBoxLayout;
-        footer->setSpacing(8);
-        m_time = new QLabel(m_content);
+        // How long, over how many watching, like the two lines beside the badge.
+        m_meta = new QWidget(this);
+        auto* meta = new QVBoxLayout(m_meta);
+        meta->setContentsMargins(0, 0, 0, 0);
+        meta->setSpacing(2);
+        m_time = new QLabel(m_meta);
         m_time->setFont(LobbyTheme::pixelFont(11));
         m_time->setProperty("role", "ink2");
-        footer->addWidget(m_time);
-        m_viewerIcon = new IconLabel(QStringLiteral("eye-line"), Role::Muted, 13, m_content);
-        m_viewers = new QLabel(m_content);
+        m_time->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        meta->addWidget(m_time);
+        m_viewerBox = new QWidget(m_meta);
+        auto* viewers = new QHBoxLayout(m_viewerBox);
+        viewers->setContentsMargins(0, 0, 0, 0);
+        viewers->setSpacing(3);
+        m_viewerIcon = new IconLabel(QStringLiteral("eye-line"), Role::Muted, 12, m_viewerBox);
+        m_viewers = new ElidedLabel(Role::Muted, m_viewerBox);
         m_viewers->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
-        m_viewers->setProperty("role", "muted");
-        auto* viewerBox = new QHBoxLayout;
-        viewerBox->setSpacing(3);
-        viewerBox->addWidget(m_viewerIcon);
-        viewerBox->addWidget(m_viewers);
-        footer->addLayout(viewerBox);
-        footer->addStretch(1);
+        m_viewers->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        viewers->addStretch(1);
+        viewers->addWidget(m_viewerIcon);
+        viewers->addWidget(m_viewers);
+        meta->addWidget(m_viewerBox);
+        m_meta->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+        m_meta->setMinimumWidth(QFontMetrics(m_time->font()).horizontalAdvance(QStringLiteral("00:00")) + 2);
+        line->addWidget(m_meta);
 
-        m_noRom = new QLabel(tr("No ROM"), m_content);
-        m_noRom->setObjectName("NoRomLabel");
-        m_noRom->setFont(LobbyTheme::uiFont(10, QFont::DemiBold));
-        m_noRom->setToolTip(tr("You don't have the ROM this match is using."));
-        footer->addWidget(m_noRom);
-
-        m_watch = new LobbyButton(tr("Watch"), LobbyButton::Kind::Primary, m_content);
-        m_watch->setObjectName("MatchWatchButton");
-        m_watch->setButtonSize(LobbyButton::Size::Small);
-        footer->addWidget(m_watch);
-        m_join = new LobbyButton(tr("Join"), LobbyButton::Kind::Secondary, m_content);
+        auto* actions = new QHBoxLayout;
+        actions->setSpacing(6);
+        m_join = new LobbyButton(tr("Join"), LobbyButton::Kind::Secondary, this);
         m_join->setObjectName("MatchJoinButton");
         m_join->setButtonSize(LobbyButton::Size::Small);
         m_join->setToolTip(tr("Take the free seat. The host can then add you to the game."));
-        footer->addWidget(m_join);
-        column->addLayout(footer);
+        actions->addWidget(m_join);
+        m_watch = new LobbyButton(tr("Watch"), LobbyButton::Kind::Secondary, this);
+        m_watch->setObjectName("MatchWatchButton");
+        m_watch->setButtonSize(LobbyButton::Size::Small);
+        m_watch->setMinimumWidth(widestWatchFace(m_watch));
+        actions->addWidget(m_watch);
+        m_more = new IconButton(QStringLiteral("arrow-right-s-line"), 22, this);
+        m_more->setObjectName("MatchMoreButton");
+        m_more->setToolTip(tr("Show details"));
+        actions->addWidget(m_more);
+        line->addLayout(actions);
+        root->addLayout(line);
 
-        outer->addWidget(m_content, 1);
+        // The details line up under the names.
+        m_details = new QWidget(this);
+        auto* details = new QVBoxLayout(m_details);
+        details->setContentsMargins(32 + 10, 9, 6, 1);
+        details->setSpacing(7);
+        auto* grid = new QGridLayout;
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(7);
+        grid->setVerticalSpacing(5);
+        for (int i = 0; i < 4; ++i)
+        {
+            DetailLine& d = m_lines[i];
+            d.chip = new PortChip(i + 1, m_details);
+            d.flag = new CountryFlag(m_details);
+            d.name = new ElidedLabel(Role::Ink, m_details);
+            d.name->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
+            d.country = new ElidedLabel(Role::Muted, m_details);
+            d.country->setFont(LobbyTheme::uiFont(11));
+            d.connectionIcon = new ConnectionGlyph(m_details);
+            d.connection = new ElidedLabel(Role::Muted, m_details);
+            d.connection->setFont(LobbyTheme::uiFont(11));
+            grid->addWidget(d.chip, i, 0);
+            grid->addWidget(d.flag, i, 1);
+            grid->addWidget(d.name, i, 2);
+            grid->addWidget(d.country, i, 3);
+            grid->addWidget(d.connectionIcon, i, 4);
+            grid->addWidget(d.connection, i, 5);
+        }
+        grid->setColumnMinimumWidth(3, 20);
+        grid->setColumnStretch(6, 1);
+        details->addLayout(grid);
+        m_roomLine = new ElidedLabel(Role::Muted, m_details);
+        m_roomLine->setFont(LobbyTheme::uiFont(11));
+        m_roomLine->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        details->addWidget(m_roomLine);
+        root->addWidget(m_details);
+        m_details->setVisible(false);
 
         connect(m_watch, &QPushButton::clicked, this, [this]() { onWatchClicked(); });
         connect(m_join, &QPushButton::clicked, this, [this]() { emit joinRequested(m_view.roomId); });
+        connect(m_more, &QToolButton::clicked, this, [this]() { emit toggled(m_view.roomId); });
     }
 
     void apply(const LiveMatchView& view) override
     {
-        MatchCardBase::apply(view);
-        const bool crowded = view.players.size() > 2;
-
-        m_tile->setTileSize(crowded ? CartridgeTile::Size::Small : CartridgeTile::Size::Normal);
-        m_tile->setGame(view.game, view.coverPath);
+        LiveMatchBase::apply(view);
+        m_badge->setGame(view.game, view.coverPath);
+        m_badge->setToolTip(view.game);
+        // Three or four names share the line, so they come down a size.
+        const int namePx = view.players.size() > 2 ? 12 : 13;
+        m_players->set(view.players, view.roomName, LobbyTheme::uiFont(namePx, QFont::DemiBold));
         m_game->setText(view.game);
-        m_game->setToolTip(view.roomName.isEmpty() ? view.game : view.roomName + QStringLiteral(" · ") + view.game);
+        m_game->setToolTip(view.game);
 
-        if (view.watching)
-            m_status->setTag(StatusTag::Kind::Purple, tr("Watching"));
-        else if (view.matchId == 0)
-            m_status->setTag(StatusTag::Kind::Neutral, tr("No replay"));
-        else
-            m_status->setTag(StatusTag::Kind::Live, tr("Live"));
+        const bool joinable = canJoin();
+        m_watchingTag->setVisible(view.watching);
+        m_noReplayTag->setVisible(view.matchId == 0 && joinable);
+        m_seats->setVisible(view.openSeats > 0);
+        m_seats->setText(view.openSeats == 1 ? tr("1 seat open") : tr("%1 seats open").arg(view.openSeats));
 
-        // Up to two players stack with their flags; three or four share a grid.
-        while (m_players->count() > 0)
-            m_players->takeAt(0);
-        for (auto* line : m_lines)
-            line->setVisible(false);
-        m_openSeats->setVisible(false);
-        m_fallbackName->setVisible(false);
-
-        int row = 0, col = 0;
-        const auto place = [&](QWidget* widget) {
-            m_players->addWidget(widget, row, col);
-            if (crowded)
-            {
-                col = (col + 1) % 2;
-                row += col == 0 ? 1 : 0;
-            }
-            else
-            {
-                ++row;
-            }
-        };
-        const int shown = std::min<int>(view.players.size(), 4);
-        for (int i = 0; i < shown; ++i)
-        {
-            m_lines[i]->set(i + 1, view.players.at(i), crowded);
-            m_lines[i]->setVisible(true);
-            place(m_lines[i]);
-        }
-        if (shown == 0)
-        {
-            m_fallbackName->setText(view.roomName);
-            m_fallbackName->setVisible(true);
-            place(m_fallbackName);
-        }
-        if (view.openSeats > 0 && (shown < 4))
-        {
-            m_openSeats->setFont([crowded]() {
-                QFont f = LobbyTheme::uiFont(crowded ? 12 : 13);
-                f.setItalic(true);
-                return f;
-            }());
-            m_openSeats->setText(view.openSeats == 1 ? tr("1 seat open") : tr("%1 seats open").arg(view.openSeats));
-            m_openSeats->setVisible(true);
-            place(m_openSeats);
-        }
-
-        const bool streaming = view.matchId != 0;
-        m_viewerIcon->setVisible(streaming);
-        m_viewers->setVisible(streaming);
+        m_streaming = view.matchId != 0;
+        m_viewerIcon->setVisible(m_streaming);
+        m_viewers->setVisible(m_streaming);
         m_viewers->setText(QString::number(view.viewers));
+        m_viewerIcon->setRole(view.viewers > 0 ? Role::Muted : Role::Faint);
+        m_viewers->setRole(view.viewers > 0 ? Role::Muted : Role::Faint);
+        m_viewerBox->setToolTip(m_streaming ? tr("%1 watching").arg(view.viewers) : QString());
         updateDuration();
 
-        const bool canJoin = view.openSeats > 0 && view.openSeats >= view.seatsNeeded && view.hasRom && !view.inRoom &&
-                             !view.watching && !view.watchingOther;
-        applyWatchButton(m_watch, canJoin);
-        m_noRom->setVisible(!view.hasRom);
-        m_join->setVisible(canJoin);
-        applyDim(m_content);
+        applyWatchButton(m_watch);
+        m_join->setVisible(joinable);
+        applyDim();
+
+        for (int i = 0; i < 4; ++i)
+        {
+            DetailLine& d = m_lines[i];
+            const bool known = i < view.players.size();
+            for (QWidget* w : {static_cast<QWidget*>(d.chip), static_cast<QWidget*>(d.name),
+                               static_cast<QWidget*>(d.country), static_cast<QWidget*>(d.connection)})
+                w->setVisible(known);
+            if (!known)
+            {
+                d.flag->setVisible(false);
+                d.connectionIcon->setVisible(false);
+                continue;
+            }
+            const LiveMatchView::Player& player = view.players.at(i);
+            d.flag->setCountry(player.country);
+            d.name->setText(player.name);
+            d.name->setToolTip(player.name);
+            d.name->setProperty("playerName", player.name);
+            d.country->setText(countryName(player.country));
+            d.connectionIcon->setConnection(player.connection);
+            d.connectionIcon->setVisible(!player.connection.isEmpty());
+            d.connection->setText(ConnectionGlyph::displayName(player.connection));
+        }
+
+        QStringList room;
+        if (!view.host.isEmpty())
+            room << tr("hosted by %1").arg(view.host);
+        if (view.startedAtMs > 0)
+            room << tr("started %1").arg(QLocale().toString(
+                QDateTime::fromMSecsSinceEpoch(view.startedAtMs).time(), QLocale::ShortFormat));
+        const bool named = !view.roomName.isEmpty() && view.roomName != view.game;
+        m_roomLine->setLead(named ? view.roomName : QString());
+        m_roomLine->setText((named && !room.isEmpty() ? QStringLiteral(" · ") : QString()) +
+                            room.join(QStringLiteral(" · ")));
+        m_roomLine->setToolTip(named ? view.roomName : QString());
+        m_roomLine->setVisible(named || !room.isEmpty());
+
+        refreshColumns();
     }
 
     void updateDuration() override
@@ -457,99 +590,157 @@ public:
         m_time->setText(formatDuration(m_view.startedAtMs));
     }
 
+    void setExpanded(bool expanded)
+    {
+        if (m_expanded == expanded)
+            return;
+        m_expanded = expanded;
+        m_details->setVisible(expanded);
+        m_more->setIconName(expanded ? QStringLiteral("arrow-down-s-line") : QStringLiteral("arrow-right-s-line"));
+        m_more->setToolTip(expanded ? tr("Hide details") : tr("Show details"));
+        update();
+    }
+
+signals:
+    void toggled(quint64 roomId);
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const Tokens& t = LobbyTheme::tokens();
+        const QRectF box = QRectF(rect()).adjusted(5.5, 1.5, -5.5, -1.5);
+        QPainterPath path;
+        path.addRoundedRect(box, 8, 8);
+
+        if (m_view.watching)
+        {
+            painter.fillPath(path, t.watchTint);
+            painter.save();
+            painter.setClipPath(path);
+            painter.fillRect(QRectF(box.left(), box.top(), 3, box.height()), t.stateWatch);
+            painter.restore();
+        }
+        else if (m_expanded)
+        {
+            painter.fillPath(path, t.tint);
+            painter.strokePath(path, QPen(t.line, 1.0));
+        }
+        else if (underMouse())
+        {
+            painter.fillPath(path, t.tint);
+        }
+        else
+        {
+            painter.fillRect(QRectF(kListMargin, height() - 1, width() - 2 * kListMargin, 1), t.line);
+        }
+    }
+
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton)
+            emit toggled(m_view.roomId);
+    }
+
+    void resizeEvent(QResizeEvent* event) override
+    {
+        LiveMatchBase::resizeEvent(event);
+        refreshColumns();
+    }
+
 private:
-    CartridgeTile* m_tile = nullptr;
-    QWidget* m_content = nullptr;
+    struct DetailLine
+    {
+        PortChip* chip = nullptr;
+        CountryFlag* flag = nullptr;
+        ElidedLabel* name = nullptr;
+        ElidedLabel* country = nullptr;
+        ConnectionGlyph* connectionIcon = nullptr;
+        ElidedLabel* connection = nullptr;
+    };
+
+    // A narrow list keeps the names and the button, and lets the numbers go.
+    void refreshColumns()
+    {
+        m_meta->setVisible(width() >= 360);
+    }
+
+    bool m_expanded = false;
+    bool m_streaming = false;
+    GameBadge* m_badge = nullptr;
+    PlayersLine* m_players = nullptr;
+    StatusTag* m_watchingTag = nullptr;
     ElidedLabel* m_game = nullptr;
-    StatusTag* m_status = nullptr;
-    QGridLayout* m_players = nullptr;
-    PlayerLine* m_lines[4] = {};
-    ElidedLabel* m_openSeats = nullptr;
-    ElidedLabel* m_fallbackName = nullptr;
+    StatusTag* m_noReplayTag = nullptr;
+    ElidedLabel* m_seats = nullptr;
+    QWidget* m_meta = nullptr;
     QLabel* m_time = nullptr;
+    QWidget* m_viewerBox = nullptr;
     IconLabel* m_viewerIcon = nullptr;
-    QLabel* m_viewers = nullptr;
-    QLabel* m_noRom = nullptr;
-    LobbyButton* m_watch = nullptr;
+    ElidedLabel* m_viewers = nullptr;
     LobbyButton* m_join = nullptr;
+    LobbyButton* m_watch = nullptr;
+    IconButton* m_more = nullptr;
+    QWidget* m_details = nullptr;
+    DetailLine m_lines[4];
+    ElidedLabel* m_roomLine = nullptr;
 };
 
-// The double-width card for the match with the biggest audience.
-class FeaturedMatchCard : public MatchCardBase
+// The match with the biggest audience, above the list.
+class FeaturedMatch : public LiveMatchBase
 {
     Q_OBJECT
 
 public:
-    explicit FeaturedMatchCard(QWidget* parent)
-        : MatchCardBase(parent)
+    explicit FeaturedMatch(QWidget* parent)
+        : LiveMatchBase(parent)
     {
         auto* outer = new QHBoxLayout(this);
-        outer->setContentsMargins(12, 11, 12, 11);
-        outer->setSpacing(11);
+        outer->setContentsMargins(14, 14, 14, 12);
+        outer->setSpacing(12);
 
-        m_tile = new CartridgeTile(CartridgeTile::Size::Large, this);
-        outer->addWidget(m_tile, 0, Qt::AlignVCenter);
+        m_badge = new GameBadge(44, this);
+        outer->addWidget(m_badge);
 
         auto* middle = new QVBoxLayout;
-        middle->setSpacing(8);
-        auto* tags = new QHBoxLayout;
-        tags->setSpacing(6);
-        m_status = new StatusTag(StatusTag::Kind::Live, this);
-        m_mostTag = new StatusTag(StatusTag::Kind::Amber, this);
-        m_mostTag->setTag(StatusTag::Kind::Amber, tr("Most watched"));
+        middle->setSpacing(5);
+        auto* top = new QHBoxLayout;
+        top->setSpacing(6);
+        m_markIcon = new IconLabel(QStringLiteral("vip-crown-fill"), Role::Warn, 12, this);
+        m_mark = new ElidedLabel(Role::Warn, this);
+        m_mark->setFont(LobbyTheme::pixelFont(10, 1.0));
         m_game = new ElidedLabel(Role::Muted, this);
         m_game->setFont(LobbyTheme::uiFont(11));
         m_game->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        tags->addWidget(m_status);
-        tags->addWidget(m_mostTag);
-        tags->addWidget(m_game, 1);
-        middle->addStretch(1);
-        middle->addLayout(tags);
-
-        auto* versus = new QGridLayout;
-        versus->setHorizontalSpacing(7);
-        versus->setColumnStretch(0, 1);
-        versus->setColumnStretch(2, 1);
-        versus->addLayout(makeSide(0), 0, 0);
-        auto* vs = new QLabel(QStringLiteral("VS"), this);
-        QFont vsFont(QStringLiteral("Arial Black"));
-        vsFont.setPixelSize(20);
-        vsFont.setItalic(true);
-        vsFont.setWeight(QFont::Black);
-        vs->setFont(vsFont);
-        vs->setProperty("role", "faint");
-        versus->addWidget(vs, 0, 1, Qt::AlignCenter);
-        versus->addLayout(makeSide(1), 0, 2);
-        middle->addLayout(versus);
-        middle->addStretch(1);
+        top->addWidget(m_markIcon);
+        top->addWidget(m_mark);
+        top->addSpacing(2);
+        top->addWidget(m_game, 1);
+        middle->addLayout(top);
+        m_players = new PlayersLine(this);
+        middle->addWidget(m_players);
         outer->addLayout(middle, 1);
 
         auto* right = new QVBoxLayout;
-        right->setSpacing(4);
-        right->addStretch(1);
+        right->setSpacing(6);
+        auto* stats = new QHBoxLayout;
+        stats->setSpacing(4);
+        stats->addStretch(1);
+        stats->addWidget(new IconLabel(QStringLiteral("eye-line"), Role::Muted, 14, this));
         m_viewers = new QLabel(this);
-        m_viewers->setFont(LobbyTheme::pixelFont(22));
-        m_viewers->setAlignment(Qt::AlignRight);
-        right->addWidget(m_viewers);
-        auto* watchingWord = new QLabel(tr("watching").toUpper(), this);
-        QFont wordFont = LobbyTheme::uiFont(9, QFont::DemiBold);
-        wordFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.6);
-        watchingWord->setFont(wordFont);
-        watchingWord->setAlignment(Qt::AlignRight);
-        watchingWord->setProperty("role", "muted");
-        right->addWidget(watchingWord);
+        m_viewers->setFont(LobbyTheme::uiFont(12));
+        m_viewers->setProperty("role", "muted");
+        stats->addWidget(m_viewers);
+        stats->addSpacing(10);
         m_time = new QLabel(this);
-        m_time->setFont(LobbyTheme::pixelFont(11));
-        m_time->setAlignment(Qt::AlignRight);
-        m_time->setProperty("role", "ink2");
-        right->addWidget(m_time);
-        m_watch = new LobbyButton(tr("Watch"), LobbyButton::Kind::Primary, this);
+        m_time->setFont(LobbyTheme::pixelFont(13));
+        stats->addWidget(m_time);
+        right->addLayout(stats);
+        m_watch = new LobbyButton(tr("Watch"), LobbyButton::Kind::Secondary, this);
         m_watch->setObjectName("MatchWatchButton");
         m_watch->setButtonSize(LobbyButton::Size::Medium);
-        m_watch->setPixelLabel(true);
-        right->addSpacing(2);
         right->addWidget(m_watch, 0, Qt::AlignRight);
-        right->addStretch(1);
         outer->addLayout(right);
 
         connect(m_watch, &QPushButton::clicked, this, [this]() { onWatchClicked(); });
@@ -557,27 +748,20 @@ public:
 
     void apply(const LiveMatchView& view) override
     {
-        MatchCardBase::apply(view);
-        m_tile->setGame(view.game, view.coverPath);
-        if (view.watching)
-            m_status->setTag(StatusTag::Kind::Purple, tr("Watching"));
-        else
-            m_status->setTag(StatusTag::Kind::Live, tr("Live"));
+        LiveMatchBase::apply(view);
+        m_badge->setGame(view.game, view.coverPath);
+        m_badge->setToolTip(view.game);
+        m_markIcon->setIconName(view.watching ? QStringLiteral("eye-line") : QStringLiteral("vip-crown-fill"));
+        m_markIcon->setRole(view.watching ? Role::Watch : Role::Warn);
+        m_mark->setRole(view.watching ? Role::Watch : Role::Warn);
+        m_mark->setText((view.watching ? tr("Watching") : tr("Most watched")).toUpper());
         m_game->setText(view.roomName.isEmpty() || view.roomName == view.game
             ? view.game : view.game + QStringLiteral(" · ") + view.roomName);
         m_game->setToolTip(m_game->text());
-
-        for (int i = 0; i < 2; ++i)
-        {
-            const bool known = i < view.players.size();
-            m_sideNames[i]->setText(known ? view.players.at(i).name : QString());
-            m_sideNames[i]->setToolTip(m_sideNames[i]->text());
-            m_sideNames[i]->setProperty("playerName", m_sideNames[i]->text());
-            m_sideFlags[i]->setCountry(known ? view.players.at(i).country : QString());
-        }
-        m_viewers->setText(QString::number(view.viewers));
+        m_players->set(view.players, view.roomName, LobbyTheme::uiFont(17, QFont::Bold));
+        m_viewers->setText(tr("%1 watching").arg(view.viewers));
         updateDuration();
-        applyWatchButton(m_watch, false);
+        applyWatchButton(m_watch);
     }
 
     void updateDuration() override
@@ -585,39 +769,45 @@ public:
         m_time->setText(formatDuration(m_view.startedAtMs));
     }
 
-private:
-    QHBoxLayout* makeSide(int index)
+protected:
+    void paintEvent(QPaintEvent*) override
     {
-        auto* side = new QHBoxLayout;
-        side->setSpacing(6);
-        auto* chip = new PortChip(index + 1, this);
-        m_sideNames[index] = new ElidedLabel(Role::Ink, this);
-        m_sideNames[index]->setFont(LobbyTheme::uiFont(14, QFont::Bold));
-        m_sideFlags[index] = new CountryFlag(this);
-        if (index == 0)
-        {
-            side->addWidget(chip);
-            side->addWidget(m_sideNames[index]);
-            side->addWidget(m_sideFlags[index]);
-            side->addStretch(1);
-        }
-        else
-        {
-            m_sideNames[index]->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            side->addStretch(1);
-            side->addWidget(m_sideFlags[index]);
-            side->addWidget(m_sideNames[index]);
-            side->addWidget(chip);
-        }
-        return side;
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const Tokens& t = LobbyTheme::tokens();
+        const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        QPainterPath path;
+        path.addRoundedRect(box, 10, 10);
+
+        QColor clear = t.tint;
+        clear.setAlpha(0);
+        QLinearGradient fill(box.topLeft(), box.bottomLeft());
+        fill.setColorAt(0, m_view.watching ? t.watchTint : t.tint);
+        fill.setColorAt(1, clear);
+        painter.fillPath(path, fill);
+
+        // The four port colours along the top edge.
+        painter.save();
+        painter.setClipPath(path);
+        const qreal quarter = box.width() / 4;
+        for (int i = 0; i < 4; ++i)
+            painter.fillRect(QRectF(box.left() + i * quarter, box.top(), quarter + 0.5, 2), LobbyTheme::portColor(i + 1));
+        painter.restore();
+
+        QColor border = t.line;
+        if (m_view.watching)
+            border = t.stateWatch;
+        else if (underMouse() && canWatch())
+            border = t.line2.lighter(t.dark ? 130 : 90);
+        painter.strokePath(path, QPen(border, 1.0));
     }
 
-    CartridgeTile* m_tile = nullptr;
-    StatusTag* m_status = nullptr;
-    StatusTag* m_mostTag = nullptr;
+private:
+    GameBadge* m_badge = nullptr;
+    IconLabel* m_markIcon = nullptr;
+    ElidedLabel* m_mark = nullptr;
     ElidedLabel* m_game = nullptr;
-    ElidedLabel* m_sideNames[2] = {};
-    CountryFlag* m_sideFlags[2] = {};
+    PlayersLine* m_players = nullptr;
     QLabel* m_viewers = nullptr;
     QLabel* m_time = nullptr;
     LobbyButton* m_watch = nullptr;
@@ -641,14 +831,15 @@ LiveGallery::LiveGallery(QWidget* parent)
     head->setSpacing(6);
     head->addWidget(new SectionMarker(SectionMarker::Kind::OnAir, header));
     head->addWidget(makeSectionLabel(tr("Live now"), header));
+    head->addSpacing(2);
     m_countLabel = new QLabel(header);
-    m_countLabel->setFont(LobbyTheme::uiFont(11, QFont::Bold));
+    m_countLabel->setFont(LobbyTheme::uiFont(11));
     m_countLabel->setProperty("role", "muted");
     head->addWidget(m_countLabel);
     head->addStretch(1);
 
-    const auto makeChip = [header](const QString& name) {
-        auto* chip = new QPushButton(header);
+    const auto makeChip = [](const QString& name, QWidget* parent) {
+        auto* chip = new QPushButton(parent);
         chip->setObjectName(name);
         chip->setProperty("chip", true);
         chip->setCheckable(true);
@@ -658,13 +849,19 @@ LiveGallery::LiveGallery(QWidget* parent)
         chip->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
         return chip;
     };
-    m_allChip = makeChip(QStringLiteral("LiveAllChip"));
+    auto* filter = new QFrame(header);
+    filter->setObjectName("ChipSeg");
+    auto* filterLayout = new QHBoxLayout(filter);
+    filterLayout->setContentsMargins(2, 2, 2, 2);
+    filterLayout->setSpacing(2);
+    m_allChip = makeChip(QStringLiteral("LiveAllChip"), filter);
     m_allChip->setChecked(true);
-    m_thisGameChip = makeChip(QStringLiteral("LiveThisGameChip"));
+    m_thisGameChip = makeChip(QStringLiteral("LiveThisGameChip"), filter);
     m_thisGameChip->setToolTip(tr("Only show matches of the game selected in the picker."));
     m_thisGameChip->setEnabled(false);
-    head->addWidget(m_allChip);
-    head->addWidget(m_thisGameChip);
+    filterLayout->addWidget(m_allChip);
+    filterLayout->addWidget(m_thisGameChip);
+    head->addWidget(filter, 0, Qt::AlignVCenter);
     connect(m_allChip, &QPushButton::clicked, this, [this]() {
         m_thisGameOnly = false;
         m_allChip->setChecked(true);
@@ -707,31 +904,41 @@ LiveGallery::LiveGallery(QWidget* parent)
     m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_scroll->viewport()->setAutoFillBackground(false);
-    m_grid = new QWidget(m_scroll);
-    m_grid->setObjectName("LiveGrid");
-    m_grid->setAttribute(Qt::WA_Hover);
-    m_grid->installEventFilter(this);
-    m_scroll->setWidget(m_grid);
-    m_grid->setAutoFillBackground(false); // setWidget turns it on
+    m_list = new QWidget(m_scroll);
+    m_list->setObjectName("LiveList");
+    m_list->setAttribute(Qt::WA_Hover);
+    m_list->installEventFilter(this);
+    m_listLayout = new QVBoxLayout(m_list);
+    m_listLayout->setContentsMargins(0, 0, 0, 6);
+    m_listLayout->setSpacing(0);
+
+    m_featuredHolder = new QWidget(m_list);
+    auto* holder = new QVBoxLayout(m_featuredHolder);
+    holder->setContentsMargins(kListMargin, 2, kListMargin, 8);
+    m_featured = new FeaturedMatch(m_featuredHolder);
+    connectMatch(m_featured);
+    holder->addWidget(m_featured);
+    m_featuredHolder->setVisible(false);
+    m_listLayout->addWidget(m_featuredHolder);
+
+    m_note = makeNote(m_noteTitle, m_noteBody, m_list);
+    m_listLayout->addWidget(m_note);
+    m_listLayout->addStretch(1);
+    m_scroll->setWidget(m_list);
+    m_list->setAutoFillBackground(false); // setWidget turns it on
     m_scroll->viewport()->installEventFilter(this);
     root->addWidget(m_scroll, 1);
-
-    m_featured = new FeaturedMatchCard(m_grid);
-    connectCard(m_featured);
-    m_featured->setVisible(false);
-
-    m_note = makeNote(m_noteTitle, m_noteBody, m_grid);
 
     rebuild();
 }
 
-void LiveGallery::connectCard(MatchCardBase* card)
+void LiveGallery::connectMatch(LiveMatchBase* match)
 {
-    connect(card, &MatchCardBase::watchRequested, this, &LiveGallery::watchRequested);
-    connect(card, &MatchCardBase::stopWatchingRequested, this, &LiveGallery::stopWatchingRequested);
-    connect(card, &MatchCardBase::joinRequested, this, &LiveGallery::joinRequested);
-    connect(card, &MatchCardBase::contextMenuRequested, this, &LiveGallery::contextMenuRequested);
-    connect(card, &MatchCardBase::playerMenuRequested, this, &LiveGallery::playerMenuRequested);
+    connect(match, &LiveMatchBase::watchRequested, this, &LiveGallery::watchRequested);
+    connect(match, &LiveMatchBase::stopWatchingRequested, this, &LiveGallery::stopWatchingRequested);
+    connect(match, &LiveMatchBase::joinRequested, this, &LiveGallery::joinRequested);
+    connect(match, &LiveMatchBase::contextMenuRequested, this, &LiveGallery::contextMenuRequested);
+    connect(match, &LiveMatchBase::playerMenuRequested, this, &LiveGallery::playerMenuRequested);
 }
 
 void LiveGallery::setMatches(const QList<LiveMatchView>& matches)
@@ -759,10 +966,10 @@ void LiveGallery::setOffline(bool offline)
 
 void LiveGallery::updateDurations()
 {
-    if (m_featuredVisible)
+    if (m_featuredRoomId != 0)
         m_featured->updateDuration();
-    for (auto* card : m_cards)
-        card->updateDuration();
+    for (auto* row : m_rows)
+        row->updateDuration();
 }
 
 QList<LiveMatchView> LiveGallery::visibleMatches() const
@@ -790,10 +997,10 @@ QList<LiveMatchView> LiveGallery::visibleMatches() const
         return a.roomId < b.roomId;
     });
 
-    // While the pointer is over the gallery, a viewer count ticking up mustn't
-    // slide a card out from under it. Known matches hold their places and new
+    // While the pointer is over the list, a viewer count ticking up mustn't
+    // slide a row out from under it. Known matches hold their places and new
     // ones join the end; the real order comes back once the pointer leaves.
-    if (m_grid->underMouse() && !m_order.isEmpty())
+    if (m_list->underMouse() && !m_order.isEmpty())
     {
         QList<LiveMatchView> held;
         for (const quint64 id : m_order)
@@ -813,16 +1020,15 @@ QList<LiveMatchView> LiveGallery::visibleMatches() const
     return visible;
 }
 
-int LiveGallery::columnCount() const
+bool LiveGallery::wideEnoughToFeature() const
 {
-    const int width = m_scroll->viewport()->width() - 2 * 12;
-    return std::max(1, (width + kCardGap) / (kCardMinWidth + kCardGap));
+    return m_scroll->viewport()->width() >= kFeaturedMinWidth;
 }
 
 void LiveGallery::rebuild()
 {
     const QList<LiveMatchView> visible = visibleMatches();
-    m_builtColumns = columnCount();
+    m_builtWide = wideEnoughToFeature();
 
     m_order.clear();
     for (const auto& match : visible)
@@ -835,26 +1041,26 @@ void LiveGallery::rebuild()
         totalViewers += match.matchId != 0 ? match.viewers : 0;
         sameGame += match.sameGame ? 1 : 0;
     }
-    m_countLabel->setText(QStringLiteral("%1 · %2 %3")
-        .arg(m_matches.size()).arg(totalViewers).arg(tr("watching").toUpper()));
+    const QString matchCount = m_matches.size() == 1 ? tr("1 match") : tr("%1 matches").arg(m_matches.size());
+    m_countLabel->setText(QStringLiteral("%1 · %2").arg(matchCount, tr("%1 watching").arg(totalViewers)));
     m_allChip->setText(QStringLiteral("%1  %2").arg(tr("All")).arg(m_matches.size()));
     m_thisGameChip->setText(QStringLiteral("%1  %2").arg(tr("This game")).arg(sameGame));
+    fitHeader();
 
-    // The most watched 1v1 earns the wide card, when there's room to span two
-    // columns and somebody is actually watching it.
+    // The most watched 1v1 is featured above the list, when the list is wide
+    // enough for it and somebody is actually watching.
     const Sort sort = static_cast<Sort>(m_sortCombo->currentData().toInt());
     quint64 featuredId = 0;
-    if (sort == Sort::MostWatched && m_builtColumns >= 2 && !visible.isEmpty())
+    if (sort == Sort::MostWatched && m_builtWide && !visible.isEmpty())
     {
         const LiveMatchView& top = visible.first();
         if (top.matchId != 0 && top.viewers > 0 && top.players.size() == 2 && top.hasRom)
             featuredId = top.roomId;
     }
     m_featuredRoomId = featuredId;
-    m_featuredVisible = featuredId != 0;
-    m_featured->setVisible(m_featuredVisible);
+    m_featuredHolder->setVisible(featuredId != 0);
 
-    QHash<quint64, MatchCard*> kept;
+    QHash<quint64, LiveMatchRow*> kept;
     for (const auto& match : visible)
     {
         if (match.roomId == featuredId)
@@ -862,25 +1068,45 @@ void LiveGallery::rebuild()
             m_featured->apply(match);
             continue;
         }
-        MatchCard* card = m_cards.take(match.roomId);
-        if (card == nullptr)
+        LiveMatchRow* row = m_rows.take(match.roomId);
+        if (row == nullptr)
         {
-            card = new MatchCard(m_grid);
-            connectCard(card);
+            row = new LiveMatchRow(m_list);
+            connectMatch(row);
+            connect(row, &LiveMatchRow::toggled, this, [this](quint64 roomId) {
+                setExpandedRoom(m_expandedRoomId == roomId ? 0 : roomId);
+            });
         }
-        card->apply(match);
-        card->setVisible(true);
-        kept.insert(match.roomId, card);
+        row->apply(match);
+        kept.insert(match.roomId, row);
     }
-    // Later, not now: this can run inside a click on the very card being dropped.
-    for (auto* card : m_cards)
+    // Later, not now: this can run inside a click on the very row being dropped.
+    for (auto* row : m_rows)
     {
-        card->hide();
-        card->deleteLater();
+        m_listLayout->removeWidget(row);
+        row->hide();
+        row->deleteLater();
     }
-    m_cards = kept;
+    m_rows = kept;
 
-    // The note says why the gallery is short, or empty.
+    // Lay the rows out in order, after the featured match and ahead of the note.
+    for (auto* row : m_rows)
+        m_listLayout->removeWidget(row);
+    int index = m_listLayout->indexOf(m_featuredHolder) + 1;
+    for (const quint64 id : m_order)
+    {
+        if (LiveMatchRow* row = m_rows.value(id))
+        {
+            m_listLayout->insertWidget(index++, row);
+            row->setVisible(true);
+        }
+    }
+    if (!m_rows.contains(m_expandedRoomId))
+        m_expandedRoomId = 0;
+    for (auto* row : m_rows)
+        row->setExpanded(row->roomId() == m_expandedRoomId);
+
+    // The note says why the list is short, or empty.
     if (m_offline)
     {
         m_noteTitle->setText(tr("Not connected").toUpper());
@@ -897,78 +1123,58 @@ void LiveGallery::rebuild()
         m_noteTitle->setText(tr("That's everything live right now").toUpper());
         m_noteBody->setText(tr("New matches appear here as they start. Rooms with Live replay on can be watched by anyone."));
     }
-
-    relayout();
+    updateNote();
 }
 
-void LiveGallery::relayout()
+void LiveGallery::setExpandedRoom(quint64 roomId)
 {
-    const int columns = columnCount();
-    const int width = m_scroll->viewport()->width();
-    const int inner = std::max(kCardMinWidth, width - 2 * 12);
-    const int cellWidth = (inner - (columns - 1) * kCardGap) / columns;
+    m_expandedRoomId = roomId;
+    for (auto* row : m_rows)
+        row->setExpanded(row->roomId() == roomId);
+    updateNote();
+}
 
-    int row = 0;
-    int column = 0;
-    const auto advance = [&](int span) {
-        column += span;
-        if (column >= columns)
-        {
-            column = 0;
-            ++row;
-        }
-    };
-    const auto cellX = [&](int c) { return 12 + c * (cellWidth + kCardGap); };
-    const auto cellY = [&](int r) { return r * (kCardHeight + kCardGap); };
+void LiveGallery::updateNote()
+{
+    // A short list explains itself; a full one doesn't need to.
+    int used = m_featuredRoomId != 0 ? m_featuredHolder->sizeHint().height() : 0;
+    for (auto* row : m_rows)
+        used += row->sizeHint().height();
+    m_note->setVisible(m_order.isEmpty() || m_scroll->viewport()->height() - used >= 100);
+}
 
-    for (const quint64 id : m_order)
+void LiveGallery::fitHeader()
+{
+    // A narrow list sheds its header's extras, least useful first.
+    QLayout* header = m_countLabel->parentWidget()->layout();
+    QWidget* const extras[] = {m_countLabel, m_sortCombo, m_thisGameChip};
+    for (QWidget* extra : extras)
+        extra->setVisible(true);
+    for (QWidget* extra : extras)
     {
-        if (id == m_featuredRoomId && m_featuredVisible)
-        {
-            const int span = std::min(2, columns);
-            m_featured->setGeometry(cellX(column), cellY(row),
-                                    span * cellWidth + (span - 1) * kCardGap, kCardHeight);
-            advance(span);
-            continue;
-        }
-        if (MatchCard* card = m_cards.value(id))
-        {
-            card->setGeometry(cellX(column), cellY(row), cellWidth, kCardHeight);
-            advance(1);
-        }
+        header->invalidate();
+        if (header->sizeHint().width() <= width())
+            break;
+        extra->setVisible(false);
     }
-    const int nextRow = column == 0 ? row : row + 1;
-
-    // A short gallery explains itself; a full one doesn't need to.
-    const int viewportHeight = m_scroll->viewport()->height();
-    const int cardsHeight = nextRow > 0 ? cellY(nextRow) : 0;
-    const bool roomForNote = m_order.isEmpty() || viewportHeight - cardsHeight >= 100;
-    m_note->setVisible(roomForNote);
-    if (roomForNote)
-        m_note->setGeometry(12, cardsHeight, inner, std::max(100, viewportHeight - cardsHeight));
-
-    m_grid->setMinimumHeight(cardsHeight + (roomForNote ? 100 : 2));
 }
 
 void LiveGallery::resizeEvent(QResizeEvent* event)
 {
     LobbyCard::resizeEvent(event);
-    // A narrow gallery sheds its header's extras, least useful first.
-    m_countLabel->setVisible(width() >= 500);
-    m_sortCombo->setVisible(width() >= 400);
-    m_thisGameChip->setVisible(width() >= 320);
+    fitHeader();
 }
 
 bool LiveGallery::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == m_scroll->viewport() && event->type() == QEvent::Resize)
     {
-        if (columnCount() != m_builtColumns)
+        if (wideEnoughToFeature() != m_builtWide)
             rebuild();
         else
-            relayout();
+            updateNote();
     }
-    else if (watched == m_grid && event->type() == QEvent::Leave)
+    else if (watched == m_list && event->type() == QEvent::Leave)
     {
         rebuild(); // the real order was on hold while the pointer was here
     }

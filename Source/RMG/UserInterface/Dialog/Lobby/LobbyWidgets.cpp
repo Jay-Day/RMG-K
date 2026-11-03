@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 using namespace UserInterface::Dialog;
 using LobbyTheme::Role;
@@ -29,19 +30,41 @@ namespace
         return path;
     }
 
-    // Top corners and bottom corners rounded differently, like a cartridge.
-    QPainterPath cartridgePath(const QRectF& r, qreal top, qreal bottom)
+    // The top of an N64 Game Pak seen from the front: rounded shoulders, then a
+    // crown that bows up to r.top(). It runs left to right, from where one
+    // straight side ends to where the other begins.
+    QPainterPath n64CrownPath(const QRectF& r)
     {
+        const qreal w = r.width();
+        const qreal h = r.height();
+        const qreal shoulder = r.top() + 0.27 * h;
+        const QPointF crownL(r.left() + 0.16 * w, r.top() + 0.08 * h);
+        const QPointF crownR(r.right() - 0.16 * w, crownL.y());
+        const QPointF bow(r.center().x(), r.top() - 0.08 * h);
         QPainterPath path;
-        path.moveTo(r.left() + top, r.top());
-        path.lineTo(r.right() - top, r.top());
-        path.arcTo(QRectF(r.right() - 2 * top, r.top(), 2 * top, 2 * top), 90, -90);
-        path.lineTo(r.right(), r.bottom() - bottom);
-        path.arcTo(QRectF(r.right() - 2 * bottom, r.bottom() - 2 * bottom, 2 * bottom, 2 * bottom), 0, -90);
-        path.lineTo(r.left() + bottom, r.bottom());
-        path.arcTo(QRectF(r.left(), r.bottom() - 2 * bottom, 2 * bottom, 2 * bottom), 270, -90);
-        path.lineTo(r.left(), r.top() + top);
-        path.arcTo(QRectF(r.left(), r.top(), 2 * top, 2 * top), 180, -90);
+        path.moveTo(r.left(), shoulder);
+        path.cubicTo(QPointF(r.left(), r.top() + 0.12 * h), crownL - (bow - crownL) * 0.22, crownL);
+        path.quadTo(bow, crownR);
+        path.cubicTo(crownR - (bow - crownR) * 0.22, QPointF(r.right(), r.top() + 0.12 * h), QPointF(r.right(), shoulder));
+        return path;
+    }
+
+    // The whole Game Pak: the crown, straight sides, and the small steps at
+    // the foot where it narrows to fit the slot.
+    QPainterPath n64CartridgePath(const QRectF& r)
+    {
+        const qreal stepW = std::max(1.0, 0.02 * r.width());
+        const qreal stepH = 0.16 * r.height();
+        const qreal foot = std::min(2.0, 0.05 * r.height());
+        QPainterPath path = n64CrownPath(r);
+        path.lineTo(r.right(), r.bottom() - stepH);
+        path.lineTo(r.right() - stepW, r.bottom() - stepH);
+        path.lineTo(r.right() - stepW, r.bottom() - foot);
+        path.quadTo(QPointF(r.right() - stepW, r.bottom()), QPointF(r.right() - stepW - foot, r.bottom()));
+        path.lineTo(r.left() + stepW + foot, r.bottom());
+        path.quadTo(QPointF(r.left() + stepW, r.bottom()), QPointF(r.left() + stepW, r.bottom() - foot));
+        path.lineTo(r.left() + stepW, r.bottom() - stepH);
+        path.lineTo(r.left(), r.bottom() - stepH);
         path.closeSubpath();
         return path;
     }
@@ -981,9 +1004,9 @@ void CartridgeTile::setTileSize(Size size)
     m_size = size;
     switch (size)
     {
-        case Size::Small:  setFixedSize(30, 38); break;
-        case Size::Normal: setFixedSize(46, 60); break;
-        case Size::Large:  setFixedSize(58, 76); break;
+        case Size::Small:  setFixedSize(42, 29); break;
+        case Size::Normal: setFixedSize(64, 44); break;
+        case Size::Large:  setFixedSize(84, 56); break;
     }
     update();
 }
@@ -994,68 +1017,124 @@ void CartridgeTile::paintEvent(QPaintEvent*)
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     const Tokens& t = LobbyTheme::tokens();
+    const bool small = m_size == Size::Small;
 
-    const qreal topRadius = m_size == Size::Small ? 4 : 6;
-    const qreal bottomRadius = m_size == Size::Small ? 2 : 3;
     const QRectF body = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -1.5);
-    const QPainterPath shell = cartridgePath(body, topRadius, bottomRadius);
-
-    const QPixmap cover = m_coverPath.isEmpty() ? QPixmap() : QPixmap(m_coverPath);
-    if (!cover.isNull())
-    {
-        // The art fills the tile, cropped to its shape.
-        painter.save();
-        painter.setClipPath(shell);
-        const QSizeF scaled = QSizeF(cover.size()).scaled(body.size(), Qt::KeepAspectRatioByExpanding);
-        const QRectF target(body.center().x() - scaled.width() / 2, body.center().y() - scaled.height() / 2,
-                            scaled.width(), scaled.height());
-        painter.drawPixmap(target, cover, QRectF(cover.rect()));
-        painter.restore();
-        painter.setPen(QPen(QColor(0, 0, 0, 90), 1.0));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawPath(shell);
-        return;
-    }
-
+    const QPainterPath shell = n64CartridgePath(body);
     QLinearGradient plastic(body.topLeft(), body.bottomLeft());
     plastic.setColorAt(0, t.cartA);
     plastic.setColorAt(1, t.cartB);
     painter.fillPath(shell, plastic);
 
+    // Two creases run down the front, framing the nearly square label.
+    const qreal creaseL = std::round(body.left() + 0.195 * body.width()) + 0.5;
+    const qreal creaseR = std::round(body.right() - 0.195 * body.width()) - 0.5;
     painter.save();
     painter.setClipPath(shell);
-    painter.setPen(QPen(QColor(255, 255, 255, 36), 1.0));
-    painter.drawLine(QPointF(body.left() + topRadius, body.top() + 0.5), QPointF(body.right() - topRadius, body.top() + 0.5));
-    painter.fillRect(QRectF(body.left(), body.bottom() - 3, body.width(), 3), QColor(0, 0, 0, 70));
-
-    // The grip's ridges.
-    const qreal inset = m_size == Size::Small ? 4 : m_size == Size::Normal ? 6 : 8;
-    const qreal gripTop = m_size == Size::Small ? 3 : m_size == Size::Normal ? 4 : 6;
-    const qreal gripHeight = m_size == Size::Small ? 4 : m_size == Size::Normal ? 6 : 8;
-    for (qreal x = body.left() + inset; x < body.right() - inset; x += 5)
-        painter.fillRect(QRectF(x, body.top() + gripTop, 2, gripHeight), QColor(0, 0, 0, 86));
+    painter.strokePath(n64CrownPath(body).translated(0, 1), QPen(QColor(255, 255, 255, 40), 1.0));
+    painter.fillRect(QRectF(body.left(), body.bottom() - 3, body.width(), 3), QColor(0, 0, 0, 60));
+    for (const qreal x : {creaseL, creaseR})
+    {
+        painter.fillRect(QRectF(x - 0.5, body.top(), 1, body.height()), QColor(0, 0, 0, 70));
+        painter.fillRect(QRectF(x + 0.5, body.top(), 1, body.height()), QColor(255, 255, 255, 26));
+    }
     painter.restore();
 
-    const QRectF label = m_size == Size::Small
-        ? QRectF(body.left() + 3, body.top() + 9, body.width() - 6, body.height() - 14)
-        : m_size == Size::Normal
-            ? QRectF(body.left() + 5, body.top() + 13, body.width() - 10, body.height() - 20)
-            : QRectF(body.left() + 6, body.top() + 17, body.width() - 12, body.height() - 26);
-    const QColor hue = LobbyTheme::gameHue(m_game);
-    QLinearGradient labelFill(label.topLeft(), label.bottomRight());
-    labelFill.setColorAt(0, LobbyTheme::mix(hue, Qt::white, 0.88));
-    labelFill.setColorAt(1, LobbyTheme::mix(hue, Qt::black, 0.72));
-    painter.setBrush(labelFill);
-    painter.setPen(QPen(QColor(0, 0, 0, 46), 1.0));
-    painter.drawRoundedRect(label, 2, 2);
+    const qreal inset = small ? 2 : 3;
+    const QRectF label(QPointF(creaseL + inset, body.top() + std::round(0.14 * body.height())),
+                       QPointF(creaseR - inset, body.bottom() - (small ? 3 : 5)));
+    const qreal radius = small ? 1.5 : 2.5;
+    QPainterPath labelPath;
+    labelPath.addRoundedRect(label, radius, radius);
 
-    const QString initials = LobbyTheme::gameInitials(m_game);
-    int px = m_size == Size::Small ? 9 : m_size == Size::Normal ? 12 : 16;
-    if (initials.size() > 2)
-        px -= m_size == Size::Small ? 2 : 3;
-    painter.setFont(LobbyTheme::pixelFont(px));
-    painter.setPen(Qt::white);
-    painter.drawText(label, Qt::AlignCenter, initials);
+    const QPixmap cover = m_coverPath.isEmpty() ? QPixmap() : QPixmap(m_coverPath);
+    if (!cover.isNull())
+    {
+        // The art is the label, cropped to fill it.
+        painter.save();
+        painter.setClipPath(labelPath);
+        const QSizeF scaled = QSizeF(cover.size()).scaled(label.size(), Qt::KeepAspectRatioByExpanding);
+        const QRectF target(label.center().x() - scaled.width() / 2, label.center().y() - scaled.height() / 2,
+                            scaled.width(), scaled.height());
+        painter.drawPixmap(target, cover, QRectF(cover.rect()));
+        painter.restore();
+    }
+    else
+    {
+        const QColor hue = LobbyTheme::gameHue(m_game);
+        QLinearGradient labelFill(label.topLeft(), label.bottomRight());
+        labelFill.setColorAt(0, LobbyTheme::mix(hue, Qt::white, 0.88));
+        labelFill.setColorAt(1, LobbyTheme::mix(hue, Qt::black, 0.72));
+        painter.fillPath(labelPath, labelFill);
+
+        const QString initials = LobbyTheme::gameInitials(m_game);
+        int px = small ? 10 : m_size == Size::Normal ? 14 : 18;
+        if (initials.size() > 2)
+            px -= small ? 2 : 4;
+        painter.setFont(LobbyTheme::pixelFont(px));
+        painter.setPen(Qt::white);
+        painter.drawText(label, Qt::AlignCenter, initials);
+    }
+    painter.strokePath(labelPath, QPen(QColor(0, 0, 0, 70), 1.0));
+    painter.strokePath(shell, QPen(QColor(0, 0, 0, t.dark ? 110 : 70), 1.0));
+}
+
+// ── GameBadge ────────────────────────────────────────────────────────
+
+GameBadge::GameBadge(int side, QWidget* parent)
+    : QWidget(parent)
+{
+    setFixedSize(side, side);
+}
+
+void GameBadge::setGame(const QString& gameName, const QString& coverPath)
+{
+    if (m_game == gameName && m_coverPath == coverPath)
+        return;
+    m_game = gameName;
+    m_coverPath = coverPath;
+    update();
+}
+
+void GameBadge::paintEvent(QPaintEvent*)
+{
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    const Tokens& t = LobbyTheme::tokens();
+
+    const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    const qreal radius = std::round(width() * 0.22);
+    const QPainterPath shape = roundedPath(box, radius);
+
+    const QPixmap cover = m_coverPath.isEmpty() ? QPixmap() : QPixmap(m_coverPath);
+    if (!cover.isNull())
+    {
+        painter.save();
+        painter.setClipPath(shape);
+        const QSizeF scaled = QSizeF(cover.size()).scaled(box.size(), Qt::KeepAspectRatioByExpanding);
+        const QRectF target(box.center().x() - scaled.width() / 2, box.center().y() - scaled.height() / 2,
+                            scaled.width(), scaled.height());
+        painter.drawPixmap(target, cover, QRectF(cover.rect()));
+        painter.restore();
+    }
+    else
+    {
+        // The game's colour, softened toward the panel so a column of them
+        // doesn't shout.
+        const QColor hue = LobbyTheme::gameHue(m_game);
+        QLinearGradient fill(box.topLeft(), box.bottomLeft());
+        fill.setColorAt(0, LobbyTheme::mix(hue, t.panel2, t.dark ? 0.72 : 0.86));
+        fill.setColorAt(1, LobbyTheme::mix(hue, t.panel2, t.dark ? 0.56 : 0.74));
+        painter.fillPath(shape, fill);
+
+        const QString initials = LobbyTheme::gameInitials(m_game);
+        const int px = std::max(9, static_cast<int>(width() * (initials.size() > 2 ? 0.28 : 0.36)));
+        painter.setFont(LobbyTheme::pixelFont(px));
+        painter.setPen(QColor(255, 255, 255, 235));
+        painter.drawText(box, Qt::AlignCenter, initials);
+    }
+    painter.strokePath(shape, QPen(t.dark ? QColor(255, 255, 255, 22) : QColor(0, 0, 0, 30), 1.0));
 }
 
 // ── FrameStepper ─────────────────────────────────────────────────────

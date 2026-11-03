@@ -76,8 +76,8 @@ namespace
         t.secondaryLip = QColor("#0e0d0f");
         t.bandA = QColor("#211f23");
         t.bandB = QColor("#171619");
-        t.cartA = QColor("#47444a");
-        t.cartB = QColor("#2d2b2f");
+        t.cartA = QColor("#57545b");
+        t.cartB = QColor("#38363b");
         t.stat = rgba(0, 0, 0, 0.24);
         t.scan = rgba(255, 255, 255, 0.03);
         return t;
@@ -513,6 +513,10 @@ QString styleSheet()
         QPushButton[chip="true"]:hover { color: @ink; }
         QPushButton[chip="true"]:checked { background-color: @raise; color: @ink; }
         QPushButton[chip="true"]:disabled { color: @faint; }
+        QFrame#ChipSeg { background-color: @well; border: 1px solid @line2; border-radius: 8px; }
+        QFrame#ChipSeg QPushButton[chip="true"] {
+            min-height: 20px; max-height: 20px; padding: 0 9px; border: none; border-radius: 6px;
+        }
 
         QFrame#Seg { background-color: @well; border: 1px solid @line2; border-radius: 9px; }
         QPushButton[seg="true"] {

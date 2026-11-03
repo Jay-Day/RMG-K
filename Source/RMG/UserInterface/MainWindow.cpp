@@ -6618,7 +6618,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                 this->stopLobbySpectate();
                 this->showErrorMessage(tr("Live Replay Error"),
                     tr("Couldn't load the live replay's saved state, so watching stopped. "
-                       "Your ROM or RMG-K version is probably different from the players'."));
+                       "Your ROM or Dale64 version is probably different from the players'."));
                 break;
             }
 #endif // NETPLAY

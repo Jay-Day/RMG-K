@@ -96,7 +96,7 @@ void LobbyConnectDialog::buildUi()
     brand->addWidget(new BrandMark(header));
     auto* words = new QVBoxLayout;
     words->setSpacing(1);
-    auto* word = new QLabel(QStringLiteral("RMG-K"), header);
+    auto* word = new QLabel(QStringLiteral("Dale64"), header);
     word->setFont(LobbyTheme::pixelFont(18, 0.3));
     words->addWidget(word);
     auto* tagline = new QLabel(tr("ROLLBACK NETPLAY"), header);

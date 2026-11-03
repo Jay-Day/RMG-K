@@ -29,13 +29,15 @@ struct LiveMatchView
     struct Player
     {
         QString name;
-        QString country; // empty when anonymous or unknown
+        QString country;    // empty when anonymous or unknown
+        QString connection; // "wifi", "lan", ... or empty when unknown
     };
 
     quint64 roomId = 0;
     quint64 matchId = 0;      // 0 unless a live replay is streaming
     QString game;
     QString roomName;
+    QString host;
     QString coverPath;
     qint64 startedAtMs = 0;
     int viewers = 0;
@@ -70,13 +72,14 @@ struct RoomRowView
     int seatsNeeded = 1;      // seats this client's players take together
 };
 
-class MatchCardBase;
-class MatchCard;
-class FeaturedMatchCard;
+class LiveMatchBase;
+class LiveMatchRow;
+class FeaturedMatch;
 
-// The Live gallery: every running match as a card, biggest audience first.
-// Cards are updated in place, so the list keeps its scroll position as matches
-// come and go.
+// The Live list: every running match as a compact row, biggest audience first,
+// with the most watched one featured above it when there's room. A row opens
+// for the details. Rows are updated in place, so the list keeps its scroll
+// position as matches come and go.
 class LiveGallery : public LobbyCard
 {
     Q_OBJECT
@@ -95,7 +98,7 @@ signals:
     void stopWatchingRequested();
     void joinRequested(quint64 roomId);
     void contextMenuRequested(quint64 roomId, const QPoint& globalPos);
-    // A right-click on a player's name in a card.
+    // A right-click on a player's name.
     void playerMenuRequested(const QString& name, const QPoint& globalPos);
 
 protected:
@@ -105,28 +108,33 @@ protected:
 private:
     enum class Sort { MostWatched, Newest, Longest };
 
-    int columnCount() const;
+    bool wideEnoughToFeature() const;
+    void fitHeader();
     void rebuild();
-    void relayout();
+    void setExpandedRoom(quint64 roomId);
+    // Shows the note under a list short enough to leave room for it.
+    void updateNote();
     QList<LiveMatchView> visibleMatches() const;
-    void connectCard(MatchCardBase* card);
+    void connectMatch(LiveMatchBase* match);
 
     QList<LiveMatchView> m_matches;
     QList<quint64> m_order;
-    QHash<quint64, MatchCard*> m_cards;
-    FeaturedMatchCard* m_featured = nullptr;
+    QHash<quint64, LiveMatchRow*> m_rows;
+    FeaturedMatch* m_featured = nullptr;
+    QWidget* m_featuredHolder = nullptr;
     quint64 m_featuredRoomId = 0;
-    bool m_featuredVisible = false;
+    quint64 m_expandedRoomId = 0;
+    bool m_builtWide = false;
     bool m_thisGameOnly = false;
     bool m_offline = false;
-    int m_builtColumns = 0;
 
     QLabel* m_countLabel = nullptr;
     QPushButton* m_allChip = nullptr;
     QPushButton* m_thisGameChip = nullptr;
     QComboBox* m_sortCombo = nullptr;
     QScrollArea* m_scroll = nullptr;
-    QWidget* m_grid = nullptr;
+    QWidget* m_list = nullptr;
+    QVBoxLayout* m_listLayout = nullptr;
     QWidget* m_note = nullptr;
     QLabel* m_noteTitle = nullptr;
     QLabel* m_noteBody = nullptr;
