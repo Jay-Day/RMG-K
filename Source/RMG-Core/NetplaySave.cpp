@@ -195,13 +195,13 @@ static void publish_running_save_data(void)
 // Exported Functions
 //
 
-bool CoreNetplaySaveData::IsEmpty(void) const
+CORE_EXPORT bool CoreNetplaySaveData::IsEmpty(void) const
 {
     return std::all_of(Kinds.begin(), Kinds.end(),
         [](const std::vector<uint8_t>& kind) { return kind.empty(); });
 }
 
-size_t CoreNetplaySaveData::TotalBytes(void) const
+CORE_EXPORT size_t CoreNetplaySaveData::TotalBytes(void) const
 {
     size_t total = 0;
     for (const std::vector<uint8_t>& kind : Kinds)
