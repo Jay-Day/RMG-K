@@ -25,6 +25,7 @@
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/LobbyIce.hpp>
+#include <RMG-Core/NetplaySave.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
@@ -323,20 +324,43 @@ namespace
         return true;
     }
 
-    bool buildPrematchManifest(const QString& romFile, std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
+    // Manifest sections, in this order after the header.
+    constexpr uint32_t PREMATCH_SECTION_CHEATS    = 1u << 0;
+    constexpr uint32_t PREMATCH_SECTION_SAVE_DATA = 1u << 1;
+
+    // saveData is the host's starting save, or null to start blank. It rides
+    // compressed in its own section, which clients before save data refuse;
+    // the lobby keeps them out of matches that use it.
+    bool buildPrematchManifest(const QString& romFile, const CoreNetplaySaveData* saveData,
+                               std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
     {
         std::vector<CoreCheat> cheats;
         std::string cheatManifest;
+        std::string saveSection;
 
         if (!CoreGetEnabledNetplayCheats(romFile.toStdU32String(), cheats) || !CoreSerializeNetplayCheats(cheats, cheatManifest))
             return false;
+        if (saveData != nullptr)
+        {
+            std::string raw;
+            if (!CoreSerializeNetplaySaveData(*saveData, raw))
+                return false;
+            const QByteArray packed = qCompress(QByteArray::fromStdString(raw), 9);
+            saveSection.assign(packed.constData(), size_t(packed.size()));
+        }
 
         manifest.clear();
         manifest.append("RMGKPMAN", 8);
         appendPrematchU32(manifest, 1);
-        appendPrematchU32(manifest, 1);
+        appendPrematchU32(manifest, PREMATCH_SECTION_CHEATS |
+            (saveData != nullptr ? PREMATCH_SECTION_SAVE_DATA : 0u));
         appendPrematchU32(manifest, static_cast<uint32_t>(cheatManifest.size()));
         manifest.append(cheatManifest);
+        if (saveData != nullptr)
+        {
+            appendPrematchU32(manifest, static_cast<uint32_t>(saveSection.size()));
+            manifest.append(saveSection);
+        }
         manifestHash = prematchHashBytes(manifest);
         cheatCount = cheats.size();
         return true;
@@ -356,9 +380,9 @@ namespace
         if (manifest.size() < 8 || std::memcmp(manifest.data(), "RMGKPMAN", 8) != 0 ||
             !readPrematchU32(manifest, offset, version) ||
             !readPrematchU32(manifest, offset, sectionMask) ||
-            version != 1 || (sectionMask & ~1u) != 0 ||
+            version != 1 || (sectionMask & ~(PREMATCH_SECTION_CHEATS | PREMATCH_SECTION_SAVE_DATA)) != 0 ||
             !readPrematchU32(manifest, offset, cheatManifestLen) ||
-            offset + cheatManifestLen != manifest.size())
+            offset + cheatManifestLen > manifest.size())
         {
             return false;
         }
@@ -366,9 +390,29 @@ namespace
         const std::string cheatManifest(manifest.data() + offset, manifest.data() + offset + cheatManifestLen);
         if (!CoreDeserializeNetplayCheats(cheatManifest, cheats))
             return false;
+        offset += cheatManifestLen;
+
+        // Without a save section the match starts blank, so a save staged for
+        // an earlier match must not carry over.
+        CoreNetplaySaveData saveData;
+        if ((sectionMask & PREMATCH_SECTION_SAVE_DATA) != 0)
+        {
+            uint32_t saveLen = 0;
+            if (!readPrematchU32(manifest, offset, saveLen) || offset + saveLen > manifest.size())
+                return false;
+            const QByteArray raw = qUncompress(QByteArray(manifest.data() + offset, int(saveLen)));
+            offset += saveLen;
+            if (raw.isEmpty() || !CoreDeserializeNetplaySaveData(raw.toStdString(), saveData))
+                return false;
+        }
+        if (offset != manifest.size())
+            return false;
 
         cheatCount = cheats.size();
-        return CoreSetNetplayCheats(cheats);
+        if (!CoreSetNetplayCheats(cheats))
+            return false;
+        CoreSetNetplaySaveData(saveData);
+        return true;
     }
 
     QByteArray buildPrematchPacket(quint8 op, quint64 senderUserId, uint64_t manifestHash, const std::string& manifest = {})
@@ -802,6 +846,7 @@ void LobbyClient::onWsConnected()
     data["romHashes"] = romArr;
     data["iceSupported"] = true;
     data["lateJoin"] = true;
+    data["saveData"] = true;
     if (!m_pendingLocalIp.isEmpty())
         data["localIp"] = m_pendingLocalIp;
 
@@ -2535,7 +2580,8 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         std::string manifest;
         uint64_t manifestHash = 0;
         size_t cheatCount = 0;
-        if (!buildPrematchManifest(romFile, manifest, manifestHash, cheatCount))
+        if (!buildPrematchManifest(romFile, m_prematchSaveData ? &*m_prematchSaveData : nullptr,
+                                   manifest, manifestHash, cheatCount))
         {
             error = QString::fromStdString(CoreGetError().empty()
                 ? std::string("Pre-match sync failed: could not build manifest") : CoreGetError());
@@ -2776,7 +2822,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         std::string manifest;
         uint64_t manifestHash = 0;
         size_t cheatCount = 0;
-        if (!buildPrematchManifest(romFile, manifest, manifestHash, cheatCount))
+        if (!buildPrematchManifest(romFile, nullptr, manifest, manifestHash, cheatCount))
         {
             error = QString::fromStdString(CoreGetError().empty() ? std::string("Pre-match sync failed: could not build manifest") : CoreGetError());
             return false;
@@ -3363,6 +3409,21 @@ void LobbyClient::updateRoomLateJoin(bool enabled)
     QJsonObject d;
     d["enabled"] = enabled;
     sendEnvelope("ROOM_UPDATE_LATE_JOIN", d);
+}
+
+void LobbyClient::updateRoomSaveData(bool enabled, const QString& label, const QStringList& kinds,
+                                     int bytes, const QString& hash)
+{
+    QJsonObject d;
+    d["enabled"] = enabled;
+    if (enabled)
+    {
+        d["label"] = label;
+        d["kinds"] = QJsonArray::fromStringList(kinds);
+        d["bytes"] = bytes;
+        d["hash"] = hash;
+    }
+    sendEnvelope("ROOM_UPDATE_SAVE_DATA", d);
 }
 
 void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)

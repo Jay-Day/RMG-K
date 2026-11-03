@@ -99,6 +99,15 @@ void main_rollback_log_state(const char* event, int state_frame, int result, int
 void main_rollback_log_eeprom(const char* event, uint8_t block, const uint8_t* data, int status);
 void main_rollback_log_inputs(const uint32_t* values, int players);
 
+/* Netplay save data sandbox (M64CMD_ROLLBACK_SET/GET_SAVE_DATA). */
+m64p_error main_set_save_data(const m64p_save_data* save);
+m64p_error main_get_save_data(m64p_save_data* save);
+int main_save_sandbox_active(void);
+void main_save_data_written(void);
+unsigned int main_get_save_generation(void);
+void main_set_save_generation(unsigned int generation);
+const uint8_t* main_flashram_boot_data(void);
+
 void main_speedup(int percent);
 void main_speeddown(int percent);
 void main_set_fastforward(int enable);

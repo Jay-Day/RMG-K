@@ -19,6 +19,7 @@
 #include "Kaillera.hpp"
 #include "Plugins.hpp"
 #include "Cheats.hpp"
+#include "NetplaySave.hpp"
 #include "Error.hpp"
 #include "File.hpp"
 #include "Rom.hpp"
@@ -1054,10 +1055,48 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #ifdef NETPLAY
     // Apply deterministic settings AFTER all overlays for synchronized netplay or
     // explicit local rollback testing.
-    if (localRollbackEnabled || (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0)))
+    const bool syncedSession = localRollbackEnabled ||
+        (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0));
+    if (syncedSession)
     {
         apply_kaillera_deterministic_settings();
     }
+#else
+    const bool syncedSession = false;
+#endif
+
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    // A replay file starts from the save its match did. (A live replay's
+    // viewer got that from the match's manifest already.)
+    if (address == "KAILLERA" && CoreIsKailleraPlaybackMode() && !n02::playbackIsStream())
+    {
+        CoreNetplaySaveData replaySave;
+        const std::string recorded = n02::playbackSaveData();
+        if (!recorded.empty() && !CoreDeserializeNetplaySaveData(recorded, replaySave))
+        {
+            CoreClearCheats();
+            CoreDetachPlugins();
+            CoreApplyPluginSettings();
+            CoreCloseRom();
+            return false;
+        }
+        CoreSetNetplaySaveData(replaySave);
+    }
+#endif
+
+    // A synced session keeps the game's saves in memory, starting from the
+    // host's pick (blank without one), so no player's own save files are read
+    // or changed. Offline play turns that off and uses the save files.
+    if (!CoreApplyNetplaySaveData(syncedSession))
+    {
+        CoreClearCheats();
+        CoreDetachPlugins();
+        CoreApplyPluginSettings();
+        CoreCloseRom();
+        return false;
+    }
+
+#ifdef NETPLAY
 
     // Kaillera connection happens BEFORE emulation via kailleraSelectServerDialog
     // Just verify it's initialized if netplay was requested

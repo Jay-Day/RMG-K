@@ -320,7 +320,9 @@ typedef enum {
   M64CMD_ROLLBACK_GET_RUN_FRAME_STATS,
   M64CMD_ROLLBACK_SET_VERBOSE_STATS,
   M64CMD_ROLLBACK_SET_TIMESYNC_SCALE,
-  M64CMD_FRAME_OUTPUT_SET
+  M64CMD_FRAME_OUTPUT_SET,
+  M64CMD_ROLLBACK_SET_SAVE_DATA,
+  M64CMD_ROLLBACK_GET_SAVE_DATA
 } m64p_command;
 
 typedef enum {
@@ -338,6 +340,28 @@ typedef struct {
   int            checksum;
   int            frame;
 } m64p_rollback_state;
+
+/* Netplay save data. M64CMD_ROLLBACK_SET_SAVE_DATA before M64CMD_EXECUTE
+ * sandboxes the cartridge saves: they start from these bytes, and the game's
+ * writes stay in memory instead of reaching the save files. NULL clears it.
+ * M64CMD_ROLLBACK_GET_SAVE_DATA copies the running game's saves out. */
+typedef enum {
+  M64SAVEDATA_EEPROM = 0,
+  M64SAVEDATA_SRAM,
+  M64SAVEDATA_FLASHRAM,
+  M64SAVEDATA_KINDS
+} m64p_save_data_kind;
+
+typedef struct {
+  /* SET: starting bytes, NULL for a blank (formatted) save.
+   * GET: buffers to copy into, NULL to skip that kind. */
+  unsigned char* data[M64SAVEDATA_KINDS];
+  /* SET: bytes given. GET: in, each buffer's capacity; out, bytes copied. */
+  int            size[M64SAVEDATA_KINDS];
+  /* GET: counts the game's save writes. Rollback loads restore it, so two
+   * reads with the same value on one timeline have the same contents. */
+  unsigned int   generation;
+} m64p_save_data;
 
 typedef struct {
   uint32_t address;
