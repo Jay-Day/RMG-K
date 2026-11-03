@@ -1375,7 +1375,7 @@ public:
         setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     }
 
-    // Numbers and short codes use the pixel font; words don't, so they fit.
+    // Numbers and short codes use the display font; words don't, so they fit.
     void setValue(const QString& value, const QString& unit, Role role, bool pixel = true)
     {
         m_value = value;

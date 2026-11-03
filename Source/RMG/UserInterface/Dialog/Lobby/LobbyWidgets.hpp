@@ -62,7 +62,7 @@ public:
     void setKind(Kind kind);
     void setIconName(const QString& name);
     void setSubText(const QString& text);
-    // Silkscreen caps, for the big calls to action.
+    // Display-font caps, for the big calls to action.
     void setPixelLabel(bool pixel);
     void setButtonSize(Size size);
     // A dashed outline: there's a reason you can't, not just "not now".

@@ -54,8 +54,10 @@ QColor portColor(int slot);
 QColor mix(const QColor& a, const QColor& b, qreal amountOfA);
 QString css(const QColor& color);
 
-// Silkscreen for labels and big numbers. It has no kana, so Japanese falls back
-// to the system UI font at the same size.
+// Audiowide for labels and big numbers: a retro arcade face drawn as outlines,
+// so it stays sharp at any display scale (the pixel font Silkscreen blurred at
+// 125%). It has no kana, so Japanese falls back to the system UI font at the
+// same size.
 QFont pixelFont(int px, qreal letterSpacing = 0.0);
 // The first character of a name, for avatars. Can be two code units.
 QString nameInitial(const QString& name);

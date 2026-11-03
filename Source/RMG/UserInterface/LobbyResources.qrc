@@ -1,6 +1,6 @@
 <RCC>
 <qresource prefix="/lobby">
-  <file alias="fonts/Silkscreen-Regular.ttf">Resource/lobby/fonts/Silkscreen-Regular.ttf</file>
+  <file alias="fonts/Audiowide-Regular.ttf">Resource/lobby/fonts/Audiowide-Regular.ttf</file>
   <file alias="icons/add-line.svg">Resource/lobby/icons/add-line.svg</file>
   <file alias="icons/arrow-down-s-line.svg">Resource/lobby/icons/arrow-down-s-line.svg</file>
   <file alias="icons/arrow-left-s-line.svg">Resource/lobby/icons/arrow-left-s-line.svg</file>

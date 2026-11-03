@@ -2,8 +2,6 @@
 
 #include "LobbyTheme.hpp"
 
-#include "Utilities/Translation.hpp"
-
 #include <QApplication>
 #include <QFile>
 #include <QFontDatabase>
@@ -141,7 +139,7 @@ namespace
     {
         static const QString family = []() {
             const int id = QFontDatabase::addApplicationFont(
-                QStringLiteral(":/lobby/fonts/Silkscreen-Regular.ttf"));
+                QStringLiteral(":/lobby/fonts/Audiowide-Regular.ttf"));
             const QStringList families = QFontDatabase::applicationFontFamilies(id);
             return families.isEmpty() ? QString() : families.first();
         }();
@@ -238,13 +236,6 @@ QFont pixelFont(int px, qreal letterSpacing)
     font.setWeight(QFont::Normal);
     if (letterSpacing != 0.0)
         font.setLetterSpacing(QFont::AbsoluteSpacing, letterSpacing);
-    // Silkscreen's grid only lands on whole pixels at multiples of 8, so at the
-    // sizes used here antialiasing just blurs it; plain pixels stay crisp and
-    // look right for the font. Not in Japanese, where these labels fall back to
-    // a font that needs the smoothing.
-    static const bool japanese = Translation::ResolvedLanguage() == QLatin1String("ja_JP");
-    if (!japanese)
-        font.setStyleStrategy(QFont::NoAntialias);
     return font;
 }
 
