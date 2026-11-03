@@ -15,6 +15,7 @@
 #include <QTemporaryDir>
 
 #include <RMG-Core/Directories.hpp>
+#include <RMG-Core/NetplaySave.hpp>
 #include <RMG-Core/Settings.hpp>
 
 #include <cstdio>
@@ -347,6 +348,31 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     }
 
     emulator.applyDeterministicSettings();
+
+    // A match that started from save data has to replay from it too.
+    {
+        CoreNetplaySaveData saveData;
+        if (!krecData.saveData.empty() &&
+            !CoreDeserializeNetplaySaveData(krecData.saveData, saveData))
+        {
+            shutdownGuard();
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "The replay's save data is damaged";
+            }
+            return false;
+        }
+        std::vector<std::vector<uint8_t>> kinds(saveData.Kinds.begin(), saveData.Kinds.end());
+        if (!emulator.setSaveData(kinds))
+        {
+            shutdownGuard();
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "Failed to set the replay's save data";
+            }
+            return false;
+        }
+    }
 
     const std::filesystem::path tempVideoPath = options.outputPath.string() + ".tmp_v.mp4";
     const std::filesystem::path tempAudioPath = options.outputPath.string() + ".tmp_a.raw";

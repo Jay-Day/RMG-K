@@ -1396,6 +1396,14 @@ When disabled, each new room starts on Auto. Applies the next time you enter a r
             <source>Unnamed controller</source>
             <translation>名前のないコントローラー</translation>
         </message>
+        <message>
+            <source>%1 KB</source>
+            <translation>%1 KB</translation>
+        </message>
+        <message>
+            <source>blank</source>
+            <translation>空</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::UnifiedInputDialog</name>
@@ -3461,6 +3469,352 @@ While it's on, only you save a local replay.</source>
         <message>
             <source>Off, nobody joins mid-game</source>
             <translation>オフ（途中参加できません）</translation>
+        </message>
+        <message>
+            <source>Save data</source>
+            <translation>セーブデータ</translation>
+        </message>
+        <message>
+            <source>Change...</source>
+            <translation>変更...</translation>
+        </message>
+        <message>
+            <source>Pick another save for the next match to start from.</source>
+            <translation>次の対戦で使うセーブを選び直します。</translation>
+        </message>
+        <message>
+            <source>Save As...</source>
+            <translation>名前を付けて保存...</translation>
+        </message>
+        <message>
+            <source>Save the game's save data to a file on your PC.</source>
+            <translation>ゲームのセーブデータをPCのファイルに保存します。</translation>
+        </message>
+        <message>
+            <source>Keep updated</source>
+            <translation>自動更新</translation>
+        </message>
+        <message>
+            <source>Save data is off. The next match starts from a blank save.</source>
+            <translation>セーブデータをオフにしました。次の対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>The host turned off save data. The next match starts from a blank save.</source>
+            <translation>ホストがセーブデータをオフにしました。次の対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>The next match starts from your save: %1.</source>
+            <translation>次の対戦はあなたのセーブから始まります：%1。</translation>
+        </message>
+        <message>
+            <source>This room uses save data. Matches start from the host's save: %1.</source>
+            <translation>このルームはセーブデータを使います。対戦はホストのセーブから始まります：%1。</translation>
+        </message>
+        <message>
+            <source>The host picked save data: %1. The next match starts from it.</source>
+            <translation>ホストがセーブデータを選びました：%1。次の対戦はこのセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Matches in this room start from the host's save data.</source>
+            <translation>このルームの対戦はホストのセーブデータから始まります。</translation>
+        </message>
+        <message>
+            <source>Matches in this room start from a blank save.</source>
+            <translation>このルームの対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Save data can't be changed during a match.</source>
+            <translation>対戦中はセーブデータを変更できません。</translation>
+        </message>
+        <message>
+            <source>Start the match from a save you pick, for games that need one (unlocks, settings, progress).
+The game saves to memory only during the match: nobody's own save files are touched.</source>
+            <translation>選んだセーブから対戦を始めます（隠し要素、設定、進行状況が必要なゲーム向け）。
+対戦中のセーブはメモリ上だけで行われ、誰のセーブファイルも変更されません。</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n s ago</source>
+            <translation>
+                <numerusform>%n秒前</numerusform>
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n min ago</source>
+            <translation>
+                <numerusform>%n分前</numerusform>
+            </translation>
+        </message>
+        <message>
+            <source>the host's save</source>
+            <translation>ホストのセーブ</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Save data:&lt;/b&gt; %1</source>
+            <translation>&lt;b&gt;セーブデータ：&lt;/b&gt;%1</translation>
+        </message>
+        <message>
+            <source>the game saved %1</source>
+            <translation>%1にゲームがセーブ</translation>
+        </message>
+        <message>
+            <source>not changed yet</source>
+            <translation>まだ変更なし</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Save data:&lt;/b&gt; the last match changed the save</source>
+            <translation>&lt;b&gt;セーブデータ：&lt;/b&gt;前回の対戦でセーブが変わりました</translation>
+        </message>
+        <message>
+            <source>the next match continues from it</source>
+            <translation>次の対戦はこのセーブの続きから</translation>
+        </message>
+        <message>
+            <source>the next match starts from %1 again</source>
+            <translation>次の対戦は再び%1から</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Starting save:&lt;/b&gt; %1</source>
+            <translation>&lt;b&gt;開始時のセーブ：&lt;/b&gt;%1</translation>
+        </message>
+        <message>
+            <source>%1 KB</source>
+            <translation>%1 KB</translation>
+        </message>
+        <message>
+            <source>picked by the host</source>
+            <translation>ホストが選択</translation>
+        </message>
+        <message>
+            <source>kept in %1 (%2)</source>
+            <translation>%1に保存済み（%2）</translation>
+        </message>
+        <message>
+            <source>kept in %1</source>
+            <translation>%1に保存済み</translation>
+        </message>
+        <message>
+            <source>Pick a file, then rewrite it each time the game saves.</source>
+            <translation>ファイルを選ぶと、ゲームがセーブするたびにそのファイルを書き換えます。</translation>
+        </message>
+        <message>
+            <source>Rewrite %1 each time the game saves.</source>
+            <translation>ゲームがセーブするたびに%1を書き換えます。</translation>
+        </message>
+        <message>
+            <source>Couldn't update %1 (%2). Keep updated is off.</source>
+            <translation>%1を更新できませんでした（%2）。自動更新をオフにしました。</translation>
+        </message>
+        <message>
+            <source>The game's save is kept in %1.</source>
+            <translation>ゲームのセーブは%1に保存されています。</translation>
+        </message>
+        <message>
+            <source>The game saved during this match. Use Save As to keep a copy.</source>
+            <translation>この対戦中にゲームがセーブしました。コピーを残すには「名前を付けて保存」を使ってください。</translation>
+        </message>
+        <message>
+            <source> (continued)</source>
+            <translation>（続き）</translation>
+        </message>
+        <message>
+            <source>Save Game Save</source>
+            <translation>ゲームのセーブを保存</translation>
+        </message>
+        <message>
+            <source>Couldn't save %1: %2</source>
+            <translation>%1を保存できませんでした：%2</translation>
+        </message>
+        <message>
+            <source>Saved to %1. It's kept updated while you play.</source>
+            <translation>%1に保存しました。プレイ中は自動で更新されます。</translation>
+        </message>
+        <message>
+            <source>Saved to %1.</source>
+            <translation>%1に保存しました。</translation>
+        </message>
+        <message>
+            <source>This room uses save data, which %1 can't play with yet. They need a newer Dale64, or turn Save data off.</source>
+            <translation>このルームはセーブデータを使いますが、%1はまだ対応していません。新しいDale64に更新してもらうか、セーブデータをオフにしてください。</translation>
+        </message>
+        <message>
+            <source>%1 can't play with save data</source>
+            <translation>%1はセーブデータに対応していません</translation>
+        </message>
+        <message>
+            <source>They need a newer Dale64, or turn Save data off.</source>
+            <translation>新しいDale64に更新してもらうか、セーブデータをオフにしてください。</translation>
+        </message>
+        <message>
+            <source>Matches start from your save</source>
+            <translation>あなたのセーブから開始します</translation>
+        </message>
+        <message>
+            <source>Off, matches start blank</source>
+            <translation>オフ（空のセーブから開始）</translation>
+        </message>
+        <message>
+            <source>You don't have the ROM this match is using (%1).
+
+Add it to your ROM directory and refresh the list, then try again.</source>
+            <translation>この対戦で使われているROM（%1）がありません。
+
+ROMディレクトリへ追加して一覧を更新してから、もう一度お試しください。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::StartingSaveDialog</name>
+        <message>
+            <source>Starting Save Data</source>
+            <translation>開始時のセーブデータ</translation>
+        </message>
+        <message>
+            <source>Everyone in the match starts from this save. During the match the game saves to memory only, so nobody's own save files are read or changed.</source>
+            <translation>対戦の全員がこのセーブから始めます。対戦中のセーブはメモリ上だけで行われるため、誰のセーブファイルも読み込まれたり変更されたりしません。</translation>
+        </message>
+        <message>
+            <source>Browse for a Save File...</source>
+            <translation>セーブファイルを参照...</translation>
+        </message>
+        <message>
+            <source>Continue from where each match left off</source>
+            <translation>前回の対戦の続きから始める</translation>
+        </message>
+        <message>
+            <source>When a match changes the save, the next match starts from the changed save.
+Turn this off to start every match from the save picked here.</source>
+            <translation>対戦でセーブが変わると、次の対戦は変わったセーブから始まります。
+オフにすると、毎回ここで選んだセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Use This Save</source>
+            <translation>このセーブを使う</translation>
+        </message>
+        <message>
+            <source>Your save for this game</source>
+            <translation>このゲームのあなたのセーブ</translation>
+        </message>
+        <message>
+            <source>%1 · changed %2</source>
+            <translation>%1 · %2に更新</translation>
+        </message>
+        <message>
+            <source>Where the last match left off</source>
+            <translation>前回の対戦の続き</translation>
+        </message>
+        <message>
+            <source>%1 · from this room</source>
+            <translation>%1 · このルームから</translation>
+        </message>
+        <message>
+            <source>netplay save · %1</source>
+            <translation>ネットプレイのセーブ · %1</translation>
+        </message>
+        <message>
+            <source>with %1</source>
+            <translation>プレイヤー：%1</translation>
+        </message>
+        <message>
+            <source>Choose Save Data</source>
+            <translation>セーブデータを選択</translation>
+        </message>
+        <message>
+            <source>Save data (*.rmgsave *.eep *.sra *.fla);;All files (*)</source>
+            <translation>セーブデータ (*.rmgsave *.eep *.sra *.fla);;すべてのファイル (*)</translation>
+        </message>
+        <message>
+            <source>Dale64 couldn't read %1 as save data.</source>
+            <translation>Dale64は%1をセーブデータとして読み込めませんでした。</translation>
+        </message>
+        <message>
+            <source>emulator save file · %1</source>
+            <translation>エミュレーターのセーブファイル · %1</translation>
+        </message>
+        <message>
+            <source>You have no saves for %1 yet. Browse for a save file, or turn Save data off to start from a blank save.</source>
+            <translation>%1のセーブはまだありません。セーブファイルを参照するか、セーブデータをオフにして空のセーブから始めてください。</translation>
+        </message>
+        <message>
+            <source>Holds: %1</source>
+            <translation>内容：%1</translation>
+        </message>
+        <message>
+            <source>Made with a different ROM (%1). Pick a save made for %2.</source>
+            <translation>別のROM（%1）で作られたセーブです。%2用のセーブを選んでください。</translation>
+        </message>
+        <message>
+            <source>An emulator save file doesn't say which game it's from. Make sure it's for %1.</source>
+            <translation>エミュレーターのセーブファイルにはゲーム名が記録されていません。%1用か確認してください。</translation>
+        </message>
+        <message>
+            <source>Made for %1.</source>
+            <translation>%1用のセーブです。</translation>
+        </message>
+        <message>
+            <source>Saves</source>
+            <translation>セーブ</translation>
+        </message>
+        <message>
+            <source>Off: every match starts from the save picked here</source>
+            <translation>オフ（毎回ここで選んだセーブから開始）</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::SaveNetplaySaveDialog</name>
+        <message>
+            <source>Save Game Save</source>
+            <translation>ゲームのセーブを保存</translation>
+        </message>
+        <message>
+            <source>Saves the game's save data as everyone has it now. Only your copy is written.</source>
+            <translation>全員が持っている現在のセーブデータを保存します。書き込まれるのはあなたのコピーだけです。</translation>
+        </message>
+        <message>
+            <source>Name</source>
+            <translation>名前</translation>
+        </message>
+        <message>
+            <source>Folder</source>
+            <translation>フォルダー</translation>
+        </message>
+        <message>
+            <source>Browse...</source>
+            <translation>参照...</translation>
+        </message>
+        <message>
+            <source>Keep this file updated while you play</source>
+            <translation>プレイ中はこのファイルを自動で更新する</translation>
+        </message>
+        <message>
+            <source>Rewrites the file each time the game saves, once every player's game agrees on it.</source>
+            <translation>ゲームがセーブするたびに、全プレイヤーのゲームで確定した内容でファイルを書き換えます。</translation>
+        </message>
+        <message>
+            <source>Choose a Folder</source>
+            <translation>フォルダーを選択</translation>
+        </message>
+        <message>
+            <source>Give the save a name and a folder.</source>
+            <translation>セーブの名前とフォルダーを入力してください。</translation>
+        </message>
+        <message>
+            <source>%1 already exists. Replace it?</source>
+            <translation>%1はすでにあります。置き換えますか？</translation>
+        </message>
+        <message>
+            <source>Rewritten each time the game saves</source>
+            <translation>ゲームがセーブするたびに書き換えます</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>Save</source>
+            <translation>保存</translation>
         </message>
     </context>
     <context>

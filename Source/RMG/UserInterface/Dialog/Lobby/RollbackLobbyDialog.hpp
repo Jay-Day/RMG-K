@@ -12,6 +12,7 @@
 #include "LobbyClient.hpp"
 #include "LobbyTheme.hpp"
 #include "LagStats.hpp"
+#include "NetplaySaveDialogs.hpp"
 
 #include <QDialog>
 #include <QHash>
@@ -487,6 +488,21 @@ private:
     // Host turning late join on: warns that other players won't record locally.
     bool confirmLateJoin();
 
+    // Save data (host-only room option): the match starts from a save the
+    // host picked, the game saves to memory, and any player can keep a copy.
+    void updateSaveDataControls();
+    // Host: pick the save the next match starts from; false when cancelled.
+    bool pickStartingSave();
+    // Host: tell the room which save that is.
+    void publishHostSaveChoice();
+    // The match's save is the starting save until the game changes it.
+    void beginMatchSave();
+    void onSaveDataTick();
+    // Match over: take the last agreed save and offer to keep it.
+    void finishMatchSave();
+    void saveMatchSaveAs();
+    bool writeMatchSave(const QString& file, QString* error = nullptr);
+
     LobbyClient* m_client = nullptr;
 
     bool    m_connectPromptOpen = false;
@@ -655,6 +671,15 @@ private:
     ToggleSwitch* m_lateJoinCheck = nullptr;
     QLabel*       m_lateJoinNote  = nullptr;   // the recording warning, while on
 
+    // Host-only room option: the next match starts from the host's pick of
+    // save data instead of a blank save. Hidden on servers without it.
+    ToggleSwitch* m_saveDataCheck     = nullptr;
+    QWidget*      m_saveDataRow       = nullptr;
+    QLabel*       m_saveDataNote      = nullptr;   // which save, and how the match's stands
+    LobbyButton*  m_saveDataChangeBtn = nullptr;   // host, waiting room
+    LobbyButton*  m_saveDataSaveAsBtn = nullptr;   // everyone, from match start
+    ToggleSwitch* m_saveDataKeepCheck = nullptr;   // keep the Save As file updated
+
     // When checked, the room host streams replay bytes so others can spectate,
     // independently of whether a local .krec file is saved. On the emulation thread,
     // bytes are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
@@ -808,6 +833,32 @@ private:
     int autoFrameDelay() const;
     QSet<quint64> m_outOfMatchUsers;
     QSet<quint64> m_lateJoinCapableUsers;
+
+    // From ROOM_STATE "saveData": present when the room has the option.
+    bool m_roomHasSaveDataOption = false;
+    bool m_roomSaveDataEnabled = false;
+    bool m_saveDataSeen = false;
+    QString m_roomSaveDataLabel;
+    QStringList m_roomSaveDataKinds;
+    int m_roomSaveDataBytes = 0;
+    QString m_roomSaveDataHash;
+    // Seated members whose client can play with save data.
+    QSet<quint64> m_saveDataCapableUsers;
+    // Host: what the next match starts from.
+    std::optional<NetplaySaveChoice> m_hostSaveChoice;
+    // Host: the room hears about a continued save once it's waiting again
+    // (the server takes no save data changes while the match is in game).
+    bool m_publishSaveChoiceWhenWaiting = false;
+    // The match's save as every player's game agrees on it. Kept after the
+    // match, for Save As, until the next one starts.
+    std::optional<CoreNetplaySaveData> m_matchSave;
+    bool m_matchSaveActive = false;    // a match with save data is running
+    bool m_matchSaveChanged = false;   // the game wrote it this match
+    qint64 m_matchSaveChangedMs = 0;
+    QString m_keepCopyFile;            // the Save As file kept updated
+    bool m_keepCopyEnabled = false;
+    qint64 m_keepCopyWrittenMs = 0;
+    QTimer* m_saveDataTimer = nullptr;
     quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet
     bool m_announcedWaitingSelf = false;
     // When each member's "waiting to join" last went to the overlay, so one

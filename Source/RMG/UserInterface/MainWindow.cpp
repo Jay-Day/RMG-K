@@ -167,6 +167,7 @@ public:
 #include <RMG-Core/CachedRomHeaderAndSettings.hpp>
 #include <RMG-Core/SpeedLimiter.hpp>
 #include <RMG-Core/Directories.hpp>
+#include <RMG-Core/NetplaySave.hpp>
 #include <RMG-Core/SpeedFactor.hpp>
 #include <RMG-Core/Screenshot.hpp>
 #include <RMG-Core/Emulation.hpp>
@@ -4541,6 +4542,7 @@ void MainWindow::cleanupLobbySpectateSession()
     }
     this->ui_SpectateCleanupPending = false;
     CoreSetNetplayCheats({}); // also clear a manifest staged before the ROM opened
+    CoreClearNetplaySaveData();
 
     if (this->kailleraSessionManager != nullptr)
     {
@@ -5288,6 +5290,11 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     // from, so it records nothing; the host's replay covers the whole match.
     if (!lateJoiner)
     {
+        // A match that starts from save data keeps it in the replay file.
+        std::string saveData;
+        if (!CoreGetNetplaySaveData().IsEmpty())
+            CoreSerializeNetplaySaveData(CoreGetNetplaySaveData(), saveData);
+        n02::recordingSetSaveData(saveData);
         const std::string recAppName = "RMG-K " + CoreGetVersion();
         n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
                            localPlayer, seatCount);

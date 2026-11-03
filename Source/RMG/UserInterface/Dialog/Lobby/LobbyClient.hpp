@@ -19,6 +19,10 @@
 #include <QSet>
 #include <QFutureWatcher>
 
+#include <RMG-Core/NetplaySave.hpp>
+
+#include <optional>
+
 class QWebSocket;
 class QUdpSocket;
 class QFile;
@@ -220,6 +224,14 @@ public:
     void updateRoomLiveReplay(bool enabled);
     // Host-only, waiting room: whether the next match can take players mid-game.
     void updateRoomLateJoin(bool enabled);
+    // Host-only, waiting room: the save the next match starts from, as shown
+    // to the room. The bytes themselves go to the players in the pre-match
+    // manifest (setPrematchSaveData), never through the server.
+    void updateRoomSaveData(bool enabled, const QString& label = QString(),
+                            const QStringList& kinds = QStringList(), int bytes = 0,
+                            const QString& hash = QString());
+    // Host: the save the next pre-match manifest carries; nullopt starts blank.
+    void setPrematchSaveData(std::optional<CoreNetplaySaveData> data) { m_prematchSaveData = std::move(data); }
     void kickFromRoom(quint64 userId);
 
     // Host-only: swap two seats (P1-P4) to re-order players before the match.
@@ -569,6 +581,7 @@ private:
 
     // Exact host manifest from the successful player sync, reused by live replay.
     QByteArray m_prematchManifest;
+    std::optional<CoreNetplaySaveData> m_prematchSaveData;
     int m_matchSeats = 0;
 
     bool m_socialSupported = false;

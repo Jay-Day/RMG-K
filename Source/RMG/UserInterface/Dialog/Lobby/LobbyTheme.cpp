@@ -498,6 +498,13 @@ QString styleSheet()
             selection-background-color: @accentTint; selection-color: @ink;
         }
 
+        QListWidget#StartingSaveList {
+            background-color: @well; border: 1px solid @line2; border-radius: 8px; padding: 4px; outline: 0;
+        }
+        QListWidget#StartingSaveList::item { padding: 6px 8px; border-radius: 6px; color: @ink2; }
+        QListWidget#StartingSaveList::item:hover { background-color: @tint; }
+        QListWidget#StartingSaveList::item:selected { background-color: @accentTint; color: @ink; }
+
         QComboBox#LiveSort {
             background: transparent; border: 1px solid @line2; border-radius: 6px;
             padding: 0 6px 0 9px; min-height: 22px; max-height: 22px; color: @muted;

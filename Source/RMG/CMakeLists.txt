@@ -138,6 +138,7 @@ if (NETPLAY)
         UserInterface/Dialog/Lobby/RollbackLobbySocial.cpp
         UserInterface/Dialog/Lobby/LagStats.cpp
         UserInterface/Dialog/Lobby/LagStatsDialog.cpp
+        UserInterface/Dialog/Lobby/NetplaySaveDialogs.cpp
         UserInterface/Dialog/Netplay/NetplayCommon.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.ui

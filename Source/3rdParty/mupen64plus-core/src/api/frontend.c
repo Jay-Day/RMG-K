@@ -479,6 +479,12 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
             return M64ERR_SUCCESS;
         case M64CMD_ROLLBACK_SAMPLE_INPUT:
             return rollback_sample_input((m64p_rollback_input_sample*)ParamPtr);
+        case M64CMD_ROLLBACK_SET_SAVE_DATA:
+            return main_set_save_data((const m64p_save_data*)ParamPtr);
+        case M64CMD_ROLLBACK_GET_SAVE_DATA:
+            if (ParamPtr == NULL)
+                return M64ERR_INPUT_ASSERT;
+            return main_get_save_data((m64p_save_data*)ParamPtr);
         case M64CMD_FRAME_OUTPUT_SET:
             main_set_frame_output(
                 (ParamInt & M64FRAME_OUTPUT_VIDEO) != 0,
