@@ -289,45 +289,38 @@ static std::string chooseVideoEncoder(const std::string& ffmpegPath, bool* hardw
 }
 
 #ifndef _WIN32
-static std::vector<const char*> buildVideoEncoderFlagsPosix(const std::string& videoEncoder, int crf)
+static std::vector<std::string> buildVideoEncoderFlagsPosix(const std::string& videoEncoder, int crf)
 {
-    const char* crfStr = std::to_string(crf).c_str();
+    const std::string crfStr = std::to_string(crf);
     
     if (videoEncoder == "h264_nvenc")
     {
-        std::vector<const char*> args =
+        std::vector<std::string> args =
         {
-            "-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", crfStr,
-            "-pix_fmt", "yuv420p"
+            "-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", crfStr, "-pix_fmt", "yuv420p"
         };
         
-        args.push_back(NULL);
         return args;
     }
     
     if (videoEncoder == "h264_amf")
     {
-        std::vector<const char*> args =
+        std::vector<std::string> args =
         {
             "-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", crfStr,
             "qp_p", crfStr, "-pix_fmt", "yuv420p"
         };
         
-        args.push_back(NULL);
         return args;
     }
     
     if (videoEncoder == "h264_qsv")
     {
-        std::vector<const char*> args = { "-c:v", "h264_qsv", "-global_quality", crfStr, "-look_ahead", "0" };
-        
-        args.push_back(NULL);
+        std::vector<std::string> args = { "-c:v", "h264_qsv", "-global_quality", crfStr, "-look_ahead", "0" };
         return args;
     }
     
-    std::vector<const char*> args = { "-c:v", "libx264", "-preset", "ultrafast", "-crf", crfStr, "-pix_fmt", "yuv420p" };
-    args.push_back(NULL);
-    
+    std::vector<std::string> args = { "-c:v", "libx264", "-preset", "ultrafast", "-crf", crfStr, "-pix_fmt", "yuv420p" };
     return args;
 }
 #endif
@@ -547,12 +540,12 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
     }
 
 #ifdef _WIN32
-    const std::string  = buildVideoEncoderFlags(m_SelectedVideoEncoder, config.crf);
+    const std::string encoderFlags = buildVideoEncoderFlags(m_SelectedVideoEncoder, config.crf);
     fprintf(stderr,
             "Using FFmpeg video encoder: %s%s\n",
             m_SelectedVideoEncoder.c_str(),
             m_HardwareAccelerated ? " (hardware)" : " (CPU)");
-
+    
     char command[4096];
     snprintf(command,
              sizeof(command),
@@ -631,7 +624,7 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
 
     setvbuf(m_Pipe, nullptr, _IOFBF, 1 << 20);
 #else
-    const std::vector<const char*> encoderFlags = buildVideoEncoderFlagsPosix(m_SelectedVideoEncoder, config.crf);
+    std::vector<std::string> encoderFlags = buildVideoEncoderFlagsPosix(m_SelectedVideoEncoder, config.crf);
     fprintf(stderr,
             "Using FFmpeg video encoder: %s%s\n",
             m_SelectedVideoEncoder.c_str(),
@@ -646,7 +639,7 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
     
     for (int i = 0; i < encoderFlags.size(); i++)
     {
-        command.push_back(encoderFlags[i]);
+        command.push_back(encoderFlags[i].c_str());
     }
     
     command.push_back(config.outputPath.c_str());

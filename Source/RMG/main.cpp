@@ -312,7 +312,7 @@ int main(int argc, char **argv)
 #if defined(NETPLAY)
         return KailleraExport::RunReplayExportFromCommandLine(parser);
 #else
-        std::cerr << "Replay export is only supported when built with netplay features" << std::endl;
+        std::cerr << "Replay export is supported only when built with netplay features enabled" << std::endl;
         return 1;
 #endif
     }
