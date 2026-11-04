@@ -3686,6 +3686,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         for (const auto& kind : saveData.value("kinds").toArray())
             kinds << kind.toString();
         const bool changed = enabled != m_roomSaveDataEnabled || (enabled && hash != m_roomSaveDataHash);
+        // A blank save holds nothing yet: the match makes the game's first save.
+        const bool blank = enabled && kinds.isEmpty();
         if (m_roomHasSaveDataOption && changed && (m_saveDataSeen || enabled))
         {
             const QString what = QStringLiteral("%1 (%2)").arg(label, kinds.join(QStringLiteral(" + ")));
@@ -3693,6 +3695,11 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
                 appendChatSystemLine(CHANNEL_ROOM, iAmHost
                     ? tr("Save data is off. The next match starts from a blank save.")
                     : tr("The host turned off save data. The next match starts from a blank save."));
+            else if (blank)
+                appendChatSystemLine(CHANNEL_ROOM, iAmHost
+                    ? tr("Save data is on. The next match starts from a blank save.")
+                    : !m_saveDataSeen ? tr("This room uses save data. The next match starts from a blank save.")
+                                      : tr("The host picked a blank save. The next match starts from it."));
             else if (iAmHost)
                 appendChatSystemLine(CHANNEL_ROOM, tr("The next match starts from your save: %1.").arg(what));
             else if (!m_saveDataSeen)
@@ -4127,7 +4134,9 @@ void RollbackLobbyDialog::updateSaveDataControls()
     };
 
     QStringList parts;
-    const QString label = m_roomSaveDataLabel.isEmpty() ? tr("the host's save") : m_roomSaveDataLabel;
+    // The host's label is in the host's language; a blank save reads in ours.
+    const QString label = m_roomSaveDataEnabled && m_roomSaveDataKinds.isEmpty() ? tr("Blank save")
+        : m_roomSaveDataLabel.isEmpty() ? tr("the host's save") : m_roomSaveDataLabel;
     if (m_matchSaveActive)
     {
         parts << tr("<b>Save data:</b> %1").arg(label.toHtmlEscaped());
@@ -4186,7 +4195,7 @@ bool RollbackLobbyDialog::pickStartingSave()
         return false;
 
     m_hostSaveChoice = dialog.choice();
-    return !m_hostSaveChoice->Data.IsEmpty();
+    return true;
 }
 
 void RollbackLobbyDialog::publishHostSaveChoice()

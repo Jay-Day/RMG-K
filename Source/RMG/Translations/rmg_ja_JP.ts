@@ -3483,6 +3483,22 @@ While it's on, only you save a local replay.</source>
             <translation>ホストがセーブデータを選びました：%1。次の対戦はこのセーブから始まります。</translation>
         </message>
         <message>
+            <source>Save data is on. The next match starts from a blank save.</source>
+            <translation>セーブデータをオンにしました。次の対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>This room uses save data. The next match starts from a blank save.</source>
+            <translation>このルームはセーブデータを使います。次の対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>The host picked a blank save. The next match starts from it.</source>
+            <translation>ホストが空のセーブを選びました。次の対戦はこのセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Blank save</source>
+            <translation>空のセーブ</translation>
+        </message>
+        <message>
             <source>Matches in this room start from the host's save data.</source>
             <translation>このルームの対戦はホストのセーブデータから始まります。</translation>
         </message>
@@ -3694,8 +3710,20 @@ Turn this off to start every match from the save picked here.</source>
             <translation>エミュレーターのセーブファイル · %1</translation>
         </message>
         <message>
-            <source>You have no saves for %1 yet. Browse for a save file, or turn Save data off to start from a blank save.</source>
-            <translation>%1のセーブはまだありません。セーブファイルを参照するか、セーブデータをオフにして空のセーブから始めてください。</translation>
+            <source>Blank save</source>
+            <translation>空のセーブ</translation>
+        </message>
+        <message>
+            <source>new cartridge · nothing saved yet</source>
+            <translation>新品のカートリッジ · まだセーブなし</translation>
+        </message>
+        <message>
+            <source>%1 starts as on a new cartridge, with nothing saved. Use Save As during the match to keep what the game saves.</source>
+            <translation>%1は新品のカートリッジと同じく、何もセーブされていない状態から始まります。ゲームがセーブした内容を残すには、対戦中に「名前を付けて保存」を使ってください。</translation>
+        </message>
+        <message>
+            <source>Holds: nothing yet</source>
+            <translation>内容：まだなし</translation>
         </message>
         <message>
             <source>Holds: %1</source>
