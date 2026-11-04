@@ -1355,6 +1355,8 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     saveRow->addWidget(m_saveDataNote, 1);
     m_saveDataChangeBtn = new QPushButton(tr("Change..."), m_saveDataRow);
     m_saveDataChangeBtn->setObjectName("SaveDataChangeBtn");
+    m_saveDataChangeBtn->setAutoDefault(false);
+    m_saveDataChangeBtn->setDefault(false);
     m_saveDataChangeBtn->setToolTip(tr("Pick another save for the next match to start from."));
     connect(m_saveDataChangeBtn, &QPushButton::clicked, this, [this]() {
         if (pickStartingSave())
@@ -1363,6 +1365,8 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     saveRow->addWidget(m_saveDataChangeBtn);
     m_saveDataSaveAsBtn = new QPushButton(tr("Save As..."), m_saveDataRow);
     m_saveDataSaveAsBtn->setObjectName("SaveDataSaveAsBtn");
+    m_saveDataSaveAsBtn->setAutoDefault(false);
+    m_saveDataSaveAsBtn->setDefault(false);
     m_saveDataSaveAsBtn->setToolTip(tr("Save the game's save data to a file on your PC."));
     connect(m_saveDataSaveAsBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::saveMatchSaveAs);
     saveRow->addWidget(m_saveDataSaveAsBtn);
