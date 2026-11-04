@@ -68,6 +68,7 @@ class StartingSaveDialog : public QDialog
         CoreNetplaySaveInfo Info;
         bool Native = false;    // a plain emulator save file: no record of its game
         bool OtherRom = false;  // a .rmgsave made with a different ROM
+        bool Blank = false;     // a new cartridge: nothing saved yet
     };
 
     void addEntry(Entry entry, bool select);
