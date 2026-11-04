@@ -173,6 +173,15 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
             accept();
     });
 
+    // For a game nobody has a save for yet: the match makes one.
+    {
+        Entry entry;
+        entry.Title = tr("Blank save");
+        entry.Detail = tr("new cartridge · nothing saved yet");
+        entry.Blank = true;
+        addEntry(std::move(entry), false);
+    }
+
     // The host's own offline save for this game.
     {
         Entry entry;
@@ -234,7 +243,8 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
         addEntry(std::move(entry), false);
 
     // Reselect what the room uses now: the same bytes, or the same file.
-    int select = 0;
+    // Otherwise offer the first real save, if there is one.
+    int select = m_entries.size() > 1 ? 1 : 0;
     if (current)
     {
         for (int i = 0; i < int(m_entries.size()); i++)
@@ -247,10 +257,7 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
             }
         }
     }
-    if (m_entries.empty())
-        showDetails();
-    else
-        m_list->setCurrentRow(select);
+    m_list->setCurrentRow(select);
 }
 
 void StartingSaveDialog::addEntry(Entry entry, bool select)
@@ -296,13 +303,21 @@ void StartingSaveDialog::showDetails(void)
     const int row = m_list->currentRow();
     if (row < 0 || row >= int(m_entries.size()))
     {
-        m_details->setText(tr("You have no saves for %1 yet. Browse for a save file, or turn Save data off "
-                              "to start from a blank save.").arg(m_gameName.toHtmlEscaped()));
+        m_details->clear();
         m_useButton->setEnabled(false);
         return;
     }
 
     const Entry& entry = m_entries[size_t(row)];
+    if (entry.Blank)
+    {
+        m_details->setText(tr("%1 starts as on a new cartridge, with nothing saved. "
+                              "Use Save As during the match to keep what the game saves.")
+                               .arg(m_gameName.toHtmlEscaped()));
+        m_useButton->setEnabled(true);
+        return;
+    }
+
     QStringList lines;
     QStringList kinds;
     for (int kind = 0; kind < CoreSaveDataKindCount; kind++)
@@ -312,7 +327,7 @@ void StartingSaveDialog::showDetails(void)
         kinds << QStringLiteral("%1 (%2)").arg(QString::fromLatin1(kKindNames[kind]),
                                                sizeText(entry.Data.Kinds[kind].size()));
     }
-    lines << tr("Holds: %1").arg(kinds.join(QStringLiteral(", ")));
+    lines << (kinds.isEmpty() ? tr("Holds: nothing yet") : tr("Holds: %1").arg(kinds.join(QStringLiteral(", "))));
 
     if (entry.OtherRom)
     {
@@ -333,7 +348,7 @@ void StartingSaveDialog::showDetails(void)
             .arg(okHex(), tr("Made for %1.").arg(m_gameName.toHtmlEscaped()));
     }
     m_details->setText(lines.join(QStringLiteral("<br>")));
-    m_useButton->setEnabled(!entry.OtherRom && !entry.Data.IsEmpty());
+    m_useButton->setEnabled(!entry.OtherRom);
 }
 
 NetplaySaveChoice StartingSaveDialog::choice(void) const
