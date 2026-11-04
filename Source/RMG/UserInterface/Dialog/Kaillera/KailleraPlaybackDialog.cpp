@@ -1352,7 +1352,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
     messageBox.setIcon(QMessageBox::Question);
     messageBox.setWindowTitle("Export MP4");
     messageBox.setText("MP4 export requires FFmpeg.");
-    
+
 #ifdef _WIN32
     messageBox.setInformativeText(
         "RMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");

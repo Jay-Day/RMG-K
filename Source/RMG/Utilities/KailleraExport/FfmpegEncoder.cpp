@@ -11,6 +11,7 @@
 #include <windows.h>
 #else
 #include <cstdlib>
+#include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -27,8 +28,8 @@ namespace
 static const int READ_PIPE = 0;
 static const int WRITE_PIPE = 1;
 #endif
-    
-    
+
+
 struct EncoderCandidate
 {
     const char* codec;
@@ -145,19 +146,19 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<const char*> arg
                                          int* exitCode)
 {
     int rwPipe[2];
-    
+
     if (pipe(rwPipe) == -1)
     {
         return false;
     }
-    
+
     pid_t childPid = fork();
-    
+
     if (childPid == -1)
     {
         return false;
     }
-    
+
     if (childPid == 0)
     {
         //Replace stdout and stderr in the child with the pipes
@@ -165,7 +166,7 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<const char*> arg
         dup2(rwPipe[WRITE_PIPE], STDERR_FILENO);
         close(rwPipe[READ_PIPE]);
         close(rwPipe[WRITE_PIPE]);
-        
+
         //The first element in arguments must always be the program name (same as command), and the last argument must be NULL
         if (execvp(arguments[0], const_cast<char* const*>(arguments.data())) == -1)
         {
@@ -176,13 +177,13 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<const char*> arg
     else {
         //Close unused write pipe
         close(rwPipe[WRITE_PIPE]);
-        
+
         int fd = syscall(SYS_pidfd_open, childPid, 0);
         struct pollfd pfd = {fd, POLL_IN, 0};
-        
+
         //Wait for the child process to exit in the given time
         int pollVal = poll(&pfd, 1, timeoutMs);
-        
+
         //Timeout
         if (pollVal == 0)
         {
@@ -195,43 +196,43 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<const char*> arg
         {
             return false;
         }
-        
+
         //Wait for the child process to exit
         int childExitCode;
         waitpid(childPid, &childExitCode, 0);
-        
+
         if (WIFEXITED(childExitCode))
         {
             int exitStatus = WEXITSTATUS(childExitCode);
-         
+
             if (exitCode != nullptr)
             {
                 *exitCode = exitStatus;
             }
         }
-        
+
         bool gotOutput = false;
-        
+
         //Read from the pipe
         char output[256];
         const int readBytes = read(rwPipe[READ_PIPE], &output, sizeof(output));
-        
+
         if (readBytes > 0)
         {
             gotOutput = true;
         }
- 
+
         //Close no longer needed pipe
         close(rwPipe[READ_PIPE]);
-        
+
         if (requireOutput && !gotOutput)
         {
             return false;
         }
- 
+
         return childExitCode == 0;
     }
-    
+
     return true;
 }
 #endif
@@ -256,13 +257,13 @@ static bool probeVideoEncoder(const std::string& ffmpegPath, const char* codec)
     return runCommandWithCapturedOutput(command, 10000, false, nullptr);
 #else
     std::vector<const char*> args =
-    { 
+    {
       ffmpegPath.c_str(), "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:r=30:d=0.1", "-frames:v", "1",
       "-pix_fmt", "yuv420p", "-c:v", codec, "-f", "null", "-"
     };
-    
+
     args.push_back(NULL);
-    
+
     return runCommandWithCapturedOutputPosix(args, 10000, false, nullptr);
 #endif
 }
@@ -292,17 +293,17 @@ static std::string chooseVideoEncoder(const std::string& ffmpegPath, bool* hardw
 static std::vector<std::string> buildVideoEncoderFlagsPosix(const std::string& videoEncoder, int crf)
 {
     const std::string crfStr = std::to_string(crf);
-    
+
     if (videoEncoder == "h264_nvenc")
     {
         std::vector<std::string> args =
         {
             "-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", crfStr, "-pix_fmt", "yuv420p"
         };
-        
+
         return args;
     }
-    
+
     if (videoEncoder == "h264_amf")
     {
         std::vector<std::string> args =
@@ -310,16 +311,16 @@ static std::vector<std::string> buildVideoEncoderFlagsPosix(const std::string& v
             "-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", crfStr,
             "qp_p", crfStr, "-pix_fmt", "yuv420p"
         };
-        
+
         return args;
     }
-    
+
     if (videoEncoder == "h264_qsv")
     {
         std::vector<std::string> args = { "-c:v", "h264_qsv", "-global_quality", crfStr, "-look_ahead", "0" };
         return args;
     }
-    
+
     std::vector<std::string> args = { "-c:v", "libx264", "-preset", "ultrafast", "-crf", crfStr, "-pix_fmt", "yuv420p" };
     return args;
 }
@@ -378,7 +379,7 @@ bool CheckFfmpegExecutable(const std::string& ffmpegPath, std::string* errorMess
 #else
     std::vector<const char*> args = { ffmpegPath.c_str(), "-version" };
     args.push_back(NULL);
-    
+
     int exitCode = 1;
     if (!runCommandWithCapturedOutputPosix(args, 5000, true, &exitCode) || exitCode != 0)
 #endif
@@ -441,12 +442,12 @@ static bool runFfmpegCommand(const std::string& command, std::string* errorMessa
 static bool runFfmpegCommandPosix(const std::vector<const char*> arguments, std::string* errorMessage)
 {
     pid_t childPid = fork();
-    
+
     if (childPid == -1)
     {
         return fail(errorMessage, "Failed to create fork for FFmpeg process");
     }
-    
+
     if (childPid == 0)
     {
         if (execvp(arguments[0], const_cast<char* const*>(arguments.data())) == -1)
@@ -461,13 +462,13 @@ static bool runFfmpegCommandPosix(const std::vector<const char*> arguments, std:
         {
             return fail(errorMessage, "Error waiting for FFmpeg process");
         }
-        
+
         if (exitCode != 0)
         {
             return fail(errorMessage, "FFmpeg exited with an error");
         }
     }
-    
+
     return true;
 }
 #endif
@@ -504,18 +505,23 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
 
     return runFfmpegCommand(command, errorMessage);
 #else
-    std::vector<const char*> arguments =
+    std::vector<std::string> arguments =
     {
-        ffmpegPath.c_str(), "-v", "error", "-y", "-itsscale", std::to_string(timestampScale).c_str(),
-        "-i", std::format("\"{}\"", videoPath.c_str()).c_str(), "-f", "s16le", "-ar",
-        std::to_string(audioFrequency).c_str(), "-ac", "2", "-i",
-        std::format("\"{}\"", audioPath.c_str()).c_str(), "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
-        "-b:a", "192k", "-shortest", std::format("\"{}\"", outputPath.c_str()).c_str()
+        ffmpegPath, "-v", "error", "-y", "-itsscale", std::to_string(timestampScale),
+        "-i", std::format("\"{}\"", videoPath), "-f", "s16le", "-ar",
+        std::to_string(audioFrequency), "-ac", "2", "-i",
+        std::format("\"{}\"", audioPath), "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
+        "-b:a", "192k", "-shortest", std::format("\"{}\"", outputPath)
     };
-    
-    arguments.push_back(NULL);
-    
-    return runFfmpegCommandPosix(arguments, errorMessage);
+
+    std::vector<const char*> actualArgs;
+    for (int i = 0; i < arguments.size(); i++)
+    {
+        actualArgs.push_back(arguments[i].c_str());
+    }
+    actualArgs.push_back(NULL);
+
+    return runFfmpegCommandPosix(actualArgs, errorMessage);
 #endif
 }
 
@@ -545,7 +551,7 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
             "Using FFmpeg video encoder: %s%s\n",
             m_SelectedVideoEncoder.c_str(),
             m_HardwareAccelerated ? " (hardware)" : " (CPU)");
-    
+
     char command[4096];
     snprintf(command,
              sizeof(command),
@@ -629,45 +635,51 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
             "Using FFmpeg video encoder: %s%s\n",
             m_SelectedVideoEncoder.c_str(),
             m_HardwareAccelerated ? " (hardware)" : " (CPU)");
-    
+
     std::vector<const char*> command =
         {
           config.ffmpegPath.c_str(), "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
           std::format("{}x{}", config.width, config.height).c_str(), "-framerate",
           std::to_string(config.fps).c_str(), "-i", "pipe:0"
         };
-    
+
     for (int i = 0; i < encoderFlags.size(); i++)
     {
         command.push_back(encoderFlags[i].c_str());
     }
-    
+
     command.push_back(config.outputPath.c_str());
     command.push_back(NULL);
-    
+
     int rwPipe[2];
-    
+
     if (pipe(rwPipe) == -1)
     {
         return fail(errorMessage, "Failed to create FFmpeg stdin pipe");
     }
-    
+
+    //As defined in /proc/sys/fs/pipe-max-size
+    const int maxPipeSize = 16 << 16;
+
+    //Set the write pipe's capacity to the max unprivileged size - the pipe will continue with the default value if it fails
+    fcntl(rwPipe[WRITE_PIPE], F_SETPIPE_SZ, maxPipeSize);
+
     pid_t childPid = fork();
-    
+
     if (childPid == -1)
     {
         close(rwPipe[READ_PIPE]);
         close(rwPipe[WRITE_PIPE]);
         return fail(errorMessage, "Failed to create fork for FFmpeg encoder");
     }
-    
+
     //Child
     if (childPid == 0)
     {
         dup2(rwPipe[READ_PIPE], STDIN_FILENO);
         close(rwPipe[READ_PIPE]);
         close(rwPipe[WRITE_PIPE]);
-        
+
         if (execvp(command[0], const_cast<char* const*>(command.data())) == -1)
         {
             return fail(errorMessage, "Failed to launch FFmpeg encoder");
@@ -678,19 +690,19 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
     {
         //Close unused read pipe
         close(rwPipe[READ_PIPE]);
-        
+
         m_Pipe = fdopen(rwPipe[WRITE_PIPE], "w");
-        
+
         if (m_Pipe == nullptr)
         {
             close(rwPipe[WRITE_PIPE]);
             return fail(errorMessage, "Failed to wrap FFmpeg pipe");
         }
-        
+
         setvbuf(m_Pipe, nullptr, _IOFBF, 1 << 20);
     }
 #endif
-    
+
     return true;
 }
 

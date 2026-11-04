@@ -24,8 +24,10 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#define GET_PROC(handle, name) GetProcAddress((HMODULE)(handle), name)
 #else
 #include <dlfcn.h>
+#define GET_PROC(handle, name) dlsym(handle, name)
 #endif
 
 namespace KailleraExport
@@ -287,13 +289,13 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     const std::string coreLibFileName = "libmupen64plus";
     const std::string fileExt = ".so";
 #endif
-    
+
     const std::filesystem::path corePath = CoreGetCoreDirectory() / (coreLibFileName + fileExt);
     const std::filesystem::path inputPluginPath = getPluginPath("Input", std::format("RMG-Input{}", fileExt).c_str());
     const std::filesystem::path rspPluginPath = getPluginPath("RSP", std::format("mupen64plus-rsp-hle{}", fileExt).c_str());
     const std::filesystem::path gfxPluginPath = getPluginPath("GFX", std::format("mupen64plus-video-GLideN64{}", fileExt).c_str());
     const std::filesystem::path audioPluginPath = getPluginPath("Audio", std::format("RMG-Audio-Capture{}", fileExt).c_str());
-    
+
     const std::filesystem::path dataDirectory = CoreGetSharedDataDirectory();
 
     if (!requireExistingFile(options.krecPath, "recording", errorMessage) ||
@@ -338,15 +340,9 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     m64p_dynlib_handle audioHandle = emulator.getAudioPluginHandle();
     if (audioHandle != nullptr)
     {
-#ifdef _WIN32
-        setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_set_output"));
-        getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_frequency"));
-        getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_bytes_written"));
-#else
-        setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn>(dlsym(audioHandle, "audio_capture_set_output"));
-        getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(dlsym(audioHandle, "audio_capture_get_frequency"));
-        getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(dlsym(audioHandle, "audio_capture_get_bytes_written"));
-#endif
+        setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn>(GET_PROC(audioHandle, "audio_capture_set_output"));
+        getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(GET_PROC(audioHandle, "audio_capture_get_frequency"));
+        getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(GET_PROC(audioHandle, "audio_capture_get_bytes_written"));
     }
 
     if (!emulator.openRom(options.romPath.string()))
