@@ -70,6 +70,12 @@ struct RoomRowView
     bool hasRom = true;
     bool sameGame = false;
     int seatsNeeded = 1;      // seats this client's players take together
+    bool anyWifi = false;     // someone seated is on Wi-Fi
+    // Who the room takes (0 / false: anyone), and whether this PC is one of them.
+    int maxPing = 0;
+    bool wiredOnly = false;
+    enum class Refusal { None, WiredOnly, PingTooHigh };
+    Refusal refusal = Refusal::None;
 };
 
 class LiveMatchBase;
@@ -169,6 +175,8 @@ private:
     void rebuild();
     void showFilterMenu();
     void selectRow(quint64 roomId);
+    bool filtering() const;
+    void saveFilters() const;
 
     QList<RoomRowView> m_rooms;
     QHash<quint64, RoomRow*> m_rows;
@@ -177,6 +185,12 @@ private:
     bool m_thisGameAvailable = false;
     bool m_offline = false;
     Sort m_sort = Sort::Default;
+    // The filters, kept between sessions. m_maxPing 0 shows every ping.
+    bool m_inLibraryOnly = false;
+    bool m_hideFull = false;
+    bool m_hidePassword = false;
+    bool m_hideWifi = false;
+    int m_maxPing = 0;
 
     QLabel* m_countLabel = nullptr;
     IconButton* m_filterButton = nullptr;

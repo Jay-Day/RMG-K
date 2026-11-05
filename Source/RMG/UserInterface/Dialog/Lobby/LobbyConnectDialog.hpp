@@ -38,6 +38,8 @@ public:
     QString username()  const { return m_username; }
     void setUsername(const QString& username);
     void setStatusMessage(const QString& message);
+    // Asking for a new name while connected: Cancel keeps the old one.
+    void setRenameMode();
 
     // Production lobby endpoint every client connects to. Exposed so callers
     // that bypass this dialog (e.g. the netplay launcher's rollback tab) can
@@ -60,6 +62,7 @@ private:
     void saveSettings();
 
     QLineEdit*   m_usernameEdit  = nullptr;
+    QLabel*      m_heading       = nullptr;
     LobbyButton* m_connectButton = nullptr;
     QLabel*      m_validationLbl = nullptr;
 

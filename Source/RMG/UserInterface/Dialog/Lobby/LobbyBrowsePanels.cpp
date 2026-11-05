@@ -1,6 +1,7 @@
 #ifdef NETPLAY
 
 #include "LobbyBrowsePanels.hpp"
+#include "LobbySocialWidgets.hpp"
 
 #include <QActionGroup>
 #include <QComboBox>
@@ -64,7 +65,7 @@ namespace
         title->setFont(LobbyTheme::pixelFont(11, 0.6));
         title->setAlignment(Qt::AlignCenter);
         title->setWordWrap(true);
-        title->setProperty("role", "ink2");
+        title->setProperty("role", "heading");
         body = new QLabel(note);
         body->setFont(LobbyTheme::uiFont(12));
         body->setAlignment(Qt::AlignCenter);
@@ -434,7 +435,7 @@ public:
         meta->setSpacing(2);
         m_time = new QLabel(m_meta);
         m_time->setFont(LobbyTheme::pixelFont(11));
-        m_time->setProperty("role", "ink2");
+        m_time->setProperty("role", "heading");
         m_time->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         meta->addWidget(m_time);
         m_viewerBox = new QWidget(m_meta);
@@ -1207,9 +1208,20 @@ public:
         m_name = new ElidedLabel(Role::Ink, this);
         m_name->setFont(LobbyTheme::uiFont(13, QFont::DemiBold));
         m_name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        // The room's join limits, when it has any.
+        m_wired = new IconLabel(QStringLiteral("router-line"), Role::Muted, 13, this);
+        m_wired->setToolTip(tr("Wired only: players on Wi-Fi can't join."));
+        m_pingLimitBars = new QLabel(this);
+        m_pingLimit = new QLabel(this);
+        m_pingLimit->setFont(LobbyTheme::uiFont(11));
+        m_pingLimit->setProperty("role", "muted");
         nameRow->addWidget(m_lock);
         nameRow->addWidget(m_inGame);
         nameRow->addWidget(m_name, 1);
+        nameRow->addWidget(m_wired);
+        nameRow->addSpacing(2);
+        nameRow->addWidget(m_pingLimitBars);
+        nameRow->addWidget(m_pingLimit);
         grid->addLayout(nameRow, 0, 0);
 
         m_game = new ElidedLabel(Role::Muted, this);
@@ -1262,6 +1274,17 @@ public:
         m_inGame->setVisible(view.inGame);
         m_name->setText(view.name);
         m_name->setToolTip(view.name);
+        m_wired->setVisible(view.wiredOnly);
+        m_pingLimitBars->setVisible(view.maxPing > 0);
+        m_pingLimit->setVisible(view.maxPing > 0);
+        if (view.maxPing > 0)
+        {
+            m_pingLimitBars->setPixmap(LobbyTheme::pingLimitIcon(view.maxPing, QColor(), devicePixelRatioF()));
+            m_pingLimit->setText(tr("≤%1 ms").arg(view.maxPing));
+            const QString tip = tr("Only players within %1 ms of the host can join.").arg(view.maxPing);
+            m_pingLimitBars->setToolTip(tip);
+            m_pingLimit->setToolTip(tip);
+        }
         m_game->setText(view.game);
         m_game->setToolTip(view.game);
         m_flag->setCountry(view.hostCountry);
@@ -1284,12 +1307,14 @@ public:
         // Everyone on this PC sits down together or nobody does.
         const int freeSeats = view.maxPlayers - view.players;
         const bool tooFewSeats = view.maxPlayers > 0 && !full && view.seatsNeeded > freeSeats;
+        const bool refused = view.refusal != RoomRowView::Refusal::None;
+        const bool blocked = !view.hasRom || tooFewSeats || refused;
         m_name->setRole(view.mine ? Role::Accent : view.hasRom ? Role::Ink : Role::Muted);
         m_game->setRole(view.hasRom ? Role::Muted : Role::Faint);
-        m_join->setDashed(!view.mine && (!view.hasRom || tooFewSeats));
-        m_join->setIconName(view.hasPassword && !view.mine && view.hasRom && !full && !tooFewSeats
+        m_join->setDashed(!view.mine && blocked);
+        m_join->setIconName(view.hasPassword && !view.mine && !blocked && !full
             ? QStringLiteral("lock-line") : QString());
-        m_join->setEnabled(view.mine || (view.hasRom && !full && !tooFewSeats));
+        m_join->setEnabled(view.mine || (!blocked && !full));
         if (view.mine)
         {
             m_join->setText(tr("Return"));
@@ -1304,6 +1329,19 @@ public:
         {
             m_join->setText(tr("Full"));
             m_join->setToolTip(QString());
+        }
+        else if (view.refusal == RoomRowView::Refusal::WiredOnly)
+        {
+            m_join->setText(tr("Wired only"));
+            m_join->setToolTip(tr("This room doesn't take players on Wi-Fi, and you're on Wi-Fi."));
+        }
+        else if (view.refusal == RoomRowView::Refusal::PingTooHigh)
+        {
+            m_join->setText(tr("Too far"));
+            m_join->setToolTip(view.pingMs >= 0
+                ? tr("This room takes players within %1 ms of the host. Your ping to them is %2 ms.")
+                      .arg(view.maxPing).arg(view.pingMs)
+                : tr("This room takes players within %1 ms of the host.").arg(view.maxPing));
         }
         else if (tooFewSeats)
         {
@@ -1397,6 +1435,9 @@ private:
     IconLabel* m_lock = nullptr;
     StatusTag* m_inGame = nullptr;
     ElidedLabel* m_name = nullptr;
+    IconLabel* m_wired = nullptr;
+    QLabel* m_pingLimitBars = nullptr;
+    QLabel* m_pingLimit = nullptr;
     ElidedLabel* m_game = nullptr;
     LobbyButton* m_join = nullptr;
     CountryFlag* m_flag = nullptr;
@@ -1418,6 +1459,13 @@ RoomsColumn::RoomsColumn(QWidget* parent)
         const int saved = settings.value("RollbackLobby/RoomsSort", 0).toInt();
         if (saved >= 0 && saved <= static_cast<int>(Sort::Name))
             m_sort = static_cast<Sort>(saved);
+        settings.beginGroup("RollbackLobby/RoomFilters");
+        m_inLibraryOnly = settings.value("InLibrary", false).toBool();
+        m_hideFull = settings.value("HideFull", false).toBool();
+        m_hidePassword = settings.value("HidePassword", false).toBool();
+        m_hideWifi = settings.value("HideWifi", false).toBool();
+        m_maxPing = std::max(0, settings.value("MaxPing", 0).toInt());
+        settings.endGroup();
     }
 
     auto* root = new QVBoxLayout(this);
@@ -1438,6 +1486,7 @@ RoomsColumn::RoomsColumn(QWidget* parent)
     head->addWidget(m_countLabel);
     head->addStretch(1);
     m_filterButton = new IconButton(QStringLiteral("filter-3-line"), 26, header);
+    m_filterButton->setObjectName("RoomsFilterButton");
     m_filterButton->setToolTip(tr("Filter and sort rooms"));
     m_filterButton->setAccessibleName(tr("Filter and sort rooms"));
     head->addWidget(m_filterButton);
@@ -1498,43 +1547,82 @@ RoomsColumn::RoomsColumn(QWidget* parent)
     rebuild();
 }
 
+bool RoomsColumn::filtering() const
+{
+    return m_thisGameOnly || m_inLibraryOnly || m_hideFull || m_hidePassword || m_hideWifi || m_maxPing > 0;
+}
+
+void RoomsColumn::saveFilters() const
+{
+    QSettings settings("RMG-K", "n02");
+    settings.setValue("RollbackLobby/RoomsSort", static_cast<int>(m_sort));
+    settings.beginGroup("RollbackLobby/RoomFilters");
+    settings.setValue("InLibrary", m_inLibraryOnly);
+    settings.setValue("HideFull", m_hideFull);
+    settings.setValue("HidePassword", m_hidePassword);
+    settings.setValue("HideWifi", m_hideWifi);
+    settings.setValue("MaxPing", m_maxPing);
+    settings.endGroup();
+}
+
+// Every choice applies as it's ticked, with the menu still open.
 void RoomsColumn::showFilterMenu()
 {
-    QMenu menu(this);
-    QAction* thisGame = menu.addAction(tr("This game only"));
-    thisGame->setCheckable(true);
-    thisGame->setChecked(m_thisGameOnly);
-    thisGame->setEnabled(m_thisGameAvailable);
-    menu.addSeparator();
-
-    auto* group = new QActionGroup(&menu);
-    const auto addSort = [&](const QString& label, Sort sort) {
-        QAction* action = menu.addAction(label);
-        action->setCheckable(true);
-        action->setChecked(m_sort == sort);
-        action->setData(static_cast<int>(sort));
-        group->addAction(action);
+    LobbyMenu menu(this);
+    const auto applied = [this]() {
+        saveFilters();
+        rebuild();
     };
-    addSort(tr("Sort: this game first"), Sort::Default);
-    addSort(tr("Sort: lowest ping"), Sort::Ping);
-    addSort(tr("Sort: most players"), Sort::Players);
-    addSort(tr("Sort: name"), Sort::Name);
+    const auto addToggle = [&](const QString& label, bool* value) {
+        QAction* action = menu.addCheckItem(QString(), label, *value);
+        connect(action, &QAction::toggled, this, [value, applied](bool on) {
+            *value = on;
+            applied();
+        });
+        return action;
+    };
 
-    QAction* chosen = menu.exec(m_filterButton->mapToGlobal(QPoint(0, m_filterButton->height())));
-    if (chosen == nullptr)
-        return;
-    if (chosen == thisGame)
+    menu.addHeading(QString(), tr("Show only"), false);
+    QAction* thisGame = addToggle(tr("Selected game"), &m_thisGameOnly);
+    thisGame->setEnabled(m_thisGameAvailable);
+    addToggle(tr("In my library"), &m_inLibraryOnly);
+
+    menu.addHeading(QString(), tr("Hide"), false);
+    addToggle(tr("Full rooms"), &m_hideFull);
+    addToggle(tr("Password rooms"), &m_hidePassword);
+    addToggle(tr("Rooms with Wi-Fi players"), &m_hideWifi);
+
+    menu.addHeading(QString(), tr("Your ping to the host"), false);
+    auto* pings = new QActionGroup(&menu);
+    for (const int limit : { 0, 50, 100, 150 })
     {
-        m_thisGameOnly = thisGame->isChecked();
+        QAction* action = menu.addPingItem(limit, limit == 0 ? tr("Any ping") : tr("≤ %1 ms").arg(limit),
+                                           m_maxPing == limit, pings);
+        connect(action, &QAction::toggled, this, [this, limit, applied](bool on) {
+            if (!on)
+                return;
+            m_maxPing = limit;
+            applied();
+        });
     }
-    else
-    {
-        m_sort = static_cast<Sort>(chosen->data().toInt());
-        QSettings settings("RMG-K", "n02");
-        settings.setValue("RollbackLobby/RoomsSort", static_cast<int>(m_sort));
-    }
-    m_filterButton->setIconColorOverride(m_thisGameOnly ? LobbyTheme::tokens().accentInk : QColor());
-    rebuild();
+
+    menu.addHeading(QString(), tr("Sort"), false);
+    auto* sorts = new QActionGroup(&menu);
+    const auto addSort = [&](const QString& label, Sort sort) {
+        QAction* action = menu.addCheckItem(QString(), label, m_sort == sort, sorts);
+        connect(action, &QAction::toggled, this, [this, sort, applied](bool on) {
+            if (!on)
+                return;
+            m_sort = sort;
+            applied();
+        });
+    };
+    addSort(tr("This game first"), Sort::Default);
+    addSort(tr("Lowest ping"), Sort::Ping);
+    addSort(tr("Most players"), Sort::Players);
+    addSort(tr("Name"), Sort::Name);
+
+    menu.exec(m_filterButton->mapToGlobal(QPoint(0, m_filterButton->height())));
 }
 
 void RoomsColumn::setRooms(const QList<RoomRowView>& rooms)
@@ -1549,7 +1637,7 @@ void RoomsColumn::setThisGameAvailable(bool available)
     if (!available && m_thisGameOnly)
     {
         m_thisGameOnly = false;
-        m_filterButton->setIconColorOverride(QColor());
+        rebuild();
     }
 }
 
@@ -1572,7 +1660,14 @@ void RoomsColumn::rebuild()
     QList<RoomRowView> visible;
     for (const auto& room : m_rooms)
     {
-        if (m_thisGameOnly && !room.sameGame)
+        // Your own room always shows: it's how you get back to it.
+        const bool full = room.maxPlayers > 0 && room.players >= room.maxPlayers;
+        if (!room.mine && ((m_thisGameOnly && !room.sameGame) ||
+                           (m_inLibraryOnly && !room.hasRom) ||
+                           (m_hideFull && full) ||
+                           (m_hidePassword && room.hasPassword) ||
+                           (m_hideWifi && room.anyWifi) ||
+                           (m_maxPing > 0 && (room.pingMs < 0 || room.pingMs > m_maxPing))))
             continue;
         if (!search.isEmpty() && !room.name.contains(search, Qt::CaseInsensitive) &&
             !room.host.contains(search, Qt::CaseInsensitive) &&
@@ -1660,7 +1755,9 @@ void RoomsColumn::rebuild()
         row->setVisible(true);
     }
 
-    m_countLabel->setText(QString::number(m_rooms.size()));
+    m_filterButton->setIconColorOverride(filtering() ? LobbyTheme::tokens().accentInk : QColor());
+    m_countLabel->setText(filtering() ? tr("%1 of %2").arg(visible.size()).arg(m_rooms.size())
+                                      : QString::number(m_rooms.size()));
     if (m_offline)
     {
         m_noteTitle->setText(tr("Not connected").toUpper());

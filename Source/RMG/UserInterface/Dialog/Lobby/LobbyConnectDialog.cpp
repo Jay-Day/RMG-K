@@ -108,10 +108,10 @@ void LobbyConnectDialog::buildUi()
     brand->addLayout(words);
     brand->addStretch(1);
     headerLay->addLayout(brand);
-    auto* heading = new QLabel(tr("Welcome to Netplay!"), header);
-    heading->setFont(LobbyTheme::uiFont(13));
-    heading->setProperty("role", "ink2");
-    headerLay->addWidget(heading);
+    m_heading = new QLabel(tr("Welcome to Netplay!"), header);
+    m_heading->setFont(LobbyTheme::uiFont(13));
+    m_heading->setProperty("role", "ink2");
+    headerLay->addWidget(m_heading);
     root->addWidget(header);
 
     auto* rule = new QFrame(this);
@@ -202,6 +202,13 @@ void LobbyConnectDialog::setUsername(const QString& username)
     m_usernameEdit->setText(username);
     m_usernameEdit->setFocus();
     m_usernameEdit->selectAll();
+}
+
+void LobbyConnectDialog::setRenameMode()
+{
+    setWindowTitle(tr("Change Username"));
+    m_heading->setText(tr("Pick a new name. You'll reconnect under it."));
+    m_connectButton->setText(tr("Change"));
 }
 
 void LobbyConnectDialog::setStatusMessage(const QString& message)

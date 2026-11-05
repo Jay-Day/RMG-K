@@ -745,7 +745,7 @@ QLabel* UserInterface::Dialog::makeSectionLabel(const QString& text, QWidget* pa
 {
     auto* label = new QLabel(text.toUpper(), parent);
     label->setFont(LobbyTheme::pixelFont(11, 1.0));
-    label->setProperty("role", "ink2");
+    label->setProperty("role", "heading");
     return label;
 }
 
@@ -1628,20 +1628,11 @@ PortCard::PortCard(int slot, QWidget* parent)
     nameRow->addWidget(m_youTag);
     m_flag = new CountryFlag(m_playerPage);
     nameRow->addWidget(m_flag);
+    // How they're connected, named in its tooltip: no line of its own.
+    m_connectionIcon = new ConnectionGlyph(m_playerPage);
+    nameRow->addWidget(m_connectionIcon);
     nameRow->addStretch(1);
     playerLay->addLayout(nameRow);
-
-    auto* connectionRow = new QHBoxLayout;
-    connectionRow->setSpacing(4);
-    connectionRow->addStretch(1);
-    m_connectionIcon = new ConnectionGlyph(m_playerPage);
-    connectionRow->addWidget(m_connectionIcon);
-    m_connectionName = new QLabel(m_playerPage);
-    m_connectionName->setFont(LobbyTheme::uiFont(11));
-    m_connectionName->setProperty("role", "muted");
-    connectionRow->addWidget(m_connectionName);
-    connectionRow->addStretch(1);
-    playerLay->addLayout(connectionRow);
 
     // How far a connection has got, while it isn't up yet.
     m_progress = new QWidget(m_playerPage);
@@ -1703,6 +1694,7 @@ void PortCard::showOpen(const QString& hint)
     m_playerPage->setVisible(false);
     m_openPage->setVisible(true);
     m_openHint->setText(hint);
+    m_openHint->setVisible(!hint.isEmpty());
     m_hostBadge->setVisible(false);
     m_dragHandle->setVisible(false);
     m_kick->setVisible(false);
@@ -1739,11 +1731,9 @@ void PortCard::setCountry(const QString& country, const QString& tooltip)
 
 void PortCard::setConnection(const QString& connection)
 {
-    const QString name = ConnectionGlyph::displayName(connection);
     m_connectionIcon->setConnection(connection);
+    m_connectionIcon->setToolTip(ConnectionGlyph::displayName(connection));
     m_connectionIcon->setVisible(!connection.isEmpty());
-    m_connectionName->setText(name);
-    m_connectionName->setVisible(!name.isEmpty());
 }
 
 void PortCard::setDelay(int frames)

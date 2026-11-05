@@ -52,5 +52,7 @@
   <file alias="icons/vip-crown-fill.svg">Resource/lobby/icons/vip-crown-fill.svg</file>
   <file alias="icons/volume-mute-line.svg">Resource/lobby/icons/volume-mute-line.svg</file>
   <file alias="icons/wifi-line.svg">Resource/lobby/icons/wifi-line.svg</file>
+  <file alias="icons/window-maximize.svg">Resource/lobby/icons/window-maximize.svg</file>
+  <file alias="icons/window-restore.svg">Resource/lobby/icons/window-restore.svg</file>
 </qresource>
 </RCC>

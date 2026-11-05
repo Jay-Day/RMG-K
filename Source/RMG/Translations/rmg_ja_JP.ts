@@ -6016,4 +6016,327 @@ A local replay is saved only if Save replay is on.</source>
             <translation>ラグチェック（%1）: %2</translation>
         </message>
     </context>
+<context>
+    <name>UserInterface::Dialog::CreateRoomDialog</name>
+    <message>
+        <source>Any</source>
+        <translation>すべて</translation>
+    </message>
+    <message>
+        <source>Any ping</source>
+        <translation>Ping制限なし</translation>
+    </message>
+    <message>
+        <source>Connection</source>
+        <translation>接続</translation>
+    </message>
+    <message>
+        <source>Max ping</source>
+        <translation>最大Ping</translation>
+    </message>
+    <message>
+        <source>Players on Wi-Fi can&apos;t join.</source>
+        <translation>Wi-Fiのプレイヤーは参加できません。</translation>
+    </message>
+    <message>
+        <source>Players whose ping to you is higher can&apos;t join. Their own measurement is used, or an estimate from where they are.</source>
+        <translation>あなたへのPingがこれより高いプレイヤーは参加できません。相手側の測定値か、相手の地域からの推定値で判断します。</translation>
+    </message>
+    <message>
+        <source>Wired only</source>
+        <translation>有線のみ</translation>
+    </message>
+    <message>
+        <source>≤ %1 ms</source>
+        <translation>%1 ms以下</translation>
+    </message>
+</context>
+<context>
+    <name>UserInterface::Dialog::LobbyConnectDialog</name>
+    <message>
+        <source>Change</source>
+        <translation>変更</translation>
+    </message>
+    <message>
+        <source>Change Username</source>
+        <translation>ユーザー名を変更</translation>
+    </message>
+    <message>
+        <source>Pick a new name. You&apos;ll reconnect under it.</source>
+        <translation>新しい名前を入力してください。その名前で再接続します。</translation>
+    </message>
+</context>
+<context>
+    <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+    <message>
+        <source>%1 isn&apos;t taking challenges</source>
+        <translation>%1は対戦の申し込みを受け付けていません</translation>
+    </message>
+    <message>
+        <source>&quot;%1&quot; doesn&apos;t take players on Wi-Fi. Connect with a cable to join it.</source>
+        <translation>「%1」はWi-Fiのプレイヤーを受け付けていません。参加するには有線で接続してください。</translation>
+    </message>
+    <message>
+        <source>&quot;%1&quot; takes players within %2 ms of the host. Your ping to them is about %3 ms.</source>
+        <translation>「%1」はホストへのPingが%2 ms以下のプレイヤーのみ参加できます。あなたのPingは約%3 msです。</translation>
+    </message>
+    <message>
+        <source>Changing your name reconnects you, so you&apos;ll leave your room.</source>
+        <translation>名前を変えると再接続するため、今いるルームから退出します。</translation>
+    </message>
+    <message>
+        <source>Every region</source>
+        <translation>すべての地域</translation>
+    </message>
+    <message>
+        <source>Hide</source>
+        <translation>非表示</translation>
+    </message>
+    <message>
+        <source>Late join is on in this room. Players who join mid-game don&apos;t get a replay of it.</source>
+        <translation>このルームは途中参加がオンです。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+    </message>
+    <message>
+        <source>Late join is on. Players can join while a game is running; they won&apos;t get a replay of it.</source>
+        <translation>途中参加をオンにしました。ゲーム中でもプレイヤーが参加できますが、途中参加したプレイヤーにはそのゲームのリプレイは保存されません。</translation>
+    </message>
+    <message>
+        <source>Let players join while a game is running. You add them with Add to Game.
+Everyone here when the game starts can still save a replay; whoever joins mid-game can&apos;t.</source>
+        <translation>ゲーム中でもプレイヤーが参加できるようにします。参加者は「ゲームに追加」で加えます。
+ゲーム開始時にいるプレイヤーは引き続きリプレイを保存できますが、途中参加したプレイヤーは保存できません。</translation>
+    </message>
+    <message>
+        <source>Not taking challenges</source>
+        <translation>対戦の申し込みを受け付けていません</translation>
+    </message>
+    <message>
+        <source>Off: nobody can send you one</source>
+        <translation>オフ: 誰もあなたに申し込めません</translation>
+    </message>
+    <message>
+        <source>Off: ones sent to you go unanswered</source>
+        <translation>オフ: 届いた申し込みには応答しません</translation>
+    </message>
+    <message>
+        <source>Players already here stay if you change these.</source>
+        <translation>変更しても、すでにいるプレイヤーはそのまま残ります。</translation>
+    </message>
+    <message>
+        <source>Players can then join mid-game, and you add them with Add to Game. Everyone in the room when a game starts can still save a replay (.krec) of it, and Live Replay isn&apos;t affected. A replay can&apos;t start part way through a game, so whoever joins later doesn&apos;t get one.</source>
+        <translation>ゲームの途中でもプレイヤーが参加でき、あなたが「ゲームに追加」で加えます。ゲーム開始時にルームにいるプレイヤーは引き続きリプレイ（.krec）を保存でき、ライブリプレイにも影響はありません。リプレイはゲームの途中からは始められないため、あとから参加したプレイヤーには保存されません。</translation>
+    </message>
+    <message>
+        <source>Players on Wi-Fi</source>
+        <translation>Wi-Fiのプレイヤー</translation>
+    </message>
+    <message>
+        <source>Players on Wi-Fi can&apos;t join.</source>
+        <translation>Wi-Fiのプレイヤーは参加できません。</translation>
+    </message>
+    <message>
+        <source>Players who join mid-game won&apos;t get a replay of it.</source>
+        <translation>途中参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+    </message>
+    <message>
+        <source>Players who join while a game is running won&apos;t get a replay of it.</source>
+        <translation>ゲーム中に参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+    </message>
+    <message>
+        <source>Players whose ping to the host is higher can&apos;t join.</source>
+        <translation>ホストへのPingがこれより高いプレイヤーは参加できません。</translation>
+    </message>
+    <message>
+        <source>Room settings</source>
+        <translation>ルーム設定</translation>
+    </message>
+    <message>
+        <source>Room settings: rollback prediction, and who can join</source>
+        <translation>ルーム設定: ロールバック予測と参加できる人</translation>
+    </message>
+    <message>
+        <source>Sort and filter players</source>
+        <translation>プレイヤーの並べ替えと絞り込み</translation>
+    </message>
+    <message>
+        <source>Sort each list by</source>
+        <translation>各リストの並べ替え</translation>
+    </message>
+    <message>
+        <source>Take challenges</source>
+        <translation>対戦の申し込みを受け付ける</translation>
+    </message>
+    <message>
+        <source>That room is wired only, and you&apos;re on Wi-Fi.</source>
+        <translation>そのルームは有線のみで、あなたはWi-Fiで接続しています。</translation>
+    </message>
+    <message>
+        <source>The host turned on late join. Players who join mid-game don&apos;t get a replay of it.</source>
+        <translation>ホストが途中参加をオンにしました。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+    </message>
+    <message>
+        <source>They turned challenges off. You can still send them a message.</source>
+        <translation>相手は対戦の申し込みをオフにしています。メッセージは送れます。</translation>
+    </message>
+    <message>
+        <source>Too far</source>
+        <translation>遠すぎます</translation>
+    </message>
+    <message>
+        <source>Who can join</source>
+        <translation>参加できる人</translation>
+    </message>
+    <message>
+        <source>Wired only</source>
+        <translation>有線のみ</translation>
+    </message>
+    <message>
+        <source>You joined mid-game, so you won&apos;t get a replay of this game.</source>
+        <translation>ゲームの途中で参加したため、このゲームのリプレイは保存されません。</translation>
+    </message>
+    <message>
+        <source>You joined while a game is running, so you won&apos;t get a replay of this one.</source>
+        <translation>ゲーム中に参加したため、このゲームのリプレイは保存されません。</translation>
+    </message>
+    <message>
+        <source>Your ping to that room&apos;s host is higher than the room allows.</source>
+        <translation>そのルームのホストへのPingが、ルームの上限を超えています。</translation>
+    </message>
+    <message>
+        <source>Your ping to them</source>
+        <translation>相手へのPing</translation>
+    </message>
+</context>
+<context>
+    <name>UserInterface::Dialog::RoomRow</name>
+    <message>
+        <source>Only players within %1 ms of the host can join.</source>
+        <translation>ホストへのPingが%1 ms以下のプレイヤーのみ参加できます。</translation>
+    </message>
+    <message>
+        <source>This room doesn&apos;t take players on Wi-Fi, and you&apos;re on Wi-Fi.</source>
+        <translation>このルームはWi-Fiのプレイヤーを受け付けておらず、あなたはWi-Fiで接続しています。</translation>
+    </message>
+    <message>
+        <source>This room takes players within %1 ms of the host.</source>
+        <translation>このルームはホストへのPingが%1 ms以下のプレイヤーのみ参加できます。</translation>
+    </message>
+    <message>
+        <source>This room takes players within %1 ms of the host. Your ping to them is %2 ms.</source>
+        <translation>このルームはホストへのPingが%1 ms以下のプレイヤーのみ参加できます。あなたのPingは%2 msです。</translation>
+    </message>
+    <message>
+        <source>Too far</source>
+        <translation>遠すぎます</translation>
+    </message>
+    <message>
+        <source>Wired only</source>
+        <translation>有線のみ</translation>
+    </message>
+    <message>
+        <source>Wired only: players on Wi-Fi can&apos;t join.</source>
+        <translation>有線のみ: Wi-Fiのプレイヤーは参加できません。</translation>
+    </message>
+    <message>
+        <source>≤%1 ms</source>
+        <translation>%1 ms以下</translation>
+    </message>
+</context>
+<context>
+    <name>UserInterface::Dialog::RoomWindow</name>
+    <message>
+        <source> (or double-click the title)</source>
+        <translation>（タイトルをダブルクリックでも可）</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>最大化</translation>
+    </message>
+    <message>
+        <source>Minimize room</source>
+        <translation>ルームを最小化</translation>
+    </message>
+    <message>
+        <source>Minimize. You keep your seat, and the room waits in the bar at the top.</source>
+        <translation>最小化します。席はそのままで、ルームは上のバーで待機します。</translation>
+    </message>
+    <message>
+        <source>Restore down</source>
+        <translation>元のサイズに戻す</translation>
+    </message>
+</context>
+<context>
+    <name>UserInterface::Dialog::RoomsColumn</name>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 / %2</translation>
+    </message>
+    <message>
+        <source>Any ping</source>
+        <translation>Ping制限なし</translation>
+    </message>
+    <message>
+        <source>Full rooms</source>
+        <translation>満席のルーム</translation>
+    </message>
+    <message>
+        <source>Hide</source>
+        <translation>非表示</translation>
+    </message>
+    <message>
+        <source>In my library</source>
+        <translation>ライブラリにあるゲーム</translation>
+    </message>
+    <message>
+        <source>Lowest ping</source>
+        <translation>Pingが低い順</translation>
+    </message>
+    <message>
+        <source>Most players</source>
+        <translation>人数が多い順</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>名前順</translation>
+    </message>
+    <message>
+        <source>Password rooms</source>
+        <translation>パスワード付きのルーム</translation>
+    </message>
+    <message>
+        <source>Rooms with Wi-Fi players</source>
+        <translation>Wi-Fiのプレイヤーがいるルーム</translation>
+    </message>
+    <message>
+        <source>Selected game</source>
+        <translation>選択中のゲーム</translation>
+    </message>
+    <message>
+        <source>Show only</source>
+        <translation>表示するもの</translation>
+    </message>
+    <message>
+        <source>Sort</source>
+        <translation>並べ替え</translation>
+    </message>
+    <message>
+        <source>This game first</source>
+        <translation>このゲームを先に</translation>
+    </message>
+    <message>
+        <source>Your ping to the host</source>
+        <translation>ホストへのPing</translation>
+    </message>
+    <message>
+        <source>≤ %1 ms</source>
+        <translation>%1 ms以下</translation>
+    </message>
+</context>
+<context>
+    <name>UserInterface::Dialog::StageScrim</name>
+    <message>
+        <source>Minimize the room. You keep your seat.</source>
+        <translation>ルームを最小化します。席はそのままです。</translation>
+    </message>
+</context>
 </TS>

@@ -10,9 +10,11 @@
 #ifdef NETPLAY
 
 #include <QDialog>
+#include <QList>
 #include <QString>
 
 class QButtonGroup;
+class QComboBox;
 class QLineEdit;
 class QPushButton;
 class QLabel;
@@ -49,6 +51,16 @@ public:
     int     delay()      const { return m_delay; }
     int     prediction() const { return m_prediction; }
     QString password()   const { return m_password; }
+    // Who may join: the highest ping to the host (0 for any), and wired only.
+    int     maxPing()    const { return m_maxPing; }
+    bool    wiredOnly()  const { return m_wiredOnly; }
+
+    // The ping limits a room can have, 0 meaning none; shared with the room's
+    // own settings so both offer the same choices.
+    static QList<int> pingLimits() { return { 0, 50, 100, 150 }; }
+    static QString pingLimitText(int maxPingMs);
+    // A combo box of pingLimits(), each with its signal bars.
+    static void fillPingLimitCombo(QComboBox* combo);
 
     // The selected game's cover art, for the dialog's header tile.
     void setCoverPath(const QString& coverPath);
@@ -88,6 +100,9 @@ private:
     QPushButton* m_anyoneButton   = nullptr;
     QPushButton* m_passwordButton = nullptr;
     QLineEdit*   m_passwordEdit   = nullptr;
+    QComboBox*   m_maxPingCombo   = nullptr;
+    QPushButton* m_anyConnectionButton = nullptr;
+    QPushButton* m_wiredOnlyButton = nullptr;
     ToggleSwitch* m_liveReplaySwitch = nullptr;
     LobbyButton* m_createButton   = nullptr;
     LobbyButton* m_cancelButton   = nullptr;
@@ -103,6 +118,8 @@ private:
     int     m_delay      = 2;
     int     m_prediction = 7;
     QString m_password;
+    int     m_maxPing    = 0;
+    bool    m_wiredOnly  = false;
 };
 
 } // namespace Dialog

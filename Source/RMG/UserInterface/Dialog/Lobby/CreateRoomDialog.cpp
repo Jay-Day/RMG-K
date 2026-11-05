@@ -11,6 +11,7 @@
 #include "LobbyWidgets.hpp"
 
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLineEdit>
@@ -19,6 +20,8 @@
 #include <QSettings>
 #include <QFileInfo>
 #include <QIcon>
+
+#include <algorithm>
 
 using namespace UserInterface::Dialog;
 
@@ -184,6 +187,45 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     m_passwordEdit->setVisible(false);
     body->addWidget(m_passwordEdit);
 
+    // Who the room takes, by connection. The server checks both on every join.
+    auto* limits = new QHBoxLayout;
+    limits->setSpacing(14);
+    auto* pingBox = new QVBoxLayout;
+    pingBox->setSpacing(6);
+    pingBox->addWidget(makeFieldLabel(tr("Max ping")));
+    m_maxPingCombo = new QComboBox(this);
+    m_maxPingCombo->setObjectName("MaxPingCombo");
+    m_maxPingCombo->setMinimumHeight(34);
+    fillPingLimitCombo(m_maxPingCombo);
+    m_maxPingCombo->setToolTip(tr("Players whose ping to you is higher can't join. "
+                                  "Their own measurement is used, or an estimate from where they are."));
+    pingBox->addWidget(m_maxPingCombo);
+    limits->addLayout(pingBox, 1);
+
+    auto* wifiBox = new QVBoxLayout;
+    wifiBox->setSpacing(6);
+    wifiBox->addWidget(makeFieldLabel(tr("Connection")));
+    auto* wifiSeg = new QFrame(this);
+    wifiSeg->setObjectName("Seg");
+    auto* wifiLay = new QHBoxLayout(wifiSeg);
+    wifiLay->setContentsMargins(3, 3, 3, 3);
+    wifiLay->setSpacing(3);
+    m_anyConnectionButton = makeSegment(tr("Any"));
+    m_anyConnectionButton->setChecked(true);
+    m_anyConnectionButton->setIcon(QIcon(LobbyTheme::icon(QStringLiteral("wifi-line"), LobbyTheme::tokens().ink2, 14, devicePixelRatioF())));
+    m_wiredOnlyButton = makeSegment(tr("Wired only"));
+    m_wiredOnlyButton->setObjectName("WiredOnlySeg");
+    m_wiredOnlyButton->setIcon(QIcon(LobbyTheme::icon(QStringLiteral("router-line"), LobbyTheme::tokens().ink2, 14, devicePixelRatioF())));
+    m_wiredOnlyButton->setToolTip(tr("Players on Wi-Fi can't join."));
+    auto* wifiGroup = new QButtonGroup(this);
+    wifiGroup->addButton(m_anyConnectionButton);
+    wifiGroup->addButton(m_wiredOnlyButton);
+    wifiLay->addWidget(m_anyConnectionButton, 1);
+    wifiLay->addWidget(m_wiredOnlyButton, 1);
+    wifiBox->addWidget(wifiSeg);
+    limits->addLayout(wifiBox, 1);
+    body->addLayout(limits);
+
     m_liveReplaySwitch = new ToggleSwitch(tr("Live replay for spectators"), this);
     m_liveReplaySwitch->setObjectName("LiveReplaySwitch");
     m_liveReplaySwitch->setSubText(tr("Shows in Live now for anyone to watch, with spectator chat"));
@@ -246,6 +288,20 @@ QString CreateRoomDialog::displayGameName(const QString& goodName, const QString
     return name;
 }
 
+QString CreateRoomDialog::pingLimitText(int maxPingMs)
+{
+    return maxPingMs > 0 ? tr("≤ %1 ms").arg(maxPingMs) : tr("Any ping");
+}
+
+void CreateRoomDialog::fillPingLimitCombo(QComboBox* combo)
+{
+    const qreal ratio = combo->devicePixelRatioF();
+    combo->setIconSize(QSize(16, 14));
+    for (const int limit : pingLimits())
+        combo->addItem(QIcon(LobbyTheme::pingLimitIcon(limit, LobbyTheme::tokens().ink2, ratio)),
+                       pingLimitText(limit), limit);
+}
+
 void CreateRoomDialog::onPasswordToggled(bool enabled)
 {
     m_passwordEdit->setEnabled(enabled);
@@ -283,6 +339,8 @@ void CreateRoomDialog::onCreateClicked()
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
     m_maxPlayers = m_playersGroup->checkedId();
     m_password   = m_passwordButton->isChecked() ? m_passwordEdit->text() : QString();
+    m_maxPing    = m_maxPingCombo->currentData().toInt();
+    m_wiredOnly  = m_wiredOnlyButton->isChecked();
 
     saveDefaults();
     setFormEnabled(false);
@@ -307,6 +365,9 @@ void CreateRoomDialog::setFormEnabled(bool enabled)
         button->setEnabled(enabled && m_playersGroup->id(button) >= m_minimumPlayers);
     m_anyoneButton->setEnabled(enabled);
     m_passwordButton->setEnabled(enabled);
+    m_maxPingCombo->setEnabled(enabled);
+    m_anyConnectionButton->setEnabled(enabled);
+    m_wiredOnlyButton->setEnabled(enabled);
     m_liveReplaySwitch->setEnabled(enabled);
     m_passwordEdit->setEnabled(enabled && m_passwordButton->isChecked());
     m_createButton->setEnabled(enabled);
@@ -325,6 +386,9 @@ void CreateRoomDialog::loadDefaults()
     // own rollback settings after entering the room.
     if (s.contains("Delay")) m_delay = s.value("Delay").toInt();
     m_prediction = 7;
+    const int maxPing = m_maxPingCombo->findData(s.value("MaxPing", 0).toInt());
+    m_maxPingCombo->setCurrentIndex(std::max(0, maxPing));
+    (s.value("WiredOnly", false).toBool() ? m_wiredOnlyButton : m_anyConnectionButton)->setChecked(true);
     s.endGroup();
     m_liveReplaySwitch->setChecked(s.value("RollbackLobby/LiveReplayEnabled", true).toBool());
 }
@@ -335,6 +399,8 @@ void CreateRoomDialog::saveDefaults()
     s.beginGroup("Lobby/CreateRoom");
     // The game selection is persisted by the lobby's shared picker, not here.
     s.setValue("MaxPlayers", m_maxPlayers);
+    s.setValue("MaxPing", m_maxPing);
+    s.setValue("WiredOnly", m_wiredOnly);
     // Rollback-setting persistence lives in the room view.
     s.endGroup();
     // The room view publishes this preference when the new room arrives.

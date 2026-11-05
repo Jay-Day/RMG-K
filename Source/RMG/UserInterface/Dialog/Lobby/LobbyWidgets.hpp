@@ -604,7 +604,6 @@ private:
     StatusTag* m_youTag = nullptr;
     CountryFlag* m_flag = nullptr;
     ConnectionGlyph* m_connectionIcon = nullptr;
-    QLabel* m_connectionName = nullptr;
     QWidget* m_progress = nullptr;
     QLabel* m_progressHint = nullptr;
     StatusTag* m_waitingTag = nullptr;
