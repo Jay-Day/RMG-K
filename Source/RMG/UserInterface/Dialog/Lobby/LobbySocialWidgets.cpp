@@ -3,10 +3,12 @@
 #include "LobbySocialWidgets.hpp"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QContextMenuEvent>
 #include <QDateTime>
 #include <QFontMetrics>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLinearGradient>
 #include <QMouseEvent>
@@ -40,6 +42,8 @@ namespace
     const char* const kIconProperty   = "lobbyMenuIcon";
     const char* const kDangerProperty = "lobbyMenuDanger";
     const char* const kNoteProperty   = "lobbyMenuNote";
+    const char* const kPingProperty   = "lobbyMenuPing";     // ping limit bars as the icon
+    const char* const kStayProperty   = "lobbyMenuStayOpen"; // triggering it leaves the menu open
 
     // A heading between a menu's groups of items.
     class MenuHeading : public QWidget
@@ -50,6 +54,14 @@ namespace
         {
             setFixedHeight(28);
             setAttribute(Qt::WA_TransparentForMouseEvents);
+        }
+
+        // QMenu leaves out a widget whose size hint is empty, which a fixed
+        // height alone (width 0) is.
+        QSize sizeHint() const override
+        {
+            const int text = QFontMetrics(LobbyTheme::pixelFont(9, 0.9)).horizontalAdvance(m_text);
+            return QSize(kMenuIconLeft + (m_icon.isEmpty() ? 0 : 16) + text + 8, 28);
         }
 
     protected:
@@ -141,6 +153,49 @@ void LobbyMenu::addLiveWidget(QWidget* widget)
     addAction(action);
 }
 
+QAction* LobbyMenu::addCheckItem(const QString& iconName, const QString& text, bool checked, QActionGroup* group)
+{
+    QAction* action = addItem(iconName, text);
+    action->setCheckable(true);
+    action->setChecked(checked);
+    action->setProperty(kStayProperty, true);
+    if (group)
+        group->addAction(action);
+    return action;
+}
+
+QAction* LobbyMenu::addPingItem(int maxPingMs, const QString& text, bool checked, QActionGroup* group)
+{
+    QAction* action = addCheckItem(QString(), text, checked, group);
+    action->setProperty(kPingProperty, maxPingMs);
+    return action;
+}
+
+void LobbyMenu::mouseReleaseEvent(QMouseEvent* event)
+{
+    QAction* action = actionAt(event->position().toPoint());
+    if (action && action->isEnabled() && action->property(kStayProperty).toBool())
+    {
+        action->trigger();
+        update();
+        return;
+    }
+    QMenu::mouseReleaseEvent(event);
+}
+
+void LobbyMenu::keyPressEvent(QKeyEvent* event)
+{
+    QAction* action = activeAction();
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter || event->key() == Qt::Key_Space) &&
+        action && action->isEnabled() && action->property(kStayProperty).toBool())
+    {
+        action->trigger();
+        update();
+        return;
+    }
+    QMenu::keyPressEvent(event);
+}
+
 void LobbyMenu::showEvent(QShowEvent* event)
 {
     QMenu::showEvent(event);
@@ -192,11 +247,23 @@ void LobbyMenu::paintEvent(QPaintEvent*)
         const QColor iconColor = !enabled ? t.faint : danger ? t.bad : active ? t.ink2 : t.muted;
 
         const QString iconName = action->property(kIconProperty).toString();
-        const int textLeft = iconName.isEmpty() ? 13 : kMenuTextLeft;
+        const QVariant ping = action->property(kPingProperty);
+        const int textLeft = iconName.isEmpty() && !ping.isValid() ? 13 : kMenuTextLeft;
         if (!iconName.isEmpty())
         {
             painter.drawPixmap(r.left() + kMenuIconLeft, r.center().y() - kMenuIconSize / 2,
                                LobbyTheme::icon(iconName, iconColor, kMenuIconSize, devicePixelRatioF()));
+        }
+        else if (ping.isValid())
+        {
+            painter.drawPixmap(r.left() + kMenuIconLeft, r.center().y() - 7,
+                               LobbyTheme::pingLimitIcon(ping.toInt(), iconColor, devicePixelRatioF()));
+        }
+        if (action->isCheckable() && action->isChecked())
+        {
+            painter.drawPixmap(r.right() - 24, r.center().y() - 7,
+                               LobbyTheme::icon(QStringLiteral("check-line"), enabled ? t.accentInk : t.faint, 14,
+                                                devicePixelRatioF()));
         }
         painter.setFont(font());
         painter.setPen(ink);

@@ -56,6 +56,7 @@ namespace
 
     const char* const kIgnoredSetting = "Lobby/IgnoredPlayers";
     const char* const kDoNotDisturbSetting = "Lobby/DoNotDisturb";
+    const char* const kNoChallengesSetting = "Lobby/NoChallenges";
     const char* const kSpectatorOverlaySetting = "Lobby/SpectatorChatOverGame";
 
     // The most of one spectator's comment that goes over the game.
@@ -161,6 +162,7 @@ void RollbackLobbyDialog::connectSocialSignals()
     QSettings settings("RMG-K", "n02");
     m_ignored = settings.value(kIgnoredSetting).toStringList();
     m_doNotDisturb = settings.value(kDoNotDisturbSetting, false).toBool();
+    m_client->setChallengesOff(settings.value(kNoChallengesSetting, false).toBool());
     m_spectatorOverlayToggle->setChecked(settings.value(kSpectatorOverlaySetting, false).toBool());
     connect(m_spectatorOverlayToggle, &QCheckBox::toggled, this, [](bool checked) {
         QSettings("RMG-K", "n02").setValue(kSpectatorOverlaySetting, checked);
@@ -202,8 +204,8 @@ void RollbackLobbyDialog::resetSocialState()
 
 bool RollbackLobbyDialog::socialEventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == m_roomsStack && event->type() == QEvent::Resize)
-        positionStageOverlays();
+    if (watched == m_stage && event->type() == QEvent::Resize)
+        layoutStage();
     else if (watched == m_chatCard && event->type() == QEvent::Resize)
         positionChatOverlays();
     else if (watched == m_chatInput && event->type() == QEvent::FocusOut)
@@ -317,6 +319,8 @@ void RollbackLobbyDialog::showPlayerMenu(quint64 userId, const QPoint& globalPos
         QString why;
         if (!user.social)
             why = tr("Needs an update");
+        else if (user.noChallenges)
+            why = tr("Not taking challenges");
         else if (playing)
             why = tr("In a match");
         else if (inLiveMatch())
@@ -446,15 +450,40 @@ void RollbackLobbyDialog::showUserMenu()
     }
     else
     {
+        // A guest's way to a new name, or into an account.
         QAction* rename = menu.addItem(QStringLiteral("edit-line"), tr("Change username…"));
         rename->setEnabled(!matchTransportInProgress());
-        connect(rename, &QAction::triggered, this, [this]() {
-            m_client->disconnectFromServer(); // back to the username prompt
-        });
+        // Queued: the prompt opens once this menu has closed.
+        connect(rename, &QAction::triggered, this, &RollbackLobbyDialog::changeUsername, Qt::QueuedConnection);
     }
 
     if (m_client->socialSupported())
     {
+        // Public: others see it and can't send one. Do not disturb below is
+        // private: challenges just go unanswered.
+        auto* challengesRow = new QWidget(&menu);
+        auto* challengesLay = new QHBoxLayout(challengesRow);
+        challengesLay->setContentsMargins(11, 4, 11, 4);
+        auto* challenges = new ToggleSwitch(tr("Take challenges"), challengesRow);
+        challenges->setObjectName("TakeChallenges");
+        challenges->setSubText(m_client->challengeSettingsSupported() ? tr("Off: nobody can send you one")
+                                                                     : tr("Off: ones sent to you go unanswered"));
+        challenges->setChecked(!m_client->challengesOff());
+        connect(challenges, &QCheckBox::toggled, this, [this](bool on) {
+            m_client->setChallengesOff(!on);
+            QSettings("RMG-K", "n02").setValue(kNoChallengesSetting, !on);
+            if (!on)
+            {
+                // Those already waiting are over too.
+                for (const auto& challenge : std::as_const(m_incomingChallenges))
+                    m_client->respondToChallenge(challenge.id, false);
+                m_incomingChallenges.clear();
+                showNextChallenge();
+            }
+        });
+        challengesLay->addWidget(challenges);
+        menu.addLiveWidget(challengesRow);
+
         auto* row = new QWidget(&menu);
         auto* rowLay = new QHBoxLayout(row);
         rowLay->setContentsMargins(11, 4, 11, 4);
@@ -590,7 +619,8 @@ void RollbackLobbyDialog::onChallengeSent(const LobbyClient::Challenge& challeng
 void RollbackLobbyDialog::onChallengeIncoming(const LobbyClient::Challenge& challenge)
 {
     // The sender just sees it go unanswered, so they can't tell they're ignored.
-    if (m_doNotDisturb || isIgnored(challenge.fromUsername))
+    // With challenges off, only an older lobby still sends them.
+    if (m_doNotDisturb || m_client->challengesOff() || isIgnored(challenge.fromUsername))
         return;
     m_incomingChallenges.append(challenge);
     expireChallengeLater(challenge.id, challenge.expiresAtMs);
@@ -825,6 +855,12 @@ void RollbackLobbyDialog::onChallengeEnded(quint64 challengeId, quint64 toUserId
         color = t.warn;
         icon = QStringLiteral("gamepad-line");
     }
+    else if (result == QLatin1String("challenges_off"))
+    {
+        title = tr("%1 isn't taking challenges").arg(name);
+        detail = tr("They turned challenges off. You can still send them a message.");
+        icon = QStringLiteral("forbid-line");
+    }
     else if (result == QLatin1String("no_game"))
     {
         title = tr("%1 doesn't have that game").arg(name);
@@ -867,14 +903,14 @@ void RollbackLobbyDialog::onChallengeEnded(quint64 challengeId, quint64 toUserId
 
 void RollbackLobbyDialog::positionStageOverlays()
 {
-    if (!m_roomsStack || !m_challengeCard || !m_toast)
+    if (!m_stage || !m_challengeCard || !m_toast)
         return;
-    const int available = m_roomsStack->width();
+    const int available = m_stage->width();
     const int cardWidth = std::min(kMaxCardWidth, available - 40);
     m_challengeCard->setFixedWidth(cardWidth);
     m_challengeCard->adjustSize();
     m_challengeCard->move((available - cardWidth) / 2, 10);
-    m_toast->move(14, m_roomsStack->height() - m_toast->height() - 14);
+    m_toast->move(14, m_stage->height() - m_toast->height() - 14);
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1009,7 +1045,7 @@ void RollbackLobbyDialog::refreshPlayerSpectatorChat()
     m_spectatorStrip->setVisible(m_playerChatMatchId != 0);
     const QString audience = tr("%1 watching").arg(room->viewerCount);
     m_spectatorCount->setText(audience);
-    m_roomSubLabel->setText(live && room->viewerCount > 0 ? m_roomSubText + QStringLiteral(" · ") + audience : m_roomSubText);
+    refreshRoomTitleTip();
     if (changed)
     {
         refreshSpectatorTab();
@@ -1188,7 +1224,9 @@ void RollbackLobbyDialog::refreshMentionPopup()
     QList<MentionCandidate> others;
     for (const auto& user : m_client->users())
     {
-        if (user.id == m_client->selfUserId() || !user.username.startsWith(typed, Qt::CaseInsensitive))
+        // Players on this PC can be mentioned, but there's no one to message.
+        if (user.id == m_client->selfUserId() || (whisper && m_client->isOnThisPc(user.id)) ||
+            !user.username.startsWith(typed, Qt::CaseInsensitive))
             continue;
         MentionCandidate candidate;
         candidate.name = user.username;

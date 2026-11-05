@@ -10,12 +10,14 @@
 #ifdef NETPLAY
 
 #include <QDialog>
+#include <QList>
 #include <QString>
 #include <QList>
 #include <QPair>
 #include <QMap>
 
 class QButtonGroup;
+class QComboBox;
 class QHBoxLayout;
 class QLineEdit;
 class QPushButton;
@@ -80,7 +82,18 @@ public:
     QString rulesetId()        const { return m_rulesetId; }
     QString ladderId()         const { return m_ladderId; }
     int teamSize()             const { return m_teamSize; }
-    int     maxPing()          const { return m_maxPing; }
+    // The ranked set's maximum ping between players (0 for any).
+    int     rankedMaxPing()    const { return m_rankedMaxPing; }
+    // Who may join: the highest ping to the host (0 for any), and wired only.
+    int     maxPing()    const { return m_maxPing; }
+    bool    wiredOnly()  const { return m_wiredOnly; }
+
+    // The ping limits a room can have, 0 meaning none; shared with the room's
+    // own settings so both offer the same choices.
+    static QList<int> pingLimits() { return { 0, 50, 100, 150 }; }
+    static QString pingLimitText(int maxPingMs);
+    // A combo box of pingLimits(), each with its signal bars.
+    static void fillPingLimitCombo(QComboBox* combo);
 
     // The selected game's cover art, for the dialog's header tile.
     void setCoverPath(const QString& coverPath);
@@ -126,6 +139,9 @@ private:
     QPushButton* m_anyoneButton   = nullptr;
     QPushButton* m_passwordButton = nullptr;
     QLineEdit*   m_passwordEdit   = nullptr;
+    QComboBox*   m_maxPingCombo   = nullptr;
+    QPushButton* m_anyConnectionButton = nullptr;
+    QPushButton* m_wiredOnlyButton = nullptr;
     ToggleSwitch* m_liveReplaySwitch = nullptr;
     LobbyButton* m_createButton   = nullptr;
     LobbyButton* m_cancelButton   = nullptr;
@@ -133,6 +149,7 @@ private:
     QLabel*      m_seatsHint      = nullptr;
     ToggleSwitch* m_rankedSwitch  = nullptr;
     QWidget*     m_rankedOptions  = nullptr;
+    QWidget*     m_joinLimits     = nullptr;   // max ping and connection; hidden for ranked
     QWidget*     m_formatBox      = nullptr;   // shown when the game has a 2v2 ladder too
     QLabel*      m_bestOfLabel    = nullptr;
     QButtonGroup* m_formatGroup   = nullptr;   // by index into m_rankedInfo.formats
@@ -156,7 +173,9 @@ private:
     QString m_rulesetId;
     QString m_ladderId;
     int m_teamSize = 1;
-    int     m_maxPing = 120;
+    int     m_rankedMaxPing = 120;
+    int     m_maxPing    = 0;
+    bool    m_wiredOnly  = false;
 };
 
 } // namespace Dialog

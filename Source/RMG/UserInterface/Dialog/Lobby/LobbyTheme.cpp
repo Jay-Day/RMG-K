@@ -352,6 +352,27 @@ void paintPingBars(QPainter& painter, const QPointF& origin, int ms, bool estima
     painter.restore();
 }
 
+QPixmap pingLimitIcon(int maxPingMs, const QColor& ink, qreal devicePixelRatio)
+{
+    QImage image(QSize(16, 14) * devicePixelRatio, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    image.setDevicePixelRatio(devicePixelRatio);
+    QPainter painter(&image);
+    if (maxPingMs > 0)
+    {
+        paintPingBars(painter, QPointF(2, 13), maxPingMs, false);
+    }
+    else
+    {
+        painter.setRenderHint(QPainter::TextAntialiasing);
+        painter.setFont(uiFont(15, QFont::DemiBold));
+        painter.setPen(ink);
+        painter.drawText(QRectF(0, -2, 16, 16), Qt::AlignCenter, QStringLiteral("∞"));
+    }
+    painter.end();
+    return QPixmap::fromImage(image);
+}
+
 void paintScanlines(QPainter& painter, const QRectF& rect, const QColor& color)
 {
     painter.save();
@@ -431,6 +452,7 @@ QString styleSheet()
         QMenu#LobbyMenu::separator { height: 9px; background: transparent; margin: 0; }
 
         QLabel[role="ink2"] { color: @ink2; }
+        QLabel[role="heading"] { color: @heading; }
         QLabel[role="muted"] { color: @muted; }
         QLabel[role="faint"] { color: @faint; }
         QLabel[role="warn"] { color: @warn; }
@@ -556,11 +578,6 @@ QString styleSheet()
         QFrame#FieldRule { background-color: @line; max-height: 1px; min-height: 1px; border: none; }
         QFrame#BrandSeparator { background-color: @line2; max-width: 1px; min-width: 1px; border: none; }
 
-        QLabel#RegionChip {
-            color: @ink2; background-color: @raise; border: 1px solid @line2; border-radius: 5px;
-            padding: 1px 6px;
-        }
-
         QPushButton#UserChip {
             background-color: @tint; border: 1px solid @line2; border-radius: 9px;
         }
@@ -581,6 +598,9 @@ QString styleSheet()
         {"@panel2", t.panel2}, {"@accent", t.accent}, {"@panel", t.panel}, {"@raise", t.raise},
         {"@line2", t.line2}, {"@line", t.line}, {"@well", t.well}, {"@tint", t.tint},
         {"@ink2", t.ink2}, {"@ink", t.ink}, {"@muted", t.muted}, {"@faint", t.faint},
+        // Small Audiowide labels. Dark-on-light makes its thin strokes look
+        // lighter than the same contrast does on dark, so light uses full ink.
+        {"@heading", t.dark ? t.ink2 : t.ink},
         {"@warnEdge", mix(t.warn, t.line, 0.35)}, {"@warnTint", t.warnTint},
         {"@onWarn", t.dark ? QColor("#1f1400") : QColor("#ffffff")},
         {"@warn", t.warn}, {"@bad", t.bad}, {"@ok", t.ok}, {"@bg", t.bg},

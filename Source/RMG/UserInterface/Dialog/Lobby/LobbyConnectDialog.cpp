@@ -264,11 +264,11 @@ void LobbyConnectDialog::buildUi()
     brand->addLayout(words);
     brand->addStretch(1);
     headerLay->addLayout(brand);
-    auto* heading = new QLabel(tr("Log in to play ranked and keep your name, or jump in as a guest."), header);
-    heading->setFont(LobbyTheme::uiFont(13));
-    heading->setProperty("role", "ink2");
-    heading->setWordWrap(true);
-    headerLay->addWidget(heading);
+    m_heading = new QLabel(tr("Log in to play ranked and keep your name, or jump in as a guest."), header);
+    m_heading->setFont(LobbyTheme::uiFont(13));
+    m_heading->setProperty("role", "ink2");
+    m_heading->setWordWrap(true);
+    headerLay->addWidget(m_heading);
     root->addWidget(header);
 
     auto* rule = new QFrame(this);
@@ -701,7 +701,7 @@ void LobbyConnectDialog::setMode(Mode mode)
     case Mode::Guest:
         note = tr("Guests play unranked, and the name isn't reserved: someone with an account "
                   "can take it.");
-        action = tr("Join as guest");
+        action = m_renaming ? tr("Change") : tr("Join as guest");
         break;
     case Mode::Reset:
         note = m_emailAvailable
@@ -953,6 +953,14 @@ void LobbyConnectDialog::setUsername(const QString& username)
     focus->setFocus();
     if (focus == m_usernameEdit)
         m_usernameEdit->selectAll();
+}
+
+void LobbyConnectDialog::setRenameMode()
+{
+    m_renaming = true;
+    setWindowTitle(tr("Change Username"));
+    m_heading->setText(tr("Pick a new name, or log in. You'll reconnect."));
+    setMode(Mode::Guest);
 }
 
 void LobbyConnectDialog::setStatusMessage(const QString& message)

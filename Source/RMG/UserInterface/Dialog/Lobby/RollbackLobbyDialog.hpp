@@ -73,9 +73,12 @@ class CartridgeTile;
 class ChallengeCard;
 class ChatView;
 class CountryFlag;
+class DropPanel;
 class ElidedLabel;
 class FrameStepper;
+class GameBadge;
 class IconBadge;
+class IconButton;
 class IconLabel;
 class LedDot;
 class LiveGallery;
@@ -87,7 +90,9 @@ class ModerationDialog;
 class PortCard;
 class PrivateMessagesPanel;
 class RoomsColumn;
+class RoomWindow;
 class Spinner;
+class StageScrim;
 class StatePill;
 class StatusTag;
 class ToggleSwitch;
@@ -98,8 +103,8 @@ class UserAvatar;
 // rooms / chat. Modeless — opened from the main window menu.
 //
 // Visual approach: its own charcoal or cream theme, picked from the application
-// palette (see LobbyTheme.hpp). Running matches get the biggest part of the
-// window, as a gallery of cards beside the open rooms.
+// palette (see LobbyTheme.hpp). Running matches share the window with the open
+// rooms, and a room opens as a window of its own over them.
 class RollbackLobbyDialog : public QDialog
 {
     Q_OBJECT
@@ -205,6 +210,8 @@ protected:
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
+    // Escape minimizes an open room before it closes the lobby.
+    void keyPressEvent(QKeyEvent* event) override;
     // Clears the players-list selection when the user clicks empty space in it,
     // so a highlighted name can be dismissed by clicking off it.
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -328,6 +335,15 @@ private:
 
     void     showUserMenu();
     void     updateUserChip();
+    // Asks for a new name while staying connected. Only an accepted name
+    // reconnects; if the lobby then refuses it, cancelling the prompt that
+    // follows goes back to the old one instead of closing the lobby.
+    void     changeUsername();
+    // Connects under username, logging in with auth when it has a mode (a
+    // guest otherwise).
+    void     connectAs(const QString& username, const QString& serverUrl,
+                       const LobbyClient::LobbyAuth& auth = LobbyClient::LobbyAuth(),
+                       const QString& discordLinkName = QString());
 
     // Repopulate the browse-view ROM picker from m_roms (RMG-K library).
     void     populateBrowseRoms();
@@ -357,6 +373,13 @@ private:
     QTreeWidgetItem* playerGroupForState(const QString& state) const;
     void placePlayerRow(QTreeWidgetItem* item, const LobbyClient::LobbyUser& u);
     void refreshPlayerGroups();
+    // The players list keeps its state headings; sorting orders the players
+    // under each one, and the filters hide rows like the name search does.
+    enum class PlayerSort { Name, Ping, Region };
+    bool playerRowBefore(const QTreeWidgetItem* a, const QTreeWidgetItem* b) const;
+    void resortPlayers();
+    void showPlayersFilterMenu();
+    bool playersFiltered() const;
     // Right-click menu on rooms and matches; moderator-only "closeroom".
     void showAdminRoomMenu(quint64 roomId, const QPoint& globalPos);
 
@@ -441,8 +464,13 @@ private:
     // a new player takes a seat while we're in the room. No-ops the flash if the
     // lobby is already the active window (Qt handles that).
     void    notifyPlayerJoined();
+    // Minimizes the room window (you keep your seat), or opens it.
     void    switchToRoomsView();
     void    switchToInRoomView();
+    bool    roomWindowOpen() const;
+    // Lays out the room window, its scrim and the overlays over the stage.
+    void    layoutStage();
+    void    refreshRoomTitleTip();
     // The room roster and metadata are server-owned and become invalid as soon
     // as the WebSocket drops. Clear them without touching an active match's
     // ICE ownership or lifecycle bookkeeping.
@@ -511,12 +539,18 @@ private:
                           bool isSelf, int pingMs, int frameDelay, bool canKick,
                           const QString& connectionType);
 
-    // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
-    // its slot; the seats container handles the drop and asks the server to swap.
+    // Seat reorder (host, waiting): dragging a seat's handle lifts a picture of
+    // its card that follows the pointer from where it was grabbed. Letting go
+    // over another seat asks the server to swap the two; Escape cancels.
+    // It's drawn inside the room window rather than as a system drag, whose
+    // image rides the cursor and lands wherever the platform puts it.
     // Seats may be left sparse on purpose (P1 + P3 with P2 empty) — the core
     // sizes the session by the highest occupied seat, so a swap into an empty
     // seat is a supported move, not something to guard against.
-    void startSeatDrag(int slot, QWidget* card);
+    void beginSeatDrag(int slot, PortCard* card, const QPoint& globalPos);
+    void moveSeatDrag(const QPoint& globalPos);
+    // drop: swap with the seat under globalPos; otherwise just put it back.
+    void endSeatDrag(const QPoint& globalPos, bool drop);
     int  seatSlotAtPos(const QPoint& pos) const;
 
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
@@ -539,6 +573,11 @@ private:
     void updateRecordingControls();
     // Host turning late join on: warns that other players won't record locally.
     bool confirmLateJoin();
+
+    // Join limits (host-only room option): the highest ping to the host a
+    // joiner may have, and whether a PC on Wi-Fi may join. Hidden on servers
+    // without it.
+    void updateJoinLimitControls();
 
     // Save data (host-only room option): the match starts from a save the
     // host picked, the game saves to memory, and any player can keep a copy.
@@ -569,7 +608,6 @@ private:
     QLabel*  m_brandLabel  = nullptr;
     LedDot*  m_statusLed   = nullptr;
     QLabel*  m_statusText  = nullptr;
-    QLabel*  m_regionChip  = nullptr;
     QLabel*  m_serverMeta  = nullptr;
     QPushButton* m_userChip = nullptr; // our name; hover: ratings, click: account menu
     UserAvatar*  m_userAvatar = nullptr;
@@ -585,6 +623,12 @@ private:
     QTreeWidget* m_playersTree   = nullptr;
     QLabel*      m_playersCount  = nullptr;
     QLineEdit*   m_playersSearch = nullptr;
+    IconButton*  m_playersFilterButton = nullptr;
+    // Kept between sessions. An empty region shows every region; 0 every ping.
+    PlayerSort   m_playerSort = PlayerSort::Name;
+    QString      m_playerRegionFilter;
+    bool         m_playerHideWifi = false;
+    int          m_playerMaxPing = 0;
     // This client's own row, fixed above the scrolling list, then the other
     // players on this PC. Each plays on their own controller; see
     // LobbyClient::LocalPlayer.
@@ -677,8 +721,14 @@ private:
     QString      m_undoIp;
     bool         m_appliedDarkTheme = false;
 
-    // ── Stacked browse / in-room view ──
-    QStackedWidget* m_roomsStack = nullptr;
+    // ── The stage: the browse view, and the room window over it ──
+    QWidget*     m_stage      = nullptr;
+    StageScrim*  m_scrim      = nullptr;
+    RoomWindow*  m_roomWindow = nullptr;
+    bool         m_roomMinimized = false;
+    QString      m_renameUsername;          // reconnect under this once disconnected
+    QString      m_renameFallbackUsername;  // ...and back to this if it's refused
+    LobbyClient::LobbyAuth m_renameAuth;    // the new name's login (a guest without one)
 
     // ── Play bar: one fixed height whatever it's showing ──
     LobbyCard*      m_playBar      = nullptr;
@@ -694,10 +744,13 @@ private:
     QLabel*         m_ticketCaptions[2] = {};
     LobbyButton*    m_ticketAction = nullptr;
 
-    // In-room header
-    ElidedLabel* m_roomTitle     = nullptr;   // the room's name
-    ElidedLabel* m_roomSubLabel  = nullptr;   // game, seats, who's hosting
+    // The room window's title bar
+    GameBadge*   m_roomBadge     = nullptr;   // the room's game
+    ElidedLabel* m_roomTitle     = nullptr;   // the room's name; game, seats and host in its tooltip
     StatePill*   m_roomStatePill = nullptr;   // "Waiting" / "In Game"
+    IconButton*  m_roomSettingsButton = nullptr;
+    StatusTag*   m_roomRankedTag = nullptr;   // a ranked set; the set's terms in its tooltip
+    DropPanel*   m_roomSettingsPanel  = nullptr; // prediction and join limits
     QString      m_roomBadgeText;
     QString      m_roomBadgeColor;
 
@@ -705,7 +758,6 @@ private:
     // host-editable. Both stay editable during this client's own match.
     FrameStepper* m_delayStepper      = nullptr;
     FrameStepper* m_predictionStepper = nullptr;
-    QLabel*       m_delayHint         = nullptr;
     QLabel*       m_predictionHint    = nullptr;
     IconLabel*    m_predictionLock    = nullptr;
     StatusTag*    m_delayLiveTag      = nullptr;
@@ -797,6 +849,14 @@ private:
     ToggleSwitch* m_lateJoinCheck = nullptr;
     QLabel*       m_lateJoinNote  = nullptr;   // the recording warning, while on
 
+    QWidget*      m_joinLimitsBox   = nullptr;
+    QComboBox*    m_joinPingCombo   = nullptr;
+    ToggleSwitch* m_wiredOnlyCheck  = nullptr;
+    QLabel*       m_joinLimitsHint  = nullptr;
+    bool          m_roomHasJoinLimits = false;
+    int           m_roomMaxPing = 0;
+    bool          m_roomWiredOnly = false;
+
     // Host-only room option: the next match starts from the host's pick of
     // save data instead of a blank save. Hidden on servers without it.
     ToggleSwitch* m_saveDataCheck     = nullptr;
@@ -848,10 +908,15 @@ private:
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
-    QWidget*   m_seatsBox        = nullptr; // container that accepts seat drops
+    QWidget*   m_seatsBox        = nullptr; // holds the port cards
     bool       m_canReorderSeats = false;   // host && room waiting
     QPoint     m_seatDragStartPos;          // press point, to clear the drag threshold
-    int        m_seatDragSlot    = 0;       // slot being dragged (0 = none)
+    int        m_seatDragSlot    = 0;       // slot pressed, not dragged yet (0 = none)
+    int        m_seatDraggingSlot = 0;      // slot being dragged (0 = none)
+    int        m_seatDropSlot    = 0;       // seat under the pointer, ringed (0 = none)
+    QLabel*    m_seatGhost       = nullptr; // the lifted card, over the room window
+    QPoint     m_seatGhostGrab;             // the grab point on the ghost
+    QObject*   m_seatDragTracker = nullptr; // app-wide filter while dragging
 
     // Drives PING_PROBE_REQUEST → UDP PROBE → PROBE_REPLY refresh cycle for
     // each peer seated in the current room. Started when a room is entered,
@@ -865,7 +930,6 @@ private:
     Spinner*     m_whySpinner    = nullptr;
     IconBadge*   m_whyBadge      = nullptr;
     ElidedLabel* m_whyTitle      = nullptr;
-    ElidedLabel* m_whyDetail     = nullptr;
     LobbyButton* m_lagStatsBtn   = nullptr;
 
     // Trades lag numbers with the other players during a match, for /lagstat

@@ -16,6 +16,7 @@
 
 #include <functional>
 
+class QActionGroup;
 class QLabel;
 class QScrollArea;
 class QStackedWidget;
@@ -51,10 +52,18 @@ public:
     void addHeaderWidget(QWidget* widget);
     // A widget that keeps the menu open while it's used.
     void addLiveWidget(QWidget* widget);
+    // A check box, or one of a group of choices when group is set. Ticking it
+    // leaves the menu open, so several can be set in one go.
+    QAction* addCheckItem(const QString& iconName, const QString& text, bool checked,
+                          QActionGroup* group = nullptr);
+    // The same, with the signal bars of a ping limit for its icon (0: none).
+    QAction* addPingItem(int maxPingMs, const QString& text, bool checked, QActionGroup* group);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 };
 
 // The chat tabs. An icon-only tab is only as wide as its icon and badge; left to

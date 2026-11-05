@@ -59,7 +59,7 @@ QString css(const QColor& color);
 // Audiowide for labels and big numbers: a retro arcade face drawn as outlines,
 // so it stays sharp at any display scale (the pixel font Silkscreen blurred at
 // 125%). It has no kana, so Japanese falls back to the system UI font at the
-// same size.
+// same size. Small labels in it take the "heading" role rather than "ink2".
 QFont pixelFont(int px, qreal letterSpacing = 0.0);
 // The first character of a name, for avatars. Can be two code units.
 QString nameInitial(const QString& name);
@@ -73,6 +73,9 @@ QPixmap flag(const QString& country, qreal devicePixelRatio);
 QColor pingColor(int ms);
 // Three signal bars with their bottom-left corner at origin. ms < 0 lights none.
 void paintPingBars(QPainter& painter, const QPointF& origin, int ms, bool estimate);
+// A 16x14 icon for a ping limit: the bars that ping would light, or an
+// infinity sign in ink for no limit (0).
+QPixmap pingLimitIcon(int maxPingMs, const QColor& ink, qreal devicePixelRatio);
 
 // Horizontal scanlines over rect, clipped by the painter's current clip.
 void paintScanlines(QPainter& painter, const QRectF& rect, const QColor& color);

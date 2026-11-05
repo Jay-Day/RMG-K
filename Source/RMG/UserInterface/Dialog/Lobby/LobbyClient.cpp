@@ -622,6 +622,7 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     m_localPlayersSupported = false;
     m_socialSupported = false;
     m_spectatorChatSupported = false;
+    m_challengeSettingsSupported = false;
     emit localPlayersChanged();
 
     qInfo() << "Rollback lobby local IPv4 detection"
@@ -848,6 +849,7 @@ void LobbyClient::onWsConnected()
     // The WebSocket is connected by the time this slot runs, so its local
     // address reflects the route the OS actually chose for lobby traffic.
     const QString transport = detectTransportMedium(m_ws->localAddress());
+    m_connection = transport;
     if (!transport.isEmpty())
         data["connection"] = transport;
     // Ask the server to withhold our country from presence and flag us
@@ -873,6 +875,8 @@ void LobbyClient::onWsConnected()
     data["social"] = true;
     data["spectatorChat"] = true;
     data["saveData"] = true;
+    if (m_challengesOff)
+        data["noChallenges"] = true;
     if (!m_pendingLocalIp.isEmpty())
         data["localIp"] = m_pendingLocalIp;
 
@@ -1095,6 +1099,7 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
     m_localPlayersSupported = data.value("localPlayers").toBool();
     m_socialSupported = data.value("social").toBool();
     m_spectatorChatSupported = data.value("spectatorChat").toBool();
+    m_challengeSettingsSupported = data.value("challengeSettings").toBool();
     emit localPlayersChanged();
 
     // Accounts: the server returns the registered spelling of our name, a
@@ -1288,6 +1293,8 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.ranked       = o.value("ranked").toBool();
         r.ladder       = o.value("ladder").toString();
         r.privateRoom  = o.value("private").toBool();
+        r.maxPing      = qMax(0, o.value("maxPing").toInt());
+        r.wiredOnly    = o.value("wiredOnly").toBool();
         for (const auto& n : o.value("playerNames").toArray())
             r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
@@ -3658,6 +3665,18 @@ void LobbyClient::requestSharedGames(quint64 toUserId)
     sendEnvelope("CHALLENGE_GAMES", d);
 }
 
+void LobbyClient::setChallengesOff(bool off)
+{
+    if (m_challengesOff == off)
+        return;
+    m_challengesOff = off;
+    if (m_state != ConnectionState::Connected || !m_challengeSettingsSupported)
+        return;
+    QJsonObject d;
+    d["off"] = off;
+    sendEnvelope("CHALLENGE_SETTINGS", d);
+}
+
 void LobbyClient::handleChallengeSent(const QJsonObject& data)
 {
     const QJsonObject rom = data.value("rom").toObject();
@@ -3788,7 +3807,8 @@ void LobbyClient::handleModList(const QJsonObject& data)
 
 void LobbyClient::createRoom(const QString& name, const QString& romName, const QString& romMd5,
                               const QString& romRegion, int maxPlayers, int delay, int prediction,
-                              int pacing, const QString& password, const QJsonObject& ranked)
+                              int pacing, const QString& password, int maxPing, bool wiredOnly,
+                              const QJsonObject& ranked)
 {
     QJsonObject rom;
     rom["name"]   = romName;
@@ -3804,18 +3824,24 @@ void LobbyClient::createRoom(const QString& name, const QString& romName, const 
     d["pacing"]     = pacing;
     if (!password.isEmpty())
         d["password"] = password;
+    if (maxPing > 0)
+        d["maxPing"] = maxPing;
+    if (wiredOnly)
+        d["wiredOnly"] = true;
     if (!ranked.isEmpty())
         d["ranked"] = ranked;
 
     sendEnvelope("ROOM_CREATE", d);
 }
 
-void LobbyClient::joinRoom(quint64 roomId, const QString& password)
+void LobbyClient::joinRoom(quint64 roomId, const QString& password, int pingMs)
 {
     QJsonObject d;
     d["roomId"] = QJsonValue(qint64(roomId));
     if (!password.isEmpty())
         d["password"] = password;
+    if (pingMs > 0)
+        d["pingMs"] = pingMs;
     sendEnvelope("ROOM_JOIN", d);
 }
 
@@ -3846,6 +3872,14 @@ void LobbyClient::updateRoomLateJoin(bool enabled)
     QJsonObject d;
     d["enabled"] = enabled;
     sendEnvelope("ROOM_UPDATE_LATE_JOIN", d);
+}
+
+void LobbyClient::updateRoomJoinLimits(int maxPing, bool wiredOnly)
+{
+    QJsonObject d;
+    d["maxPing"] = maxPing;
+    d["wiredOnly"] = wiredOnly;
+    sendEnvelope("ROOM_UPDATE_JOIN_LIMITS", d);
 }
 
 void LobbyClient::updateRoomSaveData(bool enabled, const QString& label, const QStringList& kinds,
@@ -4257,6 +4291,7 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.watchingMatchId = static_cast<quint64>(obj.value("watchingMatchId").toDouble());
     u.verified        = obj.value("verified").toBool();
     u.social          = obj.value("social").toBool();
+    u.noChallenges    = obj.value("noChallenges").toBool();
     return u;
 }
 

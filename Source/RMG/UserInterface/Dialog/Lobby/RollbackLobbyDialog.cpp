@@ -11,20 +11,20 @@
  * because people come here to find something to watch.
  *
  *   ┌───────────────────────────────────────────────────────────────┐
- *   │ Dale64  ● ONLINE  NA EAST  42 players · 14 rooms        Mira  │ ← top bar
+ *   │ Dale64  ● ONLINE  42 players · 14 rooms             Mira [US] │ ← top bar
  *   ├───────────────────────────────────────────┬───────────────────┤
  *   │ [ game picker ] [Quick Match] [Create]    │ Players           │ ← play bar
- *   │ ┌Live now──────────────────┐┌Open rooms─┐ │ ● searching...    │
- *   │ │ ┌───────────┐┌─────────┐ ││ room      │ │ ● playing...      │
- *   │ │ │ card      ││ card    │ ││ room      │ ├───────────────────┤
- *   │ │ └───────────┘└─────────┘ ││ room      │ │ Lobby | Room      │
- *   │ │ ┌───────────┐┌─────────┐ ││ room      │ │ chat...           │
- *   │ │ │ card      ││ card    │ ││           │ │                   │
- *   │ └──────────────────────────┘└───────────┘ │ [message]         │
+ *   │ ┌Live now───────────┐┌Open rooms────────┐ │ ● searching...    │
+ *   │ │ match             ││ room             │ │ ● playing...      │
+ *   │ │ match             ││ room             │ ├───────────────────┤
+ *   │ │ match             ││ room             │ │ Lobby | Room      │
+ *   │ │                   ││                  │ │ chat...           │
+ *   │ └───────────────────┘└──────────────────┘ │ [message]         │
  *   └───────────────────────────────────────────┴───────────────────┘
  *
- * In a room, the stage swaps to port cards, the rollback settings and the
- * action bar; the sidebar stays put, so chat never moves.
+ * A room opens as a window over the stage, with the lobby dimmed behind it.
+ * It can be moved, resized, maximized to fill the stage, or minimized to the
+ * play bar while you keep your seat. The sidebar stays put, so chat never moves.
  */
 #ifdef NETPLAY
 
@@ -39,6 +39,7 @@
 #include "QuickRankedMatchDialog.hpp"
 #include "LagStatsDialog.hpp"
 #include "LobbyRegions.hpp"
+#include "LobbyRoomWindow.hpp"
 #include "LobbySocialDialogs.hpp"
 #include "LobbySocialWidgets.hpp"
 #include "NetplaySaveDialogs.hpp"
@@ -92,6 +93,8 @@
 #include <QComboBox>
 #include <QCompleter>
 #include <QCheckBox>
+#include <QActionGroup>
+#include <QGridLayout>
 #include <QSettings>
 #include <QMessageBox>
 #include <QInputDialog>
@@ -102,11 +105,7 @@
 #include <QShowEvent>
 #include <QCloseEvent>
 #include <QMouseEvent>
-#include <QDrag>
-#include <QMimeData>
-#include <QDragEnterEvent>
-#include <QDragMoveEvent>
-#include <QDropEvent>
+#include <QGraphicsDropShadowEffect>
 #include <QPixmap>
 #include <QTimer>
 #include <QFont>
@@ -124,6 +123,7 @@
 #include <QHelpEvent>
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <vector>
 #include <cstdio>
@@ -172,9 +172,6 @@ namespace
     // Viewers of one live replay; the server never relays it to the players.
     const char* const CHANNEL_SPECTATE = "spectate";
 
-    // MIME type carrying the dragged seat's slot during a host reorder drag.
-    const char* const kSeatMime = "application/x-rmgk-seat-slot";
-
     constexpr int MARGIN_STAGE       = 14;  // around the stage and the sidebar
     constexpr int MARGIN_STAGE_INNER = 8;   // the stage's edge beside the splitter handle
     constexpr int GAP_STAGE          = 12;  // between the stage's cards
@@ -183,13 +180,62 @@ namespace
     constexpr int MARQUEE_HEIGHT     = 48;
     constexpr int PLAYBAR_HEIGHT     = 62;  // one height for every state, so nothing below it moves
     constexpr int SIDEBAR_WIDTH      = 300;
-    constexpr int ROOMS_WIDTH        = 284;
     constexpr int PLAYERS_HEIGHT     = 256;
 
     bool isDarkTheme()
     {
         return LobbyTheme::isDark();
     }
+
+    // Follows the pointer for a seat drag, installed on the application so it
+    // sees every mouse event: a room update can hide the handle that took the
+    // press, and the release then lands somewhere else.
+    class SeatDragTracker : public QObject
+    {
+    public:
+        SeatDragTracker(std::function<void(const QPoint&)> moved, std::function<void(const QPoint&, bool)> ended,
+                        QObject* parent)
+            : QObject(parent), m_moved(std::move(moved)), m_ended(std::move(ended))
+        {
+        }
+
+    protected:
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            if (event->type() == QEvent::ApplicationDeactivate)
+            {
+                m_ended(QPoint(), false);
+                return false;
+            }
+            if (!watched->isWidgetType())
+                return false;
+            switch (event->type())
+            {
+            case QEvent::MouseMove:
+                m_moved(static_cast<QMouseEvent*>(event)->globalPosition().toPoint());
+                return true;
+            case QEvent::MouseButtonRelease:
+                m_ended(static_cast<QMouseEvent*>(event)->globalPosition().toPoint(), true);
+                return true;
+            case QEvent::MouseButtonPress:
+            case QEvent::MouseButtonDblClick:
+                return true;
+            case QEvent::KeyPress:
+                if (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape)
+                {
+                    m_ended(QPoint(), false);
+                    return true;
+                }
+                return false;
+            default:
+                return false;
+            }
+        }
+
+    private:
+        std::function<void(const QPoint&)> m_moved;
+        std::function<void(const QPoint&, bool)> m_ended;
+    };
 
     struct StatusColors { QString ok; QString wait; QString fail; QString idle; };
     StatusColors statusColors()
@@ -246,6 +292,12 @@ namespace
         return QString("%1:%2").arg(m).arg(s, 2, 10, QChar('0'));
     }
 
+    // Wi-Fi, or anything else wireless, as far as a room's limits go.
+    bool isWireless(const QString& connection)
+    {
+        return connection == QLatin1String("wifi") || connection == QLatin1String("cellular");
+    }
+
     bool liveReplayPreference()
     {
         QSettings settings("RMG-K", "n02");
@@ -289,6 +341,8 @@ namespace
     constexpr int kPingEstimateRole   = Qt::UserRole + 7; // value is a region estimate
     constexpr int kConnectionTypeRole = Qt::UserRole + 8; // "wifi", "lan", ...
     constexpr int kSocialRole         = Qt::UserRole + 9; // can be challenged and messaged
+    constexpr int kRegionRole         = Qt::UserRole + 10; // the lobby's region bucket
+    constexpr int kNoChallengesRole   = Qt::UserRole + 11; // their PC turned challenges off
 
     QString countryTooltip(const QString& country)
     {
@@ -373,16 +427,16 @@ namespace
                     ? static_cast<const QAbstractItemView*>(option.widget)->viewport()->mapFromGlobal(QCursor::pos())
                     : QPoint();
                 const qreal dpr = option.widget ? option.widget->devicePixelRatioF() : 1.0;
-                const auto paintButton = [&](const QRect& button, const QString& icon) {
-                    const bool hot = button.contains(cursor);
+                const auto paintButton = [&](const QRect& button, const QString& icon, bool enabled) {
+                    const bool hot = enabled && button.contains(cursor);
                     painter->setPen(Qt::NoPen);
                     painter->setBrush(hot ? t.accent : t.tint);
                     painter->drawRoundedRect(QRectF(button), 5, 5);
                     painter->drawPixmap(button.center().x() - 6, button.center().y() - 6,
-                                        LobbyTheme::icon(icon, hot ? QColor(Qt::white) : t.ink2, 13, dpr));
+                                        LobbyTheme::icon(icon, hot ? QColor(Qt::white) : enabled ? t.ink2 : t.faint, 13, dpr));
                 };
-                paintButton(challengeRect(r), QStringLiteral("sword-fill"));
-                paintButton(messageRect(r), QStringLiteral("mail-line"));
+                paintButton(challengeRect(r), QStringLiteral("sword-fill"), !index.data(kNoChallengesRole).toBool());
+                paintButton(messageRect(r), QStringLiteral("mail-line"), true);
                 right = challengeRect(r).left() - 5;
             }
             else if (!connection.isEmpty())
@@ -450,7 +504,8 @@ namespace
                     if (type == QEvent::MouseButtonRelease && mouse->button() == Qt::LeftButton)
                     {
                         const quint64 userId = index.data(Qt::UserRole).toULongLong();
-                        if (onChallengeButton && onChallenge)
+                        // Shown, but greyed out: they turned challenges off.
+                        if (onChallengeButton && onChallenge && !index.data(kNoChallengesRole).toBool())
                             onChallenge(userId);
                         else if (onMessageButton && onMessage)
                             onMessage(userId);
@@ -670,6 +725,9 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
 RollbackLobbyDialog::~RollbackLobbyDialog()
 {
+    // A drag holds the cursor shape app-wide.
+    endSeatDrag(QPoint(), false);
+
     // Saved here rather than closeEvent because Esc rejects the dialog
     // without a close event.
     QSettings s("RMG-K", "n02");
@@ -677,7 +735,12 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     if (m_splitter)
         s.setValue("RollbackLobby/MainSplitterState", m_splitter->saveState());
     if (m_browseSplitter)
-        s.setValue("RollbackLobby/LiveRoomsSplitterState", m_browseSplitter->saveState());
+        s.setValue("RollbackLobby/BrowseSplitterState", m_browseSplitter->saveState());
+    if (m_roomWindow)
+    {
+        s.setValue("RollbackLobby/RoomWindowGeometry", m_roomWindow->normalGeometry());
+        s.setValue("RollbackLobby/RoomWindowMaximized", m_roomWindow->isMaximized());
+    }
     if (m_sideSplitter)
         s.setValue("RollbackLobby/SidebarSplitterState", m_sideSplitter->saveState());
 
@@ -716,21 +779,38 @@ QWidget* RollbackLobbyDialog::buildLobbyView()
     m_splitter->setHandleWidth(SPLITTER_MAIN);
     m_splitter->setChildrenCollapsible(false);
 
-    m_roomsStack = new QStackedWidget(container);
-    m_roomsStack->addWidget(buildBrowseView());   // index 0
-    m_roomsStack->addWidget(buildInRoomView());   // index 1
-    // These float over whichever view is showing.
-    m_roomsStack->installEventFilter(this);
-    m_challengeCard = new ChallengeCard(m_roomsStack);
+    // The browse view fills the stage. The room window floats over it, above a
+    // scrim that dims it; the challenge card and the undo toast float over both.
+    m_stage = new QWidget(container);
+    auto* stageLay = new QVBoxLayout(m_stage);
+    stageLay->setContentsMargins(0, 0, 0, 0);
+    stageLay->addWidget(buildBrowseView());
+    m_stage->installEventFilter(this);
+    m_scrim = new StageScrim(m_stage);
+    m_scrim->setVisible(false);
+    connect(m_scrim, &StageScrim::clicked, this, &RollbackLobbyDialog::switchToRoomsView);
+    m_roomWindow = new RoomWindow(m_stage);
+    m_roomWindow->setVisible(false);
+    m_roomWindow->setBody(buildInRoomView());
+    {
+        QSettings s("RMG-K", "n02");
+        m_roomWindow->setNormalGeometry(s.value("RollbackLobby/RoomWindowGeometry").toRect());
+        m_roomWindow->setMaximized(s.value("RollbackLobby/RoomWindowMaximized", false).toBool());
+    }
+    connect(m_roomWindow, &RoomWindow::minimizeRequested, this, &RollbackLobbyDialog::switchToRoomsView);
+    connect(m_roomWindow, &RoomWindow::geometryChanged, this, [this]() {
+        m_scrim->setWindowRect(m_roomWindow->geometry());
+    });
+    m_challengeCard = new ChallengeCard(m_stage);
     m_challengeCard->setVisible(false);
     connect(m_challengeCard, &ChallengeCard::acceptClicked, this, [this]() { answerChallenge(true); });
     connect(m_challengeCard, &ChallengeCard::declineClicked, this, [this]() { answerChallenge(false); });
-    m_toast = new UndoToast(m_roomsStack);
+    m_toast = new UndoToast(m_stage);
     connect(m_toast, &UndoToast::undoClicked, this, [this]() {
         if (!m_undoAction.isEmpty())
             m_client->sendModAction(m_undoAction, m_undoIp);
     });
-    m_splitter->addWidget(m_roomsStack);
+    m_splitter->addWidget(m_stage);
 
     m_splitter->addWidget(buildSidebar());
 
@@ -792,14 +872,6 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     status->addWidget(m_statusText);
     h->addLayout(status);
 
-    m_regionChip = new QLabel(m_marquee);
-    m_regionChip->setObjectName("RegionChip");
-    QFont regionFont = LobbyTheme::uiFont(10, QFont::DemiBold);
-    regionFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.5);
-    m_regionChip->setFont(regionFont);
-    m_regionChip->setVisible(false);
-    h->addWidget(m_regionChip, 0, Qt::AlignVCenter);
-
     m_serverMeta = new QLabel(tr("Not connected"), m_marquee);
     m_serverMeta->setFont(LobbyTheme::uiFont(12));
     m_serverMeta->setTextFormat(Qt::RichText);
@@ -824,15 +896,20 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     chip->addWidget(m_userAvatar);
     auto* who = new QVBoxLayout;
     who->setSpacing(0);
+    // Your flag goes by your name, where everyone else's does too.
+    auto* nameLine = new QHBoxLayout;
+    nameLine->setSpacing(6);
     m_userName = new QLabel(m_userChip);
     m_userName->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
     transparentForMouse(m_userName);
-    who->addWidget(m_userName);
-    auto* sub = new QHBoxLayout;
-    sub->setSpacing(4);
+    nameLine->addWidget(m_userName);
     m_userFlag = new CountryFlag(m_userChip);
     transparentForMouse(m_userFlag);
-    sub->addWidget(m_userFlag);
+    nameLine->addWidget(m_userFlag);
+    nameLine->addStretch(1);
+    who->addLayout(nameLine);
+    auto* sub = new QHBoxLayout;
+    sub->setSpacing(4);
     m_userRoleIcon = new IconLabel(QStringLiteral("shield-star-fill"), Role::Accent, 11, m_userChip);
     transparentForMouse(m_userRoleIcon);
     m_userRoleIcon->setVisible(false);
@@ -897,10 +974,7 @@ void RollbackLobbyDialog::updateUserChip()
     const bool connected = m_client->state() == LobbyClient::ConnectionState::Connected;
     m_userChip->setVisible(connected);
     if (!connected)
-    {
-        m_regionChip->setVisible(false);
         return;
-    }
 
     QString name = m_username;
     QString country;
@@ -913,9 +987,10 @@ void RollbackLobbyDialog::updateUserChip()
     m_userName->setText(name);
     m_userAvatar->setInitial(LobbyTheme::nameInitial(name));
     m_userFlag->setCountry(country);
+    m_userFlag->setToolTip(countryTooltip(country));
     const bool moderator = m_client->isModerator();
     const bool account = m_client->isVerified();
-    m_userFlag->setVisible(!moderator && !country.isEmpty());
+    m_userFlag->setVisible(!country.isEmpty());
     m_userRoleIcon->setVisible(moderator || account);
     m_userRoleIcon->setIconName(moderator ? QStringLiteral("shield-star-fill") : QStringLiteral("shield-star-line"));
     m_userRoleIcon->setRole(moderator ? Role::Accent : Role::Gold);
@@ -939,14 +1014,6 @@ void RollbackLobbyDialog::updateUserChip()
     m_userRole->setText(role);
     const QColor roleColor = moderator ? LobbyTheme::tokens().accentInk : LobbyTheme::tokens().goldInk;
     m_userRole->setStyleSheet(moderator || account ? QString("color: %1; font-weight: 600;").arg(roleColor.name()) : QString());
-
-    const int region = LobbyRegions::regionIndex(m_client->selfRegion());
-    if (region >= 0)
-    {
-        const auto& label = LobbyRegions::kRegions[region].shortLabel;
-        m_regionChip->setText(QString::fromUtf8(label.data(), int(label.size())).toUpper());
-    }
-    m_regionChip->setVisible(region >= 0);
 }
 
 // ── Play bar ─────────────────────────────────────────────────────────
@@ -1051,8 +1118,6 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
     m_quickMatchBtn->setButtonSize(LobbyButton::Size::Large);
     m_quickMatchBtn->setPixelLabel(true);
     m_quickMatchBtn->setIconName(QStringLiteral("flashlight-fill"));
-    m_quickMatchBtn->setSubText(CoreSettingsGetBoolValue(SettingsID::Rollback_RememberInputDelay)
-        ? tr("Your delay · this game") : tr("Auto delay · this game"));
     m_quickMatchBtn->setToolTip(
         tr("Auto-match with another player searching for the selected game.\n"
            "After each match it searches again, with a new opponent, until you stop the session.\n"
@@ -1180,13 +1245,15 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     connect(m_roomsColumn, &RoomsColumn::playerMenuRequested, this, &RollbackLobbyDialog::showPlayerMenuForName);
     m_browseSplitter->addWidget(m_roomsColumn);
 
+    // Live and the open rooms share the stage evenly, and keep doing so as the
+    // window changes size.
     m_browseSplitter->setStretchFactor(0, 1);
-    m_browseSplitter->setStretchFactor(1, 0);
-    m_browseSplitter->setSizes({ 556, ROOMS_WIDTH });
+    m_browseSplitter->setStretchFactor(1, 1);
+    m_browseSplitter->setSizes({ 1, 1 });
     {
-        // A new key: the old splitter was vertical, and its sizes mean nothing here.
+        // A new key again: under the old one, rooms had a fixed narrow width.
         QSettings s("RMG-K", "n02");
-        const QByteArray splitState = s.value("RollbackLobby/LiveRoomsSplitterState").toByteArray();
+        const QByteArray splitState = s.value("RollbackLobby/BrowseSplitterState").toByteArray();
         if (!splitState.isEmpty())
             m_browseSplitter->restoreState(splitState);
     }
@@ -1210,42 +1277,35 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 {
     auto* page = new QWidget(this);
     auto* lay = new QVBoxLayout(page);
-    lay->setContentsMargins(MARGIN_STAGE, MARGIN_STAGE, MARGIN_STAGE_INNER, MARGIN_STAGE);
+    lay->setContentsMargins(9, 12, 9, 9);
     lay->setSpacing(GAP_STAGE);
 
-    // ── Header: back to the lobby, the room's name, and its state ──
-    auto* head = new QHBoxLayout;
-    head->setSpacing(GAP_STAGE);
-    auto* back = new LobbyButton(tr("Lobby"), LobbyButton::Kind::Ghost, this);
-    back->setObjectName("BackToLobbyBtn");
-    back->setIconName(QStringLiteral("arrow-left-s-line"));
-    back->setToolTip(tr("Switch to the room list. You stay in your seat — use Leave Room to actually exit."));
-    connect(back, &QPushButton::clicked, this, &RollbackLobbyDialog::switchToRoomsView);
-    head->addWidget(back);
-
-    auto* titles = new QVBoxLayout;
-    titles->setSpacing(2);
-    m_roomTitle = new ElidedLabel(Role::Ink, this);
-    m_roomTitle->setFont(LobbyTheme::uiFont(17, QFont::Bold));
+    // ── Title bar: the room's game and name, then its state and settings ──
+    m_roomBadge = new GameBadge(26, m_roomWindow);
+    m_roomWindow->titleLeft()->addWidget(m_roomBadge);
+    m_roomTitle = new ElidedLabel(Role::Ink, m_roomWindow);
+    m_roomTitle->setFont(LobbyTheme::uiFont(15, QFont::Bold));
     m_roomTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    titles->addWidget(m_roomTitle);
-    m_roomSubLabel = new ElidedLabel(Role::Muted, this);
-    m_roomSubLabel->setFont(LobbyTheme::uiFont(11));
-    m_roomSubLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    titles->addWidget(m_roomSubLabel);
-    head->addLayout(titles, 1);
+    m_roomWindow->titleLeft()->addWidget(m_roomTitle, 1);
 
-    m_roomStatePill = new StatePill(this);
+    m_roomRankedTag = new StatusTag(StatusTag::Kind::Gold, m_roomWindow);
+    m_roomRankedTag->setObjectName("RoomRankedTag");
+    m_roomRankedTag->setTag(StatusTag::Kind::Gold, tr("Ranked"));
+    m_roomRankedTag->setVisible(false);
+    m_roomWindow->titleRight()->addWidget(m_roomRankedTag, 0, Qt::AlignVCenter);
+    m_roomStatePill = new StatePill(m_roomWindow);
     m_roomStatePill->setObjectName("RoomStatePill");
-    head->addWidget(m_roomStatePill);
+    m_roomWindow->titleRight()->addWidget(m_roomStatePill, 0, Qt::AlignVCenter);
     applyRoomStateBadge(tr("Waiting"), stateHex("waiting", isDarkTheme()));
-    lay->addLayout(head);
+    m_roomSettingsButton = new IconButton(QStringLiteral("settings-3-line"), 28, m_roomWindow);
+    m_roomSettingsButton->setObjectName("RoomSettingsButton");
+    m_roomSettingsButton->setToolTip(tr("Room settings: rollback prediction, and who can join"));
+    m_roomSettingsButton->setAccessibleName(tr("Room settings"));
+    m_roomWindow->titleRight()->addWidget(m_roomSettingsButton);
 
     // ── Seats: a port card each, sharing the width ──
-    auto* seatsBox = new QWidget(this);
+    auto* seatsBox = new QWidget(page);
     m_seatsBox = seatsBox;
-    seatsBox->setAcceptDrops(true);      // host reorder: drop a seat onto another
-    seatsBox->installEventFilter(this);  // handles DragEnter/Move/Drop
     auto* seatsLay = new QHBoxLayout(seatsBox);
     seatsLay->setContentsMargins(0, 0, 0, 0);
     seatsLay->setSpacing(10);
@@ -1257,86 +1317,49 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     }
     lay->addWidget(seatsBox, 1);
 
-    // ── Rollback settings and recording ──
-    auto* net = new LobbyCard(this);
+    // ── Your delay, and this session's switches ──
+    auto* net = new LobbyCard(page);
     net->setObjectName("RoomSettings");
     auto* netLay = new QHBoxLayout(net);
     netLay->setContentsMargins(14, 12, 14, 12);
     netLay->setSpacing(16);
 
-    const auto makeHint = [this]() {
-        auto* hint = new QLabel(this);
-        hint->setFont(LobbyTheme::uiFont(11));
-        hint->setProperty("role", "muted");
-        hint->setWordWrap(true);
-        hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        hint->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-        // Two lines reserved, so a longer hint never shifts the page.
-        hint->setMinimumHeight(2 * QFontMetrics(hint->font()).lineSpacing());
-        return hint;
-    };
-    const auto makeLiveTag = [this]() {
-        auto* tag = new StatusTag(StatusTag::Kind::Green, this);
+    const auto makeLiveTag = [this](QWidget* parent) {
+        auto* tag = new StatusTag(StatusTag::Kind::Green, parent);
         tag->setTag(StatusTag::Kind::Green, tr("Applies now"));
         tag->setVisible(false);
         return tag;
     };
 
     auto* delayCol = new QVBoxLayout;
-    delayCol->setSpacing(4);
+    delayCol->setSpacing(6);
     auto* delayHead = new QHBoxLayout;
     delayHead->setSpacing(6);
-    delayHead->addWidget(makeFieldLabel(tr("Your input delay"), this));
-    m_delayLiveTag = makeLiveTag();
+    delayHead->addWidget(makeFieldLabel(tr("Your input delay"), net));
+    m_delayLiveTag = makeLiveTag(net);
     delayHead->addWidget(m_delayLiveTag);
     delayHead->addStretch(1);
     delayCol->addLayout(delayHead);
-    m_delayStepper = new FrameStepper(0, 9, QStringLiteral("magic-line"), this);
+    m_delayStepper = new FrameStepper(0, 9, QStringLiteral("magic-line"), net);
     m_delayStepper->setObjectName("DelayStepper");
     m_delayStepper->setChipLabels(tr("Auto"), tr("Auto"));
     delayCol->addWidget(m_delayStepper);
-    m_delayHint = makeHint();
-    delayCol->addWidget(m_delayHint);
+    delayCol->addStretch(1);
     netLay->addLayout(delayCol, 4);
 
-    netLay->addWidget(makeSeparator("FieldSeparator", this));
-
-    auto* predictionCol = new QVBoxLayout;
-    predictionCol->setSpacing(4);
-    auto* predictionHead = new QHBoxLayout;
-    predictionHead->setSpacing(6);
-    predictionHead->addWidget(makeFieldLabel(tr("Rollback prediction"), this));
-    m_predictionLiveTag = makeLiveTag();
-    predictionHead->addWidget(m_predictionLiveTag);
-    predictionHead->addStretch(1);
-    predictionCol->addLayout(predictionHead);
-    m_predictionStepper = new FrameStepper(1, 9, QString(), this);
-    m_predictionStepper->setObjectName("PredictionStepper");
-    m_predictionStepper->setChipLabels(tr("Default"), tr("Custom"));
-    m_predictionStepper->setChipAccented(false);
-    m_predictionStepper->setValue(kDefaultPredictionWindow);
-    predictionCol->addWidget(m_predictionStepper);
-    auto* predictionFoot = new QHBoxLayout;
-    predictionFoot->setSpacing(5);
-    m_predictionLock = new IconLabel(QStringLiteral("lock-line"), Role::Muted, 12, this);
-    m_predictionLock->setVisible(false);
-    predictionFoot->addWidget(m_predictionLock, 0, Qt::AlignTop);
-    m_predictionHint = makeHint();
-    predictionFoot->addWidget(m_predictionHint, 1);
-    predictionCol->addLayout(predictionFoot);
-    netLay->addLayout(predictionCol, 4);
-
-    netLay->addWidget(makeSeparator("FieldSeparator", this));
+    netLay->addWidget(makeSeparator("FieldSeparator", net));
 
     auto* sessionCol = new QVBoxLayout;
     sessionCol->setSpacing(8);
-    sessionCol->addWidget(makeFieldLabel(tr("Session"), this));
+    sessionCol->addWidget(makeFieldLabel(tr("Session"), net));
+    auto* switches = new QGridLayout;
+    switches->setHorizontalSpacing(18);
+    switches->setVerticalSpacing(8);
 
     // Per-player local saving, independent of the host's Live Replay choice.
     // Editable before the match and initialized from the cap-aware default.
-    m_recordCheck = new ToggleSwitch(tr("Save replay"), this);
+    m_recordCheck = new ToggleSwitch(tr("Save replay"), net);
     m_recordCheck->setObjectName("RecordSwitch");
-    m_recordCheck->setSubText(tr("Writes a .krec on this PC"));
     const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
     n02_kaillera_recording_enabled = recordingDefault;
     m_recordLocallyChoice = recordingDefault;
@@ -1345,10 +1368,10 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         m_recordLocallyChoice = checked;
         n02_kaillera_recording_enabled = checked;
     });
-    sessionCol->addWidget(m_recordCheck);
+    switches->addWidget(m_recordCheck, 0, 0);
 
     // Broadcast replay bytes to the server without requiring a local file.
-    m_broadcastCheck = new ToggleSwitch(tr("Live replay for spectators"), this);
+    m_broadcastCheck = new ToggleSwitch(tr("Live replay for spectators"), net);
     m_broadcastCheck->setObjectName("LiveReplaySwitch");
     m_broadcastCheck->setChecked(liveReplayPreference());
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
@@ -1361,7 +1384,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
             m_client->updateRoomLiveReplay(checked);
         }
     });
-    sessionCol->addWidget(m_broadcastCheck);
+    switches->addWidget(m_broadcastCheck, 0, 1);
 
     // Ranked: host-only, between games. The server validates the ladder and
     // the seated players; ROOM_STATE echoes the result.
@@ -1384,7 +1407,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     sessionCol->addWidget(m_rankedCheck);
 
     // Off in every new room. The server repeats the host and waiting checks.
-    m_lateJoinCheck = new ToggleSwitch(tr("Late join"), this);
+    m_lateJoinCheck = new ToggleSwitch(tr("Late join"), net);
     m_lateJoinCheck->setObjectName("LateJoinSwitch");
     m_lateJoinCheck->setVisible(false);
     connect(m_lateJoinCheck, &QCheckBox::toggled, this, [this](bool checked) {
@@ -1400,11 +1423,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         }
         m_client->updateRoomLateJoin(checked);
     });
-    sessionCol->addWidget(m_lateJoinCheck);
+    switches->addWidget(m_lateJoinCheck, 1, 0);
 
     // Off in every new room: the match starts from a blank save. The server
     // repeats the host and waiting checks.
-    m_saveDataCheck = new ToggleSwitch(tr("Save data"), this);
+    m_saveDataCheck = new ToggleSwitch(tr("Save data"), net);
     m_saveDataCheck->setObjectName("SaveDataSwitch");
     m_saveDataCheck->setVisible(false);
     connect(m_saveDataCheck, &QCheckBox::toggled, this, [this](bool checked) {
@@ -1423,9 +1446,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         else
             m_client->updateRoomSaveData(false);
     });
-    sessionCol->addWidget(m_saveDataCheck);
+    switches->addWidget(m_saveDataCheck, 1, 1);
+    switches->setColumnStretch(2, 1);
+    sessionCol->addLayout(switches);
     sessionCol->addStretch(1);
-    netLay->addLayout(sessionCol, 5);
+    netLay->addLayout(sessionCol, 7);
 
     lay->addWidget(net);
 
@@ -1434,13 +1459,86 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         "Recommended: 2 for ~80ms RTT, 3-4 for ~150ms RTT.\n"
         "\n"
         "Local setting — each player may choose a different value."));
+
+    // ── Room settings, behind the gear: prediction, and who can join ──
+    m_roomSettingsPanel = new DropPanel(m_roomWindow);
+    m_roomSettingsPanel->setObjectName("RoomSettingsPanel");
+    m_roomSettingsPanel->setFixedWidth(312);
+    auto* panelLay = new QVBoxLayout(m_roomSettingsPanel);
+    panelLay->setContentsMargins(14, 12, 14, 14);
+    panelLay->setSpacing(6);
+    auto* predictionHead = new QHBoxLayout;
+    predictionHead->setSpacing(6);
+    predictionHead->addWidget(makeFieldLabel(tr("Rollback prediction"), m_roomSettingsPanel));
+    m_predictionLiveTag = makeLiveTag(m_roomSettingsPanel);
+    predictionHead->addWidget(m_predictionLiveTag);
+    predictionHead->addStretch(1);
+    panelLay->addLayout(predictionHead);
+    m_predictionStepper = new FrameStepper(1, 9, QString(), m_roomSettingsPanel);
+    m_predictionStepper->setObjectName("PredictionStepper");
+    m_predictionStepper->setChipLabels(tr("Default"), tr("Custom"));
+    m_predictionStepper->setChipAccented(false);
+    m_predictionStepper->setValue(kDefaultPredictionWindow);
+    panelLay->addWidget(m_predictionStepper);
+    auto* predictionFoot = new QHBoxLayout;
+    predictionFoot->setSpacing(5);
+    m_predictionLock = new IconLabel(QStringLiteral("lock-line"), Role::Muted, 12, m_roomSettingsPanel);
+    m_predictionLock->setVisible(false);
+    predictionFoot->addWidget(m_predictionLock, 0, Qt::AlignTop);
+    m_predictionHint = new QLabel(m_roomSettingsPanel);
+    m_predictionHint->setFont(LobbyTheme::uiFont(11));
+    m_predictionHint->setProperty("role", "muted");
+    m_predictionHint->setWordWrap(true);
+    predictionFoot->addWidget(m_predictionHint, 1);
+    panelLay->addLayout(predictionFoot);
     m_predictionStepper->setProperty("originalTip", tr("Maximum frames the rollback engine may predict ahead.\n"
         "Higher prediction tolerates longer network stalls but can produce larger rollbacks.\n"
         "Default: 7 frames.\n"
         "\n"
         "Room setting — only the host may change this value."));
 
-    m_lateJoinNote = new QLabel(this);
+    m_joinLimitsBox = new QWidget(m_roomSettingsPanel);
+    auto* limitsLay = new QVBoxLayout(m_joinLimitsBox);
+    limitsLay->setContentsMargins(0, 8, 0, 0);
+    limitsLay->setSpacing(6);
+    auto* limitsRule = new QFrame(m_joinLimitsBox);
+    limitsRule->setObjectName("FieldRule");
+    limitsLay->addWidget(limitsRule);
+    limitsLay->addSpacing(4);
+    limitsLay->addWidget(makeFieldLabel(tr("Who can join"), m_joinLimitsBox));
+    auto* limitsRow = new QHBoxLayout;
+    limitsRow->setSpacing(12);
+    m_joinPingCombo = new QComboBox(m_joinLimitsBox);
+    m_joinPingCombo->setObjectName("JoinPingCombo");
+    CreateRoomDialog::fillPingLimitCombo(m_joinPingCombo);
+    m_joinPingCombo->setToolTip(tr("Players whose ping to the host is higher can't join."));
+    limitsRow->addWidget(m_joinPingCombo, 1);
+    m_wiredOnlyCheck = new ToggleSwitch(tr("Wired only"), m_joinLimitsBox);
+    m_wiredOnlyCheck->setObjectName("WiredOnlySwitch");
+    m_wiredOnlyCheck->setToolTip(tr("Players on Wi-Fi can't join."));
+    limitsRow->addWidget(m_wiredOnlyCheck);
+    limitsLay->addLayout(limitsRow);
+    m_joinLimitsHint = new QLabel(m_joinLimitsBox);
+    m_joinLimitsHint->setFont(LobbyTheme::uiFont(11));
+    m_joinLimitsHint->setProperty("role", "muted");
+    m_joinLimitsHint->setWordWrap(true);
+    limitsLay->addWidget(m_joinLimitsHint);
+    m_joinLimitsBox->setVisible(false);
+    panelLay->addWidget(m_joinLimitsBox);
+
+    connect(m_roomSettingsButton, &QToolButton::clicked, this, [this]() {
+        m_roomSettingsPanel->toggleBelow(m_roomSettingsButton);
+    });
+    const auto publishJoinLimits = [this]() {
+        if (m_suppressSettingsSignal || m_currentRoomId == 0 || !m_client ||
+            m_currentRoomHostId != m_client->selfUserId())
+            return;
+        m_client->updateRoomJoinLimits(m_joinPingCombo->currentData().toInt(), m_wiredOnlyCheck->isChecked());
+    };
+    connect(m_joinPingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, publishJoinLimits);
+    connect(m_wiredOnlyCheck, &QCheckBox::toggled, this, publishJoinLimits);
+
+    m_lateJoinNote = new QLabel(page);
     m_lateJoinNote->setFont(LobbyTheme::uiFont(12));
     m_lateJoinNote->setTextFormat(Qt::RichText);
     m_lateJoinNote->setWordWrap(true);
@@ -1546,18 +1644,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_whyBadge = new IconBadge(20, 10, 13, actions);
     m_whyBadge->setVisible(false);
     actionRow->addWidget(m_whyBadge);
-    auto* whyText = new QVBoxLayout;
-    whyText->setSpacing(1);
-    whyText->setAlignment(Qt::AlignVCenter);
+    // One line on why we're waiting; the rest of the story is in its tooltip.
     m_whyTitle = new ElidedLabel(Role::Ink2, actions);
     m_whyTitle->setFont(LobbyTheme::uiFont(12));
     m_whyTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    whyText->addWidget(m_whyTitle);
-    m_whyDetail = new ElidedLabel(Role::Muted, actions);
-    m_whyDetail->setFont(LobbyTheme::uiFont(11));
-    m_whyDetail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    whyText->addWidget(m_whyDetail);
-    actionRow->addLayout(whyText, 1);
+    actionRow->addWidget(m_whyTitle, 1);
 
     // A quick match or ranked session: keep this set's teammate (2v2), or
     // end the session after this set or match.
@@ -1658,9 +1749,12 @@ void RollbackLobbyDialog::renderSeatEmpty(SeatRow& s)
     s.iceMaxAttempts = 20;
 
     if (s.row)
-        s.row->showOpen(m_currentRoomState == QLatin1String("in_game") && m_roomLateJoin
+    {
+        s.row->showOpen(QString());
+        s.row->setToolTip(m_currentRoomState == QLatin1String("in_game") && m_roomLateJoin
             ? tr("Anyone who joins can be added")
             : tr("Waiting for a player…"));
+    }
 }
 
 void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, bool isHost,
@@ -1673,6 +1767,7 @@ void RollbackLobbyDialog::renderSeatFilled(SeatRow& s, const QString& username, 
     s.username = username;
     s.frameDelay = frameDelay;
 
+    s.row->setToolTip(QString());
     s.row->showPlayer(username, isSelf, isHost,
                       m_client && m_client->isLocalPlayer(s.userId) ? tr("This PC") : QString());
     s.row->setConnection(connectionType);
@@ -1973,6 +2068,23 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     m_playersCount->setProperty("role", "muted");
     head->addWidget(m_playersCount);
     head->addStretch(1);
+    {
+        QSettings settings("RMG-K", "n02");
+        settings.beginGroup("RollbackLobby/PlayerFilters");
+        const int sort = settings.value("Sort", 0).toInt();
+        if (sort >= 0 && sort <= static_cast<int>(PlayerSort::Region))
+            m_playerSort = static_cast<PlayerSort>(sort);
+        m_playerRegionFilter = settings.value("Region").toString();
+        m_playerHideWifi = settings.value("HideWifi", false).toBool();
+        m_playerMaxPing = std::max(0, settings.value("MaxPing", 0).toInt());
+        settings.endGroup();
+    }
+    m_playersFilterButton = new IconButton(QStringLiteral("filter-3-line"), 26, card);
+    m_playersFilterButton->setObjectName("PlayersFilterButton");
+    m_playersFilterButton->setToolTip(tr("Sort and filter players"));
+    m_playersFilterButton->setAccessibleName(tr("Sort and filter players"));
+    connect(m_playersFilterButton, &QToolButton::clicked, this, &RollbackLobbyDialog::showPlayersFilterMenu);
+    head->addWidget(m_playersFilterButton);
     auto* search = new IconButton(QStringLiteral("search-line"), 26, card);
     search->setCheckable(true);
     search->setToolTip(tr("Find a player"));
@@ -2380,35 +2492,9 @@ bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
                 {
                     const int slot = m_seatDragSlot;
                     m_seatDragSlot = 0;
-                    startSeatDrag(slot, s.row);
+                    beginSeatDrag(slot, s.row, m_seatDragStartPos);
+                    moveSeatDrag(me->globalPosition().toPoint());
                 }
-                return true;
-            }
-        }
-    }
-
-    // ── Seat reorder: accept the drop and ask the server to swap ──
-    if (m_seatsBox && watched == m_seatsBox)
-    {
-        if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
-        {
-            auto* de = static_cast<QDragMoveEvent*>(event);
-            if (de->mimeData() && de->mimeData()->hasFormat(kSeatMime))
-            {
-                de->acceptProposedAction();
-                return true;
-            }
-        }
-        else if (event->type() == QEvent::Drop)
-        {
-            auto* de = static_cast<QDropEvent*>(event);
-            if (de->mimeData() && de->mimeData()->hasFormat(kSeatMime))
-            {
-                const int from = de->mimeData()->data(kSeatMime).toInt();
-                const int to   = seatSlotAtPos(de->position().toPoint());
-                if (m_client && m_canReorderSeats && from >= 1 && to >= 1 && from != to)
-                    m_client->swapSeats(from, to);
-                de->acceptProposedAction();
                 return true;
             }
         }
@@ -2417,22 +2503,93 @@ bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
     return QDialog::eventFilter(watched, event);
 }
 
-void RollbackLobbyDialog::startSeatDrag(int slot, QWidget* card)
+void RollbackLobbyDialog::beginSeatDrag(int slot, PortCard* card, const QPoint& globalPos)
 {
-    if (slot < 1 || !card)
+    if (slot < 1 || !card || m_seatDraggingSlot != 0)
         return;
-    auto* drag = new QDrag(this);
-    auto* mime = new QMimeData();
-    mime->setData(kSeatMime, QByteArray::number(slot));
-    drag->setMimeData(mime);
-    // Carry a snapshot of the seat card under the cursor for feedback.
-    const QPixmap pm = card->grab();
-    if (!pm.isNull())
+
+    // The card a little smaller, so the ring on the seat under it shows around
+    // it. It shrinks toward the grab point, which stays under the pointer.
+    constexpr qreal kScale = 0.94;
+    const QPixmap shot = card->grab();
+    const qreal dpr = shot.devicePixelRatio();
+    QPixmap lifted((QSizeF(shot.size()) * kScale).toSize());
+    lifted.setDevicePixelRatio(dpr);
+    lifted.fill(Qt::transparent);
     {
-        drag->setPixmap(pm);
-        drag->setHotSpot(QPoint(pm.width() / 8, pm.height() / 2));
+        QPainter painter(&lifted);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawPixmap(QRectF(QPointF(), QSizeF(lifted.size()) / dpr), shot, QRectF(shot.rect()));
     }
-    drag->exec(Qt::MoveAction);
+    m_seatGhost = new QLabel(m_roomWindow);
+    m_seatGhost->setObjectName("SeatDragGhost");
+    m_seatGhost->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_seatGhost->setPixmap(lifted);
+    m_seatGhost->resize((QSizeF(lifted.size()) / dpr).toSize());
+    auto* shadow = new QGraphicsDropShadowEffect(m_seatGhost);
+    shadow->setBlurRadius(28);
+    shadow->setOffset(0, 10);
+    shadow->setColor(QColor(0, 0, 0, isDarkTheme() ? 150 : 70));
+    m_seatGhost->setGraphicsEffect(shadow);
+    m_seatGhostGrab = (QPointF(card->mapFromGlobal(globalPos)) * kScale).toPoint();
+
+    m_seatDraggingSlot = slot;
+    card->setLifted(true);
+    m_seatDragTracker = new SeatDragTracker(
+        [this](const QPoint& pos) { moveSeatDrag(pos); },
+        [this](const QPoint& pos, bool drop) { endSeatDrag(pos, drop); }, this);
+    qApp->installEventFilter(m_seatDragTracker);
+    QApplication::setOverrideCursor(Qt::ClosedHandCursor);
+    moveSeatDrag(globalPos);
+    m_seatGhost->show();
+    m_seatGhost->raise();
+}
+
+void RollbackLobbyDialog::moveSeatDrag(const QPoint& globalPos)
+{
+    if (!m_seatGhost)
+        return;
+    m_seatGhost->move(m_roomWindow->mapFromGlobal(globalPos) - m_seatGhostGrab);
+    int target = seatSlotAtPos(m_seatsBox->mapFromGlobal(globalPos));
+    if (target == m_seatDraggingSlot)
+        target = 0;
+    if (target == m_seatDropSlot)
+        return;
+    m_seatDropSlot = target;
+    for (auto& s : m_seats)
+    {
+        if (s.row)
+            s.row->setDropTarget(s.slot == target);
+    }
+}
+
+void RollbackLobbyDialog::endSeatDrag(const QPoint& globalPos, bool drop)
+{
+    if (m_seatDraggingSlot == 0)
+        return;
+    const int from = m_seatDraggingSlot;
+    const int to = drop ? seatSlotAtPos(m_seatsBox->mapFromGlobal(globalPos)) : 0;
+    m_seatDraggingSlot = 0;
+    m_seatDropSlot = 0;
+
+    // This can run inside the tracker's own filter, so it's deleted later.
+    qApp->removeEventFilter(m_seatDragTracker);
+    m_seatDragTracker->deleteLater();
+    m_seatDragTracker = nullptr;
+    QApplication::restoreOverrideCursor();
+    m_seatGhost->hide();
+    m_seatGhost->deleteLater();
+    m_seatGhost = nullptr;
+    for (auto& s : m_seats)
+    {
+        if (!s.row)
+            continue;
+        s.row->setLifted(false);
+        s.row->setDropTarget(false);
+    }
+
+    if (m_client && m_canReorderSeats && to >= 1 && to != from)
+        m_client->swapSeats(from, to);
 }
 
 int RollbackLobbyDialog::seatSlotAtPos(const QPoint& pos) const
@@ -2530,14 +2687,66 @@ void RollbackLobbyDialog::promptForUsername(const QString& statusMessage)
 
     if (result != QDialog::Accepted)
     {
+        // A new name the lobby refused: cancelling goes back to the old one.
+        if (!m_renameFallbackUsername.isEmpty())
+        {
+            const QString previous = m_renameFallbackUsername;
+            m_renameFallbackUsername.clear();
+            QSettings("RMG-K", "n02").setValue("Lobby/Username", previous);
+            connectAs(previous, m_serverUrl);
+            return;
+        }
         close();
         return;
     }
-
-    m_username  = prompt.username();
-    m_serverUrl = prompt.serverUrl();
     m_rememberLogin = prompt.rememberLogin();
-    connectToLobby(prompt.auth(), linkName);
+    connectAs(prompt.username(), prompt.serverUrl(), prompt.auth(), linkName);
+}
+
+void RollbackLobbyDialog::changeUsername()
+{
+    if (matchTransportInProgress() || m_client->state() != LobbyClient::ConnectionState::Connected)
+        return;
+    LobbyConnectDialog prompt(this);
+    prompt.setRenameMode();
+    prompt.setUsername(m_username);
+    if (m_currentRoomId != 0)
+        prompt.setStatusMessage(tr("Changing your name reconnects you, so you'll leave your room."));
+    m_connectPromptOpen = true;
+    const int result = prompt.exec();
+    m_connectPromptOpen = false;
+    // The connection dropped while the prompt was open, so the usual prompt
+    // never came: this one stands in for it.
+    const LobbyClient::ConnectionState state = m_client->state();
+    if (state == LobbyClient::ConnectionState::Disconnected || state == LobbyClient::ConnectionState::Failed)
+    {
+        if (result == QDialog::Accepted)
+        {
+            m_rememberLogin = prompt.rememberLogin();
+            connectAs(prompt.username(), m_serverUrl, prompt.auth());
+        }
+        else
+            promptForUsername(m_connectPromptMessage);
+        return;
+    }
+    // Cancel, or the same guest name: nothing changes, and you stay connected.
+    // Logging in as an account is a change even under the same name.
+    if (result != QDialog::Accepted || (prompt.username() == m_username && prompt.auth().mode.isEmpty()) ||
+        state != LobbyClient::ConnectionState::Connected)
+        return;
+    m_renameUsername = prompt.username();
+    m_renameAuth     = prompt.auth();
+    m_rememberLogin  = prompt.rememberLogin();
+    m_renameFallbackUsername = m_username;
+    m_client->disconnectFromServer(); // onClientStateChanged reconnects under the new name
+}
+
+void RollbackLobbyDialog::connectAs(const QString& username, const QString& serverUrl,
+                                    const LobbyClient::LobbyAuth& auth, const QString& discordLinkName)
+{
+    m_username  = username;
+    m_serverUrl = serverUrl;
+    connectToLobby(auth, discordLinkName);
 }
 
 void RollbackLobbyDialog::connectToLobby(const LobbyClient::LobbyAuth& auth, const QString& discordLinkName)
@@ -2673,6 +2882,20 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
     m_liveGallery->setOffline(!connected);
     m_roomsColumn->setOffline(!connected);
     onRoomListChanged();
+
+    if (connected)
+        m_renameFallbackUsername.clear();
+
+    // Changing your name: straight back in under the new one.
+    if (s == LobbyClient::ConnectionState::Disconnected && !m_renameUsername.isEmpty())
+    {
+        const QString name = m_renameUsername;
+        const LobbyClient::LobbyAuth auth = m_renameAuth;
+        m_renameUsername.clear();
+        m_renameAuth = LobbyClient::LobbyAuth();
+        QTimer::singleShot(0, this, [this, name, auth]() { connectAs(name, m_serverUrl, auth); });
+        return;
+    }
 
     // A normal disconnect returns to the username prompt. Failed connections
     // are reopened by the error slots below so the server's message is retained.
@@ -3163,34 +3386,192 @@ void RollbackLobbyDialog::placePlayerRow(QTreeWidgetItem* item, const LobbyClien
     }
 
     QTreeWidgetItem* group = playerGroupForState(u.state);
-    if (group == nullptr || item->parent() == group)
+    if (group == nullptr)
         return;
+    // Already under the right heading: it only moves if the sort says so, say
+    // because a ping landed.
+    if (item->parent() == group)
+    {
+        const int index = group->indexOfChild(item);
+        const bool inOrder = (index == 0 || !playerRowBefore(item, group->child(index - 1))) &&
+                             (index == group->childCount() - 1 || !playerRowBefore(group->child(index + 1), item));
+        if (inOrder)
+            return;
+    }
+    const bool selected = item->isSelected();
     if (QTreeWidgetItem* parent = item->parent())
         parent->removeChild(item);
     else if (const int index = m_playersTree->indexOfTopLevelItem(item); index >= 0)
         m_playersTree->takeTopLevelItem(index);
 
     int position = 0;
-    while (position < group->childCount() &&
-           group->child(position)->text(0).compare(u.username, Qt::CaseInsensitive) < 0)
+    while (position < group->childCount() && playerRowBefore(group->child(position), item))
         ++position;
     group->insertChild(position, item);
     group->setExpanded(true);
+    item->setSelected(selected);
 }
 
-// Each heading shows how many players match the search, and hides when none do.
+bool RollbackLobbyDialog::playerRowBefore(const QTreeWidgetItem* a, const QTreeWidgetItem* b) const
+{
+    if (m_playerSort == PlayerSort::Ping)
+    {
+        // Unknown pings go last.
+        const int pingA = a->data(0, kPingMsRole).toInt();
+        const int pingB = b->data(0, kPingMsRole).toInt();
+        const int keyA = pingA < 0 ? std::numeric_limits<int>::max() : pingA;
+        const int keyB = pingB < 0 ? std::numeric_limits<int>::max() : pingB;
+        if (keyA != keyB)
+            return keyA < keyB;
+    }
+    else if (m_playerSort == PlayerSort::Region)
+    {
+        // In the regions' own order, then by country; unknown regions last.
+        const int regionA = LobbyRegions::regionIndex(a->data(0, kRegionRole).toString());
+        const int regionB = LobbyRegions::regionIndex(b->data(0, kRegionRole).toString());
+        const int keyA = regionA < 0 ? std::numeric_limits<int>::max() : regionA;
+        const int keyB = regionB < 0 ? std::numeric_limits<int>::max() : regionB;
+        if (keyA != keyB)
+            return keyA < keyB;
+        const int country = a->data(0, kCountryRole).toString().compare(b->data(0, kCountryRole).toString());
+        if (country != 0)
+            return country < 0;
+    }
+    return a->text(0).compare(b->text(0), Qt::CaseInsensitive) < 0;
+}
+
+void RollbackLobbyDialog::resortPlayers()
+{
+    for (QTreeWidgetItem* group : m_playerGroups)
+    {
+        QList<QTreeWidgetItem*> rows = group->takeChildren();
+        QSet<QTreeWidgetItem*> selected;
+        for (QTreeWidgetItem* row : rows)
+        {
+            if (row->isSelected())
+                selected.insert(row);
+        }
+        std::stable_sort(rows.begin(), rows.end(), [this](const QTreeWidgetItem* a, const QTreeWidgetItem* b) {
+            return playerRowBefore(a, b);
+        });
+        group->addChildren(rows);
+        for (QTreeWidgetItem* row : selected)
+            row->setSelected(true);
+    }
+    refreshPlayerGroups();
+}
+
+bool RollbackLobbyDialog::playersFiltered() const
+{
+    return !m_playerRegionFilter.isEmpty() || m_playerHideWifi || m_playerMaxPing > 0;
+}
+
+// Every choice applies as it's ticked, with the menu still open.
+void RollbackLobbyDialog::showPlayersFilterMenu()
+{
+    LobbyMenu menu(this);
+    const auto save = [this]() {
+        QSettings settings("RMG-K", "n02");
+        settings.beginGroup("RollbackLobby/PlayerFilters");
+        settings.setValue("Sort", static_cast<int>(m_playerSort));
+        settings.setValue("Region", m_playerRegionFilter);
+        settings.setValue("HideWifi", m_playerHideWifi);
+        settings.setValue("MaxPing", m_playerMaxPing);
+        settings.endGroup();
+    };
+
+    menu.addHeading(QString(), tr("Sort each list by"), false);
+    auto* sorts = new QActionGroup(&menu);
+    const auto addSort = [&](const QString& label, PlayerSort sort) {
+        QAction* action = menu.addCheckItem(QString(), label, m_playerSort == sort, sorts);
+        connect(action, &QAction::toggled, this, [this, sort, save](bool on) {
+            if (!on)
+                return;
+            m_playerSort = sort;
+            save();
+            resortPlayers();
+        });
+    };
+    addSort(tr("Name"), PlayerSort::Name);
+    addSort(tr("Ping"), PlayerSort::Ping);
+    addSort(tr("Region"), PlayerSort::Region);
+
+    menu.addHeading(QString(), tr("Hide"), false);
+    QAction* wifi = menu.addCheckItem(QStringLiteral("wifi-line"), tr("Players on Wi-Fi"), m_playerHideWifi);
+    connect(wifi, &QAction::toggled, this, [this, save](bool on) {
+        m_playerHideWifi = on;
+        save();
+        refreshPlayerGroups();
+    });
+
+    menu.addHeading(QString(), tr("Your ping to them"), false);
+    auto* pings = new QActionGroup(&menu);
+    for (const int limit : CreateRoomDialog::pingLimits())
+    {
+        QAction* action = menu.addPingItem(limit, CreateRoomDialog::pingLimitText(limit), m_playerMaxPing == limit, pings);
+        connect(action, &QAction::toggled, this, [this, limit, save](bool on) {
+            if (!on)
+                return;
+            m_playerMaxPing = limit;
+            save();
+            refreshPlayerGroups();
+        });
+    }
+
+    // Only the regions someone is in, with how many.
+    QMap<int, int> regions;
+    for (const auto& user : m_client->users())
+    {
+        const int region = LobbyRegions::regionIndex(user.region);
+        if (region >= 0)
+            ++regions[region];
+    }
+    menu.addHeading(QString(), tr("Region"), false);
+    auto* regionGroup = new QActionGroup(&menu);
+    const auto addRegion = [&](const QString& label, const QString& code) {
+        QAction* action = menu.addCheckItem(QString(), label, m_playerRegionFilter == code, regionGroup);
+        connect(action, &QAction::toggled, this, [this, code, save](bool on) {
+            if (!on)
+                return;
+            m_playerRegionFilter = code;
+            save();
+            refreshPlayerGroups();
+        });
+    };
+    addRegion(tr("Every region"), QString());
+    for (auto it = regions.constBegin(); it != regions.constEnd(); ++it)
+    {
+        const auto& region = LobbyRegions::kRegions[it.key()];
+        const QString code = QString::fromUtf8(region.code.data(), int(region.code.size()));
+        addRegion(QStringLiteral("%1 (%2)").arg(LobbyRegions::labelFor(code)).arg(it.value()), code);
+    }
+    // A region nobody's in any more stays listed while it's the filter.
+    if (!m_playerRegionFilter.isEmpty() && !regions.contains(LobbyRegions::regionIndex(m_playerRegionFilter)))
+        addRegion(QStringLiteral("%1 (0)").arg(LobbyRegions::labelFor(m_playerRegionFilter)), m_playerRegionFilter);
+
+    menu.exec(m_playersFilterButton->mapToGlobal(QPoint(0, m_playersFilterButton->height())));
+}
+
+// Each heading shows how many players match the search and filters, and hides
+// when none do.
 void RollbackLobbyDialog::refreshPlayerGroups()
 {
     if (!m_playersSearch)
         return;
     const QString search = m_playersSearch->text().trimmed();
+    if (m_playersFilterButton)
+        m_playersFilterButton->setIconColorOverride(playersFiltered() ? LobbyTheme::tokens().accentInk : QColor());
     for (QTreeWidgetItem* group : m_playerGroups)
     {
         int shown = 0;
         for (int i = 0; i < group->childCount(); ++i)
         {
             QTreeWidgetItem* child = group->child(i);
-            const bool match = search.isEmpty() || child->text(0).contains(search, Qt::CaseInsensitive);
+            const int ping = child->data(0, kPingMsRole).toInt();
+            const bool match = (search.isEmpty() || child->text(0).contains(search, Qt::CaseInsensitive)) &&
+                (m_playerRegionFilter.isEmpty() || child->data(0, kRegionRole).toString() == m_playerRegionFilter) &&
+                (!m_playerHideWifi || !isWireless(child->data(0, kConnectionTypeRole).toString())) &&
+                (m_playerMaxPing <= 0 || (ping >= 0 && ping <= m_playerMaxPing));
             child->setHidden(!match);
             shown += match ? 1 : 0;
         }
@@ -3254,7 +3635,9 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     item->setData(0, kPingMsRole, effective);
     item->setData(0, kPingEstimateRole, measured < 0);
     item->setData(0, kConnectionTypeRole, u.connection);
+    item->setData(0, kRegionRole, u.region);
     item->setData(0, kSocialRole, !isSelf && u.social && m_client->socialSupported());
+    item->setData(0, kNoChallengesRole, u.noChallenges);
 
     // Built as lines so an absent field just doesn't contribute, rather than
     // leaving a stray separator. The region is deliberately not among them: it's
@@ -3278,6 +3661,8 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         tipLines << QString(tr("Connection: %1")).arg(connLabel);
     if (!u.clientVersion.isEmpty())
         tipLines << QString(tr("Build: %1")).arg(u.clientVersion);
+    if (!isSelf && u.noChallenges)
+        tipLines << tr("Not taking challenges");
     if (!isSelf)
     {
         // The bars give the tier; the tooltip gives the number. An estimate is
@@ -3323,6 +3708,7 @@ void RollbackLobbyDialog::onRoomListChanged()
     // Rows are matched to players by name, the only key playerNames offers.
     QHash<QString, QString> countries;
     QHash<QString, QString> connections;
+    QSet<quint64> roomsWithWifi;
     if (connected)
     {
         for (const auto& user : m_client->users())
@@ -3331,8 +3717,12 @@ void RollbackLobbyDialog::onRoomListChanged()
                 countries.insert(user.username, user.country);
             if (!user.connection.isEmpty())
                 connections.insert(user.username, user.connection);
+            if (user.currentRoomId != 0 && isWireless(user.connection))
+                roomsWithWifi.insert(user.currentRoomId);
         }
     }
+    // Everyone on this PC shares its connection.
+    const bool selfWireless = connected && isWireless(m_client->selfConnection());
 
     QList<LiveMatchView> matches;
     QList<RoomRowView> rooms;
@@ -3397,6 +3787,9 @@ void RollbackLobbyDialog::onRoomListChanged()
         room.hasRom = hasRom;
         room.sameGame = sameGame;
         room.hostCountry = countries.value(r.hostName);
+        room.anyWifi = roomsWithWifi.contains(r.id);
+        room.maxPing = r.maxPing;
+        room.wiredOnly = r.wiredOnly;
 
         // Your ping to the host — the real measurement once one exists, the
         // region estimate until then — so a room can be judged before joining.
@@ -3414,6 +3807,10 @@ void RollbackLobbyDialog::onRoomListChanged()
                     room.pingMs = -1;
             }
         }
+        if (!room.mine && room.wiredOnly && selfWireless)
+            room.refusal = RoomRowView::Refusal::WiredOnly;
+        else if (!room.mine && room.maxPing > 0 && room.pingMs > room.maxPing)
+            room.refusal = RoomRowView::Refusal::PingTooHigh;
         rooms.append(room);
     }
 
@@ -3442,12 +3839,67 @@ void RollbackLobbyDialog::updateMatchDurations()
 
 void RollbackLobbyDialog::switchToRoomsView()
 {
-    if (m_roomsStack) m_roomsStack->setCurrentIndex(0);
+    m_roomMinimized = true;
+    layoutStage();
 }
 
 void RollbackLobbyDialog::switchToInRoomView()
 {
-    if (m_roomsStack) m_roomsStack->setCurrentIndex(1);
+    m_roomMinimized = false;
+    layoutStage();
+}
+
+bool RollbackLobbyDialog::roomWindowOpen() const
+{
+    return m_roomWindow && m_roomWindow->isVisible();
+}
+
+void RollbackLobbyDialog::layoutStage()
+{
+    if (!m_stage || !m_roomWindow)
+        return;
+    const bool open = m_currentRoomId != 0 && !m_roomMinimized;
+    if (!open && m_roomSettingsPanel)
+        m_roomSettingsPanel->hide();
+    if (!open)
+        endSeatDrag(QPoint(), false);
+    m_scrim->setGeometry(m_stage->rect());
+    m_roomWindow->placeIn(m_stage->rect().adjusted(MARGIN_STAGE, MARGIN_STAGE, -MARGIN_STAGE_INNER, -MARGIN_STAGE));
+    m_scrim->setWindowRect(m_roomWindow->geometry());
+    m_scrim->setVisible(open);
+    m_roomWindow->setVisible(open);
+    m_scrim->raise();
+    m_roomWindow->raise();
+    m_challengeCard->raise();
+    m_toast->raise();
+    positionStageOverlays();
+}
+
+// The room's subtitle went: its game, seats and host are in the title's tooltip.
+void RollbackLobbyDialog::refreshRoomTitleTip()
+{
+    if (!m_roomTitle)
+        return;
+    QString tip = m_roomSubText;
+    if (m_client)
+    {
+        const auto room = m_client->rooms().constFind(m_currentRoomId);
+        if (room != m_client->rooms().constEnd() && room->state == QLatin1String("in_game") && room->viewerCount > 0)
+            tip += QStringLiteral(" · ") + tr("%1 watching").arg(room->viewerCount);
+    }
+    m_roomTitle->setToolTip(tip.isEmpty() ? m_roomTitle->text() : m_roomTitle->text() + QStringLiteral("\n") + tip);
+    if (m_roomBadge)
+        m_roomBadge->setToolTip(m_currentRoomGame);
+}
+
+void RollbackLobbyDialog::keyPressEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Escape && roomWindowOpen())
+    {
+        switchToRoomsView();
+        return;
+    }
+    QDialog::keyPressEvent(event);
 }
 
 void RollbackLobbyDialog::clearServerRoomSnapshot()
@@ -3456,6 +3908,7 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     // gone, retaining it can only display a room/roster that may no longer exist
     // (the server keeps rooms in memory and loses them across a restart).
     m_canReorderSeats = false;
+    endSeatDrag(QPoint(), false);
 
     m_currentRoomId = 0;
     m_currentRoomGame.clear();
@@ -3483,8 +3936,11 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     }
 
     if (m_roomTitle) m_roomTitle->setText(QStringLiteral("—"));
+    if (m_roomRankedTag) m_roomRankedTag->setVisible(false);
     m_roomSubText.clear();
-    if (m_roomSubLabel) m_roomSubLabel->setText(QString());
+    m_roomHasJoinLimits = false;
+    m_roomMaxPing = 0;
+    m_roomWiredOnly = false;
     if (m_chatViewRoom) m_chatViewRoom->clear();
     setRoomChatVisible(false);
     if (m_startBtn) m_startBtn->setEnabled(false);
@@ -3620,6 +4076,8 @@ void RollbackLobbyDialog::onRoomCreateRequested()
         m_createRoomDialog->prediction(),
         pacing,
         m_createRoomDialog->password(),
+        m_createRoomDialog->maxPing(),
+        m_createRoomDialog->wiredOnly(),
         [this]() {
             QJsonObject ranked;
             if (!m_createRoomDialog->ranked())
@@ -3628,7 +4086,7 @@ void RollbackLobbyDialog::onRoomCreateRequested()
             if (!m_createRoomDialog->ladderId().isEmpty())
                 ranked["ladderId"]     = m_createRoomDialog->ladderId();
             ranked["rulesetId"]        = m_createRoomDialog->rulesetId();
-            ranked["maxPing"]          = m_createRoomDialog->maxPing();
+            ranked["maxPing"]          = m_createRoomDialog->rankedMaxPing();
             return ranked;
         }());
 }
@@ -3682,6 +4140,10 @@ void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
         tr("That room doesn't have a free seat for everyone on this PC.");
     else if (reason == "private_room") human =
         tr("That room is private.");
+    else if (reason == "wired_only") human =
+        tr("That room is wired only, and you're on Wi-Fi.");
+    else if (reason == "ping_too_high") human =
+        tr("Your ping to that room's host is higher than the room allows.");
     else if (reason == "needs_update") human =
         tr("That room needs a newer version of Dale64.");
     else if (reason == "peer_needs_update") human =
@@ -3749,6 +4211,10 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     // Fresh room, fresh chat — never carry the previous room's messages in.
     if (m_chatViewRoom) m_chatViewRoom->clear();
     setRoomChatVisible(true);
+    m_roomHasJoinLimits = false;
+    m_roomMaxPing = 0;
+    m_roomWiredOnly = false;
+    updateJoinLimitControls();
     switchToInRoomView();
 
     updateHeroButtons();
@@ -3815,6 +4281,30 @@ void RollbackLobbyDialog::onRoomJoinRequested(quint64 roomId)
         return;
     }
 
+    // The room's limits, checked here so nobody types a password for nothing;
+    // the server checks them again. Ping is measured if it can be, otherwise
+    // estimated from regions, like the room list shows it.
+    int pingMs = summary.hostId != 0 ? m_client->measuredPingMs(summary.hostId) : -1;
+    if (pingMs < 0 && summary.hostId != 0)
+    {
+        const auto host = m_client->users().constFind(summary.hostId);
+        if (host != m_client->users().constEnd())
+            pingMs = LobbyRegions::estimatedRttMs(m_client->selfRegion(), host->region);
+    }
+    if (summary.wiredOnly && isWireless(m_client->selfConnection()))
+    {
+        QMessageBox::information(this, tr("Wired only"),
+            tr("\"%1\" doesn't take players on Wi-Fi. Connect with a cable to join it.").arg(summary.name));
+        return;
+    }
+    if (summary.maxPing > 0 && pingMs > summary.maxPing)
+    {
+        QMessageBox::information(this, tr("Too far"),
+            tr("\"%1\" takes players within %2 ms of the host. Your ping to them is about %3 ms.")
+                .arg(summary.name).arg(summary.maxPing).arg(pingMs));
+        return;
+    }
+
     QString password;
     if (summary.hasPassword)
     {
@@ -3824,7 +4314,7 @@ void RollbackLobbyDialog::onRoomJoinRequested(quint64 roomId)
             QLineEdit::Password, QString(), &ok);
         if (!ok) return;
     }
-    m_client->joinRoom(roomId, password);
+    m_client->joinRoom(roomId, password, std::max(0, pingMs));
 }
 
 void RollbackLobbyDialog::onMatchWatchRequested(quint64 roomId)
@@ -3908,8 +4398,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_canStartAlone = roomState.value("canStartAlone").toBool(false);
 
     // Late join is the host's choice per room. Everyone hears when it changes,
-    // and a player entering a room with it on hears it too, because it turns
-    // their local recording off.
+    // and a player entering a room with it on hears it too: whoever joins once
+    // a game is running doesn't get a replay of it.
     m_roomHasLateJoinOption = roomState.contains("lateJoinEnabled");
     {
         const bool lateJoinEnabled = roomState.value("lateJoinEnabled").toBool(false);
@@ -3917,17 +4407,17 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         {
             if (lateJoinEnabled && !iAmHost)
                 appendChatSystemLine(CHANNEL_ROOM,
-                    tr("Late join is on in this room. Only the host saves a local replay, so Save replay is off for you."));
+                    tr("Late join is on in this room. Players who join mid-game don't get a replay of it."));
         }
         else if (lateJoinEnabled != m_roomLateJoinEnabled)
         {
             if (iAmHost)
                 appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
-                    ? tr("Late join is on. Players can join while a game is running, and only you save a local replay.")
+                    ? tr("Late join is on. Players can join while a game is running; they won't get a replay of it.")
                     : tr("Late join is off."));
             else
                 appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
-                    ? tr("The host turned on late join. Only the host saves a local replay, so Save replay is off for you.")
+                    ? tr("The host turned on late join. Players who join mid-game don't get a replay of it.")
                     : tr("The host turned off late join."));
         }
         m_lateJoinEnabledSeen = true;
@@ -3988,6 +4478,15 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         m_suppressSettingsSignal = false;
         m_saveDataCheck->setVisible(m_roomHasSaveDataOption);
     }
+    // Join limits are the host's too, and can change at any time.
+    m_roomHasJoinLimits = roomState.contains("joinLimits");
+    {
+        const QJsonObject limits = roomState.value("joinLimits").toObject();
+        m_roomMaxPing = std::max(0, limits.value("maxPing").toInt());
+        m_roomWiredOnly = limits.value("wiredOnly").toBool();
+    }
+    updateJoinLimitControls();
+
     if (m_publishSaveChoiceWhenWaiting && iAmHost && state == "waiting")
     {
         m_publishSaveChoiceWhenWaiting = false;
@@ -4027,10 +4526,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     }
     if (m_leaveBtn) m_leaveBtn->setEnabled(true);
 
-    // ── Header ──
+    // ── Title bar ──
     const QString title = name.isEmpty() ? romName : name;
     m_roomTitle->setText(title);
-    m_roomTitle->setToolTip(!name.isEmpty() && name != romName ? QString("%1 — %2").arg(name, romName) : title);
+    m_roomBadge->setGame(romName, coverPathForMd5(romMd5));
 
     applyRoomStateBadge(roomStateLabel(state), stateHex(state, isDarkTheme()));
 
@@ -4073,8 +4572,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
                                      : tr("%1 of %2 seats").arg(players.size()).arg(maxPlayers));
         parts << (iAmHost ? tr("hosted by you") : tr("host %1").arg(m_currentRoomHostName));
         m_roomSubText = parts.join(QStringLiteral(" · "));
-        m_roomSubLabel->setText(m_roomSubText);
-        m_roomSubLabel->setRole(roomRanked ? Role::Gold : Role::Muted);
+        refreshRoomTitleTip();
+        // A ranked set says so in the title bar, with the set's terms.
+        m_roomRankedTag->setVisible(roomRanked);
+        m_roomRankedTag->setToolTip(roomRanked ? m_roomSubText : QString());
         refreshPlayerSpectatorChat();
     }
 
@@ -4216,6 +4717,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             m_canReorderSeats && i < maxPlayers && m_seats[i].userId != 0,
             m_seats[i].canKick && m_seats[i].userId != 0);
     }
+    if (m_seatDraggingSlot != 0 && (!m_canReorderSeats || m_seats[m_seatDraggingSlot - 1].userId == 0))
+        endSeatDrag(QPoint(), false);
 
     // Late join: track who sits outside the running match. Players in the
     // match hear about a newcomer waiting to join; the newcomer learns what
@@ -4280,6 +4783,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             m_announcedWaitingSelf = false;
         }
         m_outOfMatchUsers = outOfMatch;
+        // Joining mid-game means no replay of this one.
+        updateRecordingControls();
     }
 
     // Flash + chime when a *new* player takes a seat. Compare this ROOM_STATE's
@@ -4333,21 +4838,21 @@ void RollbackLobbyDialog::updateRecordingControls()
     const bool liveReplayEnabled = m_broadcastCheck->isChecked();
     const bool editable = m_currentRoomState == "waiting" && !matchTransportInProgress();
 
-    // With late join on, only the host records: the host is the one player
-    // sure to be in the whole game. The box shows off meanwhile and goes back
-    // to the player's own choice afterwards.
-    const bool hostOnlyRecording = m_roomLateJoinEnabled && !iAmHost;
+    // Everyone in the room when a game starts can record it. A player who joins
+    // mid-game can't: their replay would start part way through, with nothing
+    // to start from. The box shows off for them meanwhile and goes back to
+    // their own choice afterwards.
+    const bool joiningMidGame = m_client && m_outOfMatchUsers.contains(m_client->selfUserId()) &&
+        m_currentRoomState == QLatin1String("in_game") && !matchTransportInProgress();
     {
         const QSignalBlocker blocker(m_recordCheck);
-        m_recordCheck->setChecked(!hostOnlyRecording && m_recordLocallyChoice);
+        m_recordCheck->setChecked(!joiningMidGame && m_recordLocallyChoice);
     }
-    m_recordCheck->setEnabled(editable && !hostOnlyRecording);
-    m_recordCheck->setSubText(hostOnlyRecording ? tr("Off: with late join on, only the host saves")
-                                                : tr("Writes a .krec on this PC"));
-    if (hostOnlyRecording)
+    m_recordCheck->setEnabled(editable);
+    if (joiningMidGame)
     {
         m_recordCheck->setToolTip(
-            tr("Late join is on, so only the host saves a local replay."));
+            tr("You joined while a game is running, so you won't get a replay of this one."));
     }
     else if (!editable)
     {
@@ -4367,20 +4872,17 @@ void RollbackLobbyDialog::updateRecordingControls()
         m_broadcastCheck->setToolTip(liveReplayEnabled
             ? tr("The room host will stream this match as a live replay.")
             : tr("The room host has live replay streaming turned off."));
-        m_broadcastCheck->setSubText(liveReplayEnabled ? tr("Host's choice · on") : tr("Host's choice · off"));
     }
     else if (!editable)
     {
         m_broadcastCheck->setToolTip(
             tr("The live replay choice is locked while a match is running."));
-        m_broadcastCheck->setSubText(liveReplayEnabled ? tr("On for this match") : tr("Off for this match"));
     }
     else
     {
         m_broadcastCheck->setToolTip(
             tr("Let others in the lobby watch this match live.\n"
                            "A local replay is saved only if Save replay is on."));
-        m_broadcastCheck->setSubText(liveReplayEnabled ? tr("Anyone in the lobby can watch") : tr("Off, nobody can watch"));
     }
 
     if (!m_lateJoinCheck || !m_lateJoinNote)
@@ -4391,41 +4893,73 @@ void RollbackLobbyDialog::updateRecordingControls()
         m_lateJoinCheck->setToolTip(m_roomLateJoinEnabled
             ? tr("The host turned on late join: players can join while a game is running.")
             : tr("The host has late join turned off."));
-        m_lateJoinCheck->setSubText(m_roomLateJoinEnabled ? tr("Host's choice · on") : tr("Host's choice · off"));
     }
     else if (!editable)
     {
         m_lateJoinCheck->setToolTip(
             tr("Late join can't be changed during a match."));
-        m_lateJoinCheck->setSubText(m_roomLateJoinEnabled ? tr("On for this match") : tr("Off for this match"));
     }
     else
     {
         m_lateJoinCheck->setToolTip(
             tr("Let players join while a game is running. You add them with Add to Game.\n"
-               "While it's on, only you save a local replay."));
-        m_lateJoinCheck->setSubText(m_roomLateJoinEnabled ? tr("You can add players mid-game")
-                                                          : tr("Off, nobody joins mid-game"));
+               "Everyone here when the game starts can still save a replay; whoever joins mid-game can't."));
     }
     m_lateJoinNote->setVisible(m_roomLateJoinEnabled);
     if (m_roomLateJoinEnabled)
     {
         m_lateJoinNote->setText(QString("<span style='color:%1; font-weight:600;'>⚠ %2</span> %3")
             .arg(warnTextHex(), tr("Late join is on."),
-                 iAmHost ? tr("Local recording is off for everyone but you.")
-                         : tr("Only the host saves a local replay, so Save replay is off for you.")));
+                 joiningMidGame ? tr("You joined mid-game, so you won't get a replay of this game.")
+                                : tr("Players who join mid-game won't get a replay of it.")));
+    }
+}
+
+void RollbackLobbyDialog::updateJoinLimitControls()
+{
+    if (!m_joinLimitsBox)
+        return;
+    const bool iAmHost = m_client && m_currentRoomId != 0 && m_currentRoomHostId == m_client->selfUserId();
+    m_joinLimitsBox->setVisible(m_roomHasJoinLimits);
+    const bool wasSuppressed = m_suppressSettingsSignal;
+    m_suppressSettingsSignal = true;
+    const int index = m_joinPingCombo->findData(m_roomMaxPing);
+    if (index >= 0)
+    {
+        m_joinPingCombo->setCurrentIndex(index);
+    }
+    else
+    {
+        // A limit this client doesn't offer, set by some other client.
+        m_joinPingCombo->addItem(CreateRoomDialog::pingLimitText(m_roomMaxPing), m_roomMaxPing);
+        m_joinPingCombo->setCurrentIndex(m_joinPingCombo->count() - 1);
+    }
+    m_wiredOnlyCheck->setChecked(m_roomWiredOnly);
+    m_suppressSettingsSignal = wasSuppressed;
+    m_joinPingCombo->setEnabled(iAmHost);
+    m_wiredOnlyCheck->setEnabled(iAmHost);
+    m_joinLimitsHint->setText(iAmHost
+        ? tr("Players already here stay if you change these.")
+        : m_currentRoomHostName.isEmpty() ? tr("Set by the host")
+                                          : tr("Set by the host (%1)").arg(m_currentRoomHostName));
+    if (m_roomSettingsButton)
+    {
+        // A tinted gear says something under it isn't the default.
+        const bool custom = !m_predictionAuto || m_roomMaxPing > 0 || m_roomWiredOnly;
+        m_roomSettingsButton->setIconColorOverride(custom ? LobbyTheme::tokens().accentInk : QColor());
     }
 }
 
 bool RollbackLobbyDialog::confirmLateJoin()
 {
     QMessageBox box(QMessageBox::Warning, tr("Turn on late join?"),
-        tr("Turning on late join turns off local recording for everyone in this room except you."),
+        tr("Players who join while a game is running won't get a replay of it."),
         QMessageBox::Cancel, this);
     box.setInformativeText(
-        tr("Players can then join while a game is running, and you add them with Add to Game. "
-           "Only your replay (.krec) is saved, since you're the one player sure to be in the whole game. "
-           "Live Replay isn't affected."));
+        tr("Players can then join mid-game, and you add them with Add to Game. "
+           "Everyone in the room when a game starts can still save a replay (.krec) of it, "
+           "and Live Replay isn't affected. A replay can't start part way through a game, "
+           "so whoever joins later doesn't get one."));
     QPushButton* turnOn = box.addButton(tr("Turn On Late Join"), QMessageBox::AcceptRole);
     box.setDefaultButton(QMessageBox::Cancel);
     box.exec();
@@ -4461,11 +4995,6 @@ void RollbackLobbyDialog::updateSaveDataControls()
         : !editable ? tr("Save data can't be changed during a match.")
                     : tr("Start the match from a save you pick, for games that need one (unlocks, settings, progress).\n"
                          "The game saves to memory only during the match: nobody's own save files are touched."));
-    m_saveDataCheck->setSubText(!iAmHost ? (m_roomSaveDataEnabled ? tr("Host's choice · on") : tr("Host's choice · off"))
-        : !editable ? (m_roomSaveDataEnabled ? tr("On for this match") : tr("Off for this match"))
-        : !m_roomSaveDataEnabled ? tr("Off, matches start blank")
-        : m_roomSaveDataKinds.isEmpty() ? tr("On, starting from a blank save")
-                                        : tr("Matches start from your save"));
 
     const bool haveMatchSave = m_matchSave.has_value() && (m_matchSaveActive || m_matchSaveChanged || m_keepCopyEnabled);
     const bool showRow = (inRoom && m_roomSaveDataEnabled) || haveMatchSave;
@@ -4722,12 +5251,13 @@ void RollbackLobbyDialog::refreshStartButton()
         seatedPeerIds.append(s.peerId);
     }
 
-    // With nobody on another PC there are no paths to measure. The server only
-    // allows it when whoever joins later can be added to the running match.
+    // With nobody on another PC there are no paths to measure. Players on this
+    // PC are enough for a match; one player alone is only allowed when whoever
+    // joins later can be added to the running match.
     const bool alone = seated >= 1 && !otherPcSeated && m_canStartAlone;
-    const bool enoughPlayers = otherPcSeated || alone;
-    bool pingsReady = alone;
-    if (m_client && !alone)
+    const bool enoughPlayers = otherPcSeated || seated >= 2 || alone;
+    bool pingsReady = !otherPcSeated;
+    if (m_client && otherPcSeated)
         m_client->worstRoomPingMs(seatedPeerIds, &pingsReady);
     // Every player's client must take the save, or the match can't start.
     QStringList needSaveData;
@@ -4774,9 +5304,7 @@ void RollbackLobbyDialog::refreshStartButton()
         else
             m_whySpinner->setColors(fill, ink);
         m_whyTitle->setText(title);
-        m_whyTitle->setToolTip(title);
-        m_whyDetail->setText(detail);
-        m_whyDetail->setToolTip(detail);
+        m_whyTitle->setToolTip(detail.isEmpty() ? title : title + QStringLiteral("\n") + detail);
     };
 
     if (inGame)
@@ -6053,6 +6581,9 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
         if (s.peerId == userId && s.userId != userId)
             refreshRow(s.userId);
     }
+    // A ping filter may now show or hide them.
+    if (m_playerMaxPing > 0)
+        refreshPlayerGroups();
 
     // Rooms hosted by this user show your ping in the rooms column.
     for (const auto& room : m_client->rooms())
@@ -6196,7 +6727,7 @@ void RollbackLobbyDialog::updateRollbackSettingControls()
     m_delayLiveTag->setVisible(liveMatch);
     m_predictionLiveTag->setVisible(liveMatch && m_serverAcceptsInGameSettings && iAmHost);
 
-    m_delayStepper->setToolTip(delayEditable
+    m_delayStepper->setProperty("baseTip", delayEditable
         ? m_delayStepper->property("originalTip").toString()
         : tipDisabledMidMatch);
     m_predictionStepper->setToolTip(!predictionOpen
@@ -6206,10 +6737,11 @@ void RollbackLobbyDialog::updateRollbackSettingControls()
     refreshSettingHints();
 }
 
-// The line under each stepper says where its value came from.
+// Says where each value came from: the delay's in its tooltip, prediction's in
+// the line under it in the room settings panel.
 void RollbackLobbyDialog::refreshSettingHints()
 {
-    if (!m_delayHint || !m_predictionHint || !m_client)
+    if (!m_delayStepper || !m_predictionHint || !m_client)
         return;
 
     const quint64 selfId = m_client->selfUserId();
@@ -6222,7 +6754,9 @@ void RollbackLobbyDialog::refreshSettingHints()
     }
     else if (m_playingAlone)
     {
-        delayHint = tr("Auto stays at 0 while you're alone, then reads real pings when someone's added.");
+        delayHint = m_client->matchSeats() > 0
+            ? tr("Auto stays at 0 while you're alone, then reads real pings when someone's added.")
+            : tr("Auto stays at 0: everyone in this match plays on this PC.");
     }
     else
     {
@@ -6243,7 +6777,8 @@ void RollbackLobbyDialog::refreshSettingHints()
             ? tr("From your worst ping, %1 ms to %2. Only affects you.").arg(worst).arg(worstName)
             : tr("Auto reads your ping once someone joins. Only affects you.");
     }
-    m_delayHint->setText(delayHint);
+    // Where the delay came from goes under the explanation, in its tooltip.
+    m_delayStepper->setToolTip(m_delayStepper->property("baseTip").toString() + QStringLiteral("\n\n") + delayHint);
 
     const bool iAmHost = m_currentRoomId != 0 && m_currentRoomHostId == selfId;
     m_predictionLock->setVisible(!iAmHost);
@@ -6254,6 +6789,7 @@ void RollbackLobbyDialog::refreshSettingHints()
         m_predictionHint->setText(m_currentRoomHostName.isEmpty()
             ? tr("Set by the host")
             : tr("Set by the host (%1)").arg(m_currentRoomHostName));
+    updateJoinLimitControls();
 }
 
 // The match is over for this client. Stop steering the engine so the next
@@ -7847,9 +8383,10 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         }
         appendChatSystemLine(CHANNEL_ROOM, delayMsg);
     }
-    if (m_playingAlone)
-        appendChatSystemLine(CHANNEL_ROOM,
-            tr("You're playing alone for now. When someone joins the room, click Add to Game on their seat."));
+    if (m_playingAlone && m_client->matchSeats() > 0)
+        appendChatSystemLine(CHANNEL_ROOM, peers.size() > 1
+            ? tr("Only this PC is playing for now. When someone joins the room, click Add to Game on their seat.")
+            : tr("You're playing alone for now. When someone joins the room, click Add to Game on their seat."));
     warnAboutLocalControllers();
 
     m_currentMatchId = matchId;
@@ -7918,15 +8455,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     {
         n02_kaillera_recording_enabled = m_recordCheck->isChecked();
     }
-    // A match open to late joiners is recorded by the host alone, including
-    // one an older server opened without asking the host.
-    if (m_client->matchSeats() > 0 && m_currentRoomHostId != selfId)
-    {
-        if (m_recordLocallyChoice)
-            appendChatSystemLine(CHANNEL_ROOM,
-                tr("Late join is on, so this game isn't saved to your PC. The host's replay covers it."));
-        n02_kaillera_recording_enabled = false;
-    }
+    // Everyone who starts the match can record it, late join or not. A late
+    // joiner never gets here: MainWindow opens no replay for them.
 
     // Capture seated player names (slot-indexed) for the .krec header, the same
     // way the p2p / kaillera paths fill recording_player_names before a recording
@@ -7961,8 +8491,9 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         remotePeers << QString("%1,ice,%2").arg(p.slot).arg(p.peerId);
     }
 
-    // Nobody else is fine only in a match someone can join later.
-    if (remotePeers.isEmpty() && m_client->matchSeats() == 0)
+    // Nobody on another PC is fine with other players on this one, or in a
+    // match someone can join later.
+    if (remotePeers.isEmpty() && localSeats.isEmpty() && m_client->matchSeats() == 0)
     {
         abortMatchStart(tr("Match start failed: missing remote peer."));
         return;

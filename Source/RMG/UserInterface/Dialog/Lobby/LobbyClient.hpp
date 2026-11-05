@@ -75,6 +75,7 @@ public:
         quint64 watchingMatchId = 0; // live replay the user watches while state == spectating
         bool verified = false;   // logged into a registered account
         bool social = false;     // can receive private messages and challenges
+        bool noChallenges = false; // their PC turned challenges off
     };
 
     // Optional account authentication sent with HELLO. An empty mode
@@ -151,6 +152,10 @@ public:
         bool    ranked = false;
         QString ladder;               // ladder id while ranked
         bool privateRoom = false;     // made for a challenge; nobody else can join
+        // Who the room takes: the highest ping to the host (0 for any), and
+        // whether a PC on Wi-Fi is turned away.
+        int maxPing = 0;
+        bool wiredOnly = false;
     };
 
     struct LobbyMatchPeer
@@ -230,6 +235,9 @@ public:
     ConnectionState state() const { return m_state; }
     quint64 selfUserId() const { return m_selfUserId; }
     QString selfRegion() const { return m_region; }
+    // How this PC reaches the lobby, as HELLO reported it: "lan", "wifi", or
+    // empty when it couldn't tell.
+    QString selfConnection() const { return m_connection; }
     const QHash<quint64, LobbyUser>& users() const { return m_users; }
     const QHash<quint64, LobbyRoomSummary>& rooms() const { return m_rooms; }
 
@@ -305,13 +313,20 @@ public:
     void respondToChallenge(quint64 challengeId, bool accept);
     // Which of this client's games a player also has; answered by sharedGamesReceived.
     void requestSharedGames(quint64 toUserId);
+    // This PC takes no challenges. Kept across reconnects and sent in HELLO.
+    void setChallengesOff(bool off);
+    bool challengesOff() const { return m_challengesOff; }
+    // The server refuses challenges for us, and tells everyone, when they're off.
+    bool challengeSettingsSupported() const { return m_challengeSettingsSupported; }
 
     // Rooms
     void createRoom(const QString& name, const QString& romName, const QString& romMd5,
                     const QString& romRegion, int maxPlayers, int delay, int prediction,
-                    int pacing, const QString& password = QString(),
+                    int pacing, const QString& password = QString(), int maxPing = 0, bool wiredOnly = false,
                     const QJsonObject& ranked = QJsonObject());
-    void joinRoom(quint64 roomId, const QString& password = QString());
+    // pingMs is this client's ping to the host (measured, or estimated), for a
+    // room with a maximum ping; 0 when unknown.
+    void joinRoom(quint64 roomId, const QString& password = QString(), int pingMs = 0);
     void leaveRoom();
     void startRoom();
     void updateRoomLiveReplay(bool enabled);
@@ -319,6 +334,8 @@ public:
     void updateRoomRanked(const QJsonObject& ranked);
     // Host-only, waiting room: whether the next match can take players mid-game.
     void updateRoomLateJoin(bool enabled);
+    // Host-only: who may join from now on. Players already seated stay.
+    void updateRoomJoinLimits(int maxPing, bool wiredOnly);
     // Host-only, waiting room: the save the next match starts from, as shown
     // to the room. The bytes themselves go to the players in the pre-match
     // manifest (setPrematchSaveData), never through the server.
@@ -748,6 +765,9 @@ private:
 
     bool m_socialSupported = false;
     bool m_spectatorChatSupported = false;
+    bool m_challengeSettingsSupported = false;
+    bool m_challengesOff = false;
+    QString m_connection; // what HELLO reported: "lan", "wifi" or empty
     bool m_localPlayersSupported = false;
     QList<LocalPlayer> m_localPlayers;
     QHash<QString, int> m_pendingLocalControllers; // asked for, by name, until the server answers

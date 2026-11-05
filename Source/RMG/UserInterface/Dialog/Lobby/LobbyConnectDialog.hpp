@@ -72,6 +72,9 @@ public:
     // log in (mode "discord_link") or create an account ("discord_register")
     // with the server's ticket to link it.
     void setDiscordLink(const QString& ticket, const QString& discordName);
+    // Asking a guest for a new name while connected: Cancel keeps the old one.
+    // Logging in or creating an account from here works too.
+    void setRenameMode();
 
     // Production lobby endpoint every client connects to. Exposed so callers
     // that bypass this dialog (e.g. the netplay launcher's rollback tab) can
@@ -119,6 +122,8 @@ private:
     QString inputProblem(QWidget** field) const;
 
     Mode         m_mode = Mode::Login;
+    bool         m_renaming = false; // setRenameMode(): the guest button changes the name
+    QLabel*      m_heading        = nullptr;
     QWidget*     m_modeBar        = nullptr;
     QPushButton* m_loginTab       = nullptr;
     QPushButton* m_registerTab    = nullptr;

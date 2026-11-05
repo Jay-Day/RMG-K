@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QFontMetrics>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLinearGradient>
@@ -753,7 +754,7 @@ QLabel* UserInterface::Dialog::makeSectionLabel(const QString& text, QWidget* pa
 {
     auto* label = new QLabel(text.toUpper(), parent);
     label->setFont(LobbyTheme::pixelFont(11, 1.0));
-    label->setProperty("role", "ink2");
+    label->setProperty("role", "heading");
     return label;
 }
 
@@ -1637,6 +1638,9 @@ PortCard::PortCard(int slot, QWidget* parent)
     nameRow->addWidget(m_youTag);
     m_flag = new CountryFlag(m_playerPage);
     nameRow->addWidget(m_flag);
+    // How they're connected, named in its tooltip: no line of its own.
+    m_connectionIcon = new ConnectionGlyph(m_playerPage);
+    nameRow->addWidget(m_connectionIcon);
     nameRow->addStretch(1);
     playerLay->addLayout(nameRow);
 
@@ -1647,18 +1651,6 @@ PortCard::PortCard(int slot, QWidget* parent)
     m_standing->setAlignment(Qt::AlignCenter);
     m_standing->setVisible(false);
     playerLay->addWidget(m_standing);
-
-    auto* connectionRow = new QHBoxLayout;
-    connectionRow->setSpacing(4);
-    connectionRow->addStretch(1);
-    m_connectionIcon = new ConnectionGlyph(m_playerPage);
-    connectionRow->addWidget(m_connectionIcon);
-    m_connectionName = new QLabel(m_playerPage);
-    m_connectionName->setFont(LobbyTheme::uiFont(11));
-    m_connectionName->setProperty("role", "muted");
-    connectionRow->addWidget(m_connectionName);
-    connectionRow->addStretch(1);
-    playerLay->addLayout(connectionRow);
 
     // How far a connection has got, while it isn't up yet.
     m_progress = new QWidget(m_playerPage);
@@ -1720,6 +1712,7 @@ void PortCard::showOpen(const QString& hint)
     m_playerPage->setVisible(false);
     m_openPage->setVisible(true);
     m_openHint->setText(hint);
+    m_openHint->setVisible(!hint.isEmpty());
     m_hostBadge->setVisible(false);
     m_dragHandle->setVisible(false);
     m_kick->setVisible(false);
@@ -1763,11 +1756,9 @@ void PortCard::setCountry(const QString& country, const QString& tooltip)
 
 void PortCard::setConnection(const QString& connection)
 {
-    const QString name = ConnectionGlyph::displayName(connection);
     m_connectionIcon->setConnection(connection);
+    m_connectionIcon->setToolTip(ConnectionGlyph::displayName(connection));
     m_connectionIcon->setVisible(!connection.isEmpty());
-    m_connectionName->setText(name);
-    m_connectionName->setVisible(!name.isEmpty());
 }
 
 void PortCard::setDelay(int frames)
@@ -1856,15 +1847,43 @@ void PortCard::setHostTools(bool dragHandle, bool kick)
     m_kick->setVisible(kick);
 }
 
+void PortCard::setLifted(bool lifted)
+{
+    if (!lifted)
+    {
+        setGraphicsEffect(nullptr);
+        return;
+    }
+    auto* fade = new QGraphicsOpacityEffect(this);
+    fade->setOpacity(0.3);
+    setGraphicsEffect(fade);
+}
+
+void PortCard::setDropTarget(bool target)
+{
+    if (m_dropTarget == target)
+        return;
+    m_dropTarget = target;
+    update();
+}
+
 void PortCard::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     const Tokens& t = LobbyTheme::tokens();
     const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    const QRectF ring = QRectF(rect()).adjusted(1, 1, -1, -1);
 
     if (m_open)
     {
+        if (m_dropTarget)
+        {
+            painter.setPen(QPen(t.ink, 2.0));
+            painter.setBrush(t.tint);
+            painter.drawRoundedRect(ring, 12, 12);
+            return;
+        }
         painter.setPen(QPen(t.line2, 1.5, Qt::DashLine));
         painter.setBrush(Qt::NoBrush);
         painter.drawRoundedRect(box, 12, 12);
@@ -1893,6 +1912,11 @@ void PortCard::paintEvent(QPaintEvent*)
     painter.setBrush(Qt::NoBrush);
     painter.setPen(QPen(m_self ? port : LobbyTheme::mix(port, t.line, 0.35), 1.0));
     painter.drawPath(path);
+    if (m_dropTarget)
+    {
+        painter.setPen(QPen(t.ink, 2.0));
+        painter.drawRoundedRect(ring, 12, 12);
+    }
 }
 
 #endif // NETPLAY
