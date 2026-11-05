@@ -3785,4 +3785,218 @@ Turn this off to start every match from the save picked here.</source>
             <translation>%1はすでにあります。置き換えますか？</translation>
         </message>
     </context>
-    </TS>
+        <context>
+        <name>KailleraPlaybackDialog</name>
+        <message>
+            <source>Playback</source>
+            <translation>再生</translation>
+        </message>
+        <message>
+            <source>Date</source>
+            <translation>日付</translation>
+        </message>
+        <message>
+            <source>Players</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>Game</source>
+            <translation>ゲーム</translation>
+        </message>
+        <message>
+            <source>Duration</source>
+            <translation>長さ</translation>
+        </message>
+        <message>
+            <source>Size</source>
+            <translation>サイズ</translation>
+        </message>
+        <message>
+            <source>Filename</source>
+            <translation>ファイル名</translation>
+        </message>
+        <message>
+            <source>Click or drag to jump</source>
+            <translation>クリックまたはドラッグで移動</translation>
+        </message>
+        <message>
+            <source>Jump to %1</source>
+            <translation>%1 へ移動</translation>
+        </message>
+        <message>
+            <source>Play</source>
+            <translation>再生</translation>
+        </message>
+        <message>
+            <source>Pause</source>
+            <translation>一時停止</translation>
+        </message>
+        <message>
+            <source>« 10s</source>
+            <translation>« 10秒</translation>
+        </message>
+        <message>
+            <source>10s »</source>
+            <translation>10秒 »</translation>
+        </message>
+        <message>
+            <source>Step</source>
+            <translation>コマ送り</translation>
+        </message>
+        <message>
+            <source>Stop</source>
+            <translation>停止</translation>
+        </message>
+        <message>
+            <source>Add Bookmark</source>
+            <translation>ブックマークを追加</translation>
+        </message>
+        <message>
+            <source>Delete</source>
+            <translation>削除</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>更新</translation>
+        </message>
+        <message>
+            <source>Export MP4</source>
+            <translation>MP4 書き出し</translation>
+        </message>
+        <message>
+            <source>Open Folder</source>
+            <translation>フォルダーを開く</translation>
+        </message>
+        <message>
+            <source>Jump back 10 seconds</source>
+            <translation>10秒戻る</translation>
+        </message>
+        <message>
+            <source>Jump forward 10 seconds</source>
+            <translation>10秒進む</translation>
+        </message>
+        <message>
+            <source>Pause, then advance one frame</source>
+            <translation>一時停止して1フレーム進める</translation>
+        </message>
+        <message>
+            <source>Bookmark this moment of the recording</source>
+            <translation>録画のこの場面をブックマークする</translation>
+        </message>
+        <message>
+            <source>Speed</source>
+            <translation>速度</translation>
+        </message>
+        <message>
+            <source>Playback speed</source>
+            <translation>再生速度</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>閉じる</translation>
+        </message>
+        <message>
+            <source>%1 / %2  (frame %3 / %4)</source>
+            <translation>%1 / %2  (フレーム %3 / %4)</translation>
+        </message>
+        <message>
+            <source>  —  jumping (%1%)</source>
+            <translation>  —  移動中 (%1%)</translation>
+        </message>
+        <message>
+            <source>Jumping back to %1...</source>
+            <translation>%1 に戻っています...</translation>
+        </message>
+        <message>
+            <source>Failed to load recording: %1</source>
+            <translation>録画を読み込めませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Show chat</source>
+            <translation>チャットを表示</translation>
+        </message>
+        <message>
+            <source>Show the recording&apos;s chat messages the way they appeared on screen</source>
+            <translation>録画のチャットを、画面に表示されたとおりに表示します</translation>
+        </message>
+        <message>
+            <source>Bookmarks</source>
+            <translation>ブックマーク</translation>
+        </message>
+        <message>
+            <source>This recording&apos;s extra data comes from a newer version of RMG-K, so its bookmarks can&apos;t be changed here.</source>
+            <translation>この録画の追加データは新しいバージョンの RMG-K で作成されたため、ここではブックマークを変更できません。</translation>
+        </message>
+        <message>
+            <source>The bookmarks couldn&apos;t be saved: %1</source>
+            <translation>ブックマークを保存できませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Bookmark %1</source>
+            <translation>ブックマーク %1</translation>
+        </message>
+        <message>
+            <source>Name the bookmark at %1:</source>
+            <translation>%1 のブックマーク名:</translation>
+        </message>
+        <message>
+            <source>Add</source>
+            <translation>追加</translation>
+        </message>
+        <message>
+            <source>Rename Bookmark</source>
+            <translation>ブックマーク名を変更</translation>
+        </message>
+        <message>
+            <source>The recording&apos;s bookmarks changed; they&apos;re shown again.</source>
+            <translation>録画のブックマークが変更されたため、表示し直しました。</translation>
+        </message>
+        <message>
+            <source>Delete Bookmark</source>
+            <translation>ブックマークを削除</translation>
+        </message>
+        <message>
+            <source>Delete the bookmark &quot;%1&quot; at %2?</source>
+            <translation>%2 のブックマーク「%1」を削除しますか？</translation>
+        </message>
+        <message>
+            <source>Game %1</source>
+            <translation>第%1ゲーム</translation>
+        </message>
+        <message>
+            <source>Bookmark</source>
+            <translation>ブックマーク</translation>
+        </message>
+        <message>
+            <source>Jump to:</source>
+            <translation>ジャンプ:</translation>
+        </message>
+        <message>
+            <source>Start</source>
+            <translation>最初</translation>
+        </message>
+        <message>
+            <source>Watch from the beginning</source>
+            <translation>最初から見る</translation>
+        </message>
+        <message>
+            <source>Watch from %1 (%2). Right-click to rename or delete it.</source>
+            <translation>%1 から見る (%2)。右クリックで名前の変更や削除ができます。</translation>
+        </message>
+        <message>
+            <source>Watch from %1 (%2)</source>
+            <translation>%1 から見る (%2)</translation>
+        </message>
+        <message>
+            <source>Rename...</source>
+            <translation>名前を変更...</translation>
+        </message>
+    </context>
+    <context>
+        <name>PlaybackTimeline</name>
+        <message>
+            <source>Timeline</source>
+            <translation>タイムライン</translation>
+        </message>
+    </context>
+</TS>

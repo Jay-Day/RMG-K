@@ -574,6 +574,9 @@ enum class SettingsID
     // raphnetraw Input Plugin Settings
     RaphnetRaw_Player1AdapterPort,
 
+    // Appended so the IDs above stay the same
+    Kaillera_ExportShowChat,
+
     Invalid
 };
 

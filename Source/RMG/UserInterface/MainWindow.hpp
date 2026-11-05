@@ -100,6 +100,19 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_HideCursorInEmulation = false;
     bool ui_HideCursorInFullscreenEmulation = false;
 #ifdef _WIN32
+    // Render widgets of ended emulations, destroyed once the thread that
+    // rendered into them has exited: destroying the window while that thread
+    // exits can deadlock OpenGL drivers (NVIDIA's DXGI-layered present).
+    struct RetiredRenderWidget
+    {
+        QPointer<QWidget> widget;
+        void* thread = nullptr; // HANDLE, signaled when the thread exits
+    };
+    QList<RetiredRenderWidget> ui_RetiredRenderWidgets;
+    QTimer* ui_RetiredRenderWidgetTimer = nullptr;
+    void retireRenderWidget(QWidget* widget);
+    void destroyRetiredRenderWidgets(void);
+
     bool ui_ExclusiveFullscreen = false;
     bool ui_DisplayModeChanged  = false;
     std::wstring ui_DisplayModeDevice;
