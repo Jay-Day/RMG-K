@@ -5268,7 +5268,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     }
 
     // A late joiner's replay would start mid-game with nothing to restore
-    // from, so it records nothing; the host's replay covers the whole match.
+    // from, so it records nothing; the players who started the match have all of it.
     if (!lateJoiner)
     {
         // A match that starts from save data keeps it in the replay file.
