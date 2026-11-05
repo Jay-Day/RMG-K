@@ -46,6 +46,7 @@ set(RMG_CORE_SOURCES
     RankedJournal.cpp
     Version.cpp
     Cheats.cpp
+    NetplaySave.cpp
     String.cpp
     Volume.cpp
     VidExt.cpp

@@ -2831,7 +2831,7 @@ bool UnifiedInputDialog::openRaphnetPreview(void)
     for (int i = 0; i < this->controllerPages.size(); ++i) this->updatePageDeviceChoices(i);
     if (!this->setRaphnetPollingSuspended(true))
     {
-        show_status(page->statusLabel, tr("Could not start the raphnet input test. Close other apps using the adapter; RMG-K will retry automatically."));
+        show_status(page->statusLabel, tr("Could not start the raphnet input test. Close other apps using the adapter; Dale64 will retry automatically."));
         return false;
     }
     this->previewBackend = PreviewBackend::Raphnet;

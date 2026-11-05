@@ -8,23 +8,27 @@
 
 #include "CreateRoomDialog.hpp"
 
+#include "LobbyWidgets.hpp"
+
 #include <algorithm>
 
+#include <QButtonGroup>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QFormLayout>
 #include <QLineEdit>
-#include <QSpinBox>
-#include <QCheckBox>
-#include <QComboBox>
 #include <QPushButton>
 #include <QLabel>
-#include <QDialogButtonBox>
 #include <QSettings>
 #include <QFileInfo>
 #include <QIcon>
 
 using namespace UserInterface::Dialog;
+
+namespace
+{
+    // The highest pings a ranked room can ask for (ms); 0 takes anyone.
+    constexpr int kRankedPings[] = { 0, 60, 90, 120, 160 };
+}
 
 CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername, const QString& defaultRoomName,
                                    const QString& gameName, const QString& gameMd5,
@@ -35,132 +39,313 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername, const QString
     setWindowTitle(tr("Create Room"));
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setModal(true);
+    setFixedWidth(450);
     // The game comes from the lobby's shared picker, not a picker of our own.
     m_romName = gameName;
     m_romMd5  = gameMd5;
     buildUi(defaultUsername, defaultRoomName);
     if (m_gameLabel)
         m_gameLabel->setText(gameName.isEmpty() ? QStringLiteral("—") : gameName);
+    if (m_tile)
+        m_tile->setGame(gameName);
     loadDefaults();
     validateInput();
+}
+
+void CreateRoomDialog::setCoverPath(const QString& coverPath)
+{
+    if (m_tile)
+        m_tile->setGame(m_romName, coverPath);
+}
+
+void CreateRoomDialog::setMinimumPlayers(int players)
+{
+    m_minimumPlayers = players;
+    for (auto* button : m_playersGroup->buttons())
+    {
+        const bool fits = m_playersGroup->id(button) >= players;
+        button->setEnabled(fits);
+        button->setToolTip(fits ? QString() : tr("You have %1 players on this PC.").arg(players));
+    }
+    if (m_playersGroup->checkedId() < players)
+    {
+        if (auto* button = m_playersGroup->button(players))
+            button->setChecked(true);
+    }
+    // a ranked seat is one account at one PC
+    m_localPlayers = players > 1;
+    if (m_localPlayers && m_rankedInfo.available)
+    {
+        m_rankedSwitch->setChecked(false);
+        m_rankedSwitch->setEnabled(false);
+        m_rankedSwitch->setSubText(tr("Ranked takes one player per PC. Remove your local players first."));
+    }
 }
 
 void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& defaultRoomName)
 {
     auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
 
-    auto* form = new QFormLayout;
+    // Header: the game this room will play.
+    auto* header = new LobbyBand(this);
+    auto* headerLay = new QHBoxLayout(header);
+    headerLay->setContentsMargins(18, 12, 18, 12);
+    headerLay->setSpacing(12);
+    m_tile = new CartridgeTile(CartridgeTile::Size::Small, header);
+    headerLay->addWidget(m_tile);
+    auto* titles = new QVBoxLayout;
+    titles->setSpacing(1);
+    auto* title = new QLabel(tr("Create Room").toUpper(), header);
+    title->setFont(LobbyTheme::pixelFont(15, 0.5));
+    titles->addWidget(title);
+    m_gameLabel = new QLabel(header);
+    m_gameLabel->setFont(LobbyTheme::uiFont(11));
+    m_gameLabel->setProperty("role", "muted");
+    m_gameLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    titles->addWidget(m_gameLabel);
+    headerLay->addLayout(titles, 1);
+    root->addWidget(header);
 
+    auto* rule = new QFrame(this);
+    rule->setObjectName("FieldRule");
+    root->addWidget(rule);
+
+    auto* body = new QVBoxLayout;
+    body->setContentsMargins(18, 14, 18, 14);
+    body->setSpacing(13);
+
+    const auto makeFieldLabel = [this](const QString& text) {
+        auto* label = new QLabel(text.toUpper(), this);
+        QFont font = LobbyTheme::uiFont(10, QFont::DemiBold);
+        font.setLetterSpacing(QFont::AbsoluteSpacing, 0.9);
+        label->setFont(font);
+        label->setProperty("role", "muted");
+        return label;
+    };
+    const auto makeSegment = [this](const QString& text) {
+        auto* button = new QPushButton(text, this);
+        button->setProperty("seg", true);
+        button->setCheckable(true);
+        button->setAutoDefault(false);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
+        return button;
+    };
+    const auto makeSegBar = [this](QHBoxLayout** lay) {
+        auto* bar = new QFrame(this);
+        bar->setObjectName("Seg");
+        *lay = new QHBoxLayout(bar);
+        (*lay)->setContentsMargins(3, 3, 3, 3);
+        (*lay)->setSpacing(3);
+        return bar;
+    };
+
+    auto* nameBox = new QVBoxLayout;
+    nameBox->setSpacing(6);
+    nameBox->addWidget(makeFieldLabel(tr("Room name")));
     m_nameEdit = new QLineEdit(this);
     m_nameEdit->setMaxLength(48);
+    m_nameEdit->setMinimumHeight(38);
     if (!defaultRoomName.isEmpty())
         m_nameEdit->setText(defaultRoomName);
     else if (!defaultUsername.isEmpty())
         m_nameEdit->setText(QString(tr("%1's Room")).arg(defaultUsername));
     else
         m_nameEdit->setPlaceholderText(tr("My Room"));
-    form->addRow(tr("Room name:"), m_nameEdit);
+    nameBox->addWidget(m_nameEdit);
+    body->addLayout(nameBox);
 
-    m_gameLabel = new QLabel(this);
-    m_gameLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    form->addRow(tr("Game:"), m_gameLabel);
+    auto* choices = new QHBoxLayout;
+    choices->setSpacing(14);
 
-    m_maxPlayersSpin = new QSpinBox(this);
-    m_maxPlayersSpin->setRange(2, 4);
-    m_maxPlayersSpin->setValue(2);
-    m_maxPlayersSpin->setSuffix(tr(" players"));
-    form->addRow(tr("Max players:"), m_maxPlayersSpin);
+    auto* playersBox = new QVBoxLayout;
+    playersBox->setSpacing(6);
+    playersBox->addWidget(makeFieldLabel(tr("Players")));
+    QHBoxLayout* playersLay = nullptr;
+    auto* playersSeg = makeSegBar(&playersLay);
+    m_playersGroup = new QButtonGroup(this);
+    for (int seats = 2; seats <= 4; ++seats)
+    {
+        auto* button = makeSegment(QString::number(seats));
+        button->setObjectName(QString("PlayersSeg%1").arg(seats));
+        m_playersGroup->addButton(button, seats);
+        playersLay->addWidget(button);
+    }
+    m_playersGroup->button(2)->setChecked(true);
+    playersBox->addWidget(playersSeg);
+    choices->addLayout(playersBox);
 
-    root->addLayout(form);
-
-    // Rollback settings are not surfaced here. Each player configures local
-    // delay and prediction in the room.
-
-    // Optional password (collapsed by default)
-    auto* pwRow = new QHBoxLayout;
-    m_passwordCheck = new QCheckBox(tr("Password-protect this room"), this);
-    pwRow->addWidget(m_passwordCheck);
-    pwRow->addStretch();
-    root->addLayout(pwRow);
+    auto* joinBox = new QVBoxLayout;
+    joinBox->setSpacing(6);
+    joinBox->addWidget(makeFieldLabel(tr("Who can join")));
+    QHBoxLayout* joinLay = nullptr;
+    auto* joinSeg = makeSegBar(&joinLay);
+    m_anyoneButton = makeSegment(tr("Anyone"));
+    m_anyoneButton->setChecked(true);
+    m_anyoneButton->setIcon(QIcon(LobbyTheme::icon(QStringLiteral("global-line"), LobbyTheme::tokens().ink2, 14, devicePixelRatioF())));
+    m_passwordButton = makeSegment(tr("Password"));
+    m_passwordButton->setObjectName("PasswordSeg");
+    m_passwordButton->setIcon(QIcon(LobbyTheme::icon(QStringLiteral("lock-line"), LobbyTheme::tokens().ink2, 14, devicePixelRatioF())));
+    auto* joinGroup = new QButtonGroup(this);
+    joinGroup->addButton(m_anyoneButton);
+    joinGroup->addButton(m_passwordButton);
+    joinLay->addWidget(m_anyoneButton, 1);
+    joinLay->addWidget(m_passwordButton, 1);
+    joinBox->addWidget(joinSeg);
+    choices->addLayout(joinBox, 1);
+    body->addLayout(choices);
 
     m_passwordEdit = new QLineEdit(this);
     m_passwordEdit->setPlaceholderText(tr("Room password"));
     m_passwordEdit->setEnabled(false);
     m_passwordEdit->setVisible(false);
-    root->addWidget(m_passwordEdit);
+    body->addWidget(m_passwordEdit);
 
-    // Ranked: 1v1 sets on the game's ladder. Hidden when the server doesn't
-    // run ranked at all; disabled with the reason when this game/account
-    // can't play it.
+    m_liveReplaySwitch = new ToggleSwitch(tr("Live replay for spectators"), this);
+    m_liveReplaySwitch->setObjectName("LiveReplaySwitch");
+    m_liveReplaySwitch->setSubText(tr("Shows in Live now for anyone to watch, with spectator chat"));
+    body->addWidget(m_liveReplaySwitch);
+
+    // Ranked: sets on the game's ladder. Hidden when the server doesn't run
+    // ranked at all; disabled with the reason when this game or account can't
+    // play it.
     const bool teams = std::any_of(m_rankedInfo.formats.begin(), m_rankedInfo.formats.end(),
         [](const CreateRoomRankedOptions::Format& f) { return f.teamSize > 1; });
-    m_rankedCheck = new QCheckBox(teams ? tr("Ranked set (1v1 or 2v2, counts toward ratings)")
-                                        : tr("Ranked set (1v1, counts toward ratings)"), this);
-    root->addWidget(m_rankedCheck);
+    m_rankedSwitch = new ToggleSwitch(tr("Ranked set"), this);
+    m_rankedSwitch->setObjectName("RankedSwitch");
+    if (m_rankedInfo.available)
+    {
+        m_rankedSwitch->setSubText(teams ? tr("1v1 or 2v2, counts toward ratings")
+                                         : tr("1v1, counts toward ratings"));
+        if (!m_rankedInfo.formats.isEmpty())
+            m_rankedSwitch->setToolTip(tr("Plays on the %1 ladder.").arg(m_rankedInfo.formats.first().ladderName));
+    }
+    else
+    {
+        m_rankedSwitch->setSubText(m_rankedInfo.unavailableReason);
+    }
+    m_rankedSwitch->setVisible(m_rankedInfo.available || !m_rankedInfo.unavailableReason.isEmpty());
+    m_rankedSwitch->setEnabled(m_rankedInfo.available);
+    body->addWidget(m_rankedSwitch);
+
     m_rankedOptions = new QWidget(this);
-    auto* rankedForm = new QFormLayout(m_rankedOptions);
-    rankedForm->setContentsMargins(20, 0, 0, 0);
-    m_formatCombo = new QComboBox(m_rankedOptions);
+    auto* rankedLay = new QVBoxLayout(m_rankedOptions);
+    rankedLay->setContentsMargins(0, 0, 0, 0);
+    rankedLay->setSpacing(13);
+
+    m_formatBox = new QWidget(m_rankedOptions);
+    auto* formatBoxLay = new QVBoxLayout(m_formatBox);
+    formatBoxLay->setContentsMargins(0, 0, 0, 0);
+    formatBoxLay->setSpacing(6);
+    formatBoxLay->addWidget(makeFieldLabel(tr("Format")));
+    QHBoxLayout* formatLay = nullptr;
+    auto* formatSeg = makeSegBar(&formatLay);
+    m_formatGroup = new QButtonGroup(this);
     for (int i = 0; i < m_rankedInfo.formats.size(); i++)
     {
         const auto& format = m_rankedInfo.formats[i];
-        m_formatCombo->addItem(format.teamSize > 1
-            ? tr("%1v%1 team battle (4 players, team attack on)").arg(format.teamSize) : QString("1v1"), i);
+        auto* button = makeSegment(format.teamSize > 1 ? tr("%1v%1 teams").arg(format.teamSize) : QStringLiteral("1v1"));
+        button->setObjectName(QString("FormatSeg%1").arg(i));
+        button->setToolTip(format.teamSize > 1
+            ? tr("%1v%1 team battle (4 players, team attack on)").arg(format.teamSize)
+            : tr("Each format has its own rankings. 2v2: pick teams on character select, any ports."));
+        m_formatGroup->addButton(button, i);
+        formatLay->addWidget(button, 1);
     }
-    m_formatCombo->setToolTip(tr("Each format has its own rankings. 2v2: pick teams on character select, any ports."));
-    rankedForm->addRow(tr("Format:"), m_formatCombo);
-    rankedForm->setRowVisible(m_formatCombo, m_rankedInfo.formats.size() > 1);
-    m_bestOfLabel = new QLabel(m_rankedOptions);
-    rankedForm->addRow(tr("Set length:"), m_bestOfLabel);
-    m_rulesetCombo = new QComboBox(m_rankedOptions);
-    m_rulesetCombo->setToolTip(tr("Which characters are legal. Games with other characters don't count."));
-    rankedForm->addRow(tr("Roster:"), m_rulesetCombo);
-    connect(m_formatCombo, &QComboBox::currentIndexChanged, this, &CreateRoomDialog::onFormatChanged);
-    onFormatChanged();
-    m_pingCombo = new QComboBox(m_rankedOptions);
-    m_pingCombo->addItem(tr("Any"), 0);
-    m_pingCombo->addItem("60 ms", 60);
-    m_pingCombo->addItem("90 ms", 90);
-    m_pingCombo->addItem("120 ms", 120);
-    m_pingCombo->addItem("160 ms", 160);
-    m_pingCombo->setCurrentIndex(m_pingCombo->findData(120));
-    m_pingCombo->setToolTip(tr("The highest ping you'll play a ranked set at. Players are matched by their regions' "
-                               "usual ping first; if the measured ping is higher, the set doesn't start."));
-    rankedForm->addRow(tr("Max ping:"), m_pingCombo);
-    root->addWidget(m_rankedOptions);
-    m_rankedOptions->setVisible(false);
+    if (auto* first = m_formatGroup->button(0))
+        first->setChecked(true);
+    formatBoxLay->addWidget(formatSeg);
+    m_formatBox->setVisible(m_rankedInfo.formats.size() > 1);
+    rankedLay->addWidget(m_formatBox);
 
-    const bool rankedKnown = m_rankedInfo.available || !m_rankedInfo.unavailableReason.isEmpty();
-    m_rankedCheck->setVisible(rankedKnown);
-    m_rankedCheck->setEnabled(m_rankedInfo.available);
-    if (m_rankedInfo.available && !m_rankedInfo.formats.isEmpty())
-        m_rankedCheck->setToolTip(tr("Plays on the %1 ladder.").arg(m_rankedInfo.formats.first().ladderName));
-    else if (!m_rankedInfo.unavailableReason.isEmpty())
+    auto* rosterRow = new QHBoxLayout;
+    rosterRow->setSpacing(14);
+    auto* rosterBox = new QVBoxLayout;
+    rosterBox->setSpacing(6);
+    rosterBox->addWidget(makeFieldLabel(tr("Roster")));
+    auto* rosterSeg = makeSegBar(&m_rulesetLay);
+    rosterSeg->setToolTip(tr("Which characters are legal. Games with other characters don't count."));
+    m_rulesetGroup = new QButtonGroup(this);
+    rosterBox->addWidget(rosterSeg);
+    rosterRow->addLayout(rosterBox, 1);
+    auto* setBox = new QVBoxLayout;
+    setBox->setSpacing(6);
+    setBox->addWidget(makeFieldLabel(tr("Set length")));
+    m_bestOfLabel = new QLabel(this);
+    m_bestOfLabel->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
+    m_bestOfLabel->setProperty("role", "ink2");
+    m_bestOfLabel->setMinimumHeight(36);
+    setBox->addWidget(m_bestOfLabel);
+    rosterRow->addLayout(setBox);
+    rankedLay->addLayout(rosterRow);
+
+    auto* pingBox = new QVBoxLayout;
+    pingBox->setSpacing(6);
+    pingBox->addWidget(makeFieldLabel(tr("Max ping")));
+    QHBoxLayout* pingLay = nullptr;
+    auto* pingSeg = makeSegBar(&pingLay);
+    pingSeg->setToolTip(tr("The highest ping you'll play a ranked set at. Players are matched by their regions' "
+                           "usual ping first; if the measured ping is higher, the set doesn't start."));
+    m_pingGroup = new QButtonGroup(this);
+    for (const int ping : kRankedPings)
     {
-        m_rankedCheck->setText(tr("Ranked set — %1").arg(m_rankedInfo.unavailableReason));
-        m_rankedCheck->setToolTip(m_rankedInfo.unavailableReason);
+        auto* button = makeSegment(ping == 0 ? tr("Any") : QString("%1 ms").arg(ping));
+        button->setObjectName(QString("PingSeg%1").arg(ping));
+        m_pingGroup->addButton(button, ping);
+        pingLay->addWidget(button, 1);
     }
-    connect(m_rankedCheck, &QCheckBox::toggled, this, &CreateRoomDialog::onRankedToggled);
+    m_pingGroup->button(120)->setChecked(true);
+    pingBox->addWidget(pingSeg);
+    rankedLay->addLayout(pingBox);
+    m_rankedOptions->setVisible(false);
+    body->addWidget(m_rankedOptions);
+
+    connect(m_formatGroup, &QButtonGroup::idClicked, this, &CreateRoomDialog::onFormatChanged);
+    onFormatChanged();
+    connect(m_rankedSwitch, &QCheckBox::toggled, this, &CreateRoomDialog::onRankedToggled);
+
+    m_seatsHint = new QLabel(tr("You can start alone and add people as they join."), this);
+    m_seatsHint->setFont(LobbyTheme::uiFont(11));
+    m_seatsHint->setProperty("role", "muted");
+    m_seatsHint->setWordWrap(true);
+    body->addWidget(m_seatsHint);
 
     m_statusLabel = new QLabel(this);
-    m_statusLabel->setStyleSheet("color: gray;");
+    m_statusLabel->setFont(LobbyTheme::uiFont(11));
+    m_statusLabel->setProperty("role", "bad");
     m_statusLabel->setWordWrap(true);
-    root->addWidget(m_statusLabel);
+    body->addWidget(m_statusLabel);
+    root->addLayout(body);
 
-    auto* btns = new QDialogButtonBox(this);
-    m_createButton = btns->addButton(tr("Create"), QDialogButtonBox::AcceptRole);
-    m_cancelButton = btns->addButton(QDialogButtonBox::Cancel);
+    auto* footRule = new QFrame(this);
+    footRule->setObjectName("FieldRule");
+    root->addWidget(footRule);
+
+    auto* footer = new QHBoxLayout;
+    footer->setContentsMargins(18, 11, 18, 15);
+    footer->setSpacing(10);
+    footer->addStretch(1);
+    m_cancelButton = new LobbyButton(tr("Cancel"), LobbyButton::Kind::Ghost, this);
+    m_createButton = new LobbyButton(tr("Create"), LobbyButton::Kind::Primary, this);
+    m_createButton->setObjectName("CreateButton");
+    m_createButton->setIconName(QStringLiteral("add-line"));
+    m_createButton->setPixelLabel(true);
+    m_createButton->setButtonSize(LobbyButton::Size::Large);
+    m_cancelButton->setButtonSize(LobbyButton::Size::Large);
     m_createButton->setDefault(true); // explicitly: Enter = Create when focus is on Create
-    m_cancelButton->setAutoDefault(false);
-    m_cancelButton->setDefault(false);
+    footer->addWidget(m_cancelButton);
+    footer->addWidget(m_createButton);
+    root->addLayout(footer);
+
     connect(m_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_createButton, &QPushButton::clicked, this, &CreateRoomDialog::onCreateClicked);
-    root->addWidget(btns);
 
     // Validation hooks
-    connect(m_nameEdit,      &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
-    connect(m_passwordCheck, &QCheckBox::toggled,     this, &CreateRoomDialog::onPasswordToggled);
-    connect(m_passwordEdit,  &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
+    connect(m_nameEdit,       &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
+    connect(m_passwordButton, &QPushButton::toggled,   this, &CreateRoomDialog::onPasswordToggled);
+    connect(m_passwordEdit,   &QLineEdit::textChanged, this, &CreateRoomDialog::validateInput);
 }
 
 QString CreateRoomDialog::displayGameName(const QString& goodName, const QString& filePath)
@@ -188,34 +373,73 @@ void CreateRoomDialog::onPasswordToggled(bool enabled)
     validateInput();
 }
 
+int CreateRoomDialog::selectedFormat() const
+{
+    const int index = m_formatGroup ? m_formatGroup->checkedId() : -1;
+    return index >= 0 && index < m_rankedInfo.formats.size() ? index : -1;
+}
+
 void CreateRoomDialog::onFormatChanged()
 {
-    const int index = m_formatCombo ? m_formatCombo->currentData().toInt() : 0;
-    if (index < 0 || index >= m_rankedInfo.formats.size())
+    const int index = selectedFormat();
+    if (index < 0)
         return;
     const auto& format = m_rankedInfo.formats[index];
     m_bestOfLabel->setText(tr("Best of %1").arg(format.bestOf));
     // keep the roster's place (Vanilla stays Vanilla)
-    const int roster = qMax(0, m_rulesetCombo->currentIndex());
-    m_rulesetCombo->clear();
-    for (const auto& ruleset : format.rulesets)
-        m_rulesetCombo->addItem(ruleset.second, ruleset.first);
-    m_rulesetCombo->setCurrentIndex(qMin(roster, m_rulesetCombo->count() - 1));
-    if (m_rankedCheck && m_rankedCheck->isChecked())
-        m_maxPlayersSpin->setValue(2 * format.teamSize);
+    int roster = 0;
+    const QList<QAbstractButton*> old = m_rulesetGroup->buttons();
+    for (int i = 0; i < old.size(); i++)
+    {
+        if (old[i]->isChecked())
+            roster = i;
+        m_rulesetGroup->removeButton(old[i]);
+        old[i]->deleteLater();
+    }
+    for (int i = 0; i < format.rulesets.size(); i++)
+    {
+        auto* button = new QPushButton(format.rulesets[i].second, this);
+        button->setProperty("seg", true);
+        button->setProperty("rulesetId", format.rulesets[i].first);
+        button->setObjectName(QString("RosterSeg%1").arg(i));
+        button->setCheckable(true);
+        button->setAutoDefault(false);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
+        if (format.standings.contains(format.rulesets[i].first))
+            button->setToolTip(format.standings.value(format.rulesets[i].first));
+        m_rulesetGroup->addButton(button, i);
+        m_rulesetLay->addWidget(button, 1);
+    }
+    if (auto* button = m_rulesetGroup->button(qMin(roster, int(format.rulesets.size()) - 1)))
+        button->setChecked(true);
+    updateSeats();
+}
+
+void CreateRoomDialog::updateSeats()
+{
+    const bool ranked = m_rankedSwitch && m_rankedSwitch->isChecked();
+    const int index = selectedFormat();
+    const int teamSize = index >= 0 ? m_rankedInfo.formats[index].teamSize : 1;
+    // A ranked room seats exactly the set's players; the server enforces it too.
+    if (ranked)
+    {
+        if (auto* button = m_playersGroup->button(2 * teamSize))
+            button->setChecked(true);
+    }
+    for (auto* button : m_playersGroup->buttons())
+        button->setEnabled(!ranked && m_playersGroup->id(button) >= m_minimumPlayers);
+    if (m_seatsHint)
+    {
+        m_seatsHint->setText(ranked ? tr("A ranked set starts with all %1 players, and nobody joins it later.").arg(2 * teamSize)
+                                    : tr("You can start alone and add people as they join."));
+    }
 }
 
 void CreateRoomDialog::onRankedToggled(bool enabled)
 {
-    // A ranked room seats exactly the set's players; the server enforces it too.
     m_rankedOptions->setVisible(enabled);
-    if (enabled)
-    {
-        const int index = m_formatCombo->currentData().toInt();
-        const int teamSize = index >= 0 && index < m_rankedInfo.formats.size() ? m_rankedInfo.formats[index].teamSize : 1;
-        m_maxPlayersSpin->setValue(2 * teamSize);
-    }
-    m_maxPlayersSpin->setEnabled(!enabled);
+    updateSeats();
     adjustSize();
     validateInput();
 }
@@ -224,7 +448,7 @@ void CreateRoomDialog::validateInput()
 {
     const QString name = m_nameEdit->text().trimmed();
     const bool   hasRom = !m_romMd5.isEmpty();
-    const bool passwordRequired = m_passwordCheck->isChecked();
+    const bool passwordRequired = m_passwordButton->isChecked();
     const QString pwd  = m_passwordEdit->text();
 
     QString reason;
@@ -245,17 +469,17 @@ void CreateRoomDialog::onCreateClicked()
     m_name = m_nameEdit->text().trimmed();
     // m_romName / m_romMd5 were set from the lobby picker in the constructor.
     m_romRegion  = ""; // baked into the ROM; resolved later via md5 lookup
-    m_maxPlayers = m_maxPlayersSpin->value();
-    m_password   = m_passwordCheck->isChecked() ? m_passwordEdit->text() : QString();
-    m_isRanked   = m_rankedCheck->isEnabled() && m_rankedCheck->isChecked();
-    m_rulesetId  = m_rulesetCombo->currentData().toString();
+    m_maxPlayers = m_playersGroup->checkedId();
+    m_password   = m_passwordButton->isChecked() ? m_passwordEdit->text() : QString();
+    m_isRanked   = m_rankedSwitch->isEnabled() && m_rankedSwitch->isChecked();
+    QAbstractButton* roster = m_rulesetGroup->checkedButton();
+    m_rulesetId  = roster ? roster->property("rulesetId").toString() : QString();
     {
-        const int index = m_formatCombo->currentData().toInt();
-        const bool known = index >= 0 && index < m_rankedInfo.formats.size();
-        m_ladderId = known ? m_rankedInfo.formats[index].ladderId : QString();
-        m_teamSize = known ? m_rankedInfo.formats[index].teamSize : 1;
+        const int index = selectedFormat();
+        m_ladderId = index >= 0 ? m_rankedInfo.formats[index].ladderId : QString();
+        m_teamSize = index >= 0 ? m_rankedInfo.formats[index].teamSize : 1;
     }
-    m_maxPing    = m_pingCombo->currentData().toInt();
+    m_maxPing    = qMax(0, m_pingGroup->checkedId());
 
     saveDefaults();
     setFormEnabled(false);
@@ -271,32 +495,47 @@ void CreateRoomDialog::showCreateFailure(const QString& reason)
     else if (reason == "invalid_payload") human = tr("Server rejected the room settings.");
     else if (reason == "not_verified") human = tr("Log into an account to create ranked rooms.");
     else if (reason == "ranked_unavailable") human = tr("This game can't be played ranked on this server.");
+    else if (reason == "not_enough_seats") human = tr("It needs a seat for everyone on this PC.");
+    else if (reason == "local_players") human = tr("Ranked takes one player per PC. Remove your local players first.");
     m_statusLabel->setText(QString(tr("Couldn't create room: %1")).arg(human));
 }
 
 void CreateRoomDialog::setFormEnabled(bool enabled)
 {
     m_nameEdit->setEnabled(enabled);
-    m_maxPlayersSpin->setEnabled(enabled && !m_rankedCheck->isChecked());
-    m_passwordCheck->setEnabled(enabled);
-    m_rankedCheck->setEnabled(enabled && m_rankedInfo.available);
+    m_anyoneButton->setEnabled(enabled);
+    m_passwordButton->setEnabled(enabled);
+    m_liveReplaySwitch->setEnabled(enabled);
+    m_rankedSwitch->setEnabled(enabled && m_rankedInfo.available && !m_localPlayers);
     m_rankedOptions->setEnabled(enabled);
-    m_passwordEdit->setEnabled(enabled && m_passwordCheck->isChecked());
+    m_passwordEdit->setEnabled(enabled && m_passwordButton->isChecked());
     m_createButton->setEnabled(enabled);
+    if (enabled)
+        updateSeats();
+    else
+    {
+        for (auto* button : m_playersGroup->buttons())
+            button->setEnabled(false);
+    }
 }
 
 void CreateRoomDialog::loadDefaults()
 {
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
-    if (s.contains("MaxPlayers")) m_maxPlayersSpin->setValue(s.value("MaxPlayers").toInt());
-    if (const int ping = m_pingCombo->findData(s.value("MaxPing", 120).toInt()); ping >= 0)
-        m_pingCombo->setCurrentIndex(ping);
+    if (s.contains("MaxPlayers"))
+    {
+        if (auto* button = m_playersGroup->button(s.value("MaxPlayers").toInt()))
+            button->setChecked(true);
+    }
+    if (auto* ping = m_pingGroup->button(s.value("MaxPing", 120).toInt()))
+        ping->setChecked(true);
     // Seed legacy room fields for older clients. Current clients publish their
     // own rollback settings after entering the room.
     if (s.contains("Delay")) m_delay = s.value("Delay").toInt();
     m_prediction = 7;
     s.endGroup();
+    m_liveReplaySwitch->setChecked(s.value("RollbackLobby/LiveReplayEnabled", true).toBool());
 }
 
 void CreateRoomDialog::saveDefaults()
@@ -304,11 +543,15 @@ void CreateRoomDialog::saveDefaults()
     QSettings s("RMG-K", "n02");
     s.beginGroup("Lobby/CreateRoom");
     // The game selection is persisted by the lobby's shared picker, not here.
-    s.setValue("MaxPlayers", m_maxPlayers);
+    // A ranked room's seats come from its format, not the player's choice.
+    if (!m_isRanked)
+        s.setValue("MaxPlayers", m_maxPlayers);
     if (m_isRanked)
         s.setValue("MaxPing", m_maxPing);
     // Rollback-setting persistence lives in the room view.
     s.endGroup();
+    // The room view publishes this preference when the new room arrives.
+    s.setValue("RollbackLobby/LiveReplayEnabled", m_liveReplaySwitch->isChecked());
 }
 
 #endif // NETPLAY

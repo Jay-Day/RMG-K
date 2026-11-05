@@ -42,7 +42,7 @@ bool ReplayLink::Parse(const QString& link, QUrl& replayUrl, qint64& setId, int&
     if (link.size() > kMaxLinkLength || !url.isValid() || url.scheme().compare("rmgk", Qt::CaseInsensitive) != 0 ||
         url.host().compare("replay", Qt::CaseInsensitive) != 0)
     {
-        error = QCoreApplication::translate("ReplayLink", "This isn't an RMG-K replay link.");
+        error = QCoreApplication::translate("ReplayLink", "This isn't a Dale64 replay link.");
         return false;
     }
 

@@ -2,23 +2,37 @@ name: RMG
 
 on:
   push:
+    branches: [master]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+
+# A newer master push replaces an older one, so an older build can't overwrite
+# test-latest. Every other run gets its own group and is left alone.
+concurrency:
+  group: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && 'test-release' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
 
 jobs:
   build-linux:
     strategy:
       matrix:
-        include:
-          - { os: ubuntu-24.04, features: ON, architecture: x86_64, configuration: Release }
-          - { os: ubuntu-24.04, features: ON, architecture: x86_64, configuration: Debug }
-          - { os: ubuntu-24.04, features: OFF, architecture: x86_64, configuration: Release }
-          - { os: ubuntu-24.04, features: OFF, architecture: x86_64, configuration: Debug }
-          - { os: ubuntu-24.04-arm, features: ON, architecture: aarch64, configuration: Release }
-          - { os: ubuntu-24.04-arm, features: ON, architecture: aarch64, configuration: Debug }
-          - { os: ubuntu-24.04-arm, features: OFF, architecture: aarch64, configuration: Release }
-          - { os: ubuntu-24.04-arm, features: OFF, architecture: aarch64, configuration: Debug }
+        # master pushes only build what goes into the test release
+        include: >-
+          ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/master')
+          && '[
+            {"os": "ubuntu-24.04", "features": "ON", "architecture": "x86_64", "configuration": "Release"}
+          ]'
+          || '[
+            {"os": "ubuntu-24.04", "features": "ON", "architecture": "x86_64", "configuration": "Release"},
+            {"os": "ubuntu-24.04", "features": "ON", "architecture": "x86_64", "configuration": "Debug"},
+            {"os": "ubuntu-24.04", "features": "OFF", "architecture": "x86_64", "configuration": "Release"},
+            {"os": "ubuntu-24.04", "features": "OFF", "architecture": "x86_64", "configuration": "Debug"},
+            {"os": "ubuntu-24.04-arm", "features": "ON", "architecture": "aarch64", "configuration": "Release"},
+            {"os": "ubuntu-24.04-arm", "features": "ON", "architecture": "aarch64", "configuration": "Debug"},
+            {"os": "ubuntu-24.04-arm", "features": "OFF", "architecture": "aarch64", "configuration": "Release"},
+            {"os": "ubuntu-24.04-arm", "features": "OFF", "architecture": "aarch64", "configuration": "Debug"}
+          ]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -53,7 +67,7 @@ jobs:
             libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev
       - name: Prepare Environment
         run: |
-          echo "GIT_REVISION=$(git describe --tags --always)" >> $GITHUB_ENV
+          echo "GIT_REVISION=$(git describe --tags --always --match "v*")" >> $GITHUB_ENV
       - name: Build SDL3
         run: |
           export sdl_dir="$(pwd)/../SDL3"
@@ -107,11 +121,18 @@ jobs:
     runs-on: windows-2025
     strategy:
       matrix:
-        include:
-          - { features: ON, configuration: Release }
-          - { features: ON, configuration: Debug }
-          - { features: OFF, configuration: Release }
-          - { features: OFF, configuration: Debug }
+        # master pushes only build what goes into the test release
+        include: >-
+          ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/master')
+          && '[
+            {"features": "ON", "configuration": "Release"}
+          ]'
+          || '[
+            {"features": "ON", "configuration": "Release"},
+            {"features": "ON", "configuration": "Debug"},
+            {"features": "OFF", "configuration": "Release"},
+            {"features": "OFF", "configuration": "Debug"}
+          ]') }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -162,7 +183,7 @@ jobs:
             "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-minizip-1.3.1-1-any.pkg.tar.zst"
       - name: Prepare Environment
         run: |
-          $env:revision = git describe --tags --always
+          $env:revision = git describe --tags --always --match "v*"
           echo "GIT_REVISION=$env:revision" >> $env:GITHUB_ENV
         shell: pwsh
       # n02 Kaillera client is now compiled as a static library (Source/n02/)
@@ -203,6 +224,42 @@ jobs:
         with:
           name: RMG-K-Setup-Windows64-${{ env.GIT_REVISION }}
           path: Bin/*.exe
+
+  test-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+      # Fixed file names keep the download links the same between builds
+      - name: Prepare test release files
+        run: |
+          mkdir -p release
+
+          cp artifacts/RMG-K-Portable-Linux64-*/*.AppImage release/RMG-K-Test-Linux64.AppImage
+
+          cd artifacts/RMG-K-Portable-Windows64-*
+          zip -r ../../release/RMG-K-Test-Windows64.zip .
+          cd ../..
+
+          ls -la release/
+      - name: Replace test-latest prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete test-latest --cleanup-tag --yes || true
+          gh release create test-latest release/* \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "Test build ${GITHUB_SHA::8}" \
+            --notes "Latest build of master. Connects to the test lobby server."
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

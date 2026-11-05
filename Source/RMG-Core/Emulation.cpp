@@ -20,6 +20,7 @@
 #include "Plugins.hpp"
 #include "Ranked.hpp"
 #include "Cheats.hpp"
+#include "NetplaySave.hpp"
 #include "Error.hpp"
 #include "File.hpp"
 #include "Rom.hpp"
@@ -53,12 +54,15 @@ static void setRollbackLoggingEnvironment(void)
 {
     const bool pifLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_VerbosePifInputLogging);
     const bool glideLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging);
+    const bool emulationLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_EmulationDiagnostics);
 #ifdef _WIN32
     _putenv_s("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0");
     _putenv_s("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0");
+    _putenv_s("RMGK_EMULATION_DIAGNOSTICS", emulationLogging ? "1" : "0");
 #else
     setenv("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0", 1);
     setenv("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0", 1);
+    setenv("RMGK_EMULATION_DIAGNOSTICS", emulationLogging ? "1" : "0", 1);
 #endif
 }
 
@@ -148,11 +152,12 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
 // 3-/4-player rollback sessions can wire each remote actor to a distinct peer.
 // Format: LOBBY|<delay>|<prediction>|<slot>,<ip>,<port>|<slot>,<ip>,<port>...
 static bool parse_lobby_address(const std::string& address, int& frameDelay, int& predictionWindow,
-    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch)
+    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch, std::vector<LobbyLocalSeat>& extraLocals)
 {
     remotes.clear();
     seats = 0;
     joinEpoch = -1;
+    extraLocals.clear();
 
     constexpr const char* prefix = "LOBBY|";
     if (address.rfind(prefix, 0) != 0)
@@ -199,13 +204,25 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
     {
         const std::string& tok = tokens[i];
         // Options ride as key=value tokens among the peers: seats=<ports the
-        // match emulates> and join=<epoch> for a late joiner.
+        // match emulates>, join=<epoch> for a late joiner, and one
+        // local=<slot>:<controller> per other player on this PC.
         const size_t equals = tok.find('=');
         if (equals != std::string::npos)
         {
             const std::string key = tok.substr(0, equals);
             try
             {
+                if (key == "local")
+                {
+                    const size_t colon = tok.find(':', equals);
+                    if (colon == std::string::npos)
+                        return false;
+                    LobbyLocalSeat seat{};
+                    seat.slot = std::stoi(tok.substr(equals + 1, colon - equals - 1));
+                    seat.controller = std::stoi(tok.substr(colon + 1));
+                    extraLocals.push_back(seat);
+                    continue;
+                }
                 const int value = std::stoi(tok.substr(equals + 1));
                 if (key == "seats" && value >= 2 && value <= 4)
                     seats = value;
@@ -1061,10 +1078,48 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #ifdef NETPLAY
     // Apply deterministic settings AFTER all overlays for synchronized netplay or
     // explicit local rollback testing.
-    if (localRollbackEnabled || (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0)))
+    const bool syncedSession = localRollbackEnabled ||
+        (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0));
+    if (syncedSession)
     {
         apply_kaillera_deterministic_settings();
     }
+#else
+    const bool syncedSession = false;
+#endif
+
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    // A replay file starts from the save its match did. (A live replay's
+    // viewer got that from the match's manifest already.)
+    if (address == "KAILLERA" && CoreIsKailleraPlaybackMode() && !n02::playbackIsStream())
+    {
+        CoreNetplaySaveData replaySave;
+        const std::string recorded = n02::playbackSaveData();
+        if (!recorded.empty() && !CoreDeserializeNetplaySaveData(recorded, replaySave))
+        {
+            CoreClearCheats();
+            CoreDetachPlugins();
+            CoreApplyPluginSettings();
+            CoreCloseRom();
+            return false;
+        }
+        CoreSetNetplaySaveData(replaySave);
+    }
+#endif
+
+    // A synced session keeps the game's saves in memory, starting from the
+    // host's pick (blank without one), so no player's own save files are read
+    // or changed. Offline play turns that off and uses the save files.
+    if (!CoreApplyNetplaySaveData(syncedSession))
+    {
+        CoreClearCheats();
+        CoreDetachPlugins();
+        CoreApplyPluginSettings();
+        CoreCloseRom();
+        return false;
+    }
+
+#ifdef NETPLAY
 
     // Kaillera connection happens BEFORE emulation via kailleraSelectServerDialog
     // Just verify it's initialized if netplay was requested
@@ -1126,7 +1181,8 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             std::vector<LobbyRemotePeer> remotes;
             int seats = 0;
             int joinEpoch = -1;
-            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch))
+            std::vector<LobbyLocalSeat> extraLocals;
+            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch, extraLocals))
             {
                 CoreSetError("CoreStartEmulation: invalid Lobby session parameters");
                 m64p_ret = M64ERR_INPUT_INVALID;
@@ -1154,11 +1210,16 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                     if (remote.slot > totalSeats)
                         totalSeats = remote.slot;
                 }
+                for (const auto& seat : extraLocals)
+                {
+                    if (seat.slot > totalSeats)
+                        totalSeats = seat.slot;
+                }
                 netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
                     totalSeats, static_cast<int>(sizeof(uint32_t)),
                     player, static_cast<unsigned short>(port),
                     remotes.data(), static_cast<int>(remotes.size()),
-                    frameDelay, predictionWindow, joinEpoch);
+                    frameDelay, predictionWindow, joinEpoch, extraLocals);
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())

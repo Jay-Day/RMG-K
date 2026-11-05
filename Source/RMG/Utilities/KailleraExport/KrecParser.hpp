@@ -26,6 +26,8 @@ struct KrecData
     std::vector<uint8_t> inputData;
     int totalInputFrames = 0;
     int delayFrames = 0;
+    // The save the match started from (its 0x16 record), empty when blank.
+    std::string saveData;
 };
 
 bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::string* errorMessage);

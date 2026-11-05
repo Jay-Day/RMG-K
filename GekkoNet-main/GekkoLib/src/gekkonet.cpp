@@ -124,6 +124,11 @@ int gekko_confirmed_frame(GekkoSession* session)
     return session->ConfirmedFrame();
 }
 
+bool gekko_peer_stats(GekkoSession* session, int handle, GekkoPeerStats* stats)
+{
+    return stats != nullptr && session->PeerStats(handle, stats);
+}
+
 #ifndef GEKKONET_NO_ASIO
 
 #ifdef _WIN32

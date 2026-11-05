@@ -461,6 +461,23 @@ void EmulatorProxy::setFrameCallback(m64p_frame_callback callback)
     coreDoCommand(M64CMD_SET_FRAME_CALLBACK, 0, reinterpret_cast<void*>(callback));
 }
 
+bool EmulatorProxy::setSaveData(const std::vector<std::vector<uint8_t>>& kinds)
+{
+    if (coreDoCommand == nullptr)
+    {
+        return false;
+    }
+
+    std::vector<std::vector<uint8_t>> copy = kinds;
+    m64p_save_data save = {};
+    for (int kind = 0; kind < M64SAVEDATA_KINDS && kind < static_cast<int>(copy.size()); kind++)
+    {
+        save.data[kind] = copy[kind].empty() ? nullptr : copy[kind].data();
+        save.size[kind] = static_cast<int>(copy[kind].size());
+    }
+    return coreDoCommand(M64CMD_ROLLBACK_SET_SAVE_DATA, 0, &save) == M64ERR_SUCCESS;
+}
+
 m64p_error EmulatorProxy::execute()
 {
     return coreDoCommand(M64CMD_EXECUTE, 0, nullptr);

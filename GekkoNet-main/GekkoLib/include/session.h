@@ -31,6 +31,7 @@ struct GekkoSession {
     virtual void SetAdvanceLimit(i32 frame) { (void)frame; }
     virtual i32 CurrentFrame() { return -1; }
     virtual i32 ConfirmedFrame() { return -1; }
+    virtual bool PeerStats(i32 handle, GekkoPeerStats* stats) { (void)handle; (void)stats; return false; }
     virtual ~GekkoSession() = default;
 };
 
@@ -73,6 +74,8 @@ namespace Gekko {
         i32 CurrentFrame() override;
 
         i32 ConfirmedFrame() override;
+
+        bool PeerStats(i32 handle, GekkoPeerStats* stats) override;
 
 	private:
 		void Poll();

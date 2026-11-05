@@ -190,7 +190,7 @@ void DiscordLogin::onConnection(void)
             const QUrlQuery query(target);
             if (query.queryItemValue("state") != m_state)
             {
-                answer(socket, 400, tr("Sign-in failed"), tr("This sign-in doesn't match the one RMG-K started. Try again from RMG-K."));
+                answer(socket, 400, tr("Sign-in failed"), tr("This sign-in doesn't match the one Dale64 started. Try again from Dale64."));
                 return;
             }
             const QString error = query.queryItemValue("error");
@@ -212,7 +212,7 @@ void DiscordLogin::onConnection(void)
                 return;
             }
             const QString code = query.queryItemValue("code", QUrl::FullyDecoded);
-            answer(socket, 200, tr("Signed in with Discord"), tr("You can close this tab and return to RMG-K."));
+            answer(socket, 200, tr("Signed in with Discord"), tr("You can close this tab and return to Dale64."));
             const QString verifier = m_verifier, redirect = m_redirectUri;
             finish();
             emit codeReceived(code, verifier, redirect);

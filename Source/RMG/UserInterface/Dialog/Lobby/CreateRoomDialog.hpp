@@ -15,10 +15,9 @@
 #include <QPair>
 #include <QMap>
 
+class QButtonGroup;
+class QHBoxLayout;
 class QLineEdit;
-class QComboBox;
-class QSpinBox;
-class QCheckBox;
 class QPushButton;
 class QLabel;
 
@@ -26,6 +25,10 @@ namespace UserInterface
 {
 namespace Dialog
 {
+
+class CartridgeTile;
+class LobbyButton;
+class ToggleSwitch;
 
 // What the lobby knows about ranked play for the selected game.
 struct CreateRoomRankedOptions
@@ -79,6 +82,11 @@ public:
     int teamSize()             const { return m_teamSize; }
     int     maxPing()          const { return m_maxPing; }
 
+    // The selected game's cover art, for the dialog's header tile.
+    void setCoverPath(const QString& coverPath);
+    // Rule out rooms too small for everyone on this PC.
+    void setMinimumPlayers(int players);
+
     // Called by the lobby when the server replies ROOM_CREATE_FAIL.
     // Re-enables the form so the user can edit and retry.
     void showCreateFailure(const QString& reason);
@@ -106,22 +114,31 @@ private:
     void loadDefaults();
     void saveDefaults();
     void setFormEnabled(bool enabled);
+    int selectedFormat() const;
+    // the players this room seats: the set's for a ranked room
+    void updateSeats();
 
     // UI — local delay and prediction live in the room view.
     QLineEdit*   m_nameEdit       = nullptr;
+    CartridgeTile* m_tile         = nullptr;
     QLabel*      m_gameLabel      = nullptr;   // read-only game from the lobby picker
-    QSpinBox*    m_maxPlayersSpin = nullptr;
-    QCheckBox*   m_passwordCheck  = nullptr;
+    QButtonGroup* m_playersGroup  = nullptr;   // 2, 3 or 4 seats, by button id
+    QPushButton* m_anyoneButton   = nullptr;
+    QPushButton* m_passwordButton = nullptr;
     QLineEdit*   m_passwordEdit   = nullptr;
-    QPushButton* m_createButton   = nullptr;
-    QPushButton* m_cancelButton   = nullptr;
+    ToggleSwitch* m_liveReplaySwitch = nullptr;
+    LobbyButton* m_createButton   = nullptr;
+    LobbyButton* m_cancelButton   = nullptr;
     QLabel*      m_statusLabel    = nullptr;
-    QCheckBox*   m_rankedCheck    = nullptr;
+    QLabel*      m_seatsHint      = nullptr;
+    ToggleSwitch* m_rankedSwitch  = nullptr;
     QWidget*     m_rankedOptions  = nullptr;
+    QWidget*     m_formatBox      = nullptr;   // shown when the game has a 2v2 ladder too
     QLabel*      m_bestOfLabel    = nullptr;
-    QComboBox*   m_rulesetCombo   = nullptr;
-    QComboBox*   m_formatCombo    = nullptr;
-    QComboBox*   m_pingCombo      = nullptr;
+    QButtonGroup* m_formatGroup   = nullptr;   // by index into m_rankedInfo.formats
+    QButtonGroup* m_rulesetGroup  = nullptr;   // the format's rosters, rebuilt with it
+    QHBoxLayout* m_rulesetLay     = nullptr;
+    QButtonGroup* m_pingGroup     = nullptr;   // by max ping in ms, 0 = any
     CreateRoomRankedOptions m_rankedInfo;
 
     // Accessor backing
@@ -130,6 +147,8 @@ private:
     QString m_romMd5;
     QString m_romRegion;
     int     m_maxPlayers = 2;
+    int     m_minimumPlayers = 2;
+    bool    m_localPlayers = false; // this PC has local players: no ranked
     int     m_delay      = 2;
     int     m_prediction = 7;
     QString m_password;

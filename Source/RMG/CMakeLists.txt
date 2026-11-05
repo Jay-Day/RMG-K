@@ -15,6 +15,10 @@ if (PORTABLE_INSTALL)
     add_definitions(-DPORTABLE_INSTALL)
 endif(PORTABLE_INSTALL)
 
+if (RMGK_TEST_BUILD)
+    add_definitions(-DRMGK_TEST_BUILD)
+endif(RMGK_TEST_BUILD)
+
 if (UPDATER)
     find_package(Qt6 COMPONENTS Network REQUIRED)
     add_definitions(-DUPDATER)
@@ -83,6 +87,7 @@ set(RMG_SOURCES
     UserInterface/UIResources.rc
     UserInterface/UIResources.qrc
     UserInterface/Flags.qrc
+    UserInterface/LobbyResources.qrc
     Thread/RomSearcherThread.cpp
     Thread/EmulationThread.cpp
     Utilities/QtKeyToSdl3Key.cpp
@@ -122,11 +127,20 @@ if (NETPLAY)
         UserInterface/Dialog/Kaillera/KailleraP2PDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraWaitingGamesDialog.cpp
         UserInterface/Dialog/Lobby/LobbyClient.cpp
+        UserInterface/Dialog/Lobby/LobbyTheme.cpp
+        UserInterface/Dialog/Lobby/LobbyWidgets.cpp
+        UserInterface/Dialog/Lobby/LobbyBrowsePanels.cpp
+        UserInterface/Dialog/Lobby/LobbySocialWidgets.cpp
+        UserInterface/Dialog/Lobby/LobbySocialDialogs.cpp
         UserInterface/Dialog/Lobby/LobbyConnectDialog.cpp
         UserInterface/Dialog/Lobby/AccountEmailDialog.cpp
         UserInterface/Dialog/Lobby/CreateRoomDialog.cpp
         UserInterface/Dialog/Lobby/QuickRankedMatchDialog.cpp
         UserInterface/Dialog/Lobby/RollbackLobbyDialog.cpp
+        UserInterface/Dialog/Lobby/RollbackLobbySocial.cpp
+        UserInterface/Dialog/Lobby/LagStats.cpp
+        UserInterface/Dialog/Lobby/LagStatsDialog.cpp
+        UserInterface/Dialog/Lobby/NetplaySaveDialogs.cpp
         UserInterface/Dialog/Lobby/PlayerRatings.cpp
         Utilities/KailleraExport/KrecParser.cpp
         Utilities/ReplayLink.cpp

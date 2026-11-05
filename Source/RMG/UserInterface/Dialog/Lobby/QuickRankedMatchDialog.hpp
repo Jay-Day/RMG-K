@@ -13,9 +13,9 @@
 
 #include <QDialog>
 
-class QComboBox;
+class QButtonGroup;
 class QCheckBox;
-class QFormLayout;
+class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 
@@ -49,6 +49,8 @@ public:
     // 2v2 sessions with a chosen teammate: search with each set's teammate
     // again when they keep the team too
     bool    keepTeammate()     const { return m_keepTeammate; }
+    // the chosen set in a few words, e.g. "1v1 · Vanilla roster · Best of 3"
+    QString formatSummary()    const { return m_formatSummary; }
 
     // names offered while typing a teammate (players in the lobby)
     void setTeammateSuggestions(const QStringList& names);
@@ -61,16 +63,19 @@ private slots:
 
 private:
     const CreateRoomRankedOptions::Format* currentFormat() const;
+    QString currentRuleset() const;
     void loadDefaults();
     void saveDefaults();
 
     CreateRoomRankedOptions m_rankedInfo;
 
-    QFormLayout* m_form           = nullptr;
+    QWidget*   m_formatBox        = nullptr;
+    QWidget*   m_teammateBox      = nullptr;
     QLineEdit* m_teammateEdit     = nullptr;
-    QComboBox* m_formatCombo      = nullptr;
-    QComboBox* m_rulesetCombo     = nullptr;
-    QComboBox* m_pingCombo        = nullptr;
+    QButtonGroup* m_formatGroup   = nullptr; // by index into m_rankedInfo.formats
+    QButtonGroup* m_rulesetGroup  = nullptr; // the format's rosters, rebuilt with it
+    QHBoxLayout*  m_rulesetLay    = nullptr;
+    QButtonGroup* m_pingGroup     = nullptr; // by max ping in ms, 0 = any
     QCheckBox* m_keepTeammateCheck = nullptr;
     QLabel*    m_standingLabel    = nullptr;
     QLabel*    m_bestOfLabel      = nullptr;
@@ -81,6 +86,7 @@ private:
     int     m_maxPing = 120;
     QString m_teammate;
     bool    m_keepTeammate = false;
+    QString m_formatSummary;
     // the box's choice, kept while it's disabled (no teammate chosen)
     bool    m_keepTeammateChoice = false;
 };

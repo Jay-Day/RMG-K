@@ -257,6 +257,22 @@ bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::st
                 ++scan;
             }
         }
+        else if (type == 0x16)
+        {
+            uint32_t length = 0;
+            if (scan + 4 > end)
+            {
+                break;
+            }
+            memcpy(&length, scan, sizeof(uint32_t));
+            scan += 4;
+            if (static_cast<size_t>(end - scan) < length)
+            {
+                break;
+            }
+            outData.saveData.assign(reinterpret_cast<const char*>(scan), length);
+            scan += length;
+        }
         else
         {
             break;

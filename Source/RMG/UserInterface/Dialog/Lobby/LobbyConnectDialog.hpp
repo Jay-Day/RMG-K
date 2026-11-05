@@ -14,11 +14,13 @@
 #include <QDialog>
 #include <QString>
 
+class QAction;
+class QCheckBox;
 class QLineEdit;
 class QPushButton;
 class QLabel;
-class QCheckBox;
-class QFormLayout;
+class QRegularExpression;
+class QVBoxLayout;
 class QWidget;
 
 namespace Utilities
@@ -31,6 +33,8 @@ namespace UserInterface
 {
 namespace Dialog
 {
+
+class LobbyButton;
 
 // Small modal asking how to join the lobby: log in, create an account, play
 // as a guest, or reset a forgotten password with a one-time code from a
@@ -85,6 +89,12 @@ public:
     // account, Play as guest for a guest.
     static void saveConnectedMode(bool account);
 
+    // The lobby decides what's a valid name. These keep typing to its characters,
+    // and catch what's too long for a replay's 32-byte field before it's refused.
+    static QRegularExpression usernameCharacters();
+    static bool usernameFits(const QString& username);
+    static QString fitUsername(QString username);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -102,6 +112,9 @@ private:
     void setDiscordWaiting(bool waiting);
     void clearDiscordLink();
     void onEmailCodeClicked();
+    void setPasswordShown(bool shown);
+    // re-lays the dialog out after rows appear, disappear or rewrap
+    void refit();
     // why the current input can't be sent yet, or empty
     QString inputProblem(QWidget** field) const;
 
@@ -111,7 +124,6 @@ private:
     QPushButton* m_registerTab    = nullptr;
     QPushButton* m_guestTab       = nullptr;
     QLabel*      m_modeNote       = nullptr;
-    QFormLayout* m_form           = nullptr;
     QLineEdit*   m_usernameEdit   = nullptr;
     QLineEdit*   m_resetCodeEdit  = nullptr;
     QLineEdit*   m_passwordEdit   = nullptr;
@@ -119,22 +131,23 @@ private:
     QLabel*      m_resetLabel     = nullptr;
     QLabel*      m_passwordLabel  = nullptr;
     QLabel*      m_confirmLabel   = nullptr;
-    QCheckBox*   m_showPassword   = nullptr;
+    QAction*     m_showPassword   = nullptr; // the eye in the password field
+    bool         m_passwordShown  = false;
     QLabel*      m_capsLockLbl    = nullptr;
     QLabel*      m_forgotLink     = nullptr; // Log in: switch to Reset
     QLabel*      m_backLink       = nullptr; // Reset: back to Log in
     QCheckBox*   m_rememberCheck  = nullptr;
     QLabel*      m_savedLoginLbl  = nullptr;
-    QPushButton* m_forgetButton   = nullptr;
-    QPushButton* m_connectButton  = nullptr;
+    LobbyButton* m_forgetButton   = nullptr;
+    LobbyButton* m_connectButton  = nullptr;
     QLabel*      m_validationLbl  = nullptr;
-    QLabel*      m_orLabel        = nullptr; // between Discord and the password form
-    // form rows (field plus the Show password column)
-    QWidget*     m_usernameRow    = nullptr;
+    QWidget*     m_orRow          = nullptr; // between Discord and the password form
+    // field blocks: the label above its field
     QWidget*     m_resetRow       = nullptr;
     QWidget*     m_passwordRow    = nullptr;
     QWidget*     m_confirmRow     = nullptr;
     QWidget*     m_savedRow       = nullptr;
+    QWidget*     m_linksRow       = nullptr;
     QPushButton* m_discordButton  = nullptr; // shown when the lobby supports Discord sign-in
     QLabel*      m_discordLinkLbl = nullptr;
     QLabel*      m_dontLinkLink   = nullptr; // link mode: back to a plain login
@@ -147,12 +160,12 @@ private:
     QLabel*      m_resetEmailLabel = nullptr;
     QLineEdit*   m_resetEmailEdit  = nullptr;
     QWidget*     m_resetEmailRow   = nullptr;
-    QPushButton* m_emailCodeButton = nullptr;
+    LobbyButton* m_emailCodeButton = nullptr;
     Utilities::PasswordResetEmail* m_resetEmail = nullptr;
     bool    m_emailAvailable = false;
     QString m_emailRequestUser;
     QString m_noticeMessage;    // shown (not as an error) until the username or mode changes
-    // problems show as grey hints until the first attempt to connect
+    // problems show as muted hints until the first attempt to connect
     bool    m_attempted = false;
 
     QString m_serverUrl;

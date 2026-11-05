@@ -81,6 +81,12 @@ static const int rollback_state_header_size = 6 * sizeof(int);
 static const int rollback_state_flag_omit_tlb_lut = 1 << 0;
 static const int rollback_state_flag_has_sram = 1 << 1;
 static const int rollback_state_flag_has_ai_fifo_addresses = 1 << 2;
+/* Netplay saves: EEPROM (u32 length, then bytes) and FlashRAM follow SRAM, and
+ * header[5] holds the save write count. Older loaders skip all three. */
+static const int rollback_state_flag_has_eeprom = 1 << 3;
+static const int rollback_state_flag_has_flashram = 1 << 4;
+static const int rollback_state_flag_has_save_generation = 1 << 5;
+enum { ROLLBACK_EEPROM_MAX_SIZE = 0x800 };
 static const size_t rollback_tlb_lut_size = 0x100000 * sizeof(uint32_t) * 2;
 static const unsigned char pj64_magic[4] = { 0xC8, 0xA6, 0xD8, 0x23 };
 
@@ -322,11 +328,23 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     int rollback_tlb_lut_omitted = 0;
     int rollback_has_sram = 0;
     int rollback_has_ai_fifo_addresses = 0;
+    int rollback_has_eeprom = 0;
+    int rollback_has_flashram = 0;
+    int rollback_has_save_generation = 0;
+    unsigned int rollback_save_generation = 0;
     unsigned char *rollback_lut_r_data = NULL;
     unsigned char *rollback_lut_w_data = NULL;
     const unsigned char *rollback_sram_data = NULL;
+    const unsigned char *rollback_eeprom_data = NULL;
+    size_t rollback_eeprom_size = 0;
+    const unsigned char *rollback_flashram_data = NULL;
     unsigned char *rollback_ai_fifo_data = NULL;
+    const int32_t use_flashram_before_load = dev->cart.use_flashram;
+    int rollback_buffer_load = 0;
     uint8_t *rollback_sram_storage = NULL;
+    uint8_t *rollback_eeprom_storage = NULL;
+    size_t rollback_eeprom_storage_size = 0;
+    uint8_t *rollback_flashram_storage = NULL;
     struct tlb_entry rollback_old_tlb_entries[32];
 
     size_t savestateSize;
@@ -345,6 +363,8 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     if (strcmp(filepath, "ROLLBACK") == 0)
     {
         int *rollback_header;
+
+        rollback_buffer_load = 1;
 
         if (rollback_load_buffer == NULL || rollback_load_buffer_size < (size_t)(rollback_state_header_size + 44))
         {
@@ -375,6 +395,13 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             rollback_has_ai_fifo_addresses =
                 rollback_header[0] == rollback_state_header_magic &&
                 (rollback_header[4] & rollback_state_flag_has_ai_fifo_addresses) != 0;
+            if (rollback_header[0] == rollback_state_header_magic)
+            {
+                rollback_has_eeprom = (rollback_header[4] & rollback_state_flag_has_eeprom) != 0;
+                rollback_has_flashram = (rollback_header[4] & rollback_state_flag_has_flashram) != 0;
+                rollback_has_save_generation = (rollback_header[4] & rollback_state_flag_has_save_generation) != 0;
+                rollback_save_generation = (unsigned int)rollback_header[5];
+            }
         }
         else
         {
@@ -496,6 +523,32 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         }
     }
 
+    if (rollback_has_eeprom &&
+        dev->cart.eeprom.storage != NULL &&
+        dev->cart.eeprom.istorage != NULL &&
+        dev->cart.eeprom.istorage->data != NULL &&
+        dev->cart.eeprom.istorage->size != NULL)
+    {
+        rollback_eeprom_storage = dev->cart.eeprom.istorage->data(dev->cart.eeprom.storage);
+        rollback_eeprom_storage_size = dev->cart.eeprom.istorage->size(dev->cart.eeprom.storage);
+    }
+    if (rollback_has_flashram &&
+        dev->cart.flashram.storage != NULL &&
+        dev->cart.flashram.istorage != NULL &&
+        dev->cart.flashram.istorage->data != NULL &&
+        dev->cart.flashram.istorage->size != NULL &&
+        dev->cart.flashram.istorage->size(dev->cart.flashram.storage) >= FLASHRAM_SIZE)
+    {
+        rollback_flashram_storage = dev->cart.flashram.istorage->data(dev->cart.flashram.storage);
+    }
+    if ((rollback_has_eeprom && rollback_eeprom_storage == NULL) ||
+        (rollback_has_flashram && rollback_flashram_storage == NULL))
+    {
+        main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Rollback save storage is unavailable.");
+        SDL_UnlockMutex(savestates_lock);
+        return 0;
+    }
+
     /* Read the rest of the savestate */
     savestateSize = 16788244;
     rollback_payload_size = savestateSize;
@@ -569,6 +622,34 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         {
             rollback_sram_data = memory_data + memory_offset;
             memory_offset += SRAM_SIZE;
+        }
+        if (rollback_has_eeprom)
+        {
+            uint32_t eeprom_len = 0;
+            if (memory_size - memory_offset >= sizeof(eeprom_len))
+                memcpy(&eeprom_len, memory_data + memory_offset, sizeof(eeprom_len));
+            if (memory_size - memory_offset < sizeof(eeprom_len) + (size_t)eeprom_len ||
+                eeprom_len > ROLLBACK_EEPROM_MAX_SIZE)
+            {
+                main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Rollback EEPROM data is incomplete.");
+                SDL_UnlockMutex(savestates_lock);
+                return 0;
+            }
+            memory_offset += sizeof(eeprom_len);
+            rollback_eeprom_data = memory_data + memory_offset;
+            rollback_eeprom_size = eeprom_len;
+            memory_offset += eeprom_len;
+        }
+        if (rollback_has_flashram)
+        {
+            if (memory_size - memory_offset < FLASHRAM_SIZE)
+            {
+                main_message(M64MSG_STATUS, OSD_BOTTOM_LEFT, "Rollback FlashRAM data is incomplete.");
+                SDL_UnlockMutex(savestates_lock);
+                return 0;
+            }
+            rollback_flashram_data = memory_data + memory_offset;
+            memory_offset += FLASHRAM_SIZE;
         }
     }
     else if (version == 0x00010000) /* original savestate version */
@@ -851,11 +932,10 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
             rollback_tlb_end = SDL_GetPerformanceCounter();
     }
 
-    /* A rollback returns to this machine's own recent past, so its compiled code stays
-     * valid. A FULL buffer comes from another machine (a late joiner, a spectator): code
-     * compiled here before the load no longer matches the RDRAM it was compiled from. */
-    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t),
-                           memory_data == NULL || !rollback_tlb_lut_omitted);
+    /* RAM was replaced directly, so compiled instructions can still reflect the
+     * discarded timeline, including for this machine's own rollback buffers.
+     * Invalidation also rebuilds dynarec address mappings from the restored TLB. */
+    savestates_load_set_pc(&dev->r4300, GETDATA(curr, uint32_t), 1);
 
     *r4300_cp0_next_interrupt(&dev->r4300.cp0) = GETDATA(curr, uint32_t);
     curr += 4; /* here there used to be next_vi */
@@ -1359,6 +1439,32 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
         /* Restore only the in-memory image. In particular, do not call the storage backend's
          * save callback: rollback must never persist a historical state to the user's .sra. */
         memcpy(rollback_sram_storage, rollback_sram_data, SRAM_SIZE);
+    }
+    if (rollback_eeprom_data != NULL)
+    {
+        memcpy(rollback_eeprom_storage, rollback_eeprom_data,
+            rollback_eeprom_size < rollback_eeprom_storage_size ? rollback_eeprom_size : rollback_eeprom_storage_size);
+    }
+    if (rollback_flashram_data != NULL)
+    {
+        memcpy(rollback_flashram_storage, rollback_flashram_data, FLASHRAM_SIZE);
+    }
+    else if (rollback_buffer_load && use_flashram_before_load == 1 && dev->cart.use_flashram != 1 &&
+             main_flashram_boot_data() != NULL &&
+             dev->cart.flashram.storage != NULL &&
+             dev->cart.flashram.istorage != NULL &&
+             dev->cart.flashram.istorage->data != NULL &&
+             dev->cart.flashram.istorage->size != NULL &&
+             dev->cart.flashram.istorage->size(dev->cart.flashram.storage) >= FLASHRAM_SIZE)
+    {
+        /* Back to before the game first used FlashRAM, which states leave out
+         * until then: it holds what the match started with again. */
+        memcpy(dev->cart.flashram.istorage->data(dev->cart.flashram.storage),
+               main_flashram_boot_data(), FLASHRAM_SIZE);
+    }
+    if (rollback_has_save_generation)
+    {
+        main_set_save_generation(rollback_save_generation);
     }
     if (memory_data != NULL && rollback_verbose_stats)
         rollback_finalize_end = SDL_GetPerformanceCounter();
@@ -1978,6 +2084,9 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     int memory_save;
     int rollback_buffer_save;
     const uint8_t *rollback_sram_data = NULL;
+    const uint8_t *rollback_eeprom_data = NULL;
+    size_t rollback_eeprom_size = 0;
+    const uint8_t *rollback_flashram_data = NULL;
     uint64_t rollback_save_start = 0;
     uint64_t rollback_save_fixed_end = 0;
     uint64_t rollback_save_rdram_start = 0;
@@ -2019,6 +2128,31 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     {
         rollback_sram_data = dev->cart.sram.istorage->data(dev->cart.sram.storage);
     }
+    /* A rollback has to restore every save the game can write, or a write
+     * from a mispredicted frame survives on one peer. FlashRAM only changes
+     * once the game uses it (use_flashram 1), so until then it stays out:
+     * an EEPROM or SRAM game never carries its 128 KB. A load back past that
+     * first use restores the match's starting FlashRAM instead. */
+    if (rollback_buffer_save &&
+        dev->cart.eeprom.storage != NULL &&
+        dev->cart.eeprom.istorage != NULL &&
+        dev->cart.eeprom.istorage->data != NULL &&
+        dev->cart.eeprom.istorage->size != NULL &&
+        dev->cart.eeprom.istorage->size(dev->cart.eeprom.storage) <= ROLLBACK_EEPROM_MAX_SIZE)
+    {
+        rollback_eeprom_data = dev->cart.eeprom.istorage->data(dev->cart.eeprom.storage);
+        rollback_eeprom_size = dev->cart.eeprom.istorage->size(dev->cart.eeprom.storage);
+    }
+    if (rollback_buffer_save &&
+        dev->cart.use_flashram == 1 &&
+        dev->cart.flashram.storage != NULL &&
+        dev->cart.flashram.istorage != NULL &&
+        dev->cart.flashram.istorage->data != NULL &&
+        dev->cart.flashram.istorage->size != NULL &&
+        dev->cart.flashram.istorage->size(dev->cart.flashram.storage) >= FLASHRAM_SIZE)
+    {
+        rollback_flashram_data = dev->cart.flashram.istorage->data(dev->cart.flashram.storage);
+    }
     if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_start = SDL_GetPerformanceCounter();
 
@@ -2034,6 +2168,10 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         save->size -= rollback_tlb_lut_size;
     if (rollback_sram_data != NULL)
         save->size += SRAM_SIZE;
+    if (rollback_eeprom_data != NULL)
+        save->size += sizeof(uint32_t) + rollback_eeprom_size;
+    if (rollback_flashram_data != NULL)
+        save->size += FLASHRAM_SIZE;
     if (rollback_buffer_save)
         save->size += AI_DMA_FIFO_SIZE * sizeof(uint32_t);
     allocation_size = save->size;
@@ -2484,6 +2622,15 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
     {
         PUTARRAY(rollback_sram_data, curr, uint8_t, SRAM_SIZE);
     }
+    if (rollback_eeprom_data != NULL)
+    {
+        PUTDATA(curr, uint32_t, (uint32_t)rollback_eeprom_size);
+        PUTARRAY(rollback_eeprom_data, curr, uint8_t, rollback_eeprom_size);
+    }
+    if (rollback_flashram_data != NULL)
+    {
+        PUTARRAY(rollback_flashram_data, curr, uint8_t, FLASHRAM_SIZE);
+    }
     if (rollback_buffer_save && rollback_verbose_stats)
         rollback_save_extra_end = SDL_GetPerformanceCounter();
 
@@ -2500,7 +2647,12 @@ static int savestates_save_m64p(const struct device* dev, char *filepath)
         rollback_header[4] |= rollback_state_flag_has_ai_fifo_addresses;
         if (rollback_sram_data != NULL)
             rollback_header[4] |= rollback_state_flag_has_sram;
-        rollback_header[5] = 0;
+        if (rollback_eeprom_data != NULL)
+            rollback_header[4] |= rollback_state_flag_has_eeprom;
+        if (rollback_flashram_data != NULL)
+            rollback_header[4] |= rollback_state_flag_has_flashram;
+        rollback_header[4] |= rollback_state_flag_has_save_generation;
+        rollback_header[5] = (int)main_get_save_generation();
 
         if (rollback_save_buffer_checksum != NULL)
             *rollback_save_buffer_checksum = 0;
@@ -2870,7 +3022,9 @@ int savestates_save_rollback_buffer(unsigned char **buffer, int *len, int *check
     rollback_save_prealloc_data = prealloc_data;
     rollback_save_prealloc_capacity = prealloc_capacity;
 
+    main_rollback_log_state("save_begin", frame, -1, 0);
     result = savestates_save_m64p(dev, "ROLLBACK");
+    main_rollback_log_state("save_end", frame, result, frame % 60 == 0);
 
     rollback_save_buffer = NULL;
     rollback_save_buffer_len = NULL;
@@ -2900,14 +3054,24 @@ int savestates_save_full_buffer(unsigned char **buffer, int *len, int *checksum,
 int savestates_load_rollback_buffer(unsigned char *buffer, int len)
 {
     int result;
+    int state_frame = -1;
+    int header[6];
 
     if (buffer == NULL || len <= 0)
         return 0;
 
+    if ((size_t)len >= sizeof(header)) {
+        memcpy(header, buffer, sizeof(header));
+        if (header[0] == rollback_state_header_magic || header[0] == rollback_state_legacy_header_magic)
+            state_frame = header[3];
+    }
+
     rollback_load_buffer = buffer;
     rollback_load_buffer_size = (size_t)len;
     main_rollback_capture_load_before_probe();
+    main_rollback_log_state("restore_begin", state_frame, -1, 0);
     result = savestates_load_m64p(&g_dev, "ROLLBACK");
+    main_rollback_log_state("restore_end", state_frame, result, state_frame >= 0 && state_frame % 60 == 0);
     if (result)
     {
         main_rollback_capture_load_probe();

@@ -2826,9 +2826,7 @@ void KailleraServerBrowserDialog::onGameStarted(QString game, int player, int nu
         QListWidgetItem* playerItem = m_playerList->item(i);
         if (playerItem != nullptr)
         {
-            QByteArray nameBytes = playerItem->data(PlayerNameRole).toString().toUtf8();
-            strncpy(recording_player_names[i], nameBytes.constData(), 31);
-            recording_player_names[i][31] = '\0';
+            n02::recordingSetPlayerName(i, playerItem->data(PlayerNameRole).toString().toUtf8().constData());
         }
     }
 

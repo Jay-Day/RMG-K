@@ -7,21 +7,22 @@
 #ifdef NETPLAY
 
 #include "LobbyConnectDialog.hpp"
+
+#include "LobbyWidgets.hpp"
 #include "Utilities/DiscordLogin.hpp"
 #include "Utilities/PasswordResetEmail.hpp"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QFormLayout>
+#include <QAction>
 #include <QLabel>
 #include <QLineEdit>
-#include <QCheckBox>
 #include <QPushButton>
 #include <QButtonGroup>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QSettings>
-#include <QDialogButtonBox>
+#include <QStyle>
 #include <QFont>
 #include <QIcon>
 #include <QKeyEvent>
@@ -44,18 +45,18 @@ using namespace UserInterface::Dialog;
 
 namespace
 {
-    // Production lobby server hosted on Vultr Chicago. Update here when DNS
-    // is set up (e.g. ws://lobby.rmgk.net:8080/ws). The dialog no longer
-    // exposes server choice — every client connects here.
+    // Lobby servers hosted on Vultr. Update here when DNS is set up (e.g.
+    // ws://lobby.rmgk.net:8080/ws). The dialog no longer exposes server
+    // choice — tagged releases connect to prod, everything else to test.
+#ifdef RMGK_TEST_BUILD
+    constexpr const char* kDefaultLobbyUrl = "ws://64.177.116.159:8080/ws";
+#else
     constexpr const char* kDefaultLobbyUrl = "ws://216.128.157.98:8080/ws";
+#endif
 
     // Must match the lobby's account password rules.
     constexpr int kMinPasswordLength = 8;
     constexpr int kMaxPasswordLength = 128;
-
-    constexpr const char* kHintStyle   = "color: gray;";
-    constexpr const char* kErrorStyle  = "color: #c0392b;";
-    constexpr const char* kNoticeStyle = "color: #2e8b57;";
 
     bool capsLockOn()
     {
@@ -98,10 +99,52 @@ namespace
 
     QLabel* makeLink(const QString& text, QWidget* parent)
     {
-        auto* label = new QLabel(QString("<a href=\"#\">%1</a>").arg(text.toHtmlEscaped()), parent);
+        auto* label = new QLabel(QString("<a href=\"#\" style=\"color:%1; text-decoration:none;\">%2</a>")
+                                     .arg(LobbyTheme::css(LobbyTheme::tokens().accentInk), text.toHtmlEscaped()),
+                                 parent);
+        label->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
         label->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
         label->setCursor(Qt::PointingHandCursor);
         return label;
+    }
+
+    // The small upper-case caption above a field.
+    QLabel* fieldLabel(const QString& text, QWidget* parent)
+    {
+        auto* label = new QLabel(text.toUpper(), parent);
+        QFont font = LobbyTheme::uiFont(10, QFont::DemiBold);
+        font.setLetterSpacing(QFont::AbsoluteSpacing, 0.9);
+        label->setFont(font);
+        label->setProperty("role", "muted");
+        return label;
+    }
+
+    QLineEdit* fieldEdit(QWidget* parent)
+    {
+        auto* edit = new QLineEdit(parent);
+        edit->setMinimumHeight(38);
+        return edit;
+    }
+
+    // A caption over its field, as one block that shows and hides together.
+    QWidget* fieldBlock(QWidget* parent, QWidget* caption, QWidget* field)
+    {
+        auto* block = new QWidget(parent);
+        auto* lay = new QVBoxLayout(block);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(5);
+        lay->addWidget(caption);
+        lay->addWidget(field);
+        return block;
+    }
+
+    void setRole(QLabel* label, const char* role)
+    {
+        if (label->property("role").toString() == QLatin1String(role))
+            return;
+        label->setProperty("role", role);
+        label->style()->unpolish(label);
+        label->style()->polish(label);
     }
 } // namespace
 
@@ -109,11 +152,34 @@ QString LobbyConnectDialog::defaultServerUrl()
 {
     // Allow overriding the lobby server without a rebuild — handy for local
     // testing. e.g. set RMGK_LOBBY_URL=ws://127.0.0.1:8080/ws to point at a
-    // server running on this machine. Falls back to the production server.
+    // server running on this machine. Falls back to the build's default server.
     const QString override = qEnvironmentVariable("RMGK_LOBBY_URL");
     if (!override.trimmed().isEmpty())
         return override.trimmed();
     return QString::fromUtf8(kDefaultLobbyUrl);
+}
+
+QRegularExpression LobbyConnectDialog::usernameCharacters()
+{
+    return QRegularExpression(QStringLiteral(R"([\p{L}\p{Mn}0-9_\-\.\x{30FB}]{1,20})"));
+}
+
+bool LobbyConnectDialog::usernameFits(const QString& username)
+{
+    return username.toUtf8().size() <= 31;
+}
+
+QString LobbyConnectDialog::fitUsername(QString username)
+{
+    username = username.normalized(QString::NormalizationForm_C);
+    static const QRegularExpression notInName(QStringLiteral(R"([^\p{L}\p{Mn}0-9_\-\.\x{30FB}])"));
+    username.remove(notInName);
+    username.truncate(20);
+    if (!username.isEmpty() && username.back().isHighSurrogate())
+        username.chop(1);
+    while (!username.isEmpty() && !usernameFits(username))
+        username.chop(username.back().isLowSurrogate() ? 2 : 1);
+    return username;
 }
 
 QString LobbyConnectDialog::savedSessionToken(const QString& username)
@@ -161,7 +227,7 @@ LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
     setWindowTitle(tr("Join Rollback Netplay"));
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setModal(true);
-    setMinimumWidth(420);
+    setFixedWidth(420);
     buildUi();
     loadSettings();
 
@@ -174,29 +240,69 @@ LobbyConnectDialog::LobbyConnectDialog(QWidget* parent)
 void LobbyConnectDialog::buildUi()
 {
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(24, 20, 24, 20);
-    root->setSpacing(12);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
 
-    auto* heading = new QLabel(tr("Welcome to Netplay!"), this);
-    QFont headingFont = heading->font();
-    headingFont.setBold(true);
-    headingFont.setPointSizeF(headingFont.pointSizeF() + 2.0);
-    heading->setFont(headingFont);
-    root->addWidget(heading);
+    auto* header = new LobbyBand(this);
+    auto* headerLay = new QVBoxLayout(header);
+    headerLay->setContentsMargins(22, 18, 22, 14);
+    headerLay->setSpacing(10);
+    auto* brand = new QHBoxLayout;
+    brand->setSpacing(10);
+    brand->addWidget(new BrandMark(header));
+    auto* words = new QVBoxLayout;
+    words->setSpacing(1);
+    auto* word = new QLabel(QStringLiteral("Dale64"), header);
+    word->setFont(LobbyTheme::pixelFont(18, 0.3));
+    words->addWidget(word);
+    auto* tagline = new QLabel(tr("ROLLBACK NETPLAY"), header);
+    QFont taglineFont = LobbyTheme::uiFont(8, QFont::Bold);
+    taglineFont.setLetterSpacing(QFont::AbsoluteSpacing, 2.2);
+    tagline->setFont(taglineFont);
+    tagline->setProperty("role", "muted");
+    words->addWidget(tagline);
+    brand->addLayout(words);
+    brand->addStretch(1);
+    headerLay->addLayout(brand);
+    auto* heading = new QLabel(tr("Log in to play ranked and keep your name, or jump in as a guest."), header);
+    heading->setFont(LobbyTheme::uiFont(13));
+    heading->setProperty("role", "ink2");
+    heading->setWordWrap(true);
+    headerLay->addWidget(heading);
+    root->addWidget(header);
+
+    auto* rule = new QFrame(this);
+    rule->setObjectName("FieldRule");
+    root->addWidget(rule);
+
+    auto* body = new QVBoxLayout;
+    body->setContentsMargins(22, 16, 22, 4);
+    body->setSpacing(10);
+
+    // link mode: a Discord sign-in found no linked account yet; the message
+    // goes above the tabs, which then offer Log in and Create account
+    m_discordLinkLbl = new QLabel(this);
+    m_discordLinkLbl->setWordWrap(true);
+    m_discordLinkLbl->setFont(LobbyTheme::uiFont(12));
+    m_discordLinkLbl->setProperty("role", "ink2");
+    m_discordLinkLbl->setVisible(false);
+    body->addWidget(m_discordLinkLbl);
 
     // ── How to join: Log in | Create account | Play as guest ──
-    m_modeBar = new QWidget(this);
-    m_modeBar->setObjectName("ConnectModeBar");
+    m_modeBar = new QFrame(this);
+    m_modeBar->setObjectName("Seg");
     auto* barLay = new QHBoxLayout(m_modeBar);
-    barLay->setContentsMargins(0, 0, 0, 0);
-    barLay->setSpacing(0);
+    barLay->setContentsMargins(3, 3, 3, 3);
+    barLay->setSpacing(3);
     auto* tabs = new QButtonGroup(this);
     tabs->setExclusive(true);
     auto makeTab = [&](const QString& text, const char* name) {
         auto* tab = new QPushButton(text, m_modeBar);
         tab->setObjectName(name);
+        tab->setProperty("seg", true);
         tab->setCheckable(true);
         tab->setAutoDefault(false);
+        tab->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
         tab->setCursor(Qt::PointingHandCursor);
         tabs->addButton(tab);
         barLay->addWidget(tab, 1);
@@ -205,25 +311,10 @@ void LobbyConnectDialog::buildUi()
     m_loginTab    = makeTab(tr("Log in"), "LoginTab");
     m_registerTab = makeTab(tr("Create account"), "RegisterTab");
     m_guestTab    = makeTab(tr("Play as guest"), "GuestTab");
-    m_modeBar->setStyleSheet(
-        "QPushButton { padding: 6px 10px; border: 1px solid palette(mid); border-radius: 0px;"
-        "  background: transparent; }"
-        "QPushButton:hover { background: palette(alternate-base); }"
-        "QPushButton:checked { background: palette(highlight); color: palette(highlighted-text);"
-        "  border-color: palette(highlight); font-weight: 600; }"
-        "QPushButton#LoginTab { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }"
-        "QPushButton#GuestTab { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }");
-    root->addWidget(m_modeBar);
+    body->addWidget(m_modeBar);
     connect(m_loginTab, &QPushButton::clicked, this, [this]() { setMode(Mode::Login); });
     connect(m_registerTab, &QPushButton::clicked, this, [this]() { setMode(Mode::Register); });
     connect(m_guestTab, &QPushButton::clicked, this, [this]() { setMode(Mode::Guest); });
-
-    // link mode: a Discord sign-in found no linked account yet; the message
-    // goes above the tabs, which then offer Log in and Create account
-    m_discordLinkLbl = new QLabel(this);
-    m_discordLinkLbl->setWordWrap(true);
-    root->insertWidget(root->indexOf(m_modeBar), m_discordLinkLbl);
-    m_discordLinkLbl->setVisible(false);
 
     // Log in: Discord first (a shortcut into an account that keeps its
     // password), then OR, then the password form
@@ -233,121 +324,149 @@ void LobbyConnectDialog::buildUi()
     m_discordButton->setCursor(Qt::PointingHandCursor);
     m_discordButton->setIcon(discordIcon(16, 8, devicePixelRatioF()));
     m_discordButton->setIconSize(QSize(16 + 8, 16));
-    m_discordButton->setMinimumHeight(32);
+    m_discordButton->setMinimumHeight(38);
+    m_discordButton->setFont(LobbyTheme::uiFont(13, QFont::DemiBold));
+    // Discord's own blurple, with the lip every lobby button has
     m_discordButton->setStyleSheet(
-        "QPushButton#DiscordButton { background: #5865F2; color: white; border: none; border-radius: 6px;"
-        "  padding: 6px 12px; font-weight: 600; }"
+        "QPushButton#DiscordButton { background: #5865F2; color: white; border: 1px solid #4752C4;"
+        "  border-bottom: 3px solid #3640A0; border-radius: 8px; padding: 4px 12px; }"
         "QPushButton#DiscordButton:hover { background: #4752C4; }"
-        "QPushButton#DiscordButton:pressed { background: #3C45A5; }");
+        "QPushButton#DiscordButton:pressed { background: #3C45A5; border-bottom-width: 1px; }"
+        "QPushButton#DiscordButton:disabled { background: #8189D8; }");
     m_discordButton->setToolTip(tr("Sign in with your linked Discord account instead of typing your password.\n"
                                    "Not linked yet? Sign in with Discord, then enter your password once to link it."));
     m_discordButton->setVisible(false);
-    root->addWidget(m_discordButton);
+    body->addWidget(m_discordButton);
 
-    m_orLabel = new QLabel(tr("OR"), this);
-    m_orLabel->setAlignment(Qt::AlignCenter);
-    QFont orFont = m_orLabel->font();
-    orFont.setPointSizeF(orFont.pointSizeF() + 2.0);
-    m_orLabel->setFont(orFont);
-    m_orLabel->setVisible(false);
-    root->addWidget(m_orLabel);
+    m_orRow = new QWidget(this);
+    auto* orLay = new QHBoxLayout(m_orRow);
+    orLay->setContentsMargins(0, 0, 0, 0);
+    orLay->setSpacing(10);
+    auto orLine = [this]() {
+        auto* line = new QFrame(m_orRow);
+        line->setObjectName("FieldRule");
+        return line;
+    };
+    auto* orLabel = new QLabel(tr("OR"), m_orRow);
+    QFont orFont = LobbyTheme::uiFont(10, QFont::DemiBold);
+    orFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
+    orLabel->setFont(orFont);
+    orLabel->setProperty("role", "faint");
+    orLay->addWidget(orLine(), 1);
+    orLay->addWidget(orLabel);
+    orLay->addWidget(orLine(), 1);
+    m_orRow->setVisible(false);
+    body->addWidget(m_orRow);
 
     m_modeNote = new QLabel(this);
     m_modeNote->setWordWrap(true);
-    m_modeNote->setStyleSheet(kHintStyle);
-    root->addWidget(m_modeNote);
+    m_modeNote->setFont(LobbyTheme::uiFont(12));
+    m_modeNote->setProperty("role", "muted");
+    body->addWidget(m_modeNote);
 
-    m_form = new QFormLayout;
-    m_form->setVerticalSpacing(8);
-
-    // Show password sits beside the (first) password field; the other fields
-    // keep the same width so their right edges line up.
-    m_showPassword = new QCheckBox(tr("Show password"), this);
-    // Reset: "Email me a code" sits beside the email field when the lobby can send email
-    m_emailCodeButton = new QPushButton(tr("Email me a code"), this);
-    m_emailCodeButton->setAutoDefault(false);
-    m_emailCodeButton->setToolTip(tr("Emails a reset code if this is the address confirmed on your account."));
-    const int sideWidth = qMax(m_showPassword->sizeHint().width(), m_emailCodeButton->sizeHint().width());
-    auto fieldRow = [this, sideWidth](QLineEdit* edit, QWidget* side) {
-        auto* row = new QWidget(this);
-        auto* lay = new QHBoxLayout(row);
-        lay->setContentsMargins(0, 0, 0, 0);
-        lay->addWidget(edit, 1);
-        if (side == nullptr)
-        {
-            side = new QWidget(row);
-        }
-        side->setFixedWidth(sideWidth);
-        lay->addWidget(side);
-        return row;
-    };
-
-    m_usernameEdit = new QLineEdit(this);
+    m_usernameEdit = fieldEdit(this);
     m_usernameEdit->setMaxLength(20);
     m_usernameEdit->setPlaceholderText(tr("2-20 characters: letters, numbers, _ - ."));
-    m_usernameEdit->setValidator(new QRegularExpressionValidator(
-        QRegularExpression(R"([A-Za-z0-9_\-\.]{1,20})"), this));
-    m_usernameRow = fieldRow(m_usernameEdit, nullptr);
-    m_form->addRow(tr("Username:"), m_usernameRow);
+    m_usernameEdit->setValidator(new QRegularExpressionValidator(usernameCharacters(), this));
+    body->addWidget(fieldBlock(this, fieldLabel(tr("Username"), this), m_usernameEdit));
 
     // Forgotten passwords: a one-time reset code from a moderator or, with the
     // account's confirmed address, by email.
-    m_resetEmailEdit = new QLineEdit(this);
+    m_resetEmailEdit = fieldEdit(this);
     m_resetEmailEdit->setMaxLength(254);
     m_resetEmailEdit->setPlaceholderText(tr("The address confirmed on your account"));
-    m_resetEmailLabel = new QLabel(tr("Email:"), this);
-    m_resetEmailRow = fieldRow(m_resetEmailEdit, m_emailCodeButton);
-    m_form->addRow(m_resetEmailLabel, m_resetEmailRow);
+    m_emailCodeButton = new LobbyButton(tr("Email me a code"), LobbyButton::Kind::Secondary, this);
+    m_emailCodeButton->setIconName("mail-send-line");
+    m_emailCodeButton->setToolTip(tr("Emails a reset code if this is the address confirmed on your account."));
+    auto* emailField = new QWidget(this);
+    auto* emailLay = new QHBoxLayout(emailField);
+    emailLay->setContentsMargins(0, 0, 0, 0);
+    emailLay->setSpacing(8);
+    emailLay->addWidget(m_resetEmailEdit, 1);
+    emailLay->addWidget(m_emailCodeButton);
+    m_resetEmailLabel = fieldLabel(tr("Email"), this);
+    m_resetEmailRow = fieldBlock(this, m_resetEmailLabel, emailField);
+    body->addWidget(m_resetEmailRow);
 
-    m_resetCodeEdit = new QLineEdit(this);
+    m_resetCodeEdit = fieldEdit(this);
     m_resetCodeEdit->setMaxLength(32);
     m_resetCodeEdit->setPlaceholderText("XXXX-XXXX-XXXX");
-    m_resetLabel = new QLabel(tr("Reset code:"), this);
-    m_resetRow = fieldRow(m_resetCodeEdit, nullptr);
-    m_form->addRow(m_resetLabel, m_resetRow);
+    m_resetLabel = fieldLabel(tr("Reset code"), this);
+    m_resetRow = fieldBlock(this, m_resetLabel, m_resetCodeEdit);
+    body->addWidget(m_resetRow);
 
-    m_passwordEdit = new QLineEdit(this);
+    // Password, with "Forgot password?" on its caption and the eye in the field
+    m_passwordEdit = fieldEdit(this);
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setMaxLength(kMaxPasswordLength);
-    m_passwordLabel = new QLabel(tr("Password:"), this);
-    m_passwordRow = fieldRow(m_passwordEdit, m_showPassword);
-    m_form->addRow(m_passwordLabel, m_passwordRow);
+    m_showPassword = m_passwordEdit->addAction(QIcon(), QLineEdit::TrailingPosition);
+    m_showPassword->setObjectName("ShowPassword");
+    connect(m_showPassword, &QAction::triggered, this, [this]() { setPasswordShown(!m_passwordShown); });
+    m_passwordLabel = fieldLabel(tr("Password"), this);
+    m_forgotLink = makeLink(tr("Forgot password?"), this);
+    auto* passwordCaption = new QWidget(this);
+    auto* captionLay = new QHBoxLayout(passwordCaption);
+    captionLay->setContentsMargins(0, 0, 0, 0);
+    captionLay->addWidget(m_passwordLabel);
+    captionLay->addStretch(1);
+    captionLay->addWidget(m_forgotLink);
+    m_passwordRow = fieldBlock(this, passwordCaption, m_passwordEdit);
+    body->addWidget(m_passwordRow);
 
-    m_confirmEdit = new QLineEdit(this);
+    m_confirmEdit = fieldEdit(this);
     m_confirmEdit->setEchoMode(QLineEdit::Password);
     m_confirmEdit->setMaxLength(kMaxPasswordLength);
-    m_confirmLabel = new QLabel(tr("Confirm password:"), this);
-    m_confirmRow = fieldRow(m_confirmEdit, nullptr);
-    m_form->addRow(m_confirmLabel, m_confirmRow);
+    m_confirmLabel = fieldLabel(tr("Confirm password"), this);
+    m_confirmRow = fieldBlock(this, m_confirmLabel, m_confirmEdit);
+    body->addWidget(m_confirmRow);
+    setPasswordShown(false);
 
-    m_capsLockLbl = new QLabel(QStringLiteral("⚠ ") + tr("Caps Lock is on"), this);
-    m_capsLockLbl->setStyleSheet("color: #d68910; font-weight: 600;");
-    m_form->addRow(QString(), m_capsLockLbl);
-    m_form->setRowVisible(m_capsLockLbl, false);
+    m_capsLockLbl = new QLabel(tr("Caps Lock is on"), this);
+    m_capsLockLbl->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
+    m_capsLockLbl->setProperty("role", "warn");
+    m_capsLockLbl->setVisible(false);
+    body->addWidget(m_capsLockLbl);
 
     // what's missing or what went wrong, right under the fields
     m_validationLbl = new QLabel(this);
-    m_validationLbl->setStyleSheet(kHintStyle);
+    m_validationLbl->setFont(LobbyTheme::uiFont(11));
+    m_validationLbl->setProperty("role", "muted");
     m_validationLbl->setWordWrap(true);
-    m_form->addRow(QString(), m_validationLbl);
+    body->addWidget(m_validationLbl);
 
-    m_rememberCheck = new QCheckBox(tr("Keep me logged in"), this);
+    m_rememberCheck = new ToggleSwitch(tr("Keep me logged in"), this);
+    m_rememberCheck->setObjectName("RememberLogin");
     m_rememberCheck->setChecked(true);
-    m_form->addRow(QString(), m_rememberCheck);
+    body->addWidget(m_rememberCheck);
 
     m_savedRow = new QWidget(this);
     auto* savedLay = new QHBoxLayout(m_savedRow);
     savedLay->setContentsMargins(0, 0, 0, 0);
+    savedLay->setSpacing(8);
     m_savedLoginLbl = new QLabel(m_savedRow);
-    m_savedLoginLbl->setStyleSheet(kHintStyle);
+    m_savedLoginLbl->setFont(LobbyTheme::uiFont(12));
+    m_savedLoginLbl->setProperty("role", "muted");
     m_savedLoginLbl->setWordWrap(true);
-    m_forgetButton = new QPushButton(tr("Log out"), m_savedRow);
-    m_forgetButton->setAutoDefault(false);
+    m_forgetButton = new LobbyButton(tr("Log out"), LobbyButton::Kind::Ghost, m_savedRow);
+    m_forgetButton->setButtonSize(LobbyButton::Size::Small);
+    m_forgetButton->setIconName("logout-box-r-line");
     savedLay->addWidget(m_savedLoginLbl, 1);
     savedLay->addWidget(m_forgetButton);
-    m_form->addRow(QString(), m_savedRow);
+    body->addWidget(m_savedRow);
 
-    root->addLayout(m_form);
+    // Reset: back to Log in; linking: log in without linking
+    m_backLink = makeLink(tr("Back to log in"), this);
+    m_dontLinkLink = makeLink(tr("Don't link"), this);
+    m_dontLinkLink->setToolTip(tr("Log in or create an account without linking this Discord account."));
+    m_linksRow = new QWidget(this);
+    auto* linksLay = new QHBoxLayout(m_linksRow);
+    linksLay->setContentsMargins(0, 0, 0, 0);
+    linksLay->setSpacing(14);
+    linksLay->addWidget(m_backLink);
+    linksLay->addWidget(m_dontLinkLink);
+    linksLay->addStretch(1);
+    body->addWidget(m_linksRow);
+    root->addLayout(body);
 
     m_discord = new Utilities::DiscordLogin(this);
     connect(m_discord, &Utilities::DiscordLogin::availabilityKnown, this, [this](bool available) {
@@ -404,26 +523,25 @@ void LobbyConnectDialog::buildUi()
     });
     connect(m_emailCodeButton, &QPushButton::clicked, this, &LobbyConnectDialog::onEmailCodeClicked);
 
-    // bottom: Forgot password? / Back to log in on the left, the action on the right
-    m_forgotLink = makeLink(tr("Forgot password?"), this);
-    m_backLink   = makeLink(tr("Back to log in"), this);
-    m_dontLinkLink = makeLink(tr("Don't link"), this);
-    m_dontLinkLink->setToolTip(tr("Log in or create an account without linking this Discord account."));
-    auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
-    m_connectButton = btnBox->addButton(tr("Log in"), QDialogButtonBox::AcceptRole);
+    auto* footer = new QHBoxLayout;
+    footer->setContentsMargins(22, 12, 22, 18);
+    footer->setSpacing(10);
+    auto* cancel = new LobbyButton(tr("Cancel"), LobbyButton::Kind::Ghost, this);
+    cancel->setButtonSize(LobbyButton::Size::Large);
+    m_connectButton = new LobbyButton(tr("Log in"), LobbyButton::Kind::Primary, this);
+    m_connectButton->setObjectName("ConnectButton");
+    m_connectButton->setButtonSize(LobbyButton::Size::Large);
+    m_connectButton->setPixelLabel(true);
     m_connectButton->setDefault(true);
-    connect(btnBox, &QDialogButtonBox::rejected, this, [this]() {
+    m_connectButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    footer->addWidget(cancel);
+    footer->addWidget(m_connectButton, 1);
+    root->addLayout(footer);
+    connect(cancel, &QPushButton::clicked, this, [this]() {
         m_discord->cancel();
         reject();
     });
     connect(m_connectButton, &QPushButton::clicked, this, &LobbyConnectDialog::onConnect);
-    auto* bottom = new QHBoxLayout;
-    bottom->addWidget(m_forgotLink);
-    bottom->addWidget(m_backLink);
-    bottom->addWidget(m_dontLinkLink);
-    bottom->addStretch(1);
-    bottom->addWidget(btnBox);
-    root->addLayout(bottom);
 
     auto inputChanged = [this]() {
         m_statusMessage.clear();
@@ -441,11 +559,6 @@ void LobbyConnectDialog::buildUi()
     connect(m_passwordEdit, &QLineEdit::textChanged, this, inputChanged);
     connect(m_confirmEdit, &QLineEdit::textChanged, this, inputChanged);
     connect(m_resetCodeEdit, &QLineEdit::textChanged, this, inputChanged);
-    connect(m_showPassword, &QCheckBox::toggled, this, [this](bool show) {
-        const auto echo = show ? QLineEdit::Normal : QLineEdit::Password;
-        m_passwordEdit->setEchoMode(echo);
-        m_confirmEdit->setEchoMode(echo);
-    });
     connect(m_forgotLink, &QLabel::linkActivated, this, [this]() { setMode(Mode::Reset); });
     connect(m_backLink, &QLabel::linkActivated, this, [this]() { setMode(Mode::Login); });
     connect(m_dontLinkLink, &QLabel::linkActivated, this, [this]() { clearDiscordLink(); });
@@ -463,6 +576,18 @@ void LobbyConnectDialog::buildUi()
     // Caps Lock: checked while typing a password
     for (QLineEdit* edit : { m_passwordEdit, m_confirmEdit })
         edit->installEventFilter(this);
+}
+
+void LobbyConnectDialog::setPasswordShown(bool shown)
+{
+    m_passwordShown = shown;
+    const auto echo = shown ? QLineEdit::Normal : QLineEdit::Password;
+    m_passwordEdit->setEchoMode(echo);
+    m_confirmEdit->setEchoMode(echo);
+    const QColor color = shown ? LobbyTheme::tokens().accentInk : LobbyTheme::tokens().muted;
+    m_showPassword->setIcon(QIcon(LobbyTheme::icon("eye-line", color, 16, devicePixelRatioF())));
+    m_showPassword->setText(shown ? tr("Hide password") : tr("Show password"));
+    m_showPassword->setToolTip(m_showPassword->text());
 }
 
 bool LobbyConnectDialog::eventFilter(QObject* watched, QEvent* event)
@@ -490,6 +615,17 @@ bool LobbyConnectDialog::eventFilter(QObject* watched, QEvent* event)
     return QDialog::eventFilter(watched, event);
 }
 
+void LobbyConnectDialog::refit()
+{
+    // A label only marks the top layout dirty when it rewraps, so the dialog
+    // keeps its old height without the activate.
+    if (isVisible())
+    {
+        layout()->activate();
+        adjustSize();
+    }
+}
+
 void LobbyConnectDialog::updateCapsLock()
 {
     const bool typingPassword = (m_passwordEdit->hasFocus() || m_confirmEdit->hasFocus()) &&
@@ -497,8 +633,8 @@ void LobbyConnectDialog::updateCapsLock()
     const bool show = typingPassword && capsLockOn();
     if (m_capsLockLbl->isVisibleTo(this) != show)
     {
-        m_form->setRowVisible(m_capsLockLbl, show);
-        adjustSize();
+        m_capsLockLbl->setVisible(show);
+        refit();
     }
 }
 
@@ -530,18 +666,19 @@ void LobbyConnectDialog::setMode(Mode mode)
     m_guestTab->setVisible(!linking);
     m_dontLinkLink->setVisible(linking);
 
-    m_form->setRowVisible(m_resetRow, reset);
-    m_form->setRowVisible(m_passwordRow, !guest);
-    m_form->setRowVisible(m_confirmRow, register_ || reset);
-    m_form->setRowVisible(m_rememberCheck, !guest);
+    m_resetRow->setVisible(reset);
+    m_passwordRow->setVisible(!guest);
+    m_confirmRow->setVisible(register_ || reset);
+    m_rememberCheck->setVisible(!guest);
     m_forgotLink->setVisible(login && !linking);
     m_backLink->setVisible(reset);
-    m_form->setRowVisible(m_resetEmailRow, reset && m_emailAvailable);
+    m_linksRow->setVisible(reset || linking);
+    m_resetEmailRow->setVisible(reset && m_emailAvailable);
     const bool discord = login && m_discordAvailable && !linking;
     m_discordButton->setVisible(discord);
-    m_orLabel->setVisible(discord);
+    m_orRow->setVisible(discord);
 
-    m_passwordLabel->setText(reset ? tr("New password:") : tr("Password:"));
+    m_passwordLabel->setText((reset ? tr("New password") : tr("Password")).toUpper());
     m_passwordEdit->setPlaceholderText((register_ || reset) ? tr("At least 8 characters")
                                        : linking ? tr("Required to link Discord")
                                        : QString());
@@ -582,7 +719,7 @@ void LobbyConnectDialog::setMode(Mode mode)
     updateSavedLoginRow();
     updateCapsLock();
     validateInput();
-    adjustSize();
+    refit();
 }
 
 void LobbyConnectDialog::onDiscordClicked()
@@ -634,9 +771,11 @@ void LobbyConnectDialog::setDiscordWaiting(bool waiting)
     m_discordButton->setText(waiting ? tr("Waiting for Discord in your browser... (Cancel)") : tr("Log in with Discord"));
     if (waiting)
     {
-        m_validationLbl->setStyleSheet(kHintStyle);
+        setRole(m_validationLbl, "muted");
         m_validationLbl->setText(tr("Finish signing in to Discord in your browser."));
+        m_validationLbl->setVisible(true);
         m_connectButton->setEnabled(false);
+        refit();
     }
     else
     {
@@ -671,7 +810,11 @@ void LobbyConnectDialog::updateSavedLoginRow()
     m_savedLoginLbl->setText(showSaved
         ? tr("Logged in as %1 (saved): no password needed.").arg(user)
         : QString());
-    m_form->setRowVisible(m_savedRow, showSaved);
+    if (m_savedRow->isVisibleTo(this) != showSaved)
+    {
+        m_savedRow->setVisible(showSaved);
+        refit();
+    }
 }
 
 QString LobbyConnectDialog::inputProblem(QWidget** field) const
@@ -687,6 +830,9 @@ QString LobbyConnectDialog::inputProblem(QWidget** field) const
 
     if (user.length() < 2)
         return at(m_usernameEdit, tr("Enter a username of at least 2 characters."));
+    if (!usernameFits(user))
+        return at(m_usernameEdit, tr("That name is too long. The limit is 15 Greek or Cyrillic characters, "
+                                     "or 10 Japanese, Chinese or Korean characters."));
     if (m_mode == Mode::Guest)
         return QString();
     if (m_mode == Mode::Reset && m_resetCodeEdit->text().trimmed().isEmpty())
@@ -705,34 +851,34 @@ QString LobbyConnectDialog::inputProblem(QWidget** field) const
 
 void LobbyConnectDialog::validateInput()
 {
-    // Before the first attempt a problem is only a grey hint; the button
+    // Before the first attempt a problem is only a muted hint; the button
     // stays enabled so clicking it explains what's missing.
     const QString problem = inputProblem(nullptr);
     QString message;
-    const char* style = kHintStyle;
+    const char* role = "muted";
     if (!m_statusMessage.isEmpty())
     {
         message = m_statusMessage;
-        style = kErrorStyle;
+        role = "bad";
     }
     else if (!m_noticeMessage.isEmpty())
     {
         message = m_noticeMessage;
-        style = kNoticeStyle;
+        role = "ok";
     }
     else if (!problem.isEmpty())
     {
         message = problem;
-        style = m_attempted ? kErrorStyle : kHintStyle;
+        role = m_attempted ? "bad" : "muted";
     }
-    m_validationLbl->setStyleSheet(style);
-    const bool resize = message != m_validationLbl->text();
+    setRole(m_validationLbl, role);
+    const bool resize = message != m_validationLbl->text() || m_validationLbl->isVisibleTo(this) == message.isEmpty();
     m_validationLbl->setText(message);
-    m_form->setRowVisible(m_validationLbl, !message.isEmpty());
+    m_validationLbl->setVisible(!message.isEmpty());
     m_connectButton->setEnabled(!m_discordWaiting);
     // fit a message that wraps onto more lines than the last one
     if (resize)
-        adjustSize();
+        refit();
 }
 
 void LobbyConnectDialog::onConnect()
