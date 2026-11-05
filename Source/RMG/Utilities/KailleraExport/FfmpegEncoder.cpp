@@ -517,11 +517,11 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
 #else
     std::vector<std::string> arguments =
     {
-        ffmpegPath, "-v", "error", "-y", "-itsscale", std::to_string(timestampScale),
-        "-i", std::format("\"{}\"", videoPath), "-f", "s16le", "-ar",
-        std::to_string(audioFrequency), "-ac", "2", "-i",
-        std::format("\"{}\"", audioPath), "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
-        "-b:a", "192k", "-shortest", std::format("\"{}\"", outputPath)
+        ffmpegPath, "-v", "error", "-y", "-itsscale", std::format("{:g}", timestampScale),
+        "-i", std::format("{}", videoPath), "-f", "s16le", "-ar",
+        std::format("{:d}", audioFrequency), "-ac", "2", "-i",
+        std::format("{}", audioPath), "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
+        "-b:a", "192k", "-shortest", std::format("{}", outputPath)
     };
 
     return runFfmpegCommandPosix(arguments, errorMessage);
