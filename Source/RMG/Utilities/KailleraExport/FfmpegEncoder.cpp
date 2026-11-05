@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <poll.h>
+#include <locale>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -515,11 +516,13 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
 
     return runFfmpegCommand(command, errorMessage);
 #else
+    //Use default C locale for formatting numbers
+    std::locale cLocale("C");
     std::vector<std::string> arguments =
     {
-        ffmpegPath, "-v", "error", "-y", "-itsscale", std::format("{:g}", timestampScale),
+        ffmpegPath, "-v", "error", "-y", "-itsscale", std::format(cLocale, "{:g}", timestampScale),
         "-i", std::format("{}", videoPath), "-f", "s16le", "-ar",
-        std::format("{:d}", audioFrequency), "-ac", "2", "-i",
+        std::format(cLocale, "{:d}", audioFrequency), "-ac", "2", "-i",
         std::format("{}", audioPath), "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
         "-b:a", "192k", "-shortest", std::format("{}", outputPath)
     };
@@ -639,11 +642,13 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
             m_SelectedVideoEncoder.c_str(),
             m_HardwareAccelerated ? " (hardware)" : " (CPU)");
 
+    //Use default C locale for formatting numbers
+    std::locale cLocale("C");
     std::vector<std::string> command =
         {
           config.ffmpegPath, "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
-          std::format("{}x{}", config.width, config.height), "-framerate",
-          std::to_string(config.fps), "-i", "pipe:0"
+          std::format(cLocale, "{}x{}", config.width, config.height), "-framerate",
+          std::format(cLocale, "{:g}", config.fps), "-i", "pipe:0"
         };
 
     for (int i = 0; i < encoderFlags.size(); i++)
