@@ -1085,6 +1085,15 @@ void KailleraPlaybackDialog::populatePlaybackList()
                     while (scan < scanEnd && *scan != 0) scan++;
                     if (scan < scanEnd) scan++;
                 }
+                else if (type == n02::KREC_SAVE_DATA_RECORD)
+                {
+                    // The match's starting save, right after the header.
+                    if (scan + 4 > scanEnd) break;
+                    unsigned int slen = *(unsigned int*)scan;
+                    scan += 4;
+                    if ((size_t)(scanEnd - scan) < slen) break;
+                    scan += slen;
+                }
                 else
                 {
                     break;
