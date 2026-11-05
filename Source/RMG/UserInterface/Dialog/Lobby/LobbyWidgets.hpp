@@ -562,6 +562,10 @@ public:
     void setAdmitVisible(bool visible);
 
     void setHostTools(bool dragHandle, bool kick);
+    // A seat drag: the card being moved fades where it was; the seat under the
+    // pointer, the one it would swap with, gets a ring.
+    void setLifted(bool lifted);
+    void setDropTarget(bool target);
 
     QWidget* dragHandle() const { return m_dragHandle; }
     IconButton* kickButton() const { return m_kick; }
@@ -587,6 +591,7 @@ private:
     bool m_connecting = false;
     bool m_waiting = false;
     bool m_admitVisible = false;
+    bool m_dropTarget = false;
 
     QWidget* m_cap = nullptr;
     QLabel* m_capLabel = nullptr;

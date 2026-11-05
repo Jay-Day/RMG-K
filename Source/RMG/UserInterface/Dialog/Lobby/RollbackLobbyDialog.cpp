@@ -94,11 +94,7 @@
 #include <QShowEvent>
 #include <QCloseEvent>
 #include <QMouseEvent>
-#include <QDrag>
-#include <QMimeData>
-#include <QDragEnterEvent>
-#include <QDragMoveEvent>
-#include <QDropEvent>
+#include <QGraphicsDropShadowEffect>
 #include <QPixmap>
 #include <QTimer>
 #include <QFont>
@@ -162,9 +158,6 @@ namespace
     // Viewers of one live replay; the server never relays it to the players.
     const char* const CHANNEL_SPECTATE = "spectate";
 
-    // MIME type carrying the dragged seat's slot during a host reorder drag.
-    const char* const kSeatMime = "application/x-rmgk-seat-slot";
-
     constexpr int MARGIN_STAGE       = 14;  // around the stage and the sidebar
     constexpr int MARGIN_STAGE_INNER = 8;   // the stage's edge beside the splitter handle
     constexpr int GAP_STAGE          = 12;  // between the stage's cards
@@ -179,6 +172,56 @@ namespace
     {
         return LobbyTheme::isDark();
     }
+
+    // Follows the pointer for a seat drag, installed on the application so it
+    // sees every mouse event: a room update can hide the handle that took the
+    // press, and the release then lands somewhere else.
+    class SeatDragTracker : public QObject
+    {
+    public:
+        SeatDragTracker(std::function<void(const QPoint&)> moved, std::function<void(const QPoint&, bool)> ended,
+                        QObject* parent)
+            : QObject(parent), m_moved(std::move(moved)), m_ended(std::move(ended))
+        {
+        }
+
+    protected:
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            if (event->type() == QEvent::ApplicationDeactivate)
+            {
+                m_ended(QPoint(), false);
+                return false;
+            }
+            if (!watched->isWidgetType())
+                return false;
+            switch (event->type())
+            {
+            case QEvent::MouseMove:
+                m_moved(static_cast<QMouseEvent*>(event)->globalPosition().toPoint());
+                return true;
+            case QEvent::MouseButtonRelease:
+                m_ended(static_cast<QMouseEvent*>(event)->globalPosition().toPoint(), true);
+                return true;
+            case QEvent::MouseButtonPress:
+            case QEvent::MouseButtonDblClick:
+                return true;
+            case QEvent::KeyPress:
+                if (static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape)
+                {
+                    m_ended(QPoint(), false);
+                    return true;
+                }
+                return false;
+            default:
+                return false;
+            }
+        }
+
+    private:
+        std::function<void(const QPoint&)> m_moved;
+        std::function<void(const QPoint&, bool)> m_ended;
+    };
 
     struct StatusColors { QString ok; QString wait; QString fail; QString idle; };
     StatusColors statusColors()
@@ -642,6 +685,9 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
 RollbackLobbyDialog::~RollbackLobbyDialog()
 {
+    // A drag holds the cursor shape app-wide.
+    endSeatDrag(QPoint(), false);
+
     // Saved here rather than closeEvent because Esc rejects the dialog
     // without a close event.
     QSettings s("RMG-K", "n02");
@@ -1127,8 +1173,6 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     // ── Seats: a port card each, sharing the width ──
     auto* seatsBox = new QWidget(page);
     m_seatsBox = seatsBox;
-    seatsBox->setAcceptDrops(true);      // host reorder: drop a seat onto another
-    seatsBox->installEventFilter(this);  // handles DragEnter/Move/Drop
     auto* seatsLay = new QHBoxLayout(seatsBox);
     seatsLay->setContentsMargins(0, 0, 0, 0);
     seatsLay->setSpacing(10);
@@ -2224,35 +2268,9 @@ bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
                 {
                     const int slot = m_seatDragSlot;
                     m_seatDragSlot = 0;
-                    startSeatDrag(slot, s.row);
+                    beginSeatDrag(slot, s.row, m_seatDragStartPos);
+                    moveSeatDrag(me->globalPosition().toPoint());
                 }
-                return true;
-            }
-        }
-    }
-
-    // ── Seat reorder: accept the drop and ask the server to swap ──
-    if (m_seatsBox && watched == m_seatsBox)
-    {
-        if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
-        {
-            auto* de = static_cast<QDragMoveEvent*>(event);
-            if (de->mimeData() && de->mimeData()->hasFormat(kSeatMime))
-            {
-                de->acceptProposedAction();
-                return true;
-            }
-        }
-        else if (event->type() == QEvent::Drop)
-        {
-            auto* de = static_cast<QDropEvent*>(event);
-            if (de->mimeData() && de->mimeData()->hasFormat(kSeatMime))
-            {
-                const int from = de->mimeData()->data(kSeatMime).toInt();
-                const int to   = seatSlotAtPos(de->position().toPoint());
-                if (m_client && m_canReorderSeats && from >= 1 && to >= 1 && from != to)
-                    m_client->swapSeats(from, to);
-                de->acceptProposedAction();
                 return true;
             }
         }
@@ -2261,22 +2279,93 @@ bool RollbackLobbyDialog::eventFilter(QObject* watched, QEvent* event)
     return QDialog::eventFilter(watched, event);
 }
 
-void RollbackLobbyDialog::startSeatDrag(int slot, QWidget* card)
+void RollbackLobbyDialog::beginSeatDrag(int slot, PortCard* card, const QPoint& globalPos)
 {
-    if (slot < 1 || !card)
+    if (slot < 1 || !card || m_seatDraggingSlot != 0)
         return;
-    auto* drag = new QDrag(this);
-    auto* mime = new QMimeData();
-    mime->setData(kSeatMime, QByteArray::number(slot));
-    drag->setMimeData(mime);
-    // Carry a snapshot of the seat card under the cursor for feedback.
-    const QPixmap pm = card->grab();
-    if (!pm.isNull())
+
+    // The card a little smaller, so the ring on the seat under it shows around
+    // it. It shrinks toward the grab point, which stays under the pointer.
+    constexpr qreal kScale = 0.94;
+    const QPixmap shot = card->grab();
+    const qreal dpr = shot.devicePixelRatio();
+    QPixmap lifted((QSizeF(shot.size()) * kScale).toSize());
+    lifted.setDevicePixelRatio(dpr);
+    lifted.fill(Qt::transparent);
     {
-        drag->setPixmap(pm);
-        drag->setHotSpot(QPoint(pm.width() / 8, pm.height() / 2));
+        QPainter painter(&lifted);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawPixmap(QRectF(QPointF(), QSizeF(lifted.size()) / dpr), shot, QRectF(shot.rect()));
     }
-    drag->exec(Qt::MoveAction);
+    m_seatGhost = new QLabel(m_roomWindow);
+    m_seatGhost->setObjectName("SeatDragGhost");
+    m_seatGhost->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_seatGhost->setPixmap(lifted);
+    m_seatGhost->resize((QSizeF(lifted.size()) / dpr).toSize());
+    auto* shadow = new QGraphicsDropShadowEffect(m_seatGhost);
+    shadow->setBlurRadius(28);
+    shadow->setOffset(0, 10);
+    shadow->setColor(QColor(0, 0, 0, isDarkTheme() ? 150 : 70));
+    m_seatGhost->setGraphicsEffect(shadow);
+    m_seatGhostGrab = (QPointF(card->mapFromGlobal(globalPos)) * kScale).toPoint();
+
+    m_seatDraggingSlot = slot;
+    card->setLifted(true);
+    m_seatDragTracker = new SeatDragTracker(
+        [this](const QPoint& pos) { moveSeatDrag(pos); },
+        [this](const QPoint& pos, bool drop) { endSeatDrag(pos, drop); }, this);
+    qApp->installEventFilter(m_seatDragTracker);
+    QApplication::setOverrideCursor(Qt::ClosedHandCursor);
+    moveSeatDrag(globalPos);
+    m_seatGhost->show();
+    m_seatGhost->raise();
+}
+
+void RollbackLobbyDialog::moveSeatDrag(const QPoint& globalPos)
+{
+    if (!m_seatGhost)
+        return;
+    m_seatGhost->move(m_roomWindow->mapFromGlobal(globalPos) - m_seatGhostGrab);
+    int target = seatSlotAtPos(m_seatsBox->mapFromGlobal(globalPos));
+    if (target == m_seatDraggingSlot)
+        target = 0;
+    if (target == m_seatDropSlot)
+        return;
+    m_seatDropSlot = target;
+    for (auto& s : m_seats)
+    {
+        if (s.row)
+            s.row->setDropTarget(s.slot == target);
+    }
+}
+
+void RollbackLobbyDialog::endSeatDrag(const QPoint& globalPos, bool drop)
+{
+    if (m_seatDraggingSlot == 0)
+        return;
+    const int from = m_seatDraggingSlot;
+    const int to = drop ? seatSlotAtPos(m_seatsBox->mapFromGlobal(globalPos)) : 0;
+    m_seatDraggingSlot = 0;
+    m_seatDropSlot = 0;
+
+    // This can run inside the tracker's own filter, so it's deleted later.
+    qApp->removeEventFilter(m_seatDragTracker);
+    m_seatDragTracker->deleteLater();
+    m_seatDragTracker = nullptr;
+    QApplication::restoreOverrideCursor();
+    m_seatGhost->hide();
+    m_seatGhost->deleteLater();
+    m_seatGhost = nullptr;
+    for (auto& s : m_seats)
+    {
+        if (!s.row)
+            continue;
+        s.row->setLifted(false);
+        s.row->setDropTarget(false);
+    }
+
+    if (m_client && m_canReorderSeats && to >= 1 && to != from)
+        m_client->swapSeats(from, to);
 }
 
 int RollbackLobbyDialog::seatSlotAtPos(const QPoint& pos) const
@@ -3395,6 +3484,8 @@ void RollbackLobbyDialog::layoutStage()
     const bool open = m_currentRoomId != 0 && !m_roomMinimized;
     if (!open && m_roomSettingsPanel)
         m_roomSettingsPanel->hide();
+    if (!open)
+        endSeatDrag(QPoint(), false);
     m_scrim->setGeometry(m_stage->rect());
     m_roomWindow->placeIn(m_stage->rect().adjusted(MARGIN_STAGE, MARGIN_STAGE, -MARGIN_STAGE_INNER, -MARGIN_STAGE));
     m_scrim->setWindowRect(m_roomWindow->geometry());
@@ -3440,6 +3531,7 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     // gone, retaining it can only display a room/roster that may no longer exist
     // (the server keeps rooms in memory and loses them across a restart).
     m_canReorderSeats = false;
+    endSeatDrag(QPoint(), false);
 
     m_currentRoomId = 0;
     m_currentRoomGame.clear();
@@ -4122,6 +4214,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             m_canReorderSeats && i < maxPlayers && m_seats[i].userId != 0,
             m_seats[i].canKick && m_seats[i].userId != 0);
     }
+    if (m_seatDraggingSlot != 0 && (!m_canReorderSeats || m_seats[m_seatDraggingSlot - 1].userId == 0))
+        endSeatDrag(QPoint(), false);
 
     // Late join: track who sits outside the running match. Players in the
     // match hear about a newcomer waiting to join; the newcomer learns what
@@ -4654,12 +4748,13 @@ void RollbackLobbyDialog::refreshStartButton()
         seatedPeerIds.append(s.peerId);
     }
 
-    // With nobody on another PC there are no paths to measure. The server only
-    // allows it when whoever joins later can be added to the running match.
+    // With nobody on another PC there are no paths to measure. Players on this
+    // PC are enough for a match; one player alone is only allowed when whoever
+    // joins later can be added to the running match.
     const bool alone = seated >= 1 && !otherPcSeated && m_canStartAlone;
-    const bool enoughPlayers = otherPcSeated || alone;
-    bool pingsReady = alone;
-    if (m_client && !alone)
+    const bool enoughPlayers = otherPcSeated || seated >= 2 || alone;
+    bool pingsReady = !otherPcSeated;
+    if (m_client && otherPcSeated)
         m_client->worstRoomPingMs(seatedPeerIds, &pingsReady);
     // Every player's client must take the save, or the match can't start.
     QStringList needSaveData;
@@ -5410,7 +5505,9 @@ void RollbackLobbyDialog::refreshSettingHints()
     }
     else if (m_playingAlone)
     {
-        delayHint = tr("Auto stays at 0 while you're alone, then reads real pings when someone's added.");
+        delayHint = m_client->matchSeats() > 0
+            ? tr("Auto stays at 0 while you're alone, then reads real pings when someone's added.")
+            : tr("Auto stays at 0: everyone in this match plays on this PC.");
     }
     else
     {
@@ -6748,9 +6845,10 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         }
         appendChatSystemLine(CHANNEL_ROOM, delayMsg);
     }
-    if (m_playingAlone)
-        appendChatSystemLine(CHANNEL_ROOM,
-            tr("You're playing alone for now. When someone joins the room, click Add to Game on their seat."));
+    if (m_playingAlone && m_client->matchSeats() > 0)
+        appendChatSystemLine(CHANNEL_ROOM, peers.size() > 1
+            ? tr("Only this PC is playing for now. When someone joins the room, click Add to Game on their seat.")
+            : tr("You're playing alone for now. When someone joins the room, click Add to Game on their seat."));
     warnAboutLocalControllers();
 
     m_currentMatchId = matchId;
@@ -6855,8 +6953,9 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         remotePeers << QString("%1,ice,%2").arg(p.slot).arg(p.peerId);
     }
 
-    // Nobody else is fine only in a match someone can join later.
-    if (remotePeers.isEmpty() && m_client->matchSeats() == 0)
+    // Nobody on another PC is fine with other players on this one, or in a
+    // match someone can join later.
+    if (remotePeers.isEmpty() && localSeats.isEmpty() && m_client->matchSeats() == 0)
     {
         abortMatchStart(tr("Match start failed: missing remote peer."));
         return;

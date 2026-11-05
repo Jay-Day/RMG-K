@@ -6339,4 +6339,15 @@ Everyone here when the game starts can still save a replay; whoever joins mid-ga
         <translation>ルームを最小化します。席はそのままです。</translation>
     </message>
 </context>
+<context>
+    <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+    <message>
+        <source>Only this PC is playing for now. When someone joins the room, click Add to Game on their seat.</source>
+        <translation>現在はこのPCだけでプレイしています。誰かがルームに参加したら、その席の「ゲームに追加」をクリックしてください。</translation>
+    </message>
+    <message>
+        <source>Auto stays at 0: everyone in this match plays on this PC.</source>
+        <translation>この試合の全員がこのPCでプレイしているため、自動は0のままです。</translation>
+    </message>
+</context>
 </TS>

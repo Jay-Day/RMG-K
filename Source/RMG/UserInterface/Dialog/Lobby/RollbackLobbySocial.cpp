@@ -1203,7 +1203,9 @@ void RollbackLobbyDialog::refreshMentionPopup()
     QList<MentionCandidate> others;
     for (const auto& user : m_client->users())
     {
-        if (user.id == m_client->selfUserId() || !user.username.startsWith(typed, Qt::CaseInsensitive))
+        // Players on this PC can be mentioned, but there's no one to message.
+        if (user.id == m_client->selfUserId() || (whisper && m_client->isOnThisPc(user.id)) ||
+            !user.username.startsWith(typed, Qt::CaseInsensitive))
             continue;
         MentionCandidate candidate;
         candidate.name = user.username;

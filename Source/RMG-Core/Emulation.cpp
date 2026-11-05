@@ -272,9 +272,10 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
         remotes.push_back(std::move(peer));
     }
 
-    // No peers is a host playing alone until someone is added, which only a
-    // match open to late joiners allows.
-    return !remotes.empty() || seats > 0;
+    // No peers is a match played on this PC alone: several players here, or a
+    // host alone until someone is added, which only a match open to late
+    // joiners allows.
+    return !remotes.empty() || !extraLocals.empty() || seats > 0;
 }
 
 //

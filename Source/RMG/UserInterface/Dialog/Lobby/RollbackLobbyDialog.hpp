@@ -483,12 +483,18 @@ private:
                           bool isSelf, int pingMs, int frameDelay, bool canKick,
                           const QString& connectionType);
 
-    // Seat reorder (host, waiting): a seat's drag handle starts a QDrag carrying
-    // its slot; the seats container handles the drop and asks the server to swap.
+    // Seat reorder (host, waiting): dragging a seat's handle lifts a picture of
+    // its card that follows the pointer from where it was grabbed. Letting go
+    // over another seat asks the server to swap the two; Escape cancels.
+    // It's drawn inside the room window rather than as a system drag, whose
+    // image rides the cursor and lands wherever the platform puts it.
     // Seats may be left sparse on purpose (P1 + P3 with P2 empty) — the core
     // sizes the session by the highest occupied seat, so a swap into an empty
     // seat is a supported move, not something to guard against.
-    void startSeatDrag(int slot, QWidget* card);
+    void beginSeatDrag(int slot, PortCard* card, const QPoint& globalPos);
+    void moveSeatDrag(const QPoint& globalPos);
+    // drop: swap with the seat under globalPos; otherwise just put it back.
+    void endSeatDrag(const QPoint& globalPos, bool drop);
     int  seatSlotAtPos(const QPoint& pos) const;
 
     // Returns the local ROM path whose MD5 matches `md5` (case-insensitive), or
@@ -770,10 +776,15 @@ private:
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
-    QWidget*   m_seatsBox        = nullptr; // container that accepts seat drops
+    QWidget*   m_seatsBox        = nullptr; // holds the port cards
     bool       m_canReorderSeats = false;   // host && room waiting
     QPoint     m_seatDragStartPos;          // press point, to clear the drag threshold
-    int        m_seatDragSlot    = 0;       // slot being dragged (0 = none)
+    int        m_seatDragSlot    = 0;       // slot pressed, not dragged yet (0 = none)
+    int        m_seatDraggingSlot = 0;      // slot being dragged (0 = none)
+    int        m_seatDropSlot    = 0;       // seat under the pointer, ringed (0 = none)
+    QLabel*    m_seatGhost       = nullptr; // the lifted card, over the room window
+    QPoint     m_seatGhostGrab;             // the grab point on the ghost
+    QObject*   m_seatDragTracker = nullptr; // app-wide filter while dragging
 
     // Drives PING_PROBE_REQUEST → UDP PROBE → PROBE_REPLY refresh cycle for
     // each peer seated in the current room. Started when a room is entered,

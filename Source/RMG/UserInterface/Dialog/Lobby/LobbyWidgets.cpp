@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QFontMetrics>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLinearGradient>
@@ -1822,15 +1823,43 @@ void PortCard::setHostTools(bool dragHandle, bool kick)
     m_kick->setVisible(kick);
 }
 
+void PortCard::setLifted(bool lifted)
+{
+    if (!lifted)
+    {
+        setGraphicsEffect(nullptr);
+        return;
+    }
+    auto* fade = new QGraphicsOpacityEffect(this);
+    fade->setOpacity(0.3);
+    setGraphicsEffect(fade);
+}
+
+void PortCard::setDropTarget(bool target)
+{
+    if (m_dropTarget == target)
+        return;
+    m_dropTarget = target;
+    update();
+}
+
 void PortCard::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     const Tokens& t = LobbyTheme::tokens();
     const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    const QRectF ring = QRectF(rect()).adjusted(1, 1, -1, -1);
 
     if (m_open)
     {
+        if (m_dropTarget)
+        {
+            painter.setPen(QPen(t.ink, 2.0));
+            painter.setBrush(t.tint);
+            painter.drawRoundedRect(ring, 12, 12);
+            return;
+        }
         painter.setPen(QPen(t.line2, 1.5, Qt::DashLine));
         painter.setBrush(Qt::NoBrush);
         painter.drawRoundedRect(box, 12, 12);
@@ -1859,6 +1888,11 @@ void PortCard::paintEvent(QPaintEvent*)
     painter.setBrush(Qt::NoBrush);
     painter.setPen(QPen(m_self ? port : LobbyTheme::mix(port, t.line, 0.35), 1.0));
     painter.drawPath(path);
+    if (m_dropTarget)
+    {
+        painter.setPen(QPen(t.ink, 2.0));
+        painter.drawRoundedRect(ring, 12, 12);
+    }
 }
 
 #endif // NETPLAY
