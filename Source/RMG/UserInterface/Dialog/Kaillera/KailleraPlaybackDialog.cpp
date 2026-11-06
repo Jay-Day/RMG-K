@@ -9,10 +9,11 @@
  */
 #include "KailleraPlaybackDialog.hpp"
 #include "KailleraTableStyle.hpp"
+#include "PlaybackTimeline.hpp"
 #include "UserInterface/MainWindow.hpp"
+#include "Utilities/KailleraExport/KrecParser.hpp"
 #ifdef _WIN32
 #include "Utilities/KailleraExport/FfmpegEncoder.hpp"
-#include "Utilities/KailleraExport/KrecParser.hpp"
 #endif
 
 #ifdef NETPLAY
@@ -23,6 +24,7 @@
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Emulation.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/SpeedFactor.hpp>
 
 #include "n02_client.h"
 
@@ -54,6 +56,11 @@
 #include <QComboBox>
 #include <QListView>
 #include <QStringList>
+#include <QInputDialog>
+#include <QJsonDocument>
+#include <QLocale>
+#include <QMenu>
+#include <QScrollBar>
 
 #include <algorithm>
 #include <climits>
@@ -62,6 +69,12 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+
+// the playback speeds offered, in percent
+static constexpr int kPlaybackSpeeds[] = {25, 50, 75, 100, 150, 200, 300, 400};
+// how far the back / forward buttons jump, in records (10 s)
+static constexpr int kPlaybackJumpRecords = 600;
+static constexpr int kBookmarkLabelMaxLength = 60;
 
 static constexpr const char* kManagedFfmpegPackageName = "ffmpeg-8.1-essentials_build";
 static constexpr const char* kManagedFfmpegArchiveName = "ffmpeg-8.1-essentials_build.7z";
@@ -250,6 +263,24 @@ static QString buildPlaybackStyleSheet()
     }
 
     return style;
+}
+
+// running or paused (CoreIsEmulationRunning() is false while paused)
+static bool emulationAlive()
+{
+    return CoreIsEmulationRunning() || CoreIsEmulationPaused();
+}
+
+// the selected recording's row, -1 for none: the selection, which
+// accessibility tools can move without the current cell
+static int selectedPlaybackRow(const QTableWidget* table)
+{
+    if (table == nullptr)
+    {
+        return -1;
+    }
+    const QList<QTableWidgetSelectionRange> ranges = table->selectedRanges();
+    return ranges.isEmpty() ? table->currentRow() : ranges.first().topRow();
 }
 
 static void configurePlaybackButton(QPushButton* button, const QString& objectName)
@@ -485,9 +516,9 @@ KailleraPlaybackDialog::~KailleraPlaybackDialog()
 
 void KailleraPlaybackDialog::setupUI()
 {
-    setWindowTitle("Playback");
+    setWindowTitle(tr("Replays"));
     setMinimumSize(520, 400);
-    resize(700, 450);
+    resize(780, 520);
     setObjectName("KailleraPlaybackDialog");
 
     const bool modern = useModernPlaybackUi();
@@ -528,7 +559,7 @@ void KailleraPlaybackDialog::setupUI()
         m_playbackTable->setProperty("playbackList", true);
         m_playbackTable->setAlternatingRowColors(true);
     }
-    m_playbackTable->setHorizontalHeaderLabels({"Date", "Players", "Game", "Duration", "Size", "Filename"});
+    m_playbackTable->setHorizontalHeaderLabels({tr("Date"), tr("Players"), tr("Game"), tr("Duration"), tr("Size"), tr("Filename")});
     m_playbackTable->horizontalHeader()->setStretchLastSection(true);
     m_playbackTable->verticalHeader()->setVisible(false);
     m_playbackTable->setShowGrid(false);
@@ -545,6 +576,7 @@ void KailleraPlaybackDialog::setupUI()
     applyNoAccentStyle(m_playbackTable);
     installHeaderDoubleClickSortToggle(m_playbackTable);
     connect(m_playbackTable, &QTableWidget::cellDoubleClicked, this, &KailleraPlaybackDialog::onPlaybackDoubleClicked);
+    connect(m_playbackTable, &QTableWidget::itemSelectionChanged, this, &KailleraPlaybackDialog::onPlaybackSelectionChanged);
     if (tablePaneLayout != nullptr)
     {
         tablePaneLayout->addWidget(m_playbackTable);
@@ -555,33 +587,67 @@ void KailleraPlaybackDialog::setupUI()
         mainLayout->addWidget(m_playbackTable, 1);
     }
 
+    // The selected or playing recording's timeline: click or drag to jump
+    m_timeline = new PlaybackTimeline(this);
+    m_timeline->setToolTip(tr("Click or drag to jump"));
+    m_timeline->hide();
+    connect(m_timeline, &PlaybackTimeline::seekRequested, this, &KailleraPlaybackDialog::seekTo);
+    connect(m_timeline, &PlaybackTimeline::dragPreview, this, [this](int record) {
+        m_frameLabel->setText(tr("Jump to %1").arg(PlaybackTimeText(record)));
+    });
+    mainLayout->addWidget(m_timeline);
+
     // Playback controls
     auto* btnLayout = new QHBoxLayout();
     if (modern)
     {
         btnLayout->setSpacing(8);
     }
-    m_btnPlay = new QPushButton("Play", this);
-    m_btnPause = new QPushButton("Pause", this);
-    m_btnStepForward = new QPushButton(">>", this);
-    m_btnStop = new QPushButton("Stop", this);
-    m_btnPBDelete = new QPushButton("Delete", this);
-    m_btnPBRefresh = new QPushButton("Refresh", this);
-    m_btnExport = new QPushButton("Export MP4", this);
-    m_btnOpenFolder = new QPushButton("Open Folder", this);
+    m_btnPlay = new QPushButton(tr("Play"), this);
+    m_btnPause = new QPushButton(tr("Pause"), this);
+    m_btnBack = new QPushButton(tr("« 10s"), this);
+    m_btnForward = new QPushButton(tr("10s »"), this);
+    m_btnStepForward = new QPushButton(tr("Step"), this);
+    m_btnStop = new QPushButton(tr("Stop"), this);
+    m_btnAddBookmark = new QPushButton(tr("Add Bookmark"), this);
+    m_btnPBDelete = new QPushButton(tr("Delete"), this);
+    m_btnPBRefresh = new QPushButton(tr("Refresh"), this);
+    m_btnExport = new QPushButton(tr("Export MP4"), this);
+    m_btnOpenFolder = new QPushButton(tr("Open Folder"), this);
 #ifndef _WIN32
     m_btnExport->hide();
 #endif
+    m_btnBack->setToolTip(tr("Jump back 10 seconds"));
+    m_btnForward->setToolTip(tr("Jump forward 10 seconds"));
+    m_btnStepForward->setToolTip(tr("Pause, then advance one frame"));
+    m_btnAddBookmark->setToolTip(tr("Bookmark this moment of the recording"));
+
+    m_speedLabel = new QLabel(tr("Speed"), this);
+    m_speedCombo = new QComboBox(this);
+    for (int speed : kPlaybackSpeeds)
+    {
+        m_speedCombo->addItem(QString("%1%").arg(speed), speed);
+    }
+    m_speedCombo->setCurrentIndex(m_speedCombo->findData(m_speed));
+    m_speedCombo->setToolTip(tr("Playback speed"));
+    m_speedCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    m_speedLabel->setBuddy(m_speedCombo);
+    configurePlaybackComboPopup(m_speedCombo);
+    connect(m_speedCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            &KailleraPlaybackDialog::onPlaybackSpeedChanged);
 
     m_btnPBRefresh->setText(QString());
-    m_btnPBRefresh->setToolTip("Refresh");
-    m_btnPBRefresh->setAccessibleName("Refresh");
+    m_btnPBRefresh->setToolTip(tr("Refresh"));
+    m_btnPBRefresh->setAccessibleName(tr("Refresh"));
     m_btnPBRefresh->setIcon(themedPlaybackIcon("refresh-line"));
     m_btnPBRefresh->setIconSize(QSize(18, 18));
 
     connect(m_btnPlay, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackPlay);
     connect(m_btnPause, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackPause);
     connect(m_btnStepForward, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackStepForward);
+    connect(m_btnBack, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackBack);
+    connect(m_btnForward, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackForward);
+    connect(m_btnAddBookmark, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackAddBookmark);
     connect(m_btnStop, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackStop);
     connect(m_btnPBDelete, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackDelete);
     connect(m_btnPBRefresh, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackRefresh);
@@ -595,6 +661,9 @@ void KailleraPlaybackDialog::setupUI()
         configurePlaybackButton(m_btnPlay, "KailleraPrimaryButton");
         configurePlaybackButton(m_btnPause, "KailleraSecondaryButton");
         configurePlaybackButton(m_btnStepForward, "KailleraSecondaryButton");
+        configurePlaybackButton(m_btnBack, "KailleraSecondaryButton");
+        configurePlaybackButton(m_btnForward, "KailleraSecondaryButton");
+        configurePlaybackButton(m_btnAddBookmark, "KailleraSecondaryButton");
         configurePlaybackButton(m_btnStop, "KailleraSecondaryButton");
         configurePlaybackButton(m_btnPBDelete, "KailleraSecondaryButton");
         configurePlaybackButton(m_btnPBRefresh, "KailleraHeaderIconButton");
@@ -606,9 +675,14 @@ void KailleraPlaybackDialog::setupUI()
 
     btnLayout->addWidget(m_btnPlay);
     btnLayout->addWidget(m_btnPause);
+    btnLayout->addWidget(m_btnBack);
+    btnLayout->addWidget(m_btnForward);
     btnLayout->addWidget(m_btnStepForward);
     btnLayout->addWidget(m_btnStop);
     btnLayout->addStretch();
+    btnLayout->addWidget(m_speedLabel);
+    btnLayout->addWidget(m_speedCombo);
+    btnLayout->addWidget(m_btnAddBookmark);
     mainLayout->addLayout(btnLayout);
 
     // Frame counter
@@ -618,6 +692,24 @@ void KailleraPlaybackDialog::setupUI()
         m_frameLabel->setObjectName("KailleraPaneMeta");
     }
     mainLayout->addWidget(m_frameLabel);
+
+    // The recording's bookmarks (ranked replays mark each game): one button
+    // each, scrolling sideways when there are many
+    m_bookmarkRow = new QWidget();
+    m_bookmarkLayout = new QHBoxLayout(m_bookmarkRow);
+    m_bookmarkLayout->setContentsMargins(0, 0, 0, 0);
+    m_bookmarkLayout->setSpacing(6);
+    m_bookmarkScroll = new QScrollArea(this);
+    m_bookmarkScroll->setWidget(m_bookmarkRow);
+    m_bookmarkScroll->setWidgetResizable(true);
+    m_bookmarkScroll->setFrameShape(QFrame::NoFrame);
+    m_bookmarkScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_bookmarkScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_bookmarkScroll->setStyleSheet("QScrollArea { background: transparent; }");
+    m_bookmarkScroll->viewport()->setAutoFillBackground(false);
+    m_bookmarkRow->setAutoFillBackground(false);
+    m_bookmarkScroll->hide();
+    mainLayout->addWidget(m_bookmarkScroll);
 
     // Bottom actions
     auto* bottomLayout = new QHBoxLayout();
@@ -632,7 +724,7 @@ void KailleraPlaybackDialog::setupUI()
     bottomLayout->addStretch();
     bottomLayout->addWidget(m_btnPBRefresh);
     bottomLayout->addWidget(m_btnOpenFolder);
-    auto* btnClose = new QPushButton("Close", this);
+    auto* btnClose = new QPushButton(tr("Close"), this);
     if (modern)
     {
         configurePlaybackButton(btnClose, "KailleraSecondaryButton");
@@ -644,6 +736,7 @@ void KailleraPlaybackDialog::setupUI()
     // Populate on creation
     populatePlaybackList();
     updatePlaybackControls();
+    refreshBookmarks();
 }
 
 void KailleraPlaybackDialog::onPlaybackTimer()
@@ -653,17 +746,97 @@ void KailleraPlaybackDialog::onPlaybackTimer()
     // which ultimately starts emulation.
     n02::processStateMachineStep();
 
-    // Update frame counter display
-    if (n02::isPlaybackActive() && m_frameLabel)
+    // A jump back replays from the start once the old session is gone.
+    if (m_restartSeekTarget >= 0 && !m_playbackWasActive && !n02::isPlaybackActive() &&
+        !emulationAlive())
     {
-        int cur = n02::playbackGetCurrentFrame();
-        int total = n02::playbackGetTotalFrames();
-        m_frameLabel->setText(QString("Frame: %1 / %2").arg(cur).arg(total));
+        const int target = m_restartSeekTarget;
+        m_restartSeekTarget = -1;
+        startPlayback(m_activeRecordingPath);
+        if (m_playbackWasActive)
+        {
+            m_seekTarget = target;
+        }
+        else
+        {
+            m_seekPause = false;
+            m_activeRecordingPath.clear();
+            refreshBookmarks();
+        }
+    }
+
+    const bool running = n02::isPlaybackActive() && emulationAlive();
+
+    // the speed picked here, on each emulation (the core puts its own back
+    // when a playback stops); later changes from the main window are kept
+    if (running && !m_speedApplied)
+    {
+        m_speedApplied = true;
+        if (CoreGetSpeedFactor() != m_speed)
+        {
+            CoreSetSpeedFactor(m_speed);
+        }
+    }
+    else if (running && CoreGetSpeedFactor() != m_speed)
+    {
+        m_speed = CoreGetSpeedFactor();
+        syncSpeedCombo();
+    }
+
+    // Seeking: the core fast-forwards to the target record and stops there; a
+    // seek it no longer runs either arrived or can't start
+    if (m_seekTarget >= 0 && running && !CoreIsPlaybackSeeking() &&
+        !CoreStartPlaybackSeek(m_seekTarget, m_seekPause))
+    {
+        if (m_seekPause && !CoreIsEmulationPaused())
+        {
+            CorePauseEmulation(); // a jump to where playback already was
+        }
+        m_seekTarget = -1;
+        m_seekPause = false;
+    }
+
+    // pauses from the main window (menu, hotkey) show here too
+    if (running && !m_stepping && CoreIsEmulationPaused() != m_isPaused)
+    {
+        m_isPaused = !m_isPaused;
+        updatePlaybackControls();
+    }
+
+    if (n02::isPlaybackActive())
+    {
+        m_playbackTotal = n02::playbackGetTotalFrames();
+    }
+
+    // Update frame counter display
+    if (m_frameLabel && m_timeline != nullptr && m_timeline->isDragging())
+    {
+        // showing where the drag would jump
+    }
+    else if (n02::isPlaybackActive() && m_frameLabel)
+    {
+        const int cur = n02::playbackGetCurrentFrame();
+        const int total = n02::playbackGetTotalFrames();
+        // time first, the frames it comes from in parentheses
+        QString text = tr("%1 / %2  (frame %3 / %4)").arg(PlaybackTimeText(cur), PlaybackTimeText(total))
+            .arg(QLocale().toString(cur), QLocale().toString(total));
+        if (m_seekTarget >= 0)
+        {
+            const int span = m_seekTarget - m_seekFrom;
+            text += tr("  —  jumping (%1%)").arg(
+                span > 0 ? std::clamp((cur - m_seekFrom) * 100 / span, 0, 100) : 100);
+        }
+        m_frameLabel->setText(text);
+    }
+    else if (m_frameLabel && m_restartSeekTarget >= 0)
+    {
+        m_frameLabel->setText(tr("Jumping back to %1...").arg(PlaybackTimeText(m_restartSeekTarget)));
     }
     else if (m_frameLabel)
     {
         m_frameLabel->setText("");
     }
+    updateTimeline();
 
     if (m_exportProcess != nullptr && m_exportProgressDialog != nullptr)
     {
@@ -673,17 +846,22 @@ void KailleraPlaybackDialog::onPlaybackTimer()
     // Detect playback ending naturally (recording ran out).
     if (m_playbackWasActive && !n02::isPlaybackActive())
     {
+        finishSeek();
+        m_seekPause = false;
         m_playbackWasActive = false;
         m_isPaused = false;
+        m_activeRecordingPath.clear();
         CoreMarkKailleraGameInactive();
         CoreStopEmulation();
         updatePlaybackControls();
+        refreshBookmarks();
     }
 }
 
 void KailleraPlaybackDialog::updatePlaybackControls()
 {
-    const bool playbackSessionOpen = m_playbackWasActive || n02::isPlaybackActive();
+    // a jump back keeps the controls while the playback restarts
+    const bool playbackSessionOpen = m_playbackWasActive || n02::isPlaybackActive() || m_restartSeekTarget >= 0;
 
     if (m_btnPlay != nullptr)
     {
@@ -693,17 +871,15 @@ void KailleraPlaybackDialog::updatePlaybackControls()
     if (m_btnPause != nullptr)
     {
         m_btnPause->setVisible(playbackSessionOpen);
-        m_btnPause->setText(m_isPaused ? "Play" : "Pause");
+        m_btnPause->setText(m_isPaused ? tr("Play") : tr("Pause"));
     }
 
-    if (m_btnStepForward != nullptr)
+    for (QPushButton* button : {m_btnStepForward, m_btnBack, m_btnForward, m_btnStop, m_btnAddBookmark})
     {
-        m_btnStepForward->setVisible(playbackSessionOpen);
-    }
-
-    if (m_btnStop != nullptr)
-    {
-        m_btnStop->setVisible(playbackSessionOpen);
+        if (button != nullptr)
+        {
+            button->setVisible(playbackSessionOpen);
+        }
     }
 }
 
@@ -729,8 +905,8 @@ void KailleraPlaybackDialog::populatePlaybackList()
 
     for (const QFileInfo& fi : files)
     {
-        std::string fullPath = fi.absoluteFilePath().toStdString();
-        std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
+        // a wide path: player names in file names can be in any script
+        std::ifstream file(std::filesystem::path(fi.absoluteFilePath().toStdU32String()), std::ios::binary | std::ios::ate);
         if (!file.is_open()) continue;
 
         std::streamsize len = file.tellg();
@@ -909,6 +1085,15 @@ void KailleraPlaybackDialog::populatePlaybackList()
                     while (scan < scanEnd && *scan != 0) scan++;
                     if (scan < scanEnd) scan++;
                 }
+                else if (type == n02::KREC_SAVE_DATA_RECORD)
+                {
+                    // The match's starting save, right after the header.
+                    if (scan + 4 > scanEnd) break;
+                    unsigned int slen = *(unsigned int*)scan;
+                    scan += 4;
+                    if ((size_t)(scanEnd - scan) < slen) break;
+                    scan += slen;
+                }
                 else
                 {
                     break;
@@ -938,7 +1123,9 @@ void KailleraPlaybackDialog::populatePlaybackList()
         m_playbackTable->setItem(row, 0, new QTableWidgetItem(dateStr));
         m_playbackTable->setItem(row, 1, new QTableWidgetItem(playersStr));
         m_playbackTable->setItem(row, 2, new QTableWidgetItem(QString::fromUtf8(gameName)));
-        m_playbackTable->setItem(row, 3, new QTableWidgetItem(durationStr));
+        auto* durationItem = new QTableWidgetItem(durationStr);
+        durationItem->setData(Qt::UserRole, frames);
+        m_playbackTable->setItem(row, 3, durationItem);
         m_playbackTable->setItem(row, 4, new QTableWidgetItem(sizeStr));
         m_playbackTable->setItem(row, 5, new QTableWidgetItem(fi.fileName()));
 
@@ -958,7 +1145,7 @@ QString KailleraPlaybackDialog::getSelectedRecordingPath() const
         return {};
     }
 
-    const int row = m_playbackTable->currentRow();
+    const int row = selectedPlaybackRow(m_playbackTable);
     if (row < 0)
     {
         return {};
@@ -1054,8 +1241,9 @@ bool KailleraPlaybackDialog::promptForExportSettings(const QString& defaultOutpu
     configurePlaybackComboPopup(resolutionComboBox);
     formLayout->addRow("Resolution", resolutionComboBox);
 
-    auto* includeChatCheckBox = new QCheckBox("Include Kaillera chat on-screen", &dialog);
-    includeChatCheckBox->setChecked(true);
+    auto* includeChatCheckBox = new QCheckBox(tr("Show chat"), &dialog);
+    includeChatCheckBox->setToolTip(tr("Show the recording's chat messages the way they appeared on screen"));
+    includeChatCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Kaillera_ExportShowChat));
     formLayout->addRow(QString(), includeChatCheckBox);
 
     auto* labelPortsCheckBox = new QCheckBox("Label ports", &dialog);
@@ -1126,8 +1314,9 @@ bool KailleraPlaybackDialog::promptForExportSettings(const QString& defaultOutpu
         const QSize renderSize = resolutionComboBox->currentData().toSize();
         settings.renderWidth = renderSize.width();
         settings.renderHeight = renderSize.height();
-        settings.includeKailleraChat = includeChatCheckBox->isChecked();
+        settings.includeChat = includeChatCheckBox->isChecked();
         settings.labelPorts = labelPortsCheckBox->isChecked();
+        CoreSettingsSetValue(SettingsID::Kaillera_ExportShowChat, settings.includeChat);
         CoreSettingsSetValue(SettingsID::Kaillera_ExportLabelPorts, settings.labelPorts);
         CoreSettingsSave();
         dialog.accept();
@@ -1414,7 +1603,7 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
                                                 const QString& ffmpegPath,
                                                 int renderWidth,
                                                 int renderHeight,
-                                                bool includeKailleraChat,
+                                                bool includeChat,
                                                 bool labelPorts,
                                                 int totalFrames)
 {
@@ -1445,9 +1634,9 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
         "--export-width", QString::number(renderWidth),
         "--export-height", QString::number(renderHeight)
     };
-    if (!includeKailleraChat)
+    if (includeChat)
     {
-        exportArguments << "--export-no-kaillera-chat";
+        exportArguments << "--export-chat";
     }
     if (labelPorts)
     {
@@ -1526,34 +1715,50 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
 void KailleraPlaybackDialog::onPlaybackPlay()
 {
     if (!m_playbackTable) return;
-    if (n02::isPlaybackActive()) return;
+    if (n02::isPlaybackActive() || m_restartSeekTarget >= 0) return;
 
-    int row = m_playbackTable->currentRow();
-    if (row < 0) return;
+    const QString filename = getSelectedRecordingPath();
+    if (filename.isEmpty()) return;
 
-    QTableWidgetItem* fnItem = m_playbackTable->item(row, 5);
-    if (!fnItem) return;
+    m_seekTarget = -1;
+    m_seekPause = false;
+    startPlayback(filename);
+}
 
-    QString filename = QDir(getKailleraRecordsDirectory()).filePath(fnItem->text());
-    QByteArray pathBytes = filename.toUtf8();
+void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
+{
+    QByteArray pathBytes = krecPath.toUtf8();
 
     // Ensure playback mode is active
     n02::activateMode(2);
 
     if (n02::playbackLoad(pathBytes.constData()))
     {
+        m_activeRecordingPath = krecPath;
         m_playbackWasActive = true;
         m_isPaused = false;
+        m_speedApplied = false;
+        m_playbackTotal = n02::playbackGetTotalFrames();
         updatePlaybackControls();
+        refreshBookmarks();
     }
     else
     {
-        QMessageBox::warning(this, "Playback", "Failed to load recording: " + fnItem->text());
+        QMessageBox::warning(this, tr("Replays"), tr("Failed to load recording: %1").arg(QFileInfo(krecPath).fileName()));
     }
 }
 
 void KailleraPlaybackDialog::onPlaybackStop()
 {
+    m_seekPause = false;
+    stopPlayback(false);
+}
+
+void KailleraPlaybackDialog::stopPlayback(bool restarting)
+{
+    finishSeek();
+    m_restartSeekTarget = -1;
+
     // Resume first if paused, so emulation can shut down cleanly
     if (m_isPaused)
     {
@@ -1569,7 +1774,502 @@ void KailleraPlaybackDialog::onPlaybackStop()
     m_isPaused = false;
     CoreMarkKailleraGameInactive();
     CoreStopEmulation();
+    if (!restarting)
+    {
+        m_activeRecordingPath.clear();
+        refreshBookmarks();
+    }
     updatePlaybackControls();
+}
+
+void KailleraPlaybackDialog::seekTo(int record)
+{
+    int target = std::max(0, record);
+
+    // already restarting for a jump back: just aim elsewhere
+    if (m_restartSeekTarget >= 0)
+    {
+        m_restartSeekTarget = target;
+        return;
+    }
+
+    if (!n02::isPlaybackActive())
+    {
+        if (m_playbackWasActive)
+        {
+            m_seekFrom = 0;
+            m_seekTarget = target; // still starting up
+            return;
+        }
+        // not playing yet: start the selected recording, then seek
+        onPlaybackPlay();
+        if (m_playbackWasActive && target > 0)
+        {
+            m_seekFrom = 0;
+            m_seekTarget = std::min(target, std::max(0, m_playbackTotal - 1));
+        }
+        return;
+    }
+
+    // the last record at most: playing it all ends the playback
+    const int total = n02::playbackGetTotalFrames();
+    if (total > 0)
+    {
+        target = std::min(target, total - 1);
+    }
+
+    const int current = n02::playbackGetCurrentFrame();
+    const bool seeking = m_seekTarget >= 0;
+    // a jump started while paused lands paused, frame-exact
+    if (!seeking)
+    {
+        m_seekPause = m_isPaused || CoreIsEmulationPaused();
+    }
+
+    if (target == current && !seeking)
+    {
+        return;
+    }
+
+    if (target >= current)
+    {
+        if (m_isPaused || CoreIsEmulationPaused())
+        {
+            CoreResumeEmulation();
+            m_isPaused = false;
+            updatePlaybackControls();
+        }
+        if (!seeking)
+        {
+            m_seekFrom = current;
+        }
+        m_seekTarget = target;
+        // already jumping: retarget, or stop when already there
+        if (CoreIsPlaybackSeeking() && !CoreStartPlaybackSeek(target, m_seekPause))
+        {
+            finishSeek();
+            if (m_seekPause)
+            {
+                CorePauseEmulation();
+                m_seekPause = false;
+            }
+        }
+        return;
+    }
+
+    // Inputs can only be replayed forwards: restart from the beginning and
+    // fast-forward (onPlaybackTimer starts the new session).
+    const QString path = m_activeRecordingPath;
+    stopPlayback(true);
+    m_activeRecordingPath = path;
+    m_restartSeekTarget = target;
+    m_seekFrom = 0;
+    updatePlaybackControls();
+}
+
+void KailleraPlaybackDialog::finishSeek()
+{
+    if (m_seekTarget < 0)
+    {
+        return;
+    }
+    m_seekTarget = -1;
+    CoreStopPlaybackSeek();
+}
+
+void KailleraPlaybackDialog::onPlaybackBack()
+{
+    const int from = m_restartSeekTarget >= 0 ? m_restartSeekTarget
+        : m_seekTarget >= 0 ? m_seekTarget : n02::playbackGetCurrentFrame();
+    seekTo(std::max(0, from - kPlaybackJumpRecords));
+}
+
+void KailleraPlaybackDialog::onPlaybackForward()
+{
+    const int from = m_restartSeekTarget >= 0 ? m_restartSeekTarget
+        : m_seekTarget >= 0 ? m_seekTarget : n02::playbackGetCurrentFrame();
+    seekTo(from + kPlaybackJumpRecords);
+}
+
+void KailleraPlaybackDialog::onPlaybackSpeedChanged(int index)
+{
+    if (m_speedCombo == nullptr || index < 0)
+    {
+        return;
+    }
+    m_speed = m_speedCombo->itemData(index).toInt();
+    if (n02::isPlaybackActive() && emulationAlive())
+    {
+        CoreSetSpeedFactor(m_speed);
+        m_speedApplied = true;
+    }
+}
+
+void KailleraPlaybackDialog::syncSpeedCombo()
+{
+    if (m_speedCombo == nullptr)
+    {
+        return;
+    }
+    int index = m_speedCombo->findData(m_speed);
+    const QSignalBlocker blocker(m_speedCombo);
+    if (index < 0)
+    {
+        // a speed from the main window's menu or hotkeys that isn't listed
+        index = 0;
+        while (index < m_speedCombo->count() && m_speedCombo->itemData(index).toInt() < m_speed)
+        {
+            index++;
+        }
+        m_speedCombo->insertItem(index, QString("%1%").arg(m_speed), m_speed);
+    }
+    m_speedCombo->setCurrentIndex(index);
+}
+
+bool KailleraPlaybackDialog::loadReplayMetadata(const QString& krecPath, QJsonObject& metadata)
+{
+    std::string json;
+    if (!KailleraExport::ReadKrecMetadata(std::filesystem::path(krecPath.toStdU32String()), json))
+    {
+        return false;
+    }
+    metadata = QJsonDocument::fromJson(QByteArray::fromStdString(json)).object();
+    return metadata.value("schema").toInt() == 1;
+}
+
+bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::function<void(QJsonArray&)>& edit)
+{
+    const std::filesystem::path path(krecPath.toStdU32String());
+    QJsonObject metadata;
+    std::string json;
+    if (KailleraExport::ReadKrecMetadata(path, json))
+    {
+        // keep everything else in it (a ranked replay's module and journal)
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(QByteArray::fromStdString(json), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject() ||
+            document.object().value("schema").toInt() != 1)
+        {
+            QMessageBox::warning(this, tr("Bookmarks"),
+                tr("This recording's extra data comes from a newer version of RMG-K, so its bookmarks can't be changed here."));
+            return false;
+        }
+        metadata = document.object();
+    }
+    else
+    {
+        metadata.insert("schema", 1);
+    }
+
+    QJsonArray marks = metadata.value("bookmarks").toArray();
+    edit(marks);
+    // in playback order
+    QList<QJsonValue> sorted(marks.begin(), marks.end());
+    std::stable_sort(sorted.begin(), sorted.end(), [](const QJsonValue& a, const QJsonValue& b) {
+        return a.toObject().value("record").toInt() < b.toObject().value("record").toInt();
+    });
+    marks = QJsonArray();
+    for (const QJsonValue& mark : sorted)
+    {
+        marks.append(mark);
+    }
+    metadata.insert("bookmarks", marks);
+
+    std::string error;
+    if (!KailleraExport::WriteKrecMetadata(path, QJsonDocument(metadata).toJson(QJsonDocument::Compact).toStdString(), &error))
+    {
+        QMessageBox::warning(this, tr("Bookmarks"),
+            tr("The bookmarks couldn't be saved: %1").arg(QString::fromStdString(error)));
+        return false;
+    }
+    return true;
+}
+
+void KailleraPlaybackDialog::onPlaybackAddBookmark()
+{
+    if (m_activeRecordingPath.isEmpty())
+    {
+        return;
+    }
+
+    // where a jump is heading, else where playback is
+    const int record = m_restartSeekTarget >= 0 ? m_restartSeekTarget
+        : m_seekTarget >= 0 ? m_seekTarget : n02::playbackGetCurrentFrame();
+    const QString path = m_activeRecordingPath;
+
+    int userMarks = 0;
+    for (const Bookmark& bookmark : m_bookmarks)
+    {
+        userMarks += bookmark.kind == "user" ? 1 : 0;
+    }
+    const QString suggested = tr("Bookmark %1").arg(userMarks + 1);
+
+    QInputDialog input(this);
+    input.setWindowTitle(tr("Add Bookmark"));
+    input.setLabelText(tr("Name the bookmark at %1:").arg(PlaybackTimeText(record)));
+    input.setTextValue(suggested);
+    input.setOkButtonText(tr("Add"));
+    if (auto* edit = input.findChild<QLineEdit*>())
+    {
+        edit->setMaxLength(kBookmarkLabelMaxLength);
+    }
+    if (input.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+    QString label = input.textValue().simplified();
+    if (label.isEmpty())
+    {
+        label = suggested;
+    }
+
+    if (editBookmarks(path, [record, &label](QJsonArray& marks) {
+            QJsonObject mark;
+            mark.insert("record", record);
+            mark.insert("label", label);
+            mark.insert("kind", "user");
+            marks.append(mark);
+        }))
+    {
+        refreshBookmarks();
+    }
+}
+
+// the stored bookmark still matches what the row shows (the file may have
+// changed since)
+static bool sameBookmark(const QJsonArray& marks, int index, int record, const QString& kind)
+{
+    if (index < 0 || index >= marks.size())
+    {
+        return false;
+    }
+    const QJsonObject mark = marks[index].toObject();
+    return mark.value("record").toInt(-1) == record && mark.value("kind").toString() == kind;
+}
+
+void KailleraPlaybackDialog::renameBookmark(const Bookmark& bookmark)
+{
+    QInputDialog input(this);
+    input.setWindowTitle(tr("Rename Bookmark"));
+    input.setLabelText(tr("Name the bookmark at %1:").arg(PlaybackTimeText(bookmark.record)));
+    input.setTextValue(bookmark.label);
+    if (auto* edit = input.findChild<QLineEdit*>())
+    {
+        edit->setMaxLength(kBookmarkLabelMaxLength);
+    }
+    if (input.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+    const QString label = input.textValue().simplified();
+    if (label.isEmpty() || label == bookmark.label)
+    {
+        return;
+    }
+
+    bool found = false;
+    const bool saved = editBookmarks(m_bookmarksPath, [&](QJsonArray& marks) {
+        if (sameBookmark(marks, bookmark.index, bookmark.record, bookmark.kind))
+        {
+            QJsonObject mark = marks[bookmark.index].toObject();
+            mark.insert("label", label);
+            marks[bookmark.index] = mark;
+            found = true;
+        }
+    });
+    if (saved && !found)
+    {
+        QMessageBox::information(this, tr("Bookmarks"), tr("The recording's bookmarks changed; they're shown again."));
+    }
+    refreshBookmarks();
+}
+
+void KailleraPlaybackDialog::deleteBookmark(const Bookmark& bookmark)
+{
+    if (QMessageBox::question(this, tr("Delete Bookmark"),
+            tr("Delete the bookmark \"%1\" at %2?").arg(bookmark.label, PlaybackTimeText(bookmark.record)),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    editBookmarks(m_bookmarksPath, [&](QJsonArray& marks) {
+        if (sameBookmark(marks, bookmark.index, bookmark.record, bookmark.kind))
+        {
+            marks.removeAt(bookmark.index);
+        }
+    });
+    refreshBookmarks();
+}
+
+QString KailleraPlaybackDialog::timelineRecordingPath() const
+{
+    const bool playing = m_playbackWasActive || n02::isPlaybackActive() || m_restartSeekTarget >= 0;
+    return playing && !m_activeRecordingPath.isEmpty() ? m_activeRecordingPath : getSelectedRecordingPath();
+}
+
+int KailleraPlaybackDialog::selectedRecordingFrames() const
+{
+    const int row = selectedPlaybackRow(m_playbackTable);
+    if (row < 0)
+    {
+        return 0;
+    }
+    QTableWidgetItem* item = m_playbackTable->item(row, 3);
+    return item != nullptr ? item->data(Qt::UserRole).toInt() : 0;
+}
+
+void KailleraPlaybackDialog::onPlaybackSelectionChanged()
+{
+    // while playing, the bookmarks and timeline stay the playing recording's
+    if (timelineRecordingPath() != m_bookmarksPath)
+    {
+        refreshBookmarks();
+    }
+    updateTimeline();
+}
+
+void KailleraPlaybackDialog::refreshBookmarks()
+{
+    if (m_bookmarkLayout == nullptr || m_bookmarkScroll == nullptr)
+    {
+        return;
+    }
+
+    m_bookmarksPath = timelineRecordingPath();
+    m_bookmarks.clear();
+    QJsonObject metadata;
+    if (!m_bookmarksPath.isEmpty() && loadReplayMetadata(m_bookmarksPath, metadata))
+    {
+        const QJsonArray marks = metadata.value("bookmarks").toArray();
+        for (int i = 0; i < marks.size(); i++)
+        {
+            const QJsonObject mark = marks[i].toObject();
+            Bookmark bookmark;
+            bookmark.record = mark.value("record").toInt(-1);
+            bookmark.kind = mark.value("kind").toString();
+            bookmark.index = i;
+            // a game's end is the next one's start
+            if (bookmark.record < 0 || bookmark.kind == "game_end")
+            {
+                continue;
+            }
+            // game starts are labelled here (translated); other bookmarks keep their label
+            const int game = mark.value("game").toInt();
+            bookmark.label = game > 0 && bookmark.kind == "game_start"
+                ? tr("Game %1").arg(game) : mark.value("label").toString();
+            if (bookmark.label.isEmpty())
+            {
+                bookmark.label = tr("Bookmark");
+            }
+            m_bookmarks.append(bookmark);
+        }
+    }
+
+    while (QLayoutItem* item = m_bookmarkLayout->takeAt(0))
+    {
+        delete item->widget();
+        delete item;
+    }
+    auto addButton = [this](const QString& text, const QString& tip, int record) {
+        auto* button = new QPushButton(text, m_bookmarkRow);
+        button->setToolTip(tip);
+        configurePlaybackButton(button, "KailleraSecondaryButton");
+        connect(button, &QPushButton::clicked, this, [this, record]() { seekTo(record); });
+        m_bookmarkLayout->addWidget(button);
+        return button;
+    };
+
+    QVector<PlaybackTimeline::Mark> marks;
+    if (!m_bookmarks.isEmpty())
+    {
+        m_bookmarkLayout->addWidget(new QLabel(tr("Jump to:"), m_bookmarkRow));
+        addButton(tr("Start"), tr("Watch from the beginning"), 0);
+        for (const Bookmark& bookmark : m_bookmarks)
+        {
+            const QString time = PlaybackTimeText(bookmark.record);
+            QPushButton* button = addButton(bookmark.label + "  " + time,
+                bookmark.kind == "user"
+                    ? tr("Watch from %1 (%2). Right-click to rename or delete it.").arg(bookmark.label, time)
+                    : tr("Watch from %1 (%2)").arg(bookmark.label, time),
+                bookmark.record);
+            if (bookmark.kind == "user")
+            {
+                button->setContextMenuPolicy(Qt::CustomContextMenu);
+                connect(button, &QWidget::customContextMenuRequested, this, [this, button, bookmark](const QPoint& pos) {
+                    QMenu menu(this);
+                    QAction* rename = menu.addAction(tr("Rename..."));
+                    QAction* remove = menu.addAction(tr("Delete"));
+                    QAction* chosen = menu.exec(button->mapToGlobal(pos));
+                    // the row is rebuilt after either, deleting this button: leave the lambda first
+                    if (chosen == rename)
+                    {
+                        QTimer::singleShot(0, this, [this, bookmark]() { renameBookmark(bookmark); });
+                    }
+                    else if (chosen == remove)
+                    {
+                        QTimer::singleShot(0, this, [this, bookmark]() { deleteBookmark(bookmark); });
+                    }
+                });
+            }
+            marks.append({bookmark.record, bookmark.label});
+        }
+        m_bookmarkLayout->addStretch();
+    }
+    m_bookmarkScroll->setVisible(!m_bookmarks.isEmpty());
+    // Widgets added to a shown row stay hidden until Qt shows them later, and
+    // a layout leaves hidden widgets out of its size: show them now so the
+    // row measures them (polished, with the style sheet's size).
+    for (QWidget* widget : m_bookmarkRow->findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
+    {
+        widget->show();
+    }
+    m_bookmarkRow->ensurePolished();
+    m_bookmarkLayout->activate();
+    m_bookmarkScroll->setFixedHeight(m_bookmarkRow->sizeHint().height() +
+        m_bookmarkScroll->horizontalScrollBar()->sizeHint().height());
+    if (m_timeline != nullptr)
+    {
+        m_timeline->setMarks(marks);
+    }
+    updateTimeline();
+}
+
+void KailleraPlaybackDialog::updateTimeline()
+{
+    if (m_timeline == nullptr)
+    {
+        return;
+    }
+
+    const bool playing = n02::isPlaybackActive();
+    const bool restarting = m_restartSeekTarget >= 0;
+    const bool show = playing || restarting || m_playbackWasActive || !getSelectedRecordingPath().isEmpty();
+    m_timeline->setVisible(show);
+    if (!show)
+    {
+        return;
+    }
+
+    if (playing || restarting || m_playbackWasActive)
+    {
+        m_timeline->setTotal(m_playbackTotal);
+        if (!m_timeline->isDragging())
+        {
+            m_timeline->setPosition(playing ? n02::playbackGetCurrentFrame() : 0);
+        }
+        m_timeline->setSeekTarget(restarting ? m_restartSeekTarget : m_seekTarget);
+    }
+    else
+    {
+        // the selected recording: a click starts it from there
+        m_timeline->setTotal(selectedRecordingFrames());
+        if (!m_timeline->isDragging())
+        {
+            m_timeline->setPosition(0);
+        }
+        m_timeline->setSeekTarget(-1);
+    }
 }
 
 void KailleraPlaybackDialog::onPlaybackPause()
@@ -1596,7 +2296,7 @@ void KailleraPlaybackDialog::onPlaybackPause()
 
 void KailleraPlaybackDialog::onPlaybackStepForward()
 {
-    if (!n02::isPlaybackActive()) return;
+    if (!n02::isPlaybackActive() || m_stepping) return;
 
     // Pause first if running
     if (!m_isPaused)
@@ -1609,11 +2309,13 @@ void KailleraPlaybackDialog::onPlaybackStepForward()
 
     // Use M64CMD_ADVANCE_FRAME for precise single-frame stepping,
     // then nudge with resume+pause to force the display to update.
+    m_stepping = true;
     CoreAdvanceFrame();
     QTimer::singleShot(50, this, [this]() {
         CoreResumeEmulation();
         QTimer::singleShot(17, this, [this]() {
             CorePauseEmulation();
+            m_stepping = false;
         });
     });
 }
@@ -1622,7 +2324,7 @@ void KailleraPlaybackDialog::onPlaybackDelete()
 {
     if (!m_playbackTable) return;
 
-    int row = m_playbackTable->currentRow();
+    int row = selectedPlaybackRow(m_playbackTable);
     if (row < 0) return;
 
     QTableWidgetItem* fnItem = m_playbackTable->item(row, 5);
@@ -1721,7 +2423,7 @@ void KailleraPlaybackDialog::onPlaybackExport()
                        ffmpegPath,
                        exportSettings.renderWidth,
                        exportSettings.renderHeight,
-                       exportSettings.includeKailleraChat,
+                       exportSettings.includeChat,
                        exportSettings.labelPorts,
                        totalFrames);
 }

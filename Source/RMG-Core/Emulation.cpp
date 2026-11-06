@@ -24,6 +24,7 @@
 #include "File.hpp"
 #include "Rom.hpp"
 #include "SpeedLimiter.hpp"
+#include "SpeedFactor.hpp"
 #include "Callback.hpp"
 #include "rmgk_gekko.hpp"
 #ifdef RMGK_HAVE_P2P_TRANSPORT
@@ -346,6 +347,7 @@ static std::mutex          s_PlaybackSeekMutex;
 static std::atomic<int>    s_PlaybackSeekTarget{-1};
 static std::atomic<bool>   s_PlaybackSeekSkipping{false};
 static bool                s_PlaybackSeekLimiter = true; // speed limiter state to restore
+static bool                s_PlaybackSeekPause = false;  // pause on arrival
 static int                 s_PlaybackSeekStartRecord = 0;
 static std::chrono::steady_clock::time_point s_PlaybackSeekStartTime;
 static unsigned int        s_PlaybackSeekSkipped = 0;
@@ -375,6 +377,11 @@ static void finish_playback_seek(bool arrived)
     stop_playback_seek_skipping();
     CoreSetFrameOutput(CoreFrameOutput_All);
     CoreSetSpeedLimiterState(s_PlaybackSeekLimiter);
+
+    if (arrived && s_PlaybackSeekPause)
+    {
+        CorePauseEmulation(); // takes effect at the next VI, the target record's frame
+    }
 
     if (arrived)
     {
@@ -411,6 +418,11 @@ static void playback_seek_step(void)
     }
 }
 #endif // RMGK_HAVE_P2P_TRANSPORT
+
+// The speed factor a krec playback started with, restored when it stops so a
+// speed picked for the playback doesn't carry into the next session (the core
+// keeps it across ROMs). -1 = not playing back.
+static std::atomic<int> s_PlaybackSpeedRestore{-1};
 
 // Kaillera PIF sync callback (called from mupen64plus-core after netplay sync)
 static void KailleraPifSyncCallback(struct pif* pif)
@@ -723,7 +735,7 @@ CORE_EXPORT void CoreStageSpectateKeyframe(const unsigned char* data, int len, i
     s_SpectateKeyframeLoaded = false;
 }
 
-CORE_EXPORT bool CoreStartPlaybackSeek(int record)
+CORE_EXPORT bool CoreStartPlaybackSeek(int record, bool pauseOnArrival)
 {
 #ifdef RMGK_HAVE_P2P_TRANSPORT
     std::lock_guard<std::mutex> lock(s_PlaybackSeekMutex);
@@ -756,10 +768,12 @@ CORE_EXPORT bool CoreStartPlaybackSeek(int record)
         s_PlaybackSeekSkipping = CorePluginsSetGfxSkipRendering(true);
     }
 
+    s_PlaybackSeekPause  = pauseOnArrival;
     s_PlaybackSeekTarget = record;
     return true;
 #else
     (void)record;
+    (void)pauseOnArrival;
     return false;
 #endif
 }
@@ -1302,6 +1316,10 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         setRollbackLoggingEnvironment();
 
+#ifdef NETPLAY
+        s_PlaybackSpeedRestore = (address == "KAILLERA" && CoreIsKailleraPlaybackMode()) ? CoreGetSpeedFactor() : -1;
+#endif
+
         if (rollbackExecute)
         {
             m64p_ret = rmgk_gekko::execute() ? M64ERR_SUCCESS : M64ERR_SYSTEM_FAIL;
@@ -1339,6 +1357,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 
     // a seek cut short by the end of emulation still restores normal output
     CoreStopPlaybackSeek();
+    s_PlaybackSpeedRestore = -1;
 
     if (!netplay && rollbackExecute)
     {
@@ -1398,6 +1417,14 @@ CORE_EXPORT bool CoreStopEmulation(void)
     if (!m64p::Core.IsHooked())
     {
         return false;
+    }
+
+    // the speed can only be set while the core runs
+    const int playbackSpeed = s_PlaybackSpeedRestore.exchange(-1);
+    if (playbackSpeed > 0 && (CoreIsEmulationRunning() || CoreIsEmulationPaused()) &&
+        CoreGetSpeedFactor() != playbackSpeed)
+    {
+        CoreSetSpeedFactor(playbackSpeed);
     }
 
     ret = m64p::Core.DoCommand(M64CMD_STOP, 0, nullptr);

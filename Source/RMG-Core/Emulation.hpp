@@ -72,8 +72,9 @@ int CoreGetCurrentFrameCount(void);
 // Playback seeking. Fast-forwards a krec playback, without the speed limiter and
 // without rendering where possible, until `record` input records were played,
 // then restores normal output on that record. Updates the target of a running seek.
+// pauseOnArrival pauses emulation on that record (a seek started while paused).
 // Returns false when not playing back or already at `record`.
-bool CoreStartPlaybackSeek(int record);
+bool CoreStartPlaybackSeek(int record, bool pauseOnArrival = false);
 // stops a seek, restoring normal output
 void CoreStopPlaybackSeek(void);
 // returns whether a seek is running
