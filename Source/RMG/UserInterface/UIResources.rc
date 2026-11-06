@@ -46,12 +46,12 @@ BEGIN
         BLOCK "200004b0"
         BEGIN
             VALUE "CompanyName", "Rosalie"
-            VALUE "FileDescription", "RMG Kaillera Edition"
+            VALUE "FileDescription", "Dale64"
             VALUE "FileVersion", "1.0.0.1"
             VALUE "InternalName", "RMG-K.exe"
             VALUE "LegalCopyright", "Copyright (C) 2020-2025 Rosalie Wanders"
             VALUE "OriginalFilename", "RMG-K.exe"
-            VALUE "ProductName", "RMG Kaillera Edition"
+            VALUE "ProductName", "Dale64"
             VALUE "ProductVersion", "1.0.0.1"
         END
     END

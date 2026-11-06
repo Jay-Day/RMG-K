@@ -51,6 +51,10 @@ int recordingFrameCount();
 // No-op without an active capture. nick/msg are length-bounded.
 void recordingQueueChat(const char* nick, const char* msg);
 
+// Sets a player's name for the next capture, cut at a character boundary to fit
+// the replay header. index is 0-based.
+void recordingSetPlayerName(int index, const char* utf8Name);
+
 // Queue a port change for the active replay capture: `name` took controller
 // `slot` (1-based), or left it when `joined` is false. Safe from any thread;
 // written before the next input frame, to the stream and the local file, as

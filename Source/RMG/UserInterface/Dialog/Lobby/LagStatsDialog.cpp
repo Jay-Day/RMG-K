@@ -1,103 +1,103 @@
 #ifdef NETPLAY
 
 #include "LagStatsDialog.hpp"
+#include "LobbyTheme.hpp"
+#include "LobbyWidgets.hpp"
 
 #include <QApplication>
 #include <QClipboard>
-#include <QComboBox>
+#include <QEvent>
+#include <QGridLayout>
 #include <QHBoxLayout>
-#include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
-#include <QPalette>
 #include <QPushButton>
 #include <QTimer>
-#include <QTreeWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
 
 using namespace UserInterface::Dialog;
+using LobbyTheme::Role;
+using LobbyTheme::Tokens;
 
 namespace
 {
-enum PlayerColumn
-{
-    ColumnPlayer,
-    ColumnFps,
-    ColumnFrame,
-    ColumnLong,
-    ColumnStutters,
-    ColumnHeldUp,
-    ColumnDropouts,
-    ColumnWaited,
-    ColumnPing,
-    ColumnRollbacks,
-    ColumnCount
-};
-
-bool isDark()
-{
-    return QApplication::palette().window().color().value() < 128;
-}
-
-QColor severityColor(LagReport::Severity severity)
-{
-    const bool dark = isDark();
-    switch (severity)
-    {
-    case LagReport::Severity::Lag:
-        return QColor(dark ? "#EF5350" : "#C62828");
-    case LagReport::Severity::Minor:
-        return QColor(dark ? "#FFCA28" : "#B26A00");
-    case LagReport::Severity::Fine:
-        return QColor(dark ? "#4CAF50" : "#2E7D32");
-    case LagReport::Severity::None:
-        break;
-    }
-    return QColor(dark ? "#BDBDBD" : "#9E9E9E");
-}
-
 QString number(double value, int decimals)
 {
     return QString::number(value, 'f', decimals);
 }
 
-QTreeWidget* makeTree(QWidget* parent, const QStringList& headers)
+QLabel* fieldLabel(const QString& text, QWidget* parent)
 {
-    auto* tree = new QTreeWidget(parent);
-    tree->setObjectName("LagTree");
-    tree->setRootIsDecorated(false);
-    tree->setSelectionMode(QAbstractItemView::NoSelection);
-    tree->setFocusPolicy(Qt::NoFocus);
-    tree->setUniformRowHeights(true);
-    tree->setHeaderLabels(headers);
-    tree->header()->setStretchLastSection(false);
-    tree->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    tree->header()->setSectionsMovable(false);
-    tree->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    tree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    return tree;
+    auto* label = new QLabel(text.toUpper(), parent);
+    QFont font = LobbyTheme::uiFont(10, QFont::DemiBold);
+    font.setLetterSpacing(QFont::AbsoluteSpacing, 0.9);
+    label->setFont(font);
+    label->setProperty("role", "muted");
+    return label;
 }
 
-// Fit a tree to its rows, so the window shows every player without scrolling.
-void fitHeight(QTreeWidget* tree)
+QFrame* rule(QWidget* parent)
 {
-    int height = tree->header()->sizeHint().height() + 2 * tree->frameWidth();
-    for (int i = 0; i < tree->topLevelItemCount(); ++i)
-        height += tree->sizeHintForRow(i) > 0 ? tree->sizeHintForRow(i) : tree->fontMetrics().height() + 8;
-    tree->setFixedHeight(height + 2);
+    auto* line = new QFrame(parent);
+    line->setObjectName("FieldRule");
+    return line;
 }
 
-// How much wider a tree must be to show every column whole.
-int missingWidth(QTreeWidget* tree)
+QLabel* cell(const QString& text, QWidget* parent, bool right = true, const QColor& color = QColor(), bool bold = false)
 {
-    // QTreeView hides sizeHintForColumn; the base class's is public.
-    const QAbstractItemView* view = tree;
-    int needed = 2 * tree->frameWidth();
-    for (int i = 0; i < tree->columnCount(); ++i)
-        needed += std::max(view->sizeHintForColumn(i), tree->header()->sectionSizeHint(i));
-    return std::max(0, needed - tree->width());
+    auto* label = new QLabel(text, parent);
+    label->setFont(LobbyTheme::uiFont(12, bold ? QFont::DemiBold : QFont::Normal));
+    if (right)
+        label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    if (color.isValid())
+        label->setStyleSheet(QStringLiteral("color: %1;").arg(color.name()));
+    return label;
+}
+
+QString severityIcon(LagReport::Severity severity)
+{
+    switch (severity)
+    {
+    case LagReport::Severity::Lag:
+        return QStringLiteral("error-warning-line");
+    case LagReport::Severity::Minor:
+        return QStringLiteral("information-line");
+    case LagReport::Severity::Fine:
+        return QStringLiteral("check-line");
+    case LagReport::Severity::None:
+        break;
+    }
+    return QStringLiteral("time-line");
+}
+
+void clearGrid(QGridLayout* grid)
+{
+    while (QLayoutItem* item = grid->takeAt(0))
+    {
+        if (QWidget* widget = item->widget())
+            widget->deleteLater();
+        delete item;
+    }
+}
+
+// A table drawn the lobby's way: a header row of field labels and a hairline
+// under every row.
+QWidget* makeTable(QWidget* parent, QGridLayout** grid)
+{
+    auto* box = new QWidget(parent);
+    *grid = new QGridLayout(box);
+    (*grid)->setContentsMargins(0, 0, 0, 0);
+    (*grid)->setHorizontalSpacing(18);
+    (*grid)->setVerticalSpacing(0);
+    return box;
+}
+
+// Each table row is a 30 px band; its rule spans every column.
+void addRowRule(QGridLayout* grid, int row, int columns, QWidget* parent)
+{
+    grid->addWidget(rule(parent), row, 0, 1, columns);
 }
 } // namespace
 
@@ -105,83 +105,102 @@ LagStatsDialog::LagStatsDialog(ReportSource source, QWidget* parent)
     : QDialog(parent), m_source(std::move(source))
 {
     setWindowTitle(tr("Lag Stats"));
+    setWindowIcon(QIcon(":Resource/RMG.png"));
     setObjectName("LagStatsDialog");
-    setAttribute(Qt::WA_DeleteOnClose, false);
-    resize(960, 430);
+    resize(980, 470);
 
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(14, 12, 14, 12);
-    layout->setSpacing(8);
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
 
-    // Verdict: a status dot, the headline and what's behind it.
-    auto* topRow = new QHBoxLayout;
-    topRow->setSpacing(8);
-    m_dot = new QLabel(this);
-    m_dot->setFixedSize(12, 12);
-    topRow->addWidget(m_dot, 0, Qt::AlignVCenter);
-    m_headline = new QLabel(this);
+    // The band: what this is, and which stretch of the match it covers.
+    auto* band = new LobbyBand(this);
+    auto* bandLay = new QHBoxLayout(band);
+    bandLay->setContentsMargins(18, 12, 18, 12);
+    bandLay->setSpacing(12);
+    bandLay->addWidget(new IconLabel(QStringLiteral("pulse-line"), Role::Accent, 22, band));
+    auto* words = new QVBoxLayout;
+    words->setSpacing(1);
+    auto* title = new QLabel(tr("Lag Stats").toUpper(), band);
+    title->setFont(LobbyTheme::pixelFont(15, 0.5));
+    words->addWidget(title);
+    auto* detail = new QLabel(tr("Each player's Dale64 measures its own frames and shares them once a second."), band);
+    detail->setFont(LobbyTheme::uiFont(11));
+    detail->setProperty("role", "muted");
+    words->addWidget(detail);
+    bandLay->addLayout(words, 1);
+    const auto makeChip = [band](const QString& text, const QString& name) {
+        auto* chip = new QPushButton(text, band);
+        chip->setObjectName(name);
+        chip->setProperty("chip", true);
+        chip->setCheckable(true);
+        chip->setAutoDefault(false);
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
+        return chip;
+    };
+    m_recentChip = makeChip(tr("Last %1 s").arg(RollbackLagStats::RecentSeconds), QStringLiteral("LagRecent"));
+    m_matchChip = makeChip(tr("Whole match"), QStringLiteral("LagMatch"));
+    m_recentChip->setToolTip(tr("The stretch of the match the numbers cover."));
+    m_matchChip->setToolTip(m_recentChip->toolTip());
+    bandLay->addWidget(m_recentChip);
+    bandLay->addWidget(m_matchChip);
+    connect(m_recentChip, &QPushButton::clicked, this, [this]() { showWindow(false); });
+    connect(m_matchChip, &QPushButton::clicked, this, [this]() { showWindow(true); });
+    root->addWidget(band);
+    root->addWidget(rule(this));
+
+    auto* body = new QWidget(this);
+    auto* bodyLay = new QVBoxLayout(body);
+    bodyLay->setContentsMargins(18, 14, 18, 12);
+    bodyLay->setSpacing(10);
+
+    // The verdict: a badge in its colour, the one-line answer and why.
+    auto* verdict = new QHBoxLayout;
+    verdict->setSpacing(12);
+    m_badge = new IconBadge(34, 9, 20, body);
+    verdict->addWidget(m_badge, 0, Qt::AlignTop);
+    auto* verdictWords = new QVBoxLayout;
+    verdictWords->setSpacing(3);
+    m_headline = new QLabel(body);
+    m_headline->setFont(LobbyTheme::uiFont(16, QFont::DemiBold));
     m_headline->setWordWrap(true);
     m_headline->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    QFont headlineFont = m_headline->font();
-    headlineFont.setPointSizeF(headlineFont.pointSizeF() * 1.3);
-    headlineFont.setBold(true);
-    m_headline->setFont(headlineFont);
-    topRow->addWidget(m_headline, 1);
-    m_windowCombo = new QComboBox(this);
-    m_windowCombo->setObjectName("LobbyCombo");
-    m_windowCombo->addItem(tr("Last %1 s").arg(RollbackLagStats::RecentSeconds), false);
-    m_windowCombo->addItem(tr("Whole match"), true);
-    m_windowCombo->setToolTip(tr("The stretch of the match the numbers cover."));
-    connect(m_windowCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LagStatsDialog::refresh);
-    topRow->addWidget(m_windowCombo, 0, Qt::AlignTop);
-    layout->addLayout(topRow);
-
-    m_details = new QLabel(this);
+    verdictWords->addWidget(m_headline);
+    m_details = new QLabel(body);
+    m_details->setFont(LobbyTheme::uiFont(12));
+    m_details->setProperty("role", "ink2");
     m_details->setWordWrap(true);
     m_details->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(m_details);
+    verdictWords->addWidget(m_details);
+    verdict->addLayout(verdictWords, 1);
+    bodyLay->addLayout(verdict);
 
-    auto* playersHeader = new QLabel(tr("PLAYERS"), this);
-    playersHeader->setProperty("class", "SectionHeader");
-    layout->addWidget(playersHeader);
+    bodyLay->addSpacing(4);
+    bodyLay->addWidget(fieldLabel(tr("Players"), body));
+    m_playersBox = makeTable(body, &m_players);
+    bodyLay->addWidget(m_playersBox);
 
-    m_players = makeTree(this, {tr("Player"), tr("FPS"), tr("Frame time"), tr("Long frames"), tr("Stutters"),
-                                tr("Others waited"), tr("Dropouts"), tr("Waited on others"), tr("Ping"), tr("Rollbacks")});
-    const QStringList tips = {
-        QString(),
-        tr("Frames the game ran per second. Full speed is about 60."),
-        tr("How long this player's PC took to run a frame (emulation, rollbacks and drawing), not counting waits. It has to stay under the frame time, about 16.7 ms."),
-        tr("Share of frames this player's PC took longer to run than a frame allows."),
-        tr("Times the picture froze for 2.5 frames or more. In brackets: how many came from this player's own PC rather than waiting on someone."),
-        tr("The longest any other player's game stood still waiting for this player's inputs. A player held up by someone else falls behind and shows up here too, so read it with the verdict above."),
-        tr("Of that wait, the time nothing at all arrived from this player: lost packets, a connection dropping out, or a frozen PC. A player who is only behind keeps sending."),
-        tr("How long this player's game stood still waiting for the others' inputs."),
-        tr("Worst ping between this player and anyone else."),
-        tr("Rollbacks per second, and the most frames one rollback replayed."),
-    };
-    for (int i = 0; i < tips.size(); ++i)
-        m_players->headerItem()->setToolTip(i, tips.at(i));
-    layout->addWidget(m_players);
+    bodyLay->addSpacing(4);
+    bodyLay->addWidget(fieldLabel(tr("Connections"), body));
+    m_linksBox = makeTable(body, &m_links);
+    bodyLay->addWidget(m_linksBox);
 
-    auto* linksHeader = new QLabel(tr("CONNECTIONS"), this);
-    linksHeader->setProperty("class", "SectionHeader");
-    layout->addWidget(linksHeader);
-    m_links = makeTree(this, {tr("Between"), tr("Ping"), tr("Jitter")});
-    m_links->headerItem()->setToolTip(2, tr("How much the game packets' round trip varies. Each game reads packets once a frame, so up to about 15 ms is normal on any connection; much more points to Wi-Fi or a busy line."));
-    layout->addWidget(m_links);
-
-    m_notes = new QLabel(this);
+    m_notes = new QLabel(body);
+    m_notes->setFont(LobbyTheme::uiFont(11));
+    m_notes->setProperty("role", "muted");
     m_notes->setWordWrap(true);
-    layout->addWidget(m_notes);
-    layout->addStretch(1);
+    bodyLay->addWidget(m_notes);
+    bodyLay->addStretch(1);
+    root->addWidget(body, 1);
 
-    auto* buttons = new QHBoxLayout;
-    auto* footnote = new QLabel(tr("Each player's RMG-K measures its own frames and shares them once a second."), this);
-    footnote->setWordWrap(true);
-    footnote->setEnabled(false);
-    buttons->addWidget(footnote, 1);
-    m_copyButton = new QPushButton(tr("Copy Report"), this);
+    auto* footer = new QHBoxLayout;
+    footer->setContentsMargins(18, 0, 18, 14);
+    footer->setSpacing(8);
+    footer->addStretch(1);
+    m_copyButton = new LobbyButton(tr("Copy Report"), LobbyButton::Kind::Secondary, this);
     m_copyButton->setObjectName("LagCopyBtn");
+    m_copyButton->setIconName(QStringLiteral("file-copy-line"));
     m_copyButton->setAutoDefault(false);
     m_copyButton->setToolTip(tr("Copy the report as text, to paste into a chat or a bug report."));
     connect(m_copyButton, &QPushButton::clicked, this, [this]() {
@@ -189,16 +208,17 @@ LagStatsDialog::LagStatsDialog(ReportSource source, QWidget* parent)
         m_copyButton->setText(tr("Copied"));
         QTimer::singleShot(1500, this, [this]() { m_copyButton->setText(tr("Copy Report")); });
     });
-    buttons->addWidget(m_copyButton);
-    auto* closeButton = new QPushButton(tr("Close"), this);
+    footer->addWidget(m_copyButton);
+    auto* closeButton = new LobbyButton(tr("Close"), LobbyButton::Kind::Ghost, this);
     closeButton->setAutoDefault(false);
     connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
-    buttons->addWidget(closeButton);
-    layout->addLayout(buttons);
+    footer->addWidget(closeButton);
+    root->addLayout(footer);
 
     m_timer = new QTimer(this);
     m_timer->setInterval(1000);
     connect(m_timer, &QTimer::timeout, this, &LagStatsDialog::refresh);
+    showWindow(false);
 }
 
 void LagStatsDialog::showEvent(QShowEvent* event)
@@ -214,105 +234,190 @@ void LagStatsDialog::hideEvent(QHideEvent* event)
     QDialog::hideEvent(event);
 }
 
+void LagStatsDialog::changeEvent(QEvent* event)
+{
+    QDialog::changeEvent(event);
+    if (event->type() == QEvent::ApplicationPaletteChange && isVisible())
+        refresh();
+}
+
+void LagStatsDialog::showWindow(bool wholeMatch)
+{
+    m_wholeMatch = wholeMatch;
+    m_recentChip->setChecked(!wholeMatch);
+    m_matchChip->setChecked(wholeMatch);
+    if (isVisible())
+        refresh();
+}
+
 void LagStatsDialog::refresh()
 {
-    m_report = m_source(m_windowCombo->currentData().toBool());
-    const QColor color = severityColor(m_report.severity);
-    m_dot->setStyleSheet(QStringLiteral("background-color: %1; border-radius: 6px;").arg(color.name()));
+    m_report = m_source(m_wholeMatch);
+    const Tokens& t = LobbyTheme::tokens();
+    const QColor color = LagStats::severityColor(m_report.severity);
+    m_badge->setIconAndColors(severityIcon(m_report.severity), color, LobbyTheme::mix(color, t.panel, 0.16));
     m_copyButton->setEnabled(m_report.severity != LagReport::Severity::None);
 
+    setUpdatesEnabled(false);
     if (m_report.severity == LagReport::Severity::None)
     {
         m_headline->setText(tr("No rollback match to check yet."));
         m_headline->setStyleSheet(QString());
         m_details->setText(tr("Lag stats appear once a rollback match is running. You can also type /lagstat in the room chat or the in-game chat."));
-        m_players->clear();
-        m_links->clear();
+        clearGrid(m_players);
+        clearGrid(m_links);
+        m_playersBox->setVisible(false);
+        m_linksBox->setVisible(false);
         m_notes->clear();
-        fitHeight(m_players);
-        fitHeight(m_links);
+        setUpdatesEnabled(true);
         return;
     }
 
     m_headline->setText(m_report.headline);
     m_headline->setStyleSheet(QStringLiteral("color: %1;").arg(color.name()));
-    QStringList details = m_report.details;
-    m_details->setText(details.join(QStringLiteral("\n")));
+    m_details->setText(m_report.details.join(QStringLiteral("\n")));
+    m_playersBox->setVisible(true);
+    fillPlayers();
+    m_linksBox->setVisible(!m_report.links.isEmpty());
+    fillLinks();
+    m_notes->setText(m_report.notes.join(QStringLiteral("\n")));
+    m_notes->setVisible(!m_report.notes.isEmpty());
+    setUpdatesEnabled(true);
+}
 
-    const QColor muted = QApplication::palette().color(QPalette::Disabled, QPalette::Text);
-    m_players->clear();
+void LagStatsDialog::fillPlayers()
+{
+    enum Column { Player, Fps, Frame, Long, Stutters, OthersWaited, Dropouts, Waited, Ping, Rollbacks, Count };
+    clearGrid(m_players);
+    const Tokens& t = LobbyTheme::tokens();
+    const QColor alarm = LagStats::severityColor(m_report.severity);
+
+    const QStringList headers = {tr("Player"), tr("FPS"), tr("Frame time"), tr("Long frames"), tr("Stutters"),
+                                 tr("Others waited"), tr("Dropouts"), tr("Waited on others"), tr("Ping"), tr("Rollbacks")};
+    const QStringList tips = {
+        QString(),
+        tr("Frames the game ran per second. Full speed is about 60."),
+        tr("How long this player's PC took to run a frame (emulation, rollbacks and drawing), not counting waits. It has to stay under the frame time, about 16.7 ms."),
+        tr("Share of frames this player's PC took longer to run than a frame allows."),
+        tr("Times the picture froze for 2.5 frames or more. In brackets: how many came from this player's own PC rather than waiting on someone."),
+        tr("The longest any other player's game stood still waiting for this player's inputs. A player held up by someone else falls behind and shows up here too, so read it with the verdict above."),
+        tr("Of that wait, the time nothing at all arrived from this player: lost packets, a connection dropping out, or a frozen PC. A player who is only behind keeps sending."),
+        tr("How long this player's game stood still waiting for the others' inputs."),
+        tr("Worst ping between this player and anyone else."),
+        tr("Rollbacks per second, and the most frames one rollback replayed."),
+    };
+    for (int column = 0; column < Count; ++column)
+    {
+        QLabel* label = fieldLabel(headers.at(column), m_playersBox);
+        label->setToolTip(tips.at(column));
+        label->setMinimumHeight(24);
+        label->setAlignment((column == Player ? Qt::AlignLeft : Qt::AlignRight) | Qt::AlignVCenter);
+        m_players->addWidget(label, 0, column);
+    }
+    m_players->setColumnStretch(Player, 1);
+
+    int gridRow = 1;
     for (const LagReport::Row& row : m_report.rows)
     {
-        auto* item = new QTreeWidgetItem(m_players);
-        QString name = QStringLiteral("P%1  %2").arg(row.slot).arg(row.name);
+        addRowRule(m_players, gridRow++, Count, m_playersBox);
+
+        auto* who = new QWidget(m_playersBox);
+        who->setMinimumHeight(32);
+        auto* whoLay = new QHBoxLayout(who);
+        whoLay->setContentsMargins(0, 0, 0, 0);
+        whoLay->setSpacing(8);
+        whoLay->addWidget(new PortChip(row.slot, who));
+        auto* name = new QLabel(row.name, who);
+        name->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
+        if (row.culprit)
+            name->setStyleSheet(QStringLiteral("color: %1;").arg(alarm.name()));
+        whoLay->addWidget(name);
         if (row.self)
-            name += tr(" (you)");
-        item->setText(ColumnPlayer, name);
+        {
+            auto* you = new QLabel(tr("you"), who);
+            you->setFont(LobbyTheme::uiFont(11));
+            you->setProperty("role", "muted");
+            whoLay->addWidget(you);
+        }
+        whoLay->addStretch(1);
+        m_players->addWidget(who, gridRow, Player);
+
         if (!row.reported)
         {
-            item->setText(ColumnFps, tr("no stats"));
-            item->setToolTip(ColumnFps, tr("This player hasn't sent lag stats: they may be on an older RMG-K, or their connection to you is down."));
-            for (int column = ColumnFps; column < ColumnCount; ++column)
-                item->setForeground(column, muted);
+            QLabel* none = cell(tr("no stats"), m_playersBox, false, t.muted);
+            none->setToolTip(tr("This player hasn't sent lag stats: they may be on an older Dale64, or their connection to you is down."));
+            m_players->addWidget(none, gridRow, Fps, 1, Stutters - Fps + 1);
         }
         else
         {
-            item->setText(ColumnFps, number(row.fps, 1));
-            item->setText(ColumnFrame, row.frameMs >= 0 ? tr("%1 ms").arg(number(row.frameMs, 1)) : QStringLiteral("—"));
-            item->setToolTip(ColumnFrame, tr("Longest: %1 ms").arg(number(row.frameMaxMs, 1)));
-            item->setText(ColumnLong, QStringLiteral("%1%").arg(row.slowPercent));
-            item->setText(ColumnStutters, row.stutters > 0 ? tr("%1 (%2 own)").arg(row.stutters).arg(row.ownStutters)
-                                                           : QStringLiteral("0"));
-            item->setText(ColumnWaited, LagStats::formatDuration(row.waitedMs));
-            item->setText(ColumnRollbacks, tr("%1/s · max %2 f").arg(number(row.rollbacksPerSecond, 1)).arg(row.maxRollback));
-            if (row.frameMs >= m_report.budgetMs * 0.9 || row.slowPercent >= 10)
-            {
-                item->setForeground(ColumnFrame, color);
-                item->setForeground(ColumnLong, color);
-            }
+            const bool slowPc = row.frameMs >= m_report.budgetMs * 0.9 || row.slowPercent >= 10;
+            const QColor frameColor = slowPc ? alarm : QColor();
+            m_players->addWidget(cell(number(row.fps, 1), m_playersBox), gridRow, Fps);
+            QLabel* frame = cell(row.frameMs >= 0 ? tr("%1 ms").arg(number(row.frameMs, 1)) : QStringLiteral("—"),
+                                 m_playersBox, true, frameColor, slowPc);
+            frame->setToolTip(tr("Longest: %1 ms").arg(number(row.frameMaxMs, 1)));
+            m_players->addWidget(frame, gridRow, Frame);
+            m_players->addWidget(cell(QStringLiteral("%1%").arg(row.slowPercent), m_playersBox, true, frameColor, slowPc),
+                                 gridRow, Long);
+            m_players->addWidget(cell(row.stutters > 0 ? tr("%1 (%2 own)").arg(row.stutters).arg(row.ownStutters)
+                                                       : QStringLiteral("0"), m_playersBox),
+                                 gridRow, Stutters);
+            m_players->addWidget(cell(LagStats::formatDuration(row.waitedMs), m_playersBox), gridRow, Waited);
+            m_players->addWidget(cell(tr("%1/s · max %2 f").arg(number(row.rollbacksPerSecond, 1)).arg(row.maxRollback),
+                                      m_playersBox, true, t.ink2),
+                                 gridRow, Rollbacks);
         }
-        item->setText(ColumnHeldUp, LagStats::formatDuration(row.heldUpMs));
-        item->setText(ColumnDropouts, LagStats::formatDuration(row.dropoutMs));
+        // The number the verdict rests on, in its colour.
+        const bool dropEvidence = row.culprit && row.dropoutMs > 0;
+        const bool waitEvidence = row.culprit && !dropEvidence;
+        m_players->addWidget(cell(LagStats::formatDuration(row.heldUpMs), m_playersBox, true,
+                                  waitEvidence ? alarm : QColor(), waitEvidence),
+                             gridRow, OthersWaited);
+        QLabel* dropout = cell(LagStats::formatDuration(row.dropoutMs), m_playersBox, true,
+                               dropEvidence ? alarm : QColor(), dropEvidence);
         if (row.longestDropoutMs > 0)
-            item->setToolTip(ColumnDropouts, tr("Longest: %1").arg(LagStats::formatDuration(row.longestDropoutMs)));
-        item->setText(ColumnPing, row.pingMs >= 0 ? tr("%1 ms").arg(row.pingMs) : QStringLiteral("—"));
-        for (int column = ColumnFps; column < ColumnCount; ++column)
-            item->setTextAlignment(column, Qt::AlignRight | Qt::AlignVCenter);
-        if (row.culprit)
-        {
-            // The name, and the number the verdict rests on.
-            QFont font = item->font(ColumnPlayer);
-            font.setBold(true);
-            const int evidence = row.dropoutMs > 0 ? ColumnDropouts : ColumnHeldUp;
-            for (int column : {int(ColumnPlayer), evidence})
-            {
-                item->setFont(column, font);
-                item->setForeground(column, color);
-            }
-        }
+            dropout->setToolTip(tr("Longest: %1").arg(LagStats::formatDuration(row.longestDropoutMs)));
+        m_players->addWidget(dropout, gridRow, Dropouts);
+        auto* ping = new QWidget(m_playersBox);
+        auto* pingLay = new QHBoxLayout(ping);
+        pingLay->setContentsMargins(0, 0, 0, 0);
+        pingLay->setSpacing(5);
+        pingLay->addStretch(1);
+        auto* bars = new SignalBars(ping);
+        bars->setPing(row.pingMs, false);
+        pingLay->addWidget(bars);
+        pingLay->addWidget(cell(row.pingMs >= 0 ? tr("%1 ms").arg(row.pingMs) : QStringLiteral("—"), ping));
+        m_players->addWidget(ping, gridRow, Ping);
+        ++gridRow;
     }
-    fitHeight(m_players);
-    // Grow rather than cut names short; never shrink under the user's hand.
-    if (const int missing = missingWidth(m_players); missing > 0)
-        resize(width() + missing, height());
+}
 
-    m_links->clear();
+void LagStatsDialog::fillLinks()
+{
+    clearGrid(m_links);
+    const QStringList headers = {tr("Between"), tr("Ping"), tr("Jitter")};
+    for (int column = 0; column < headers.size(); ++column)
+    {
+        QLabel* label = fieldLabel(headers.at(column), m_linksBox);
+        label->setMinimumHeight(24);
+        label->setAlignment((column == 0 ? Qt::AlignLeft : Qt::AlignRight) | Qt::AlignVCenter);
+        m_links->addWidget(label, 0, column);
+    }
+    m_links->itemAtPosition(0, 2)->widget()->setToolTip(
+        tr("How much the game packets' round trip varies. Each game reads packets once a frame, so up to about 15 ms is normal on any connection; much more points to Wi-Fi or a busy line."));
+    m_links->setColumnStretch(0, 1);
+
+    int gridRow = 1;
     for (const LagReport::Link& link : m_report.links)
     {
-        auto* item = new QTreeWidgetItem(m_links);
-        item->setText(0, link.between);
-        item->setText(1, link.pingMs >= 0 ? tr("%1 ms").arg(link.pingMs) : QStringLiteral("—"));
-        item->setText(2, link.jitterMs >= 0 ? tr("%1 ms").arg(link.jitterMs) : QStringLiteral("—"));
-        item->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
-        item->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
+        addRowRule(m_links, gridRow++, headers.size(), m_linksBox);
+        QLabel* between = cell(link.between, m_linksBox, false);
+        between->setMinimumHeight(28);
+        m_links->addWidget(between, gridRow, 0);
+        m_links->addWidget(cell(link.pingMs >= 0 ? tr("%1 ms").arg(link.pingMs) : QStringLiteral("—"), m_linksBox), gridRow, 1);
+        m_links->addWidget(cell(link.jitterMs >= 0 ? tr("%1 ms").arg(link.jitterMs) : QStringLiteral("—"), m_linksBox), gridRow, 2);
+        ++gridRow;
     }
-    fitHeight(m_links);
-
-    QPalette notesPalette = m_notes->palette();
-    notesPalette.setColor(QPalette::WindowText, muted);
-    m_notes->setPalette(notesPalette);
-    m_notes->setText(m_report.notes.join(QStringLiteral("\n")));
-    m_notes->setVisible(!m_report.notes.isEmpty());
 }
 
 #endif // NETPLAY
