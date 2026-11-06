@@ -5017,6 +5017,10 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, [](const QString& message) { OnScreenDisplaySetCenterMessage(message.toStdString()); });
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::portLabelsChanged,
             this, []() { OnScreenDisplaySetKailleraPortLabelNames(GetLiveKailleraPortLabelNames()); });
+
+    // The lobby opened over a game already running.
+    if (this->emulationThread && this->emulationThread->isRunning())
+        this->rollbackLobbyDialog->notifyEmulationStarted();
 }
 #endif
 

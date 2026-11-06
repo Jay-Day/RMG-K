@@ -4437,6 +4437,7 @@ void RollbackLobbyDialog::onLeaveRoomClicked()
 
 void RollbackLobbyDialog::notifyEmulationStarted()
 {
+    m_localGameOpen = true;
     if (!m_awaitingEmulationStart) return;
     m_awaitingEmulationStart = false;
     m_emulationActive = true;
@@ -4474,6 +4475,7 @@ void RollbackLobbyDialog::notifyEmulationStarted()
 
 void RollbackLobbyDialog::notifyEmulationFinished()
 {
+    m_localGameOpen = false;
     // Always close out a broadcast if one is running, even on paths that fall
     // through the early-return below (it flushes the tail + sends BROADCAST_END).
     stopBroadcast();
@@ -4502,8 +4504,10 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     m_currentMatchId = 0;
     emit liveReplayViewerCountCleared();
     if (m_dropBtn) m_dropBtn->setEnabled(false);
-    // A hand-off can't outlive our game.
-    if (m_lateJoin.role != LateJoinRole::None)
+    // A hand-off can't outlive our game. A joiner's game starts at launch;
+    // before that, the game that closed is the one it replaces.
+    if (m_lateJoin.role != LateJoinRole::None &&
+        (m_lateJoin.role != LateJoinRole::Joiner || m_lateJoin.launched))
         abortLateJoin(QStringLiteral("game_closed"), true);
     refreshAdmitButtons();
 
@@ -6098,9 +6102,18 @@ void RollbackLobbyDialog::onMatchAdmitBegin(quint64 matchId, quint64 admitId, in
     if (joiner.userId == selfId)
     {
         m_lateJoin.role = LateJoinRole::Joiner;
-        // Watching the match? The game is about to take over the window.
+        // The game is about to take over the window. Whatever is open there
+        // (say, a live replay of this match) closes first: its shutdown
+        // clears the match settings the host sends, so they wait until it's gone.
         if (m_spectatingMatchId != 0)
+        {
             stopSpectating();
+            emit spectateStreamClosed(QStringLiteral("late_join"));
+        }
+        else if (m_localGameOpen)
+        {
+            emit closeMatchRequested();
+        }
         for (const auto& peer : peers)
             m_client->ensureIcePeer(peer.userId);
         appendChatSystemLine(CHANNEL_ROOM, tr("The host is adding you to the game…"));
@@ -6224,13 +6237,15 @@ void RollbackLobbyDialog::onMatchAdmitBlob(quint64 matchId, quint64 admitId, con
 
     if (step == QStringLiteral("manifest") && !m_lateJoin.launched)
     {
-        if (raw.isEmpty() || !m_client->applySpectateManifest(raw))
+        if (raw.isEmpty())
         {
             abortLateJoin(QStringLiteral("manifest_failed"), true);
             return;
         }
-        beginMatchSave();
-        launchAsLateJoiner();
+        // The tick launches once the game that was open has closed.
+        m_lateJoin.manifest = raw;
+        if (!m_localGameOpen)
+            launchAsLateJoiner();
     }
     else if (step == QStringLiteral("state") && m_lateJoin.launched)
     {
@@ -6246,6 +6261,13 @@ void RollbackLobbyDialog::onMatchAdmitBlob(quint64 matchId, quint64 admitId, con
 
 void RollbackLobbyDialog::launchAsLateJoiner()
 {
+    if (!m_client->applySpectateManifest(m_lateJoin.manifest))
+    {
+        abortLateJoin(QStringLiteral("manifest_failed"), true);
+        return;
+    }
+    beginMatchSave();
+
     const quint64 selfId = m_client->selfUserId();
     const QString romFile = localRomPathForMd5(m_currentRoomMd5);
     if (romFile.isEmpty())
@@ -6465,7 +6487,9 @@ void RollbackLobbyDialog::onLateJoinTick()
     {
         if (!lj.launched)
         {
-            if (nowMs - lj.startedMs > kLateJoinReadyTimeoutMs)
+            if (!lj.manifest.isEmpty() && !m_localGameOpen)
+                launchAsLateJoiner();
+            else if (nowMs - lj.startedMs > kLateJoinReadyTimeoutMs)
                 abortLateJoin(QStringLiteral("manifest_timeout"), true);
             return;
         }
