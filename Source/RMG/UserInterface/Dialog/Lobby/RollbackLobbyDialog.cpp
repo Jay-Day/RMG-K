@@ -2117,6 +2117,8 @@ void RollbackLobbyDialog::refreshTheme()
     }
     updateRollbackSettingControls();
     updateStatusIndicator(m_client->state());
+    // The role line under the name is coloured as it's set.
+    updateUserChip();
     onRoomListChanged();
     update();
 }
