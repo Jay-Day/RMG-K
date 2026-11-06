@@ -590,6 +590,7 @@ private:
         QSet<quint64> awaitingCut;                // host: players yet to stop
         bool stateSent = false;                   // host
         bool cutReported = false;                 // player
+        QByteArray manifest;                      // joiner: held until the open game closes
         bool launched = false;                    // joiner
         bool readySent = false;                   // joiner
         qint64 readyMs = 0;                       // joiner, host: when it was ready
@@ -674,6 +675,8 @@ private:
     bool m_awaitingEmulationStart = false;
     bool m_emulationActive        = false;
     bool m_quickMatchActive       = false;
+    // Any game open on this PC, a live replay or an offline game included.
+    bool m_localGameOpen          = false;
 
     QMap<QString, CoreRomSettings> m_roms;
 };

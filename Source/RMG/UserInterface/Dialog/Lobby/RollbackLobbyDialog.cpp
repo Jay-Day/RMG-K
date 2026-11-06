@@ -3645,8 +3645,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_canStartAlone = roomState.value("canStartAlone").toBool(false);
 
     // Late join is the host's choice per room. Everyone hears when it changes,
-    // and a player entering a room with it on hears it too, because it turns
-    // their local recording off.
+    // and a player entering a room with it on hears it too: whoever joins once
+    // a game is running doesn't get a replay of it.
     m_roomHasLateJoinOption = roomState.contains("lateJoinEnabled");
     {
         const bool lateJoinEnabled = roomState.value("lateJoinEnabled").toBool(false);
@@ -3654,17 +3654,17 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         {
             if (lateJoinEnabled && !iAmHost)
                 appendChatSystemLine(CHANNEL_ROOM,
-                    tr("Late join is on in this room. Only the host saves a local replay, so Record locally is off for you."));
+                    tr("Late join is on in this room. Players who join mid-game don't get a replay of it."));
         }
         else if (lateJoinEnabled != m_roomLateJoinEnabled)
         {
             if (iAmHost)
                 appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
-                    ? tr("Late join is on. Players can join while a game is running, and only you save a local replay.")
+                    ? tr("Late join is on. Players can join while a game is running; they won't get a replay of it.")
                     : tr("Late join is off."));
             else
                 appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
-                    ? tr("The host turned on late join. Only the host saves a local replay, so Record locally is off for you.")
+                    ? tr("The host turned on late join. Players who join mid-game don't get a replay of it.")
                     : tr("The host turned off late join."));
         }
         m_lateJoinEnabledSeen = true;
@@ -3949,6 +3949,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             m_announcedWaitingSelf = false;
         }
         m_outOfMatchUsers = outOfMatch;
+        // Joining mid-game means no replay of this one.
+        updateRecordingControls();
     }
 
     // Flash + chime when a *new* player takes a seat. Compare this ROOM_STATE's
@@ -4003,19 +4005,21 @@ void RollbackLobbyDialog::updateRecordingControls()
     const bool liveReplayEnabled = m_broadcastCheck->isChecked();
     const bool editable = m_currentRoomState == "waiting" && !matchTransportInProgress();
 
-    // With late join on, only the host records: the host is the one player
-    // sure to be in the whole game. The box shows off meanwhile and goes back
-    // to the player's own choice afterwards.
-    const bool hostOnlyRecording = m_roomLateJoinEnabled && !iAmHost;
+    // Everyone in the room when a game starts can record it. A player who joins
+    // mid-game can't: their replay would start part way through, with nothing
+    // to start from. The box shows off for them meanwhile and goes back to
+    // their own choice afterwards.
+    const bool joiningMidGame = m_client && m_outOfMatchUsers.contains(m_client->selfUserId()) &&
+        m_currentRoomState == QLatin1String("in_game") && !matchTransportInProgress();
     {
         const QSignalBlocker blocker(m_recordCheck);
-        m_recordCheck->setChecked(!hostOnlyRecording && m_recordLocallyChoice);
+        m_recordCheck->setChecked(!joiningMidGame && m_recordLocallyChoice);
     }
-    m_recordCheck->setEnabled(editable && !hostOnlyRecording);
-    if (hostOnlyRecording)
+    m_recordCheck->setEnabled(editable);
+    if (joiningMidGame)
     {
         m_recordCheck->setToolTip(
-            tr("Late join is on, so only the host saves a local replay."));
+            tr("You joined while a game is running, so you won't get a replay of this one."));
     }
     else if (!editable)
     {
@@ -4066,27 +4070,28 @@ void RollbackLobbyDialog::updateRecordingControls()
     {
         m_lateJoinCheck->setToolTip(
             tr("Let players join while a game is running. You add them with Add to Game.\n"
-               "While it's on, only you save a local replay."));
+               "Everyone here when the game starts can still save a replay; whoever joins mid-game can't."));
     }
     m_lateJoinNote->setVisible(m_roomLateJoinEnabled);
     if (m_roomLateJoinEnabled)
     {
         m_lateJoinNote->setText(QString("<span style='color:%1; font-weight:600;'>⚠ %2</span> %3")
             .arg(warnTextHex(), tr("Late join is on."),
-                 iAmHost ? tr("Local recording is off for everyone but you.")
-                         : tr("Only the host saves a local replay, so Record locally is off for you.")));
+                 joiningMidGame ? tr("You joined mid-game, so you won't get a replay of this game.")
+                                : tr("Players who join mid-game won't get a replay of it.")));
     }
 }
 
 bool RollbackLobbyDialog::confirmLateJoin()
 {
     QMessageBox box(QMessageBox::Warning, tr("Turn on late join?"),
-        tr("Turning on late join turns off local recording for everyone in this room except you."),
+        tr("Players who join while a game is running won't get a replay of it."),
         QMessageBox::Cancel, this);
     box.setInformativeText(
-        tr("Players can then join while a game is running, and you add them with Add to Game. "
-           "Only your replay (.krec) is saved, since you're the one player sure to be in the whole game. "
-           "Live Replay isn't affected."));
+        tr("Players can then join mid-game, and you add them with Add to Game. "
+           "Everyone in the room when a game starts can still save a replay (.krec) of it, "
+           "and Live Replay isn't affected. A replay can't start part way through a game, "
+           "so whoever joins later doesn't get one."));
     QPushButton* turnOn = box.addButton(tr("Turn On Late Join"), QMessageBox::AcceptRole);
     box.setDefaultButton(QMessageBox::Cancel);
     box.exec();
@@ -4432,6 +4437,7 @@ void RollbackLobbyDialog::onLeaveRoomClicked()
 
 void RollbackLobbyDialog::notifyEmulationStarted()
 {
+    m_localGameOpen = true;
     if (!m_awaitingEmulationStart) return;
     m_awaitingEmulationStart = false;
     m_emulationActive = true;
@@ -4469,6 +4475,7 @@ void RollbackLobbyDialog::notifyEmulationStarted()
 
 void RollbackLobbyDialog::notifyEmulationFinished()
 {
+    m_localGameOpen = false;
     // Always close out a broadcast if one is running, even on paths that fall
     // through the early-return below (it flushes the tail + sends BROADCAST_END).
     stopBroadcast();
@@ -4497,8 +4504,10 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     m_currentMatchId = 0;
     emit liveReplayViewerCountCleared();
     if (m_dropBtn) m_dropBtn->setEnabled(false);
-    // A hand-off can't outlive our game.
-    if (m_lateJoin.role != LateJoinRole::None)
+    // A hand-off can't outlive our game. A joiner's game starts at launch;
+    // before that, the game that closed is the one it replaces.
+    if (m_lateJoin.role != LateJoinRole::None &&
+        (m_lateJoin.role != LateJoinRole::Joiner || m_lateJoin.launched))
         abortLateJoin(QStringLiteral("game_closed"), true);
     refreshAdmitButtons();
 
@@ -5888,15 +5897,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     {
         n02_kaillera_recording_enabled = m_recordCheck->isChecked();
     }
-    // A match open to late joiners is recorded by the host alone, including
-    // one an older server opened without asking the host.
-    if (m_client->matchSeats() > 0 && m_currentRoomHostId != selfId)
-    {
-        if (m_recordLocallyChoice)
-            appendChatSystemLine(CHANNEL_ROOM,
-                tr("Late join is on, so this game isn't saved to your PC. The host's replay covers it."));
-        n02_kaillera_recording_enabled = false;
-    }
+    // Everyone who starts the match can record it, late join or not. A late
+    // joiner never gets here: MainWindow opens no replay for them.
 
     // Capture seated player names (slot-indexed) for the .krec header, the same
     // way the p2p / kaillera paths fill recording_player_names before a recording
@@ -6100,9 +6102,18 @@ void RollbackLobbyDialog::onMatchAdmitBegin(quint64 matchId, quint64 admitId, in
     if (joiner.userId == selfId)
     {
         m_lateJoin.role = LateJoinRole::Joiner;
-        // Watching the match? The game is about to take over the window.
+        // The game is about to take over the window. Whatever is open there
+        // (say, a live replay of this match) closes first: its shutdown
+        // clears the match settings the host sends, so they wait until it's gone.
         if (m_spectatingMatchId != 0)
+        {
             stopSpectating();
+            emit spectateStreamClosed(QStringLiteral("late_join"));
+        }
+        else if (m_localGameOpen)
+        {
+            emit closeMatchRequested();
+        }
         for (const auto& peer : peers)
             m_client->ensureIcePeer(peer.userId);
         appendChatSystemLine(CHANNEL_ROOM, tr("The host is adding you to the game…"));
@@ -6226,13 +6237,15 @@ void RollbackLobbyDialog::onMatchAdmitBlob(quint64 matchId, quint64 admitId, con
 
     if (step == QStringLiteral("manifest") && !m_lateJoin.launched)
     {
-        if (raw.isEmpty() || !m_client->applySpectateManifest(raw))
+        if (raw.isEmpty())
         {
             abortLateJoin(QStringLiteral("manifest_failed"), true);
             return;
         }
-        beginMatchSave();
-        launchAsLateJoiner();
+        // The tick launches once the game that was open has closed.
+        m_lateJoin.manifest = raw;
+        if (!m_localGameOpen)
+            launchAsLateJoiner();
     }
     else if (step == QStringLiteral("state") && m_lateJoin.launched)
     {
@@ -6248,6 +6261,13 @@ void RollbackLobbyDialog::onMatchAdmitBlob(quint64 matchId, quint64 admitId, con
 
 void RollbackLobbyDialog::launchAsLateJoiner()
 {
+    if (!m_client->applySpectateManifest(m_lateJoin.manifest))
+    {
+        abortLateJoin(QStringLiteral("manifest_failed"), true);
+        return;
+    }
+    beginMatchSave();
+
     const quint64 selfId = m_client->selfUserId();
     const QString romFile = localRomPathForMd5(m_currentRoomMd5);
     if (romFile.isEmpty())
@@ -6467,7 +6487,9 @@ void RollbackLobbyDialog::onLateJoinTick()
     {
         if (!lj.launched)
         {
-            if (nowMs - lj.startedMs > kLateJoinReadyTimeoutMs)
+            if (!lj.manifest.isEmpty() && !m_localGameOpen)
+                launchAsLateJoiner();
+            else if (nowMs - lj.startedMs > kLateJoinReadyTimeoutMs)
                 abortLateJoin(QStringLiteral("manifest_timeout"), true);
             return;
         }

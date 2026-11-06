@@ -5017,6 +5017,10 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, [](const QString& message) { OnScreenDisplaySetCenterMessage(message.toStdString()); });
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::portLabelsChanged,
             this, []() { OnScreenDisplaySetKailleraPortLabelNames(GetLiveKailleraPortLabelNames()); });
+
+    // The lobby opened over a game already running.
+    if (this->emulationThread && this->emulationThread->isRunning())
+        this->rollbackLobbyDialog->notifyEmulationStarted();
 }
 #endif
 
@@ -5268,7 +5272,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     }
 
     // A late joiner's replay would start mid-game with nothing to restore
-    // from, so it records nothing; the host's replay covers the whole match.
+    // from, so it records nothing; the players who started the match have all of it.
     if (!lateJoiner)
     {
         // A match that starts from save data keeps it in the replay file.
