@@ -895,8 +895,8 @@
             <translation>プラグイン(&amp;P)</translation>
         </message>
         <message>
-            <source>&amp;Playback</source>
-            <translation>再生(&amp;P)</translation>
+            <source>&amp;Replays</source>
+            <translation>リプレイ(&amp;R)</translation>
         </message>
         <message>
             <source>&amp;Fullscreen</source>
@@ -3788,8 +3788,8 @@ Turn this off to start every match from the save picked here.</source>
         <context>
         <name>KailleraPlaybackDialog</name>
         <message>
-            <source>Playback</source>
-            <translation>再生</translation>
+            <source>Replays</source>
+            <translation>リプレイ</translation>
         </message>
         <message>
             <source>Date</source>

@@ -516,7 +516,7 @@ KailleraPlaybackDialog::~KailleraPlaybackDialog()
 
 void KailleraPlaybackDialog::setupUI()
 {
-    setWindowTitle(tr("Playback"));
+    setWindowTitle(tr("Replays"));
     setMinimumSize(520, 400);
     resize(780, 520);
     setObjectName("KailleraPlaybackDialog");
@@ -1744,7 +1744,7 @@ void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
     }
     else
     {
-        QMessageBox::warning(this, tr("Playback"), tr("Failed to load recording: %1").arg(QFileInfo(krecPath).fileName()));
+        QMessageBox::warning(this, tr("Replays"), tr("Failed to load recording: %1").arg(QFileInfo(krecPath).fileName()));
     }
 }
 
