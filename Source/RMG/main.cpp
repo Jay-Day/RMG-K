@@ -9,7 +9,7 @@
  */
 #include <UserInterface/MainWindow.hpp>
 #include <Utilities/Translation.hpp>
-#if defined(_WIN32) && defined(NETPLAY)
+#if defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
 #endif
 
@@ -84,7 +84,7 @@ static LONG WINAPI exception_handler(_EXCEPTION_POINTERS* ExceptionInfo)
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
-    ptr_MiniDumpWriteDump miniDumpWriteDump = 
+    ptr_MiniDumpWriteDump miniDumpWriteDump =
         (ptr_MiniDumpWriteDump)GetProcAddress(dbgHelpModule, "MiniDumpWriteDump");
     if (miniDumpWriteDump == nullptr)
     {
@@ -99,7 +99,7 @@ static LONG WINAPI exception_handler(_EXCEPTION_POINTERS* ExceptionInfo)
         show_error("Failed to retrieve path of current process!");
         return EXCEPTION_CONTINUE_SEARCH;
     }
-    
+
     if ((filename_len + 4) > MAX_PATH)
     { // replace .exe with .dmp
         wcscpy((dump_filename + (filename_len - 4)), L".dmp");
@@ -109,7 +109,7 @@ static LONG WINAPI exception_handler(_EXCEPTION_POINTERS* ExceptionInfo)
         wcscpy((dump_filename + filename_len), L".dmp");
     }
 
-    HANDLE hDumpFile = CreateFileW(dump_filename, GENERIC_WRITE, FILE_SHARE_WRITE, 
+    HANDLE hDumpFile = CreateFileW(dump_filename, GENERIC_WRITE, FILE_SHARE_WRITE,
                                    nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 
     if (hDumpFile != INVALID_HANDLE_VALUE)
@@ -119,8 +119,8 @@ static LONG WINAPI exception_handler(_EXCEPTION_POINTERS* ExceptionInfo)
         exceptionInfo.ExceptionPointers = ExceptionInfo;
         exceptionInfo.ClientPointers = FALSE;
 
-        BOOL ret = miniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), 
-                                     hDumpFile, MiniDumpNormal, &exceptionInfo, 
+        BOOL ret = miniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(),
+                                     hDumpFile, MiniDumpNormal, &exceptionInfo,
                                      nullptr, nullptr);
         if (!ret)
         {
@@ -166,7 +166,7 @@ int main(int argc, char **argv)
 
     // on Linux, wayland works only on some compositors,
     // it works on KDE plasma and sway (on 2023-07-26),
-    // but i.e doesn't work on GNOME wayland or labwc, 
+    // but i.e doesn't work on GNOME wayland or labwc,
     // so to compromise the situation, we'll force xwayland
     // unless RMG_ALLOW_WAYLAND is set to 1, which'll allow wayland
     // as qt platform, so users can experiment with the
@@ -309,10 +309,10 @@ int main(int argc, char **argv)
 
     if (parser.isSet(exportKrecOption))
     {
-#if defined(_WIN32) && defined(NETPLAY)
+#if defined(NETPLAY)
         return KailleraExport::RunReplayExportFromCommandLine(parser);
 #else
-        std::cerr << "Replay export is only supported on Windows" << std::endl;
+        std::cerr << "Replay export is supported only when built with netplay features enabled" << std::endl;
         return 1;
 #endif
     }
