@@ -54,5 +54,11 @@
   <file alias="icons/wifi-line.svg">Resource/lobby/icons/wifi-line.svg</file>
   <file alias="icons/window-maximize.svg">Resource/lobby/icons/window-maximize.svg</file>
   <file alias="icons/window-restore.svg">Resource/lobby/icons/window-restore.svg</file>
+  <file alias="icons/computer-line.svg">Resource/lobby/icons/computer-line.svg</file>
+  <file alias="icons/layout-column-line.svg">Resource/lobby/icons/layout-column-line.svg</file>
+  <file alias="icons/layout-row-line.svg">Resource/lobby/icons/layout-row-line.svg</file>
+  <file alias="icons/moon-line.svg">Resource/lobby/icons/moon-line.svg</file>
+  <file alias="icons/palette-line.svg">Resource/lobby/icons/palette-line.svg</file>
+  <file alias="icons/sun-line.svg">Resource/lobby/icons/sun-line.svg</file>
 </qresource>
 </RCC>

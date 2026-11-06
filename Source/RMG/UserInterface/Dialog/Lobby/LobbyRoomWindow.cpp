@@ -389,6 +389,11 @@ void DropPanel::toggleBelow(QWidget* anchor)
         return;
     }
     m_anchor = anchor;
+    // Sized before it's first shown, the stylesheet hasn't reached its labels
+    // yet and the wrapped ones measure too tall.
+    ensurePolished();
+    if (layout())
+        layout()->activate();
     adjustSize();
     QWidget* host = parentWidget();
     const QPoint corner = anchor->mapTo(host, QPoint(anchor->width(), anchor->height() + 4));

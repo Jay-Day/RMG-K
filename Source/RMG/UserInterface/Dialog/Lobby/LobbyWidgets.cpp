@@ -1744,7 +1744,6 @@ void PortCard::showPlayer(const QString& name, bool isSelf, bool isHost, const Q
 void PortCard::setStanding(const QString& text)
 {
     m_standing->setText(text);
-    m_standing->setStyleSheet(QString("color: %1;").arg(LobbyTheme::tokens().goldInk.name()));
     m_standing->setVisible(!text.isEmpty());
 }
 

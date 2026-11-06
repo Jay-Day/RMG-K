@@ -20,7 +20,8 @@ namespace LobbyTheme
 {
 
 // The lobby's colours: console charcoal when the application palette is dark,
-// Famicom cream when it's light. Painted widgets read these on every paint and
+// Famicom cream when it's light, unless the player picked one for the lobby
+// (setThemeChoice). Painted widgets read these on every paint and
 // the stylesheet is generated from them, so nothing else hard-codes a colour.
 // P2 keeps its port blue; nothing else in the theme is blue.
 struct Tokens
@@ -46,6 +47,11 @@ struct Tokens
 
 // Text colours a widget can follow across a theme change.
 enum class Role { Ink, Ink2, Muted, Faint, Accent, Ok, Warn, Bad, Live, Watch, Gold };
+
+// Follow the application's theme, or keep the lobby dark or light.
+enum class ThemeChoice { App, Dark, Light };
+void setThemeChoice(ThemeChoice choice);
+ThemeChoice themeChoice();
 
 bool isDark();
 const Tokens& tokens();

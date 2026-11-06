@@ -48,6 +48,7 @@ class QSplitter;
 class QStackedWidget;
 class QTabBar;
 class QComboBox;
+class QButtonGroup;
 
 namespace Utilities
 {
@@ -71,6 +72,7 @@ struct CreateRoomRankedOptions;
 
 class CartridgeTile;
 class ChallengeCard;
+class ChatTabBar;
 class ChatView;
 class CountryFlag;
 class DropPanel;
@@ -332,6 +334,13 @@ private:
     QWidget* buildChatColumn();
     QWidget* buildPlayersColumn();
     void     applyStylesheet();
+    void     alignPickerInfo();
+    // After the lobby's colours change: restyles and repaints what holds them.
+    void     refreshTheme();
+    void     setLobbyTheme(LobbyTheme::ThemeChoice choice);
+    void     setBrowseStacked(bool stacked);
+    void     restoreBrowseSplit();
+    QString  browseSplitterKey() const;
 
     void     showUserMenu();
     void     updateUserChip();
@@ -578,6 +587,7 @@ private:
     // joiner may have, and whether a PC on Wi-Fi may join. Hidden on servers
     // without it.
     void updateJoinLimitControls();
+    void updateRoomSizeControls();
 
     // Save data (host-only room option): the match starts from a save the
     // host picked, the game saves to memory, and any player can keep a copy.
@@ -670,7 +680,7 @@ private:
     IconLabel*   m_spectatorEye   = nullptr;
     QLabel*      m_spectatorCount = nullptr;
     ToggleSwitch* m_spectatorOverlayToggle = nullptr;
-    QTabBar*     m_chatTabs      = nullptr; // Lobby | Room | Spectators | mail
+    ChatTabBar*  m_chatTabs      = nullptr; // Lobby | Room | Spectators | mail
     QStackedWidget* m_chatStack  = nullptr; // one view per tab
     QLineEdit*   m_chatInput     = nullptr; // sends to the selected tab
     QWidget*     m_chatCard      = nullptr;
@@ -839,12 +849,12 @@ private:
     // match (the player who checks it records, same as the p2p/kaillera lobbies).
     // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
     ToggleSwitch* m_recordCheck  = nullptr;
-    // The player's own choice. While late join keeps non-hosts from recording,
-    // the switch shows off and this keeps what to restore.
+    // The player's own choice. While they wait to join a running game, the
+    // switch shows off and this keeps what to restore.
     bool          m_recordLocallyChoice = false;
 
-    // Host-only room option: the next match can take players mid-game. While
-    // it's on, only the host records locally (see updateRecordingControls).
+    // Host-only room option: the next match can take players mid-game. Those
+    // who join it mid-game don't record it (see updateRecordingControls).
     // Hidden on servers without the option.
     ToggleSwitch* m_lateJoinCheck = nullptr;
     QLabel*       m_lateJoinNote  = nullptr;   // the recording warning, while on
@@ -856,6 +866,15 @@ private:
     bool          m_roomHasJoinLimits = false;
     int           m_roomMaxPing = 0;
     bool          m_roomWiredOnly = false;
+
+    // Host-only, while the room waits: how many seats it has. Hidden on
+    // servers that can't change it, and in quick match and challenge rooms.
+    QWidget*      m_roomSizeBox     = nullptr;
+    QButtonGroup* m_roomSizeGroup   = nullptr;
+    QLabel*       m_roomSizeHint    = nullptr;
+    bool          m_roomResizable   = false;
+    int           m_roomMaxPlayers  = 0;
+    int           m_roomSeatedCount = 0;
 
     // Host-only room option: the next match starts from the host's pick of
     // save data instead of a blank save. Hidden on servers without it.
