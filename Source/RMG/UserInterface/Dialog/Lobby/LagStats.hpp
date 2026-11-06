@@ -6,6 +6,7 @@
 #include <RMG-Core/rmgk_gekko.hpp>
 
 #include <QByteArray>
+#include <QColor>
 #include <QHash>
 #include <QList>
 #include <QObject>
@@ -105,14 +106,20 @@ bool decode(const QByteArray& data, RollbackLagStats& stats);
 // whole match instead of the last RecentSeconds.
 bool parseCommand(const QString& text, bool* wholeMatch);
 
-// This client and the players its session knows of, without their reports.
-QList<LagPlayer> localPlayers(quint64 selfUserId, const std::function<QString(quint64)>& nameOf);
+// Names a seat: its slot, and the lobby user whose connection it plays through.
+using SeatNamer = std::function<QString(int slot, quint64 userId)>;
+
+// Every seat of the match: this PC's (with its numbers) and the others',
+// without their reports.
+QList<LagPlayer> localPlayers(quint64 selfUserId, const SeatNamer& nameOf);
 
 LagReport build(const QList<LagPlayer>& players, bool wholeMatch);
 
-// The report as a room chat block (HTML), a table for the in-game overlay,
-// and plain text for the clipboard.
-QString chatHtml(const LagReport& report, bool dark);
+// The verdict's colour in the lobby theme.
+QColor severityColor(LagReport::Severity severity);
+// The report as a chat line (HTML), a table for the in-game overlay, and plain
+// text for the clipboard.
+QString chatHtml(const LagReport& report);
 std::vector<std::vector<std::string>> overlayTable(const LagReport& report);
 QString plainText(const LagReport& report);
 
@@ -135,7 +142,7 @@ class LagStatsExchange : public QObject
     void reset();
 
     // Every player of the match, in seat order. nameOf names a lobby user.
-    QList<LagPlayer> players(quint64 selfUserId, const std::function<QString(quint64)>& nameOf) const;
+    QList<LagPlayer> players(quint64 selfUserId, const LagStats::SeatNamer& nameOf) const;
 
   private:
     void tick();

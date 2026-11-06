@@ -65,6 +65,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool Init(QApplication* app, bool showUI, bool launchROM);
     void OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation, int stateSlot);
 #ifdef NETPLAY
+    // downloads and plays a ranked replay from an rmgk:// link (asks first)
+    void OpenReplayLink(QString link);
+#endif // NETPLAY
+#ifdef NETPLAY
     QString ResolveKailleraRomByName(QString gameName);
 #endif
 
@@ -91,6 +95,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     Widget::VKWidget    *ui_Widget_Vulkan          = nullptr;
     Widget::RomBrowserWidget *ui_Widget_RomBrowser = nullptr;
     EventFilter *ui_EventFilter                    = nullptr;
+    InputMethodFilter *ui_InputMethodFilter        = nullptr;
     QLabel *ui_StatusBar_Label                     = nullptr;
 
     QByteArray ui_Geometry;
@@ -162,6 +167,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     int ui_GamesharkButtonTimerId = 0;
     int ui_UpdateSaveStateSlotTimerId = 0;
     int ui_CheckVideoSizeTimerId = 0;
+    int ui_RankedTimerId = 0;
+    bool ui_RankedStopPending = false;
     int ui_RollbackLivePumpTimerId = 0;
 
     int ui_LoadSaveStateSlotCounter = 0;
@@ -173,10 +180,13 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 #ifdef NETPLAY
     Dialog::NetplaySessionDialog* netplaySessionDialog = nullptr;
     Dialog::RollbackLobbyDialog* rollbackLobbyDialog = nullptr;
+    bool ui_ReplayLinkDownloading = false;
     KailleraSessionManager* kailleraSessionManager = nullptr;
     bool ui_AutoStartNetplayOnStartupPending = false;
     bool ui_NetplayChatInputActive = false;
     QString ui_NetplayChatInput;
+    QString ui_NetplayChatPreedit;
+    QChar ui_NetplayChatHighSurrogate;
     // True while a rollback *lobby* game is running, so the in-game chat
     // overlay routes through the lobby room chat instead of Kaillera.
     bool ui_LobbyNetplaySession = false;
@@ -205,6 +215,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
     bool    ui_SpectateBuffering = false;   // emulation thread is waiting for a safe input cushion
     qint64  ui_SpectateExpectedOffset = 0;  // next ordered krec byte expected from the server
+    int     ui_SpectateJournalSeq = 0;      // next ranked write journal chunk expected
     bool    ui_SpectateBannerPending = false; // 1 video-on tick to bake the "buffering" banner in before going headless
     // Catch-up loading-bar estimator (reset each time fast-forward engages).
     int     ui_SpectateInitialBehind = 1;   // backlog (frames) when this catch-up started
@@ -291,6 +302,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void showEvent(QShowEvent *event) Q_DECL_OVERRIDE;
     void timerEvent(QTimerEvent *event) Q_DECL_OVERRIDE;
 
+    void processRankedEvents(void);
+    // translates the ranked module's English status and reasons
+    static QString localizeRankedText(const QString& text);
+
   private slots:
     void on_EventFilter_KeyPressed(QKeyEvent *event);
     void on_EventFilter_KeyReleased(QKeyEvent *event);
@@ -298,8 +313,12 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
 #ifdef NETPLAY
     bool handleNetplayChatKeyPress(QKeyEvent *event);
+    void openNetplayChatPrompt(void);
+    void appendNetplayChatText(const QString& text);
     void updateNetplayChatPrompt(void);
     void closeNetplayChatPrompt(void);
+    void on_InputMethodFilter_Query(QInputMethodQueryEvent *event);
+    void on_InputMethodFilter_Event(QInputMethodEvent *event);
     // /lagstat typed in the in-game chat: the lag report on the overlay.
     void showLagReportOverlay(bool wholeMatch);
 #endif // NETPLAY
@@ -374,6 +393,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QString romPath);
     void on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 offset);
     void on_Lobby_SpectateKeyframe(int frame, QByteArray savestate);
+    void on_Lobby_SpectateJournal(int seq, QByteArray journal);
     void on_Lobby_SpectateClosed(QString reason);
     void on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isSpectator);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);

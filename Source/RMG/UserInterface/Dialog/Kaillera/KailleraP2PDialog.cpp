@@ -122,9 +122,9 @@ static QString friendlyNatTraversalErrorMessage(const QString& reason, const QSt
     }
     if (reason == QStringLiteral("BADREQ"))
     {
-        return QStringLiteral("The NAT server did not understand the request. Try again or update RMG-K.");
+        return QStringLiteral("The NAT server did not understand the request. Try again or update Dale64.");
     }
-    return QStringLiteral("The NAT server returned an unexpected error. Try again or update RMG-K.");
+    return QStringLiteral("The NAT server returned an unexpected error. Try again or update Dale64.");
 }
 
 static int sockaddrPortFromBytes(const QByteArray& saddr)

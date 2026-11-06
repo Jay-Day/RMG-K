@@ -20,6 +20,7 @@
 #ifdef NETPLAY
 
 #include "LagStats.hpp"
+#include "LobbyTheme.hpp"
 
 #include <RMG-Core/LobbyIce.hpp>
 
@@ -31,6 +32,7 @@
 #include <QMap>
 #include <QPair>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTimer>
 
 #include <algorithm>
@@ -153,7 +155,7 @@ bool LagStats::parseCommand(const QString& text, bool* wholeMatch)
     return true;
 }
 
-QList<LagPlayer> LagStats::localPlayers(quint64 selfUserId, const std::function<QString(quint64)>& nameOf)
+QList<LagPlayer> LagStats::localPlayers(quint64 selfUserId, const SeatNamer& nameOf)
 {
     QList<LagPlayer> players;
     RollbackLagStats local;
@@ -161,20 +163,29 @@ QList<LagPlayer> LagStats::localPlayers(quint64 selfUserId, const std::function<
     if (!local.valid)
         return players;
 
-    LagPlayer self;
-    self.slot = local.localSlot;
-    self.userId = selfUserId;
-    self.name = nameOf(selfUserId);
-    self.self = true;
-    self.reported = true;
-    self.stats = local;
-    players << self;
+    // Every seat on this PC shares its numbers: one PC, one frame time.
+    const std::vector<int> localSlots = local.localSlots.empty() ? std::vector<int>{local.localSlot} : local.localSlots;
+    for (int slot : localSlots)
+    {
+        LagPlayer self;
+        self.slot = slot;
+        self.userId = selfUserId;
+        self.name = nameOf(slot, selfUserId);
+        if (self.name.isEmpty())
+            self.name = tr("P%1").arg(slot);
+        self.self = true;
+        self.reported = true;
+        self.stats = local;
+        players << self;
+    }
     for (const RollbackLagPeer& peer : local.peers)
     {
         LagPlayer player;
         player.slot = peer.slot;
         player.userId = peer.userId;
-        player.name = peer.userId != 0 ? nameOf(peer.userId) : tr("P%1").arg(peer.slot);
+        player.name = nameOf(peer.slot, peer.userId);
+        if (player.name.isEmpty())
+            player.name = tr("P%1").arg(peer.slot);
         players << player;
     }
     std::sort(players.begin(), players.end(),
@@ -188,6 +199,10 @@ QByteArray LagStats::encode(const RollbackLagStats& stats)
     object["v"] = kWireVersion;
     object["act"] = stats.active;
     object["slot"] = stats.localSlot;
+    QJsonArray localSlots;
+    for (int slot : stats.localSlots)
+        localSlots << slot;
+    object["ls"] = localSlots;
     object["d"] = stats.delay;
     object["p"] = stats.prediction;
     object["hz"] = stats.frameHz;
@@ -220,6 +235,12 @@ bool LagStats::decode(const QByteArray& data, RollbackLagStats& stats)
     stats.valid = true;
     stats.active = object.value("act").toBool();
     stats.localSlot = object.value("slot").toInt();
+    for (const QJsonValue& slot : object.value("ls").toArray())
+        if (slot.toInt() >= 1 && slot.toInt() <= 4)
+            stats.localSlots.push_back(slot.toInt());
+    // Clients without several players on one PC send no list.
+    if (stats.localSlots.empty())
+        stats.localSlots.push_back(stats.localSlot);
     stats.delay = object.value("d").toInt();
     stats.prediction = object.value("p").toInt();
     stats.frameHz = object.value("hz").toDouble(60.0);
@@ -638,7 +659,7 @@ LagReport LagStats::build(const QList<LagPlayer>& players, bool wholeMatch)
         if (player.self)
             continue;
         if (!player.reported)
-            report.notes << tr("No lag stats from %1: they may be on an older RMG-K, or their connection to you is down.").arg(player.name);
+            report.notes << tr("No lag stats from %1: they may be on an older Dale64, or their connection to you is down.").arg(player.name);
         else if (report.active && player.ageMs > kStaleReportMs)
             report.notes << tr("%1's numbers are %2 old.").arg(player.name, formatDuration(player.ageMs));
     }
@@ -649,33 +670,37 @@ LagReport LagStats::build(const QList<LagPlayer>& players, bool wholeMatch)
     return report;
 }
 
-QString LagStats::chatHtml(const LagReport& report, bool dark)
+QColor LagStats::severityColor(LagReport::Severity severity)
 {
-    const char* color = "#9E9E9E";
-    switch (report.severity)
+    const LobbyTheme::Tokens& t = LobbyTheme::tokens();
+    switch (severity)
     {
     case LagReport::Severity::Lag:
-        color = dark ? "#EF5350" : "#C62828";
-        break;
+        return t.bad;
     case LagReport::Severity::Minor:
-        color = dark ? "#FFCA28" : "#B26A00";
-        break;
+        return t.warn;
     case LagReport::Severity::Fine:
-        color = dark ? "#4CAF50" : "#2E7D32";
-        break;
+        return t.ok;
     case LagReport::Severity::None:
         break;
     }
-    const QString muted = dark ? QStringLiteral("#A0A0A0") : QStringLiteral("#6A6A6A");
+    return t.muted;
+}
 
-    QString html = QStringLiteral("<span style=\"color:%1;\">●</span> <b>%2</b> <span style=\"color:%3;\">%4</span><br>")
-                       .arg(color, tr("Lag check"), muted, report.window.toHtmlEscaped());
-    html += QStringLiteral("<b style=\"color:%1;\">%2</b>").arg(color, report.headline.toHtmlEscaped());
+QString LagStats::chatHtml(const LagReport& report)
+{
+    const LobbyTheme::Tokens& t = LobbyTheme::tokens();
+    const QString color = severityColor(report.severity).name();
+    const QString muted = t.muted.name();
+
+    QString html = QStringLiteral("<b style='color:%1;'>%2</b> <span style='color:%3;'>%4</span>")
+                       .arg(color, report.headline.toHtmlEscaped(), muted, report.window.toHtmlEscaped());
     for (const QString& line : report.details)
         html += QStringLiteral("<br>%1").arg(line.toHtmlEscaped());
     for (const LagReport::Row& row : report.rows)
     {
-        QString line = QStringLiteral("<b>P%1 %2</b>").arg(row.slot).arg(row.name.toHtmlEscaped());
+        QString line = QStringLiteral("<b style='color:%1;'>P%2</b> <b>%3</b>")
+                           .arg(LobbyTheme::portColor(row.slot).name()).arg(row.slot).arg(row.name.toHtmlEscaped());
         if (!row.reported)
         {
             line += QStringLiteral(" · ") + tr("no stats").toHtmlEscaped();
@@ -695,11 +720,11 @@ QString LagStats::chatHtml(const LagReport& report, bool dark)
             line += QStringLiteral(" · ") + parts.join(QStringLiteral(" · ")).toHtmlEscaped();
         }
         if (row.culprit)
-            line = QStringLiteral("<span style=\"color:%1;\">%2</span>").arg(color, line);
+            line = QStringLiteral("<span style='color:%1;'>%2</span>").arg(color, line);
         html += QStringLiteral("<br>") + line;
     }
     for (const QString& note : report.notes)
-        html += QStringLiteral("<br><span style=\"color:%1;\">%2</span>").arg(muted, note.toHtmlEscaped());
+        html += QStringLiteral("<br><span style='color:%1;'>%2</span>").arg(muted, note.toHtmlEscaped());
     return html;
 }
 
@@ -734,7 +759,7 @@ std::vector<std::vector<std::string>> LagStats::overlayTable(const LagReport& re
 QString LagStats::plainText(const LagReport& report)
 {
     QStringList lines;
-    lines << tr("RMG-K lag check, %1").arg(report.window);
+    lines << tr("Dale64 lag check, %1").arg(report.window);
     lines << report.headline;
     for (const QString& line : report.details)
         lines << QStringLiteral("- ") + line;
@@ -812,14 +837,18 @@ void LagStatsExchange::tick()
     for (RollbackLagPeer& peer : local.peers)
         peer.directPingMs = peer.userId != 0 ? m_directPing(peer.userId) : -1;
     const QByteArray payload = LagStats::encode(local);
+    // A PC with several players has one connection for all their seats.
+    QSet<quint64> sentTo;
     for (const RollbackLagPeer& peer : local.peers)
     {
-        if (peer.userId != 0 && peer.connected)
-            LobbyIce::send(peer.userId, LobbyIceChannel::LagStats, payload.constData(), size_t(payload.size()));
+        if (peer.userId == 0 || !peer.connected || sentTo.contains(peer.userId))
+            continue;
+        sentTo.insert(peer.userId);
+        LobbyIce::send(peer.userId, LobbyIceChannel::LagStats, payload.constData(), size_t(payload.size()));
     }
 }
 
-QList<LagPlayer> LagStatsExchange::players(quint64 selfUserId, const std::function<QString(quint64)>& nameOf) const
+QList<LagPlayer> LagStatsExchange::players(quint64 selfUserId, const LagStats::SeatNamer& nameOf) const
 {
     QList<LagPlayer> players = LagStats::localPlayers(selfUserId, nameOf);
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
@@ -832,7 +861,8 @@ QList<LagPlayer> LagStatsExchange::players(quint64 selfUserId, const std::functi
             continue;
         }
         const auto it = m_reports.constFind(player.userId);
-        if (player.self || player.userId == 0 || it == m_reports.constEnd() || it->stats.localSlot != player.slot)
+        if (player.self || player.userId == 0 || it == m_reports.constEnd() ||
+            std::find(it->stats.localSlots.begin(), it->stats.localSlots.end(), player.slot) == it->stats.localSlots.end())
             continue;
         player.reported = true;
         player.ageMs = nowMs - it->receivedMs;

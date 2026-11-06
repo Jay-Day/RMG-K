@@ -112,13 +112,13 @@ static m64p_error vidExtSetMode(int width, int height, int, int, int)
         s_Window = nullptr;
     }
 
-    s_Window = SDL_CreateWindow("RMG-K Replay Export",
+    s_Window = SDL_CreateWindow("Dale64 Replay Export",
                                 width,
                                 height,
                                 SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
     if (s_Window == nullptr)
     {
-        s_Window = SDL_CreateWindow("RMG-K Replay Export",
+        s_Window = SDL_CreateWindow("Dale64 Replay Export",
                                     width,
                                     height,
                                     SDL_WINDOW_OPENGL | SDL_WINDOW_MINIMIZED);

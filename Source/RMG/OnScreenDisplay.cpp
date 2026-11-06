@@ -9,17 +9,27 @@
  */
 #include "OnScreenDisplay.hpp"
 
+#include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Settings.hpp>
 
 #include <backends/imgui_impl_opengl3.h>
 #include <imgui.h>
+#include <QLocale>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
+#include <filesystem>
+#include <fstream>
+#include <future>
 #include <mutex>
 #include <string>
+#include <vector>
 
 //
 // Local Variables
@@ -64,6 +74,19 @@ static size_t      l_KailleraChatMaxMessages = 5;
 static bool        l_KailleraChatEnabled = true;
 static bool        l_FontsDirty      = true;
 static const float l_BaseFontSize    = 13.0f;
+// font.ttf covers Latin, Greek and Cyrillic. Japanese, Chinese, Korean and emoji
+// come from fonts already on the system. Those are 13-20 MB each, so they're only
+// read once such a character shows up, and off the emulation thread so it can't
+// stall a running match. Until then the character draws as a placeholder.
+struct OnScreenDisplayFallbackFont
+{
+    std::vector<char> data;
+    int index = 0;
+};
+static std::atomic<bool> l_FallbackFontsWanted = false;
+static bool l_FallbackFontsAdded = false;
+static std::future<std::vector<OnScreenDisplayFallbackFont>> l_FallbackFontLoad;
+static std::vector<OnScreenDisplayFallbackFont> l_FallbackFonts;
 static const float l_MessageFadeoutDurationSeconds = 0.26f;
 static const float l_MessageSlideInDurationSeconds = 0.31f;
 static bool        l_InputPromptActive = false;
@@ -174,24 +197,226 @@ static void OnScreenDisplayEnforceQueueLimitWithFade(const std::chrono::time_poi
     }
 }
 
-static void OnScreenDisplayUpdateFonts(void)
+// Notes when text needs a font beyond font.ttf: from Hangul Jamo up, leaving out
+// the punctuation and Latin extensions in between.
+static void OnScreenDisplayCheckFallbackFonts(const std::string& text)
 {
-    if (!l_FontsDirty)
+    if (l_FallbackFontsWanted.load(std::memory_order_relaxed))
     {
         return;
     }
 
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        const unsigned char lead = static_cast<unsigned char>(text[i]);
+        const bool hangulJamo = lead == 0xE1 && i + 1 < text.size() &&
+            static_cast<unsigned char>(text[i + 1]) >= 0x84 && static_cast<unsigned char>(text[i + 1]) <= 0x87;
+        const bool symbols = lead == 0xE2 && i + 1 < text.size() &&
+            static_cast<unsigned char>(text[i + 1]) >= 0x98; // U+2600 and up
+        if (lead >= 0xE3 || hangulJamo || symbols)
+        {
+            l_FallbackFontsWanted.store(true, std::memory_order_relaxed);
+            return;
+        }
+    }
+}
+
+// Variation selectors ask for a presentation the OSD can't do anyway, and the emoji
+// font gives them a wide blank glyph, which leaves a gap after the emoji.
+static void OnScreenDisplayDropVariationSelectors(std::string& text)
+{
+    for (const char* selector : {"ï¸", "ï¸"})
+    {
+        for (size_t at = text.find(selector); at != std::string::npos; at = text.find(selector, at))
+        {
+            text.erase(at, 3);
+        }
+    }
+}
+
+static std::vector<OnScreenDisplayFallbackFont> OnScreenDisplayReadFallbackFonts(void)
+{
+    struct Candidate
+    {
+        const char* path;
+        int index;
+    };
+    using Candidates = std::vector<Candidate>;
+
+#ifdef _WIN32
+    const char* windowsDirectory = std::getenv("WINDIR");
+    const std::filesystem::path directory =
+        std::filesystem::path(windowsDirectory != nullptr ? windowsDirectory : "C:\\Windows") / "Fonts";
+    const Candidates japanese = {{"YuGothM.ttc", 0}, {"meiryo.ttc", 0}, {"msgothic.ttc", 0}};
+    const Candidates chinese = {{"msyh.ttc", 0}, {"msyh.ttf", 0}, {"msjh.ttc", 0}, {"simsun.ttc", 0}};
+    const Candidates korean = {{"malgun.ttf", 0}};
+    const Candidates emoji = {{"seguiemj.ttf", 0}, {"seguisym.ttf", 0}};
+#else
+    const std::filesystem::path directory = "/usr/share/fonts";
+    // Noto Sans CJK puts every language in one file; the index picks which one wins.
+    const char* notoPaths[] = {"opentype/noto/NotoSansCJK-Regular.ttc", "noto-cjk/NotoSansCJK-Regular.ttc",
+                               "google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
+                               "OTF/NotoSansCJK-Regular.ttc", "noto/NotoSansCJK-Regular.ttc"};
+    const auto noto = [&notoPaths](int index) {
+        Candidates candidates;
+        for (const char* path : notoPaths)
+        {
+            candidates.push_back({path, index});
+        }
+        return candidates;
+    };
+    Candidates japanese = noto(0);
+    japanese.push_back({"truetype/fonts-japanese-gothic.ttf", 0});
+    Candidates chinese = noto(2);
+    chinese.push_back({"truetype/wqy/wqy-microhei.ttc", 0});
+    chinese.push_back({"truetype/wqy/wqy-zenhei.ttc", 0});
+    Candidates korean = noto(1);
+    korean.push_back({"truetype/nanum/NanumGothic.ttf", 0});
+    const Candidates emoji = {{"truetype/noto/NotoEmoji-Regular.ttf", 0}, {"noto/NotoEmoji-Regular.ttf", 0},
+                              {"truetype/dejavu/DejaVuSans.ttf", 0}};
+#endif
+
+    // The same Han character is drawn differently per language, so the player's
+    // own language goes first. Everyone else gets Japanese first, the likeliest
+    // non-Latin names in this community.
+    const QLocale::Language language = QLocale::system().language();
+    std::vector<const Candidates*> order = {&japanese, &chinese, &korean};
+    if (language == QLocale::Chinese)
+    {
+        order = {&chinese, &japanese, &korean};
+    }
+    else if (language == QLocale::Korean)
+    {
+        order = {&korean, &japanese, &chinese};
+    }
+    order.push_back(&emoji);
+
+    std::vector<OnScreenDisplayFallbackFont> fonts;
+    for (const Candidates* candidates : order)
+    {
+        for (const Candidate& candidate : *candidates)
+        {
+            std::ifstream file(directory / candidate.path, std::ios::binary);
+            if (!file)
+            {
+                continue;
+            }
+            OnScreenDisplayFallbackFont font;
+            font.data.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            font.index = candidate.index;
+            fonts.push_back(std::move(font));
+            break;
+        }
+    }
+    return fonts;
+}
+
+// ImGui sizes a font by its line height, and how much of that a font's glyphs fill
+// varies a lot: Noto Sans CJK draws a quarter smaller than Yu Gothic at the same size.
+// This reads a font's line height in ems from its header, so they can all be evened out.
+static float OnScreenDisplayFontLineHeightInEms(const std::vector<char>& data, int index)
+{
+    const auto read16 = [&data](size_t at) -> int {
+        if (at + 2 > data.size())
+        {
+            return 0;
+        }
+        return (static_cast<unsigned char>(data[at]) << 8) | static_cast<unsigned char>(data[at + 1]);
+    };
+    const auto read32 = [&read16](size_t at) -> size_t {
+        return (static_cast<size_t>(read16(at)) << 16) | static_cast<size_t>(read16(at + 2));
+    };
+
+    size_t offset = 0;
+    if (data.size() >= 4 && std::memcmp(data.data(), "ttcf", 4) == 0)
+    {
+        offset = read32(12 + 4 * static_cast<size_t>(index));
+    }
+
+    int unitsPerEm = 0;
+    int ascent = 0;
+    int descent = 0;
+    const int tableCount = read16(offset + 4);
+    for (int i = 0; i < tableCount; ++i)
+    {
+        const size_t record = offset + 12 + 16 * static_cast<size_t>(i);
+        if (record + 16 > data.size())
+        {
+            break;
+        }
+        const size_t table = read32(record + 8);
+        if (std::memcmp(data.data() + record, "head", 4) == 0)
+        {
+            unitsPerEm = read16(table + 18);
+        }
+        else if (std::memcmp(data.data() + record, "hhea", 4) == 0)
+        {
+            ascent = static_cast<int16_t>(read16(table + 4));
+            descent = static_cast<int16_t>(read16(table + 6));
+        }
+    }
+
+    if (unitsPerEm <= 0 || ascent <= descent)
+    {
+        return 1.0f;
+    }
+    return static_cast<float>(ascent - descent) / static_cast<float>(unitsPerEm);
+}
+
+static void OnScreenDisplayUpdateFonts(void)
+{
     ImGuiIO& io = ImGui::GetIO();
-    ImFontConfig config;
-    config.SizePixels = l_BaseFontSize * l_MessageScale;
 
-    io.Fonts->Clear();
-    io.FontDefault = io.Fonts->AddFontDefault(&config);
+    if (io.Fonts->Fonts.empty())
+    {
+        const std::filesystem::path fontPath = CoreGetSharedDataDirectory() / "font.ttf";
+        std::error_code error;
+        if (std::filesystem::exists(fontPath, error))
+        {
+            io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), l_BaseFontSize);
+        }
+        if (io.Fonts->Fonts.empty())
+        {
+            io.Fonts->AddFontDefault();
+        }
+    }
 
-    ImGui_ImplOpenGL3_DestroyFontsTexture();
-    ImGui_ImplOpenGL3_CreateFontsTexture();
+    if (l_FontsDirty)
+    {
+        // glyphs are drawn on demand at each size in use, so nothing needs rebuilding
+        ImGui::GetStyle().FontSizeBase = l_BaseFontSize * l_MessageScale;
+        l_FontsDirty = false;
+    }
 
-    l_FontsDirty = false;
+    if (l_FallbackFontsAdded)
+    {
+        return;
+    }
+    if (!l_FallbackFontLoad.valid())
+    {
+        if (l_FallbackFontsWanted.load(std::memory_order_relaxed))
+        {
+            l_FallbackFontLoad = std::async(std::launch::async, OnScreenDisplayReadFallbackFonts);
+        }
+        return;
+    }
+    if (l_FallbackFontLoad.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    {
+        return;
+    }
+
+    l_FallbackFonts = l_FallbackFontLoad.get();
+    for (OnScreenDisplayFallbackFont& font : l_FallbackFonts)
+    {
+        ImFontConfig config;
+        config.MergeMode = true;
+        config.FontNo = font.index;
+        config.FontDataOwnedByAtlas = false;
+        // A merged font's size is relative to the base font's. 0.92 em sits well beside font.ttf.
+        const float size = l_BaseFontSize * 0.92f * OnScreenDisplayFontLineHeightInEms(font.data, font.index);
+        io.Fonts->AddFontFromMemoryTTF(font.data.data(), static_cast<int>(font.data.size()), size, &config);
+    }
+    l_FallbackFontsAdded = true;
 }
 
 static std::string OnScreenDisplayNormalizePortLabelName(const std::string& name, int playerIndex)
@@ -224,7 +449,15 @@ static std::string OnScreenDisplayTruncateToWidth(std::string label, float textS
         {
             return label;
         }
-        label.pop_back();
+        // drop one whole character: its continuation bytes, then its lead byte
+        while (!label.empty() && (static_cast<unsigned char>(label.back()) & 0xC0) == 0x80)
+        {
+            label.pop_back();
+        }
+        if (!label.empty())
+        {
+            label.pop_back();
+        }
     }
 
     return label;
@@ -455,6 +688,15 @@ void OnScreenDisplayShutdown(void)
     ImGui_ImplOpenGL3_Shutdown();
     ImGui::DestroyContext();
 
+    if (l_FallbackFontLoad.valid())
+    {
+        l_FallbackFontLoad.wait();
+        l_FallbackFontLoad = {};
+    }
+    l_FallbackFonts.clear();
+    l_FallbackFontsAdded = false;
+    l_FallbackFontsWanted.store(false, std::memory_order_relaxed);
+
     l_MessageQueue.clear();
     l_InputPromptActive = false;
     l_InputPrompt.clear();
@@ -572,6 +814,7 @@ void OnScreenDisplaySetMessage(std::string message)
         return;
     }
 
+    OnScreenDisplayCheckFallbackFonts(message);
     l_MessageQueue.push_back({std::move(message), std::chrono::high_resolution_clock::now(), OnScreenDisplayMessageType::System});
     OnScreenDisplayEnforceQueueLimitWithFade(std::chrono::high_resolution_clock::now());
 }
@@ -604,6 +847,8 @@ void OnScreenDisplaySetKailleraChatMessage(std::string message)
         return;
     }
 
+    OnScreenDisplayDropVariationSelectors(message);
+    OnScreenDisplayCheckFallbackFonts(message);
     l_MessageQueue.push_back({std::move(message), std::chrono::high_resolution_clock::now(), OnScreenDisplayMessageType::Chat});
     OnScreenDisplayEnforceQueueLimitWithFade(std::chrono::high_resolution_clock::now());
 }
@@ -660,6 +905,8 @@ void OnScreenDisplaySetKailleraChatMessageImmediate(std::string message)
         return;
     }
 
+    OnScreenDisplayDropVariationSelectors(message);
+    OnScreenDisplayCheckFallbackFonts(message);
     l_MessageQueue.push_back({std::move(message), std::chrono::high_resolution_clock::now(), OnScreenDisplayMessageType::Chat, true});
     OnScreenDisplayEnforceQueueLimitWithFade(std::chrono::high_resolution_clock::now());
 }
@@ -678,12 +925,18 @@ void OnScreenDisplaySetInputPrompt(std::string message)
         return;
     }
 
+    OnScreenDisplayDropVariationSelectors(message);
+    OnScreenDisplayCheckFallbackFonts(message);
     l_InputPromptActive = true;
     l_InputPrompt = std::move(message);
 }
 
 void OnScreenDisplaySetKailleraPortLabels(int playerCount, const std::array<std::string, 4>& playerNames)
 {
+    for (const std::string& name : playerNames)
+    {
+        OnScreenDisplayCheckFallbackFonts(name);
+    }
     std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_KailleraPortLabelPlayerCount = std::clamp(playerCount, 0, 4);
     l_KailleraPortLabelPlayerNames = playerNames;
@@ -691,6 +944,10 @@ void OnScreenDisplaySetKailleraPortLabels(int playerCount, const std::array<std:
 
 void OnScreenDisplaySetKailleraPortLabelNames(const std::array<std::string, 4>& playerNames)
 {
+    for (const std::string& name : playerNames)
+    {
+        OnScreenDisplayCheckFallbackFonts(name);
+    }
     std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_KailleraPortLabelPlayerNames = playerNames;
 }
@@ -704,6 +961,7 @@ void OnScreenDisplayClearKailleraPortLabels(void)
 
 void OnScreenDisplaySetCenterMessage(const std::string& message)
 {
+    OnScreenDisplayCheckFallbackFonts(message);
     std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_CenterMessage = message;
 }
@@ -711,6 +969,16 @@ void OnScreenDisplaySetCenterMessage(const std::string& message)
 void OnScreenDisplaySetLagReport(const std::string& headline, const std::string& detail,
                                  const std::vector<std::vector<std::string>>& table, int seconds)
 {
+    // Japanese labels and non-Latin names need the system fonts.
+    OnScreenDisplayCheckFallbackFonts(headline);
+    OnScreenDisplayCheckFallbackFonts(detail);
+    for (const std::vector<std::string>& row : table)
+    {
+        for (const std::string& cell : row)
+        {
+            OnScreenDisplayCheckFallbackFonts(cell);
+        }
+    }
     std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_LagReportHeadline = seconds > 0 ? headline : std::string();
     l_LagReportDetail = detail;
@@ -855,6 +1123,13 @@ void OnScreenDisplayRender(void)
         break;
     }
 
+    // ImGui stacks windows by when each was first created, not by draw order, and
+    // NoBringToFrontOnFocus creates a window behind all the others. Port labels
+    // keep that flag and chat and the prompt don't, which puts chat on top however
+    // the two came to be created.
+    const ImGuiWindowFlags chatWindowFlags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing;
+
     const bool anchorBottom = (l_MessagePosition == 0 || l_MessagePosition == 3);
     const float stackSpacingFactor = 1.5f;
     float offsetY = 0.0f;
@@ -884,7 +1159,7 @@ void OnScreenDisplayRender(void)
         const float posY = anchorBottom ? (baseY - offsetY) : (baseY + offsetY);
         ImGui::SetNextWindowPos(ImVec2(baseX, posY), ImGuiCond_Always, pivot);
 
-        ImGui::Begin("OSD Input", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing);
+        ImGui::Begin("OSD Input", nullptr, chatWindowFlags);
         if (maxWrapWidth > 0.0f)
         {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + maxWrapWidth);
@@ -934,7 +1209,7 @@ void OnScreenDisplayRender(void)
 
         const std::string windowName = "OSD Message##" + std::to_string(messageIndex);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, messageAlpha);
-        ImGui::Begin(windowName.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing);
+        ImGui::Begin(windowName.c_str(), nullptr, chatWindowFlags);
         if (maxWrapWidth > 0.0f)
         {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + maxWrapWidth);

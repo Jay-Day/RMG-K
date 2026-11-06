@@ -118,6 +118,7 @@ if (PORTABLE_INSTALL)
     set(LIB_INSTALL_PATH "${INSTALL_PATH}")
     set(CORE_INSTALL_PATH "${INSTALL_PATH}/Core")
     set(PLUGIN_INSTALL_PATH "${INSTALL_PATH}/Plugin")
+    set(RANKED_INSTALL_PATH "${INSTALL_PATH}/Ranked")
     set(DATA_INSTALL_PATH "${INSTALL_PATH}/Data")
     set(INSTALL_DESKTOP_FILE OFF)
 else()
@@ -127,6 +128,7 @@ else()
     set(LIB_INSTALL_PATH "${SYSTEM_LIB_INSTALL_PATH}/RMG")
     set(CORE_INSTALL_PATH "${SYSTEM_LIB_INSTALL_PATH}/RMG/Core")
     set(PLUGIN_INSTALL_PATH "${SYSTEM_LIB_INSTALL_PATH}/RMG/Plugin")
+    set(RANKED_INSTALL_PATH "${SYSTEM_LIB_INSTALL_PATH}/RMG/Ranked")
     set(DATA_INSTALL_PATH "${CMAKE_INSTALL_DATADIR}/RMG")
     set(INSTALL_DESKTOP_FILE ON)
     set(METAINFO_INSTALL_PATH "${CMAKE_INSTALL_DATADIR}/metainfo/")
@@ -147,6 +149,7 @@ if (WIN32 AND NETPLAY)
 endif()
 add_subdirectory(Source/RMG-Input)
 add_subdirectory(Source/RMG-Input-GCA)
+add_subdirectory(Source/RMG-Ranked-SmashRemix)
 install(TARGETS RMG-Core
     DESTINATION ${SYSTEM_LIB_INSTALL_PATH}
 )
@@ -163,6 +166,13 @@ if (WIN32 AND NETPLAY)
 endif()
 install(TARGETS RMG-Input RMG-Input-GCA
     DESTINATION ${PLUGIN_INSTALL_PATH}/Input
+)
+install(TARGETS RMG-Ranked-SmashRemix
+    DESTINATION ${RANKED_INSTALL_PATH}
+)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/Data/Ranked/SmashRemix
+    DESTINATION ${RANKED_INSTALL_PATH}
+    FILES_MATCHING PATTERN "*.sym"
 )
 
 if (WIN32)
@@ -232,6 +242,10 @@ install(FILES ${MUPEN64PLUS_PLUGIN_GFX_PARALLEL}
 
 if (INSTALL_DESKTOP_FILE)
     install(FILES Package/com.github.Rosalie241.RMG.desktop
+        DESTINATION ${DESKTOP_INSTALL_PATH}
+    )
+    # rmgk:// replay links (the rankings site's "Watch in RMG-K")
+    install(FILES Package/com.github.Rosalie241.RMG.ReplayLink.desktop
         DESTINATION ${DESKTOP_INSTALL_PATH}
     )
     install(FILES Package/com.github.Rosalie241.RMG.svg

@@ -39,6 +39,13 @@ public:
     explicit KailleraPlaybackDialog(QWidget* parent = nullptr);
     ~KailleraPlaybackDialog() override;
 
+    // selects a recording in the records directory and plays it, from
+    // `record` (a .krec input record, e.g. a game's bookmark) when > 0
+    void playRecording(const QString& path, int record = 0);
+
+    // whether `path` is the recording being played
+    bool isPlaying(const QString& path) const;
+
     // jumps the playback to a .krec record (starts the selected recording
     // when stopped)
     void seekTo(int record);
@@ -85,6 +92,8 @@ private:
     // replay metadata appended to the .krec (bookmarks; ranked replays add
     // their module and write journal). False when the recording has none.
     static bool loadReplayMetadata(const QString& krecPath, QJsonObject& metadata);
+    // stages the recording's ranked module in replay mode; false = cancelled
+    bool stageRankedReplay(const QString& krecPath);
     // changes a recording's bookmarks; false (after telling the user) when
     // they can't be saved
     bool editBookmarks(const QString& krecPath, const std::function<void(QJsonArray&)>& edit);

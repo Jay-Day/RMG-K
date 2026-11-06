@@ -18,6 +18,7 @@
 #include "Netplay.hpp"
 #include "Kaillera.hpp"
 #include "Plugins.hpp"
+#include "Ranked.hpp"
 #include "Cheats.hpp"
 #include "NetplaySave.hpp"
 #include "Error.hpp"
@@ -152,11 +153,12 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
 // 3-/4-player rollback sessions can wire each remote actor to a distinct peer.
 // Format: LOBBY|<delay>|<prediction>|<slot>,<ip>,<port>|<slot>,<ip>,<port>...
 static bool parse_lobby_address(const std::string& address, int& frameDelay, int& predictionWindow,
-    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch)
+    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch, std::vector<LobbyLocalSeat>& extraLocals)
 {
     remotes.clear();
     seats = 0;
     joinEpoch = -1;
+    extraLocals.clear();
 
     constexpr const char* prefix = "LOBBY|";
     if (address.rfind(prefix, 0) != 0)
@@ -203,13 +205,25 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
     {
         const std::string& tok = tokens[i];
         // Options ride as key=value tokens among the peers: seats=<ports the
-        // match emulates> and join=<epoch> for a late joiner.
+        // match emulates>, join=<epoch> for a late joiner, and one
+        // local=<slot>:<controller> per other player on this PC.
         const size_t equals = tok.find('=');
         if (equals != std::string::npos)
         {
             const std::string key = tok.substr(0, equals);
             try
             {
+                if (key == "local")
+                {
+                    const size_t colon = tok.find(':', equals);
+                    if (colon == std::string::npos)
+                        return false;
+                    LobbyLocalSeat seat{};
+                    seat.slot = std::stoi(tok.substr(equals + 1, colon - equals - 1));
+                    seat.controller = std::stoi(tok.substr(colon + 1));
+                    extraLocals.push_back(seat);
+                    continue;
+                }
                 const int value = std::stoi(tok.substr(equals + 1));
                 if (key == "seats" && value >= 2 && value <= 4)
                     seats = value;
@@ -260,9 +274,10 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
         remotes.push_back(std::move(peer));
     }
 
-    // No peers is a host playing alone until someone is added, which only a
-    // match open to late joiners allows.
-    return !remotes.empty() || seats > 0;
+    // No peers is a match played on this PC alone: several players here, or a
+    // host alone until someone is added, which only a match open to late
+    // joiners allows.
+    return !remotes.empty() || !extraLocals.empty() || seats > 0;
 }
 
 //
@@ -297,6 +312,7 @@ static bool pif_channel_has_command(const pif_channel& channel)
 static void FrameCallback(unsigned int frameIndex)
 {
     s_CurrentFrame = frameIndex;
+    CoreRankedOnCoreFrame(frameIndex);
 #ifdef NETPLAY
     // Reset sync flag at the start of each new frame
     // This ensures we sync exactly once per frame regardless of PIF polling timing
@@ -486,6 +502,8 @@ static void KailleraPifSyncCallback(struct pif* pif)
                 kfState.len    = static_cast<int>(s_SpectateKeyframeBuf.size());
                 kfState.frame  = s_SpectateKeyframeFrame;
                 const bool deferOk = CoreRollbackLoadGameStateDeferred(kfState);
+                // a ranked write journal continues from the keyframe's record
+                CoreRankedReplayRebase(s_SpectateKeyframeFrame);
 
                 // Realign the krec reader to the first record after the snapshot. ROM boot
                 // may poll controllers before the deferred load lands; seeking to zero
@@ -718,6 +736,12 @@ static void KailleraPifSyncCallback(struct pif* pif)
         }
     }
 #endif // NETPLAY
+}
+
+bool CoreSpectateKeyframeAwaitingLoad(void)
+{
+    std::lock_guard<std::mutex> lock(s_SpectateKeyframeMutex);
+    return s_SpectateKeyframeStaged && !s_SpectateKeyframeLoaded;
 }
 
 CORE_EXPORT void CoreStageSpectateKeyframe(const unsigned char* data, int len, int frame)
@@ -1172,7 +1196,8 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             std::vector<LobbyRemotePeer> remotes;
             int seats = 0;
             int joinEpoch = -1;
-            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch))
+            std::vector<LobbyLocalSeat> extraLocals;
+            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch, extraLocals))
             {
                 CoreSetError("CoreStartEmulation: invalid Lobby session parameters");
                 m64p_ret = M64ERR_INPUT_INVALID;
@@ -1200,11 +1225,16 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                     if (remote.slot > totalSeats)
                         totalSeats = remote.slot;
                 }
+                for (const auto& seat : extraLocals)
+                {
+                    if (seat.slot > totalSeats)
+                        totalSeats = seat.slot;
+                }
                 netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
                     totalSeats, static_cast<int>(sizeof(uint32_t)),
                     player, static_cast<unsigned short>(port),
                     remotes.data(), static_cast<int>(remotes.size()),
-                    frameDelay, predictionWindow, joinEpoch);
+                    frameDelay, predictionWindow, joinEpoch, extraLocals);
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())
@@ -1257,9 +1287,21 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     }
 #endif
 
+    // ranked sets need their module loaded before the first frame
+    bool rankedReady = true;
+    if ((!netplay && (!localRollbackEnabled || rollbackExecute)) || (netplay && netplay_ret))
+    {
+        rankedReady = CoreRankedBeginEmulation(netplay, rollbackExecute);
+        if (!rankedReady)
+        {
+            error = CoreGetError();
+            m64p_ret = M64ERR_SYSTEM_FAIL;
+        }
+    }
+
     // only start emulation when initializing netplay/local rollback
     // is successful or if there's legacy netplay requested
-    if ((!netplay && (!localRollbackEnabled || rollbackExecute)) || (netplay && netplay_ret))
+    if (rankedReady && ((!netplay && (!localRollbackEnabled || rollbackExecute)) || (netplay && netplay_ret)))
     {
         // Register frame callback for frame counter (used by Kaillera)
         s_CurrentFrame = 0;
@@ -1357,6 +1399,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 
     // a seek cut short by the end of emulation still restores normal output
     CoreStopPlaybackSeek();
+    CoreRankedEndEmulation();
     s_PlaybackSpeedRestore = -1;
 
     if (!netplay && rollbackExecute)

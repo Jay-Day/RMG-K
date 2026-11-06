@@ -24,6 +24,7 @@
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Emulation.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/Ranked.hpp>
 #include <RMG-Core/SpeedFactor.hpp>
 
 #include "n02_client.h"
@@ -1372,7 +1373,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
     messageBox.setWindowTitle("Export MP4");
     messageBox.setText("MP4 export requires FFmpeg.");
     messageBox.setInformativeText(
-        "RMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
+        "Dale64 can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
 
     QPushButton* downloadButton = messageBox.addButton("Download FFmpeg", QMessageBox::AcceptRole);
     QPushButton* chooseButton = messageBox.addButton("Choose ffmpeg.exe", QMessageBox::ActionRole);
@@ -1712,6 +1713,48 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
     m_exportProgressDialog->show();
 }
 
+void KailleraPlaybackDialog::playRecording(const QString& path, int record)
+{
+    if (isPlaying(path))
+    {
+        seekTo(record); // already watching it: just jump
+        return;
+    }
+    populatePlaybackList();
+    const QString fileName = QFileInfo(path).fileName();
+    for (int row = 0; m_playbackTable != nullptr && row < m_playbackTable->rowCount(); row++)
+    {
+        QTableWidgetItem* item = m_playbackTable->item(row, 5);
+        if (item != nullptr && item->text() == fileName)
+        {
+            m_playbackTable->selectRow(row);
+            m_playbackTable->scrollToItem(item);
+            break;
+        }
+    }
+    if (n02::isPlaybackActive() || m_playbackWasActive || m_restartSeekTarget >= 0)
+    {
+        QMessageBox::information(this, tr("Replays"), tr("Stop the current playback to watch %1.").arg(fileName));
+        return;
+    }
+    m_seekTarget = -1;
+    m_seekPause = false;
+    startPlayback(path);
+    if (m_playbackWasActive && record > 0)
+    {
+        m_seekFrom = 0;
+        m_seekTarget = std::min(record, std::max(0, m_playbackTotal - 1));
+    }
+}
+
+bool KailleraPlaybackDialog::isPlaying(const QString& path) const
+{
+    // a jump back restarting the recording still counts
+    return (n02::isPlaybackActive() || m_playbackWasActive || m_restartSeekTarget >= 0) &&
+        !m_activeRecordingPath.isEmpty() &&
+        QFileInfo(m_activeRecordingPath).canonicalFilePath() == QFileInfo(path).canonicalFilePath();
+}
+
 void KailleraPlaybackDialog::onPlaybackPlay()
 {
     if (!m_playbackTable) return;
@@ -1727,6 +1770,11 @@ void KailleraPlaybackDialog::onPlaybackPlay()
 
 void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
 {
+    if (!stageRankedReplay(krecPath))
+    {
+        return;
+    }
+
     QByteArray pathBytes = krecPath.toUtf8();
 
     // Ensure playback mode is active
@@ -1744,6 +1792,7 @@ void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
     }
     else
     {
+        CoreRankedClearStagedSession();
         QMessageBox::warning(this, tr("Replays"), tr("Failed to load recording: %1").arg(QFileInfo(krecPath).fileName()));
     }
 }
@@ -1937,6 +1986,59 @@ bool KailleraPlaybackDialog::loadReplayMetadata(const QString& krecPath, QJsonOb
     return metadata.value("schema").toInt() == 1;
 }
 
+bool KailleraPlaybackDialog::stageRankedReplay(const QString& krecPath)
+{
+    CoreRankedClearStagedSession();
+
+    QJsonObject metadata;
+    if (!loadReplayMetadata(krecPath, metadata) || !metadata.contains("journal"))
+    {
+        return true; // a plain recording
+    }
+
+    // The ranked module rewrote game memory during the match; the recorded
+    // write journal reproduces that without needing the module itself.
+    const QJsonObject module = metadata.value("module").toObject();
+    CoreRankedSessionSettings settings;
+    settings.ModuleId      = module.value("id").toString().toStdString();
+    settings.ModuleVersion = module.value("version").toString().toStdString();
+    settings.RulesetId     = metadata.value("ruleset").toObject().value("id").toString().toStdString();
+    settings.BestOf        = metadata.value("bestOf").toInt(3);
+    for (const QJsonValue& port : metadata.value("ports").toArray())
+    {
+        settings.Ports.push_back(port.toInt());
+    }
+    for (const QJsonValue& team : metadata.value("teams").toArray())
+    {
+        settings.Teams.push_back(team.toInt());
+    }
+    settings.Replay  = true;
+    settings.Journal = QByteArray::fromBase64(
+        metadata.value("journal").toObject().value("data").toString().toLatin1()).toStdString();
+    settings.ExpectedRulesetHash = metadata.value("ruleset").toObject().value("hash").toString().toStdString();
+    for (const QJsonValue& value : metadata.value("games").toArray())
+    {
+        const QJsonObject game = value.toObject();
+        const int index = game.value("game").toInt() - 1;
+        if (index < 0 || index > 99)
+        {
+            continue;
+        }
+        if (static_cast<size_t>(index) >= settings.ExpectedWinners.size())
+        {
+            settings.ExpectedWinners.resize(static_cast<size_t>(index) + 1, 0);
+        }
+        settings.ExpectedWinners[static_cast<size_t>(index)] = game.value("winnerPort").toInt();
+    }
+    if (!CoreRankedStageSession(settings))
+    {
+        QMessageBox::warning(this, tr("Ranked Replay"),
+            tr("This ranked replay can't be played: %1").arg(QString::fromStdString(CoreGetError())));
+        return false;
+    }
+    return true;
+}
+
 bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::function<void(QJsonArray&)>& edit)
 {
     const std::filesystem::path path(krecPath.toStdU32String());
@@ -1951,7 +2053,7 @@ bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::f
             document.object().value("schema").toInt() != 1)
         {
             QMessageBox::warning(this, tr("Bookmarks"),
-                tr("This recording's extra data comes from a newer version of RMG-K, so its bookmarks can't be changed here."));
+                tr("This recording's extra data comes from a newer version of Dale64, so its bookmarks can't be changed here."));
             return false;
         }
         metadata = document.object();

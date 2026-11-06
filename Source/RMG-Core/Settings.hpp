@@ -574,6 +574,12 @@ enum class SettingsID
     // raphnetraw Input Plugin Settings
     RaphnetRaw_Player1AdapterPort,
 
+    // Ranked Settings (appended so the IDs above stay the same)
+    Ranked_DevModuleId,
+    Ranked_DevRulesetId,
+    Ranked_DevBestOf,
+    Ranked_DevPorts,
+
     // Appended so the IDs above stay the same
     Kaillera_ExportShowChat,
 

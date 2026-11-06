@@ -51,6 +51,10 @@ int recordingFrameCount();
 // No-op without an active capture. nick/msg are length-bounded.
 void recordingQueueChat(const char* nick, const char* msg);
 
+// Sets a player's name for the next capture, cut at a character boundary to fit
+// the replay header. index is 0-based.
+void recordingSetPlayerName(int index, const char* utf8Name);
+
 // Queue a port change for the active replay capture: `name` took controller
 // `slot` (1-based), or left it when `joined` is false. Safe from any thread;
 // written before the next input frame, to the stream and the local file, as
@@ -74,6 +78,10 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
 
 // Flush and end replay capture, closing the local file if one was opened.
 void recordingClose();
+
+// Path of the most recently saved .krec (still valid after it closes), or
+// empty when the last capture saved no local file.
+std::string recordingLastPath();
 
 // The save data the next lobby capture's match starts from (RMG-Core's
 // serialized form), or empty for a blank save. recordingOpen() writes it

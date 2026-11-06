@@ -45,11 +45,18 @@
 #endif // UPDATER
 #ifdef NETPLAY
 #include <QWebSocket>
+#include <QFile>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include "Utilities/ReplayLink.hpp"
 #endif // NETPLAY
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QGuiApplication>
+#include <QInputMethod>
+#include <QTextBoundaryFinder>
 #include <QStyleFactory>
 #include <QActionGroup>
 #include <QFileDialog>
@@ -169,6 +176,7 @@ public:
 #include <RMG-Core/SpeedFactor.hpp>
 #include <RMG-Core/Screenshot.hpp>
 #include <RMG-Core/Emulation.hpp>
+#include <RMG-Core/Ranked.hpp>
 #include <RMG-Core/RollbackNetcode.hpp>
 #include <RMG-Core/rmgk_gekko.hpp>
 #include <RMG-Core/SaveState.hpp>
@@ -1664,6 +1672,24 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->configureUI(app, showUI);
 #ifdef NETPLAY
     this->refreshKailleraRecordingStorageStatus(true);
+
+    // rmgk:// replay links: this executable handles them, and later
+    // launches with a link hand it to this window
+    ReplayLink::RegisterHandler();
+    auto* replayLinkServer = new ReplayLink::Server(this);
+    connect(replayLinkServer, &ReplayLink::Server::linkReceived, this, [this](QString link)
+    {
+        this->showNormal();
+        this->raise();
+        this->activateWindow();
+        this->OpenReplayLink(link);
+    });
+    if (!replayLinkServer->Listen())
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning,
+            "Replay links: another Dale64 already receives rmgk:// links");
+    }
+
     // A replay or live replay relabels its ports when a player leaves or joins
     // mid-match. Called on the playback's thread; the labels have a lock.
     n02::setPlaybackPortNamesCallback([](const char (*names)[32]) {
@@ -1964,6 +1990,7 @@ void MainWindow::initializeUI(bool launchROM)
     this->ui_Widget_Dummy = new Widget::DummyWidget(this);
 
     this->ui_EventFilter = new EventFilter(this);
+    this->ui_InputMethodFilter = new InputMethodFilter(this);
     this->ui_StatusBar_Label = new QLabel(this);
     this->controllerStartupNotice.shown = CoreSettingsGetBoolValue(SettingsID::RaphnetInput_StartupNoticeShown);
     this->controllerNoticeClock.start();
@@ -2010,6 +2037,12 @@ void MainWindow::initializeUI(bool launchROM)
             &MainWindow::on_EventFilter_KeyReleased);
     connect(this->ui_EventFilter, &EventFilter::on_EventFilter_FileDropped, this,
             &MainWindow::on_EventFilter_FileDropped);
+#ifdef NETPLAY
+    connect(this->ui_InputMethodFilter, &InputMethodFilter::on_InputMethodFilter_Query, this,
+            &MainWindow::on_InputMethodFilter_Query);
+    connect(this->ui_InputMethodFilter, &InputMethodFilter::on_InputMethodFilter_Event, this,
+            &MainWindow::on_InputMethodFilter_Event);
+#endif // NETPLAY
 }
 
 void MainWindow::configureUI(QApplication* app, bool showUI)
@@ -2675,6 +2708,12 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
     }
 
     this->ui_CheckVideoSizeTimerId = this->startTimer(2000);
+
+    this->ui_RankedStopPending = false;
+    if (this->ui_RankedTimerId == 0)
+    {
+        this->ui_RankedTimerId = this->startTimer(250);
+    }
 
     this->ui_HideCursorInEmulation = CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInEmulation);
     this->ui_HideCursorInFullscreenEmulation = CoreSettingsGetBoolValue(SettingsID::GUI_HideCursorInFullscreenEmulation);
@@ -3411,6 +3450,10 @@ void MainWindow::timerEvent(QTimerEvent *event)
         this->updateSaveStateSlotActions(CoreIsEmulationRunning(), false);
         this->killTimer(timerId);
         this->ui_UpdateSaveStateSlotTimerId = 0;
+    }
+    else if (timerId == this->ui_RankedTimerId)
+    {
+        this->processRankedEvents();
     }
     else if (timerId == this->ui_CheckVideoSizeTimerId)
     {
@@ -4410,7 +4453,11 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QStr
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
     this->ui_SpectateNamesShown = false; // set once the krec header arrives
     this->ui_SpectateExpectedOffset = 0;
+    this->ui_SpectateJournalSeq = 0;
     CoreClearSpectateKeyframe(); // drop any stale keyframe from a previous spectate
+    // a ranked match's module wrote game memory: apply its write journal as
+    // it streams in (nothing to apply for unranked matches)
+    CoreRankedStageSpectatorJournal();
 
     // ~60 Hz: drive the playback state machine + fast-forward.
     if (this->ui_SpectateTimerId == 0)
@@ -4472,6 +4519,22 @@ void MainWindow::on_Lobby_SpectateKeyframe(int frame, QByteArray savestate)
                               static_cast<int>(savestate.size()), frame);
 }
 
+void MainWindow::on_Lobby_SpectateJournal(int seq, QByteArray journal)
+{
+    if (!this->ui_SpectateActive)
+    {
+        return;
+    }
+    if (seq != this->ui_SpectateJournalSeq)
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning,
+            ("Live replay: ranked journal chunk " + std::to_string(seq) + " arrived, expected " +
+             std::to_string(this->ui_SpectateJournalSeq) + "; the replay may drift").c_str());
+    }
+    this->ui_SpectateJournalSeq = seq + 1;
+    CoreRankedAppendReplayJournal(journal.toStdString());
+}
+
 void MainWindow::on_Lobby_SpectateClosed(QString reason)
 {
     (void)reason;
@@ -4495,6 +4558,7 @@ void MainWindow::stopLobbySpectate()
     this->ui_SpectateMatchId = 0;
     this->ui_SpectateRomFile.clear();
     this->ui_SpectateExpectedOffset = 0;
+    CoreRankedClearStagedSession(); // in case emulation never started
     if (this->ui_SpectateTimerId != 0)
     {
         this->killTimer(this->ui_SpectateTimerId);
@@ -4559,6 +4623,118 @@ void MainWindow::cleanupLobbySpectateSession()
     // also end before its header launches emulation, so refresh that case here.
     if (!this->emulationThread->isRunning())
         this->updateUI(false, false);
+
+    // A switch to another match was waiting for this session to be gone.
+    if (this->rollbackLobbyDialog != nullptr)
+        this->rollbackLobbyDialog->notifySpectateSessionClosed();
+}
+
+void MainWindow::OpenReplayLink(QString link)
+{
+    // started for a replay: don't also open the lobby, whose name prompt
+    // would hold up this one's
+    this->ui_AutoStartNetplayOnStartupPending = false;
+
+    QUrl replayUrl;
+    qint64 setId = 0;
+    int record = 0;
+    QString error;
+    if (!ReplayLink::Parse(link, replayUrl, setId, record, error))
+    {
+        this->showErrorMessage(tr("Replay Link"), error);
+        return;
+    }
+    if (this->ui_ReplayLinkDownloading)
+    {
+        return;
+    }
+
+    // kept with the other recordings, so it's in the Playback list later
+    const QString host = replayUrl.host();
+    QString safeHost = host;
+    safeHost.replace(QRegularExpression("[^A-Za-z0-9.-]"), "_");
+    const QString path = QDir(QString::fromStdString(CoreGetKailleraRecordsDirectory()))
+        .filePath(QString("ranked-set-%1-%2.krec").arg(setId).arg(safeHost));
+
+    // another game of the replay being watched: just jump there
+    if (auto* dialog = this->findChild<KailleraPlaybackDialog*>(); dialog != nullptr && dialog->isPlaying(path))
+    {
+        dialog->raise();
+        dialog->activateWindow();
+        dialog->seekTo(record);
+        return;
+    }
+    if (this->emulationThread->isRunning())
+    {
+        this->showErrorMessage(tr("Replay Link"), tr("Stop the running game first, then open the replay link again."));
+        return;
+    }
+
+    const int seconds = record / 60; // one record per 60 Hz frame
+    const QString from = record > 0
+        ? tr(" from %1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0')) : QString();
+    const QString question = QFile::exists(path)
+        ? tr("Play the replay of ranked set #%1%2?").arg(setId).arg(from)
+        : tr("Download and play the replay of ranked set #%1 from %2%3?").arg(setId).arg(host)
+              .arg(record > 0 ? tr(", starting at %1:%2").arg(seconds / 60).arg(seconds % 60, 2, 10, QChar('0')) : QString());
+    if (QMessageBox::question(this, tr("Watch Ranked Replay"), question, QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    auto play = [this, path, record]()
+    {
+        this->on_Action_Playback();
+        if (auto* dialog = this->findChild<KailleraPlaybackDialog*>())
+        {
+            dialog->playRecording(path, record);
+        }
+    };
+    if (QFile::exists(path))
+    {
+        play(); // replays never change
+        return;
+    }
+
+    constexpr qint64 kMaxReplayBytes = 16 << 20;
+    auto* network = new QNetworkAccessManager(this);
+    QNetworkRequest request(replayUrl);
+    request.setTransferTimeout(30000);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    QNetworkReply* reply = network->get(request);
+    this->ui_ReplayLinkDownloading = true;
+    OnScreenDisplaySetMessage(tr("Downloading ranked replay...").toStdString());
+    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64)
+    {
+        if (received > kMaxReplayBytes)
+        {
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, network, path, play]()
+    {
+        reply->deleteLater();
+        network->deleteLater();
+        this->ui_ReplayLinkDownloading = false;
+        const QByteArray data = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError || data.size() > kMaxReplayBytes || !data.startsWith("KRC1"))
+        {
+            this->showErrorMessage(tr("Replay Link"), tr("The replay couldn't be downloaded: %1").arg(
+                reply->error() != QNetworkReply::NoError ? reply->errorString() : tr("not a replay file")));
+            return;
+        }
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile file(path + ".part");
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(data) != data.size())
+        {
+            this->showErrorMessage(tr("Replay Link"), tr("The replay couldn't be saved to %1").arg(path));
+            return;
+        }
+        file.close();
+        QFile::remove(path);
+        QFile::rename(path + ".part", path);
+        play();
+    });
 }
 #endif // NETPLAY
 
@@ -4993,6 +5169,8 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_SpectateData);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamKeyframe,
             this, &MainWindow::on_Lobby_SpectateKeyframe);
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamJournal,
+            this, &MainWindow::on_Lobby_SpectateJournal);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamClosed,
             this, &MainWindow::on_Lobby_SpectateClosed);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountChanged,
@@ -5251,7 +5429,8 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     // the highest occupied seat; the player count would drop the top player and
     // shift every label past the gap. Each remotePeers entry is "slot,ip,port",
     // or an option: "seats=N" (a match open to late joiners emulates every
-    // seat) and "join=E" (this client is joining the running match).
+    // seat), "join=E" (this client is joining the running match) and
+    // "local=S:C" (another player on this PC, in seat S on controller C).
     int seatCount = localPlayer;
     bool lateJoiner = false;
     for (const QString& peer : remotePeers)
@@ -5264,6 +5443,11 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
         if (peer.startsWith(QStringLiteral("join=")))
         {
             lateJoiner = true;
+            continue;
+        }
+        if (peer.startsWith(QStringLiteral("local=")))
+        {
+            seatCount = std::max(seatCount, peer.mid(6).section(':', 0, 0).toInt());
             continue;
         }
         const int slot = peer.section(',', 0, 0).toInt();
@@ -5529,7 +5713,11 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
         {
             if (!this->ui_NetplayChatInput.isEmpty())
             {
-                this->ui_NetplayChatInput.chop(1);
+                // one visible character, which can be several code units
+                QTextBoundaryFinder boundary(QTextBoundaryFinder::Grapheme, this->ui_NetplayChatInput);
+                boundary.toEnd();
+                const qsizetype start = boundary.toPreviousBoundary();
+                this->ui_NetplayChatInput.truncate(start > 0 ? start : 0);
                 this->updateNetplayChatPrompt();
             }
             return true;
@@ -5538,17 +5726,7 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
         const QString text = event->text();
         if (!text.isEmpty())
         {
-            const int maxLength = 127;
-            if (this->ui_NetplayChatInput.size() < maxLength)
-            {
-                const QChar ch = text.at(0);
-                if (!ch.isNull() && (ch.isPrint() || ch.isSpace()))
-                {
-                    this->ui_NetplayChatInput.append(ch);
-                    this->updateNetplayChatPrompt();
-                }
-            }
-            return true;
+            this->appendNetplayChatText(text);
         }
 
         return true;
@@ -5570,9 +5748,7 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
     QKeySequence pressed(key | event->modifiers());
     if (expected.matches(pressed) == QKeySequence::ExactMatch)
     {
-        this->ui_NetplayChatInputActive = true;
-        this->ui_NetplayChatInput.clear();
-        this->updateNetplayChatPrompt();
+        this->openNetplayChatPrompt();
         return true;
     }
 
@@ -5581,9 +5757,7 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
         QKeySequence altPressed(Qt::Key_Return | event->modifiers());
         if (expected.matches(altPressed) == QKeySequence::ExactMatch)
         {
-            this->ui_NetplayChatInputActive = true;
-            this->ui_NetplayChatInput.clear();
-            this->updateNetplayChatPrompt();
+            this->openNetplayChatPrompt();
             return true;
         }
     }
@@ -5592,14 +5766,58 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
         QKeySequence altPressed(Qt::Key_Enter | event->modifiers());
         if (expected.matches(altPressed) == QKeySequence::ExactMatch)
         {
-            this->ui_NetplayChatInputActive = true;
-            this->ui_NetplayChatInput.clear();
-            this->updateNetplayChatPrompt();
+            this->openNetplayChatPrompt();
             return true;
         }
     }
 
     return false;
+}
+
+void MainWindow::openNetplayChatPrompt(void)
+{
+    this->ui_NetplayChatInputActive = true;
+    this->ui_NetplayChatInput.clear();
+    this->ui_NetplayChatPreedit.clear();
+    this->ui_NetplayChatHighSurrogate = QChar();
+    this->updateNetplayChatPrompt();
+
+    this->ui_InputMethodFilter->SetEnabled(true);
+    QGuiApplication::inputMethod()->update(Qt::ImEnabled | Qt::ImCursorRectangle);
+}
+
+void MainWindow::appendNetplayChatText(const QString& text)
+{
+    // Windows sends a character past U+FFFF as two key events, one for each half.
+    QString whole = text;
+    if (!this->ui_NetplayChatHighSurrogate.isNull())
+    {
+        whole.prepend(this->ui_NetplayChatHighSurrogate);
+        this->ui_NetplayChatHighSurrogate = QChar();
+    }
+    if (whole.back().isHighSurrogate())
+    {
+        this->ui_NetplayChatHighSurrogate = whole.back();
+        whole.chop(1);
+    }
+
+    QString accepted;
+    for (const char32_t codePoint : whole.toUcs4())
+    {
+        // the joiners aren't printable, but they're how emoji combine
+        const bool wanted = QChar::isPrint(codePoint) || QChar::isSpace(codePoint) || codePoint == 0x200C || codePoint == 0x200D;
+        if (wanted && codePoint != QChar::ReplacementCharacter)
+        {
+            accepted += QString::fromUcs4(&codePoint, 1);
+        }
+    }
+
+    const int maxLength = 127;
+    if (!accepted.isEmpty() && this->ui_NetplayChatInput.size() + accepted.size() <= maxLength)
+    {
+        this->ui_NetplayChatInput += accepted;
+        this->updateNetplayChatPrompt();
+    }
 }
 
 void MainWindow::updateNetplayChatPrompt(void)
@@ -5609,7 +5827,7 @@ void MainWindow::updateNetplayChatPrompt(void)
         return;
     }
 
-    const std::string prompt = "> " + this->ui_NetplayChatInput.toStdString();
+    const std::string prompt = "> " + (this->ui_NetplayChatInput + this->ui_NetplayChatPreedit).toStdString();
     OnScreenDisplaySetInputPrompt(prompt);
 }
 
@@ -5617,7 +5835,64 @@ void MainWindow::closeNetplayChatPrompt(void)
 {
     this->ui_NetplayChatInputActive = false;
     this->ui_NetplayChatInput.clear();
+    this->ui_NetplayChatPreedit.clear();
     OnScreenDisplaySetInputPrompt("");
+
+    QGuiApplication::inputMethod()->reset();
+    this->ui_InputMethodFilter->SetEnabled(false);
+    QGuiApplication::inputMethod()->update(Qt::ImEnabled);
+}
+
+void MainWindow::on_InputMethodFilter_Query(QInputMethodQueryEvent *event)
+{
+    const Qt::InputMethodQueries queries = event->queries();
+    if (queries & Qt::ImEnabled)
+    {
+        event->setValue(Qt::ImEnabled, true);
+    }
+    if (queries & Qt::ImHints)
+    {
+        event->setValue(Qt::ImHints, static_cast<int>(Qt::ImhNone));
+    }
+    if (queries & Qt::ImSurroundingText)
+    {
+        event->setValue(Qt::ImSurroundingText, this->ui_NetplayChatInput);
+    }
+    if (queries & Qt::ImCursorPosition)
+    {
+        event->setValue(Qt::ImCursorPosition, static_cast<int>(this->ui_NetplayChatInput.size()));
+    }
+    if (queries & Qt::ImCurrentSelection)
+    {
+        event->setValue(Qt::ImCurrentSelection, QString());
+    }
+    if (queries & Qt::ImCursorRectangle)
+    {
+        // Where the prompt sits, near enough for the input method's candidate list
+        // to open beside it rather than in a corner of the screen.
+        const QWidget* surface = this->ui_Widgets->currentWidget();
+        const int location = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayLocation);
+        const int padX = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayPaddingX);
+        const int padY = CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayPaddingY);
+        const int promptHeight = 32;
+        const bool right = location == 2 || location == 3;
+        const bool bottom = location == 0 || location == 3;
+        const int x = right ? surface->width() - padX : padX;
+        const int y = bottom ? surface->height() - padY - promptHeight : padY;
+        event->setValue(Qt::ImCursorRectangle, QRect(x, y, 1, promptHeight));
+    }
+    event->accept();
+}
+
+void MainWindow::on_InputMethodFilter_Event(QInputMethodEvent *event)
+{
+    if (!event->commitString().isEmpty())
+    {
+        this->appendNetplayChatText(event->commitString());
+    }
+    this->ui_NetplayChatPreedit = event->preeditString();
+    this->updateNetplayChatPrompt();
+    event->accept();
 }
 
 void MainWindow::showLagReportOverlay(bool wholeMatch)
@@ -5633,9 +5908,11 @@ void MainWindow::showLagReportOverlay(bool wholeMatch)
     {
         // Outside the lobby nobody sends us their numbers; this side's view
         // of the match still tells who it waited on.
-        const QString localNickname = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_Username)).trimmed();
+        const std::array<std::string, 4> labels = GetLiveKailleraPortLabelNames();
         report = Dialog::LagStats::build(
-            Dialog::LagStats::localPlayers(0, [&localNickname](quint64) { return localNickname.isEmpty() ? tr("You") : localNickname; }),
+            Dialog::LagStats::localPlayers(0, [&labels](int slot, quint64) {
+                return slot >= 1 && slot <= 4 ? QString::fromStdString(labels[static_cast<size_t>(slot - 1)]) : QString();
+            }),
             wholeMatch);
     }
 
@@ -5875,6 +6152,14 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     {
         this->killTimer(this->ui_CheckVideoSizeTimerId);
         this->ui_CheckVideoSizeTimerId = 0;
+    }
+
+    if (this->ui_RankedTimerId != 0)
+    {
+        this->killTimer(this->ui_RankedTimerId);
+        this->ui_RankedTimerId = 0;
+        // drain events of a set that ended with emulation
+        this->processRankedEvents();
     }
 
     if (this->ui_QuitAfterEmulation)
@@ -6391,6 +6676,152 @@ void MainWindow::on_VidExt_ToggleFS(bool fullscreen)
     }
 }
 
+// The ranked module reports its status and reasons in English; translate the
+// phrases it uses (other text passes through unchanged).
+QString MainWindow::localizeRankedText(const QString& text)
+{
+    struct Pattern
+    {
+        QRegularExpression regex;
+        QString translated; // %1.. = captures
+    };
+    static const QList<Pattern> patterns = {
+        {QRegularExpression("^Ranked 2v2 Bo(\\d+) - Game (\\d+) - pick two teams of two$"),
+            tr("Ranked 2v2 Bo%1 - Game %2 - pick two teams of two")},
+        {QRegularExpression("^Ranked 2v2 Bo(\\d+) - (.+) - team (\\d) wins (\\d+)-(\\d+)$"),
+            tr("Ranked 2v2 Bo%1 - %2 - team %3 wins %4-%5")},
+        {QRegularExpression("^Ranked 2v2 Bo(\\d+) - Game (\\d+) - (.+) - (\\d+) : (\\d+)$"),
+            tr("Ranked 2v2 Bo%1 - Game %2 - %3 - %4 : %5")},
+        {QRegularExpression("^Ranked Bo(\\d+) - P(\\d) wins the set (\\d+)-(\\d+)$"),
+            tr("Ranked Bo%1 - P%2 wins the set %3-%4")},
+        {QRegularExpression("^Ranked Bo(\\d+) - Game (\\d+) - P(\\d) (\\d+) : (\\d+) P(\\d)$"),
+            tr("Ranked Bo%1 - Game %2 - P%3 %4 : %5 P%6")},
+        {QRegularExpression("^P(\\d)'s character \\(id (0x[0-9A-Fa-f]+)\\) isn't in the (\\w+) roster$"),
+            tr("P%1's character (id %2) isn't in the %3 roster")},
+        {QRegularExpression("^rules differ: (.*)$"), tr("rules differ: %1")},
+        {QRegularExpression("^not two teams of two$"), tr("not two teams of two")},
+        {QRegularExpression("^the teams changed partners \\(the set keeps game 1's teams\\)$"),
+            tr("the teams changed partners (the set keeps game 1's teams)")},
+        {QRegularExpression("^no single winner$"), tr("no single winner")},
+        {QRegularExpression("^match was reset$"), tr("match was reset")},
+    };
+    for (const Pattern& pattern : patterns)
+    {
+        const QRegularExpressionMatch match = pattern.regex.match(text);
+        if (!match.hasMatch())
+        {
+            continue;
+        }
+        QString out = pattern.translated;
+        for (int i = 1; i <= match.lastCapturedIndex(); i++)
+        {
+            out = out.arg(match.captured(i));
+        }
+        return out;
+    }
+    return text;
+}
+
+void MainWindow::processRankedEvents(void)
+{
+    for (const CoreRankedEvent& event : CoreRankedTakeEvents())
+    {
+        // who won: a port in 1v1, a team (its ports, e.g. P1+P3) in team sets
+        auto winner = [&event]() {
+            if (event.WinnerTeam > 0)
+            {
+                QStringList ports;
+                for (size_t i = 0; i < event.Teams.size(); i++)
+                {
+                    if (event.Teams[i] == event.WinnerTeam)
+                    {
+                        ports << QString("P%1").arg(int(i + 1));
+                    }
+                }
+                return ports.isEmpty() ? tr("Team %1").arg(event.WinnerTeam) : ports.join("+");
+            }
+            return QString("P%1").arg(event.WinnerPort);
+        };
+        const QString detail = localizeRankedText(QString::fromStdString(event.Detail));
+        QString message;
+        switch (event.Type)
+        {
+        case CoreRankedEventType::GameStarted:
+            message = tr("Ranked: game %1 started").arg(event.GameNumber);
+            if (!detail.isEmpty())
+            {
+                message += tr(" - won't count: %1").arg(detail);
+            }
+            break;
+        case CoreRankedEventType::GameEnded:
+            message = tr("Ranked: %1 wins game %2").arg(winner()).arg(event.GameNumber);
+            break;
+        case CoreRankedEventType::GameVoided:
+            message = tr("Ranked: game %1 doesn't count (%2), replay it").arg(event.GameNumber).arg(detail);
+            break;
+        case CoreRankedEventType::SetEnded:
+            message = tr("Ranked: %1 wins the set").arg(winner());
+            break;
+        case CoreRankedEventType::ReplayMismatch:
+            message = tr("Replay out of sync: %1").arg(detail);
+            break;
+        case CoreRankedEventType::PlayerLeft:
+            message = tr("Ranked: P%1 left the set; the lobby decides the result").arg(event.WinnerPort);
+            break;
+        }
+
+        const QString status = localizeRankedText(QString::fromStdString(CoreRankedGetStatusText()));
+        if (!status.isEmpty() && event.Type != CoreRankedEventType::SetEnded &&
+            event.Type != CoreRankedEventType::PlayerLeft)
+        {
+            message += "  |  " + status;
+        }
+        OnScreenDisplaySetMessage(message.toStdString());
+
+        // replays only show the set's progress
+        if (CoreRankedIsReplay())
+        {
+            continue;
+        }
+
+#ifdef NETPLAY
+        // lobby ranked sets: report this player's result right away, the
+        // server rates the set once both players' reports agree
+        if (event.Type == CoreRankedEventType::SetEnded && this->rollbackLobbyDialog != nullptr &&
+            this->ui_LobbyNetplaySession)
+        {
+            this->rollbackLobbyDialog->reportRankedSetEnded();
+        }
+        // each counted game, so the lobby can judge a set someone leaves
+        if (event.Type == CoreRankedEventType::GameEnded && this->rollbackLobbyDialog != nullptr &&
+            this->ui_LobbyNetplaySession)
+        {
+            this->rollbackLobbyDialog->reportRankedProgress();
+        }
+        if (event.Type == CoreRankedEventType::PlayerLeft && this->rollbackLobbyDialog != nullptr &&
+            this->ui_LobbyNetplaySession)
+        {
+            this->rollbackLobbyDialog->reportRankedPlayerLeft();
+        }
+#endif // NETPLAY
+
+        // the set is decided on every peer at the same confirmed
+        // frame; leave the result on screen briefly, then end it
+        if (event.Type == CoreRankedEventType::SetEnded && !this->ui_RankedStopPending)
+        {
+            this->ui_RankedStopPending = true;
+            QTimer::singleShot(5000, this, [this]()
+            {
+                if (this->ui_RankedStopPending && CoreIsEmulationRunning())
+                {
+                    this->on_Action_System_Shutdown();
+                }
+                this->ui_RankedStopPending = false;
+            });
+        }
+    }
+}
+
 void MainWindow::on_Core_DebugCallback(QList<CoreCallbackMessage> messages)
 {
     // pass callback messages to the log window
@@ -6523,7 +6954,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
                 this->stopLobbySpectate();
                 this->showErrorMessage(tr("Live Replay Error"),
                     tr("Couldn't load the live replay's saved state, so watching stopped. "
-                       "Your ROM or RMG-K version is probably different from the players'."));
+                       "Your ROM or Dale64 version is probably different from the players'."));
                 break;
             }
 #endif // NETPLAY

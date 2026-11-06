@@ -11,6 +11,8 @@ void ResetPifReplayFrameSync(void);
 // input records the replay has read
 int GetPifReplayFrameIndex(void);
 bool IsPifReplayFinished(void);
+// input records consumed so far
+int GetPifReplayFrameIndex(void);
 void PifReplayCallback(struct pif* pifState);
 
 } // namespace KailleraExport
