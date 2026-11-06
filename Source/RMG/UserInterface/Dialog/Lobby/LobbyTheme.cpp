@@ -162,8 +162,29 @@ namespace
     }
 } // namespace
 
+namespace
+{
+    ThemeChoice s_themeChoice = ThemeChoice::App;
+} // namespace
+
+void setThemeChoice(ThemeChoice choice)
+{
+    s_themeChoice = choice;
+}
+
+ThemeChoice themeChoice()
+{
+    return s_themeChoice;
+}
+
 bool isDark()
 {
+    switch (s_themeChoice)
+    {
+        case ThemeChoice::Dark:  return true;
+        case ThemeChoice::Light: return false;
+        case ThemeChoice::App:   break;
+    }
     return QApplication::palette().window().color().value() < 128;
 }
 
@@ -499,6 +520,18 @@ QString styleSheet()
         QFrame#ChallengeVersus { background-color: @tint; border: 1px solid @line; border-radius: 10px; }
         QFrame#SanctionNote { background-color: @warnTint; border: 1px solid @warnEdge; border-radius: 8px; }
         QFrame#ModerationRow { background: transparent; border: none; border-bottom: 1px solid @line; }
+
+        /* Every other combo box in the lobby: drawn from the tokens rather than
+           left to the platform style, which follows the app's theme and not a
+           theme picked for the lobby. */
+        QComboBox {
+            background-color: @well; color: @ink; border: 1px solid @line2; border-radius: 6px;
+            padding: 2px 6px 2px 8px;
+        }
+        QComboBox:focus { border-color: @accent; }
+        QComboBox:disabled { color: @faint; }
+        QComboBox::drop-down { border: none; width: 16px; }
+        QComboBox::down-arrow { image: url(@chevron); width: 12px; height: 12px; }
 
         QComboBox#ChallengeRomCombo { background: transparent; border: none; padding: 0; color: @ink; }
         QComboBox#ChallengeRomCombo::drop-down { width: 0; border: none; }

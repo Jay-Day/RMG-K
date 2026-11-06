@@ -18,6 +18,7 @@
 #include "LobbyWidgets.hpp"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -32,6 +33,7 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSettings>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QTabBar>
 #include <QTextBlock>
@@ -480,6 +482,35 @@ void RollbackLobbyDialog::showUserMenu()
         connect(menu.addItem(QStringLiteral("forbid-line"), tr("Ignored players…")), &QAction::triggered,
                 this, &RollbackLobbyDialog::showIgnoredPlayers);
     }
+
+    // How the lobby looks on this PC. Picking one leaves the menu open, so the
+    // change shows straight away.
+    menu.addHeading(QStringLiteral("palette-line"), tr("Theme"), false);
+    auto* themes = new QActionGroup(&menu);
+    const auto addTheme = [&](const QString& iconName, const QString& text, LobbyTheme::ThemeChoice choice) {
+        QAction* item = menu.addCheckItem(iconName, text, LobbyTheme::themeChoice() == choice, themes);
+        connect(item, &QAction::toggled, this, [this, choice](bool on) {
+            if (on)
+                setLobbyTheme(choice);
+        });
+    };
+    addTheme(QStringLiteral("computer-line"), tr("Same as the app"), LobbyTheme::ThemeChoice::App);
+    addTheme(QStringLiteral("moon-line"), tr("Dark"), LobbyTheme::ThemeChoice::Dark);
+    addTheme(QStringLiteral("sun-line"), tr("Light"), LobbyTheme::ThemeChoice::Light);
+
+    menu.addHeading(QStringLiteral("layout-column-line"), tr("Live and open rooms"), false);
+    auto* layouts = new QActionGroup(&menu);
+    const auto pickLayout = [this](bool stacked) {
+        setBrowseStacked(stacked);
+        // An open room window covers them: minimize it so the change shows.
+        if (roomWindowOpen())
+            switchToRoomsView();
+    };
+    const bool stacked = m_browseSplitter && m_browseSplitter->orientation() == Qt::Vertical;
+    QAction* side = menu.addCheckItem(QStringLiteral("layout-column-line"), tr("Side by side"), !stacked, layouts);
+    connect(side, &QAction::toggled, this, [pickLayout](bool on) { if (on) pickLayout(false); });
+    QAction* above = menu.addCheckItem(QStringLiteral("layout-row-line"), tr("Live above the rooms"), stacked, layouts);
+    connect(above, &QAction::toggled, this, [pickLayout](bool on) { if (on) pickLayout(true); });
 
     if (m_client->isModerator())
     {
@@ -1007,7 +1038,7 @@ void RollbackLobbyDialog::refreshPlayerSpectatorChat()
         m_playerChatMatchId = m_currentMatchId;
         m_chatViewSpectate->clear();
         m_pendingMentions[kChatTabSpectators].clear();
-        m_chatTabs->setTabVisible(kChatTabSpectators, true);
+        m_chatTabs->showTab(kChatTabSpectators, true);
         refreshSpectatorTab();
         appendChatSystemLine(CHANNEL_SPECTATE, tr("Spectators' comments show up here, and they can see your replies."),
                              QStringLiteral("eye-line"));

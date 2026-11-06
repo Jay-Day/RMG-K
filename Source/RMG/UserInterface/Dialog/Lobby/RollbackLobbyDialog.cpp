@@ -64,6 +64,7 @@
 #include <QStyle>
 #include <QPalette>
 #include <QStyledItemDelegate>
+#include <QStyleOptionFrame>
 #include <QPainter>
 #include <QPainterPath>
 #include <QVBoxLayout>
@@ -83,6 +84,7 @@
 #include <QCompleter>
 #include <QCheckBox>
 #include <QActionGroup>
+#include <QButtonGroup>
 #include <QGridLayout>
 #include <QSettings>
 #include <QMessageBox>
@@ -172,6 +174,10 @@ namespace
     {
         return LobbyTheme::isDark();
     }
+
+    // The account menu's look choices: "app", "dark" or "light"; "side" or "stacked".
+    const char* const kLobbyThemeSetting = "RollbackLobby/Theme";
+    const char* const kBrowseLayoutSetting = "RollbackLobby/BrowseLayout";
 
     // Follows the pointer for a seat drag, installed on the application so it
     // sees every mouse event: a room update can hide the handle that took the
@@ -613,6 +619,14 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     m_client = new LobbyClient(this);
     m_lagStats = new LagStatsExchange([this](quint64 userId) { return m_client->measuredPingMs(userId); }, this);
 
+    // Before anything is built: some widgets take their colours once.
+    {
+        const QString theme = QSettings("RMG-K", "n02").value(kLobbyThemeSetting).toString();
+        LobbyTheme::setThemeChoice(theme == QLatin1String("dark")    ? LobbyTheme::ThemeChoice::Dark
+                                   : theme == QLatin1String("light") ? LobbyTheme::ThemeChoice::Light
+                                                                     : LobbyTheme::ThemeChoice::App);
+    }
+
     buildUi();
     applyStylesheet();
 
@@ -695,7 +709,7 @@ RollbackLobbyDialog::~RollbackLobbyDialog()
     if (m_splitter)
         s.setValue("RollbackLobby/MainSplitterState", m_splitter->saveState());
     if (m_browseSplitter)
-        s.setValue("RollbackLobby/BrowseSplitterState", m_browseSplitter->saveState());
+        s.setValue(browseSplitterKey(), m_browseSplitter->saveState());
     if (m_roomWindow)
     {
         s.setValue("RollbackLobby/RoomWindowGeometry", m_roomWindow->normalGeometry());
@@ -1020,6 +1034,7 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
     m_createRoomBtn = new LobbyButton(tr("Create Room"), LobbyButton::Kind::Secondary, idle);
     m_createRoomBtn->setObjectName("CreateRoomBtn");
     m_createRoomBtn->setButtonSize(LobbyButton::Size::Large);
+    m_createRoomBtn->setPixelLabel(true);
     m_createRoomBtn->setIconName(QStringLiteral("add-line"));
 
     connect(m_quickMatchBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onQuickMatchClicked);
@@ -1088,9 +1103,11 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
 
     lay->addWidget(buildPlayBar());
 
-    // ── Live gallery beside the open rooms, dividing a draggable splitter so
-    //    each person can give running games as much of the window as they like ──
-    m_browseSplitter = new QSplitter(Qt::Horizontal, this);
+    // ── Live gallery beside the open rooms (or above them, the player's
+    //    choice), dividing a draggable splitter so each person can give
+    //    running games as much of the window as they like ──
+    const bool stacked = QSettings("RMG-K", "n02").value(kBrowseLayoutSetting).toString() == QLatin1String("stacked");
+    m_browseSplitter = new QSplitter(stacked ? Qt::Vertical : Qt::Horizontal, this);
     m_browseSplitter->setHandleWidth(GAP_STAGE);
     m_browseSplitter->setChildrenCollapsible(false);
 
@@ -1122,13 +1139,7 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_browseSplitter->setStretchFactor(0, 1);
     m_browseSplitter->setStretchFactor(1, 1);
     m_browseSplitter->setSizes({ 1, 1 });
-    {
-        // A new key again: under the old one, rooms had a fixed narrow width.
-        QSettings s("RMG-K", "n02");
-        const QByteArray splitState = s.value("RollbackLobby/BrowseSplitterState").toByteArray();
-        if (!splitState.isEmpty())
-            m_browseSplitter->restoreState(splitState);
-    }
+    restoreBrowseSplit();
     lay->addWidget(m_browseSplitter, 1);
 
     refreshSameGameFilter();
@@ -1343,6 +1354,48 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         "Default: 7 frames.\n"
         "\n"
         "Room setting — only the host may change this value."));
+
+    // Seats: the host adds or takes some away while the room waits.
+    m_roomSizeBox = new QWidget(m_roomSettingsPanel);
+    auto* sizeLay = new QVBoxLayout(m_roomSizeBox);
+    sizeLay->setContentsMargins(0, 8, 0, 0);
+    sizeLay->setSpacing(6);
+    auto* sizeRule = new QFrame(m_roomSizeBox);
+    sizeRule->setObjectName("FieldRule");
+    sizeLay->addWidget(sizeRule);
+    sizeLay->addSpacing(4);
+    sizeLay->addWidget(makeFieldLabel(tr("Players", "how many seats the room has"), m_roomSizeBox));
+    auto* sizeSeg = new QFrame(m_roomSizeBox);
+    sizeSeg->setObjectName("Seg");
+    auto* sizeSegLay = new QHBoxLayout(sizeSeg);
+    sizeSegLay->setContentsMargins(3, 3, 3, 3);
+    sizeSegLay->setSpacing(3);
+    m_roomSizeGroup = new QButtonGroup(this);
+    for (int seats = 2; seats <= 4; ++seats)
+    {
+        auto* button = new QPushButton(QString::number(seats), sizeSeg);
+        button->setObjectName(QString("RoomSizeSeg%1").arg(seats));
+        button->setProperty("seg", true);
+        button->setCheckable(true);
+        button->setAutoDefault(false);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
+        m_roomSizeGroup->addButton(button, seats);
+        sizeSegLay->addWidget(button);
+    }
+    sizeLay->addWidget(sizeSeg);
+    m_roomSizeHint = new QLabel(m_roomSizeBox);
+    m_roomSizeHint->setFont(LobbyTheme::uiFont(11));
+    m_roomSizeHint->setProperty("role", "muted");
+    m_roomSizeHint->setWordWrap(true);
+    sizeLay->addWidget(m_roomSizeHint);
+    m_roomSizeBox->setVisible(false);
+    panelLay->addWidget(m_roomSizeBox);
+    connect(m_roomSizeGroup, &QButtonGroup::idClicked, this, [this](int seats) {
+        if (m_currentRoomId == 0 || !m_client || m_currentRoomHostId != m_client->selfUserId())
+            return;
+        m_client->updateRoomMaxPlayers(seats);
+    });
 
     m_joinLimitsBox = new QWidget(m_roomSettingsPanel);
     auto* limitsLay = new QVBoxLayout(m_joinLimitsBox);
@@ -1666,14 +1719,14 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
     m_chatTabs->addTab(tr("Room").toUpper());
     m_chatTabs->addTab(tr("Spectators").toUpper());
     m_chatTabs->addTab(QString());
-    m_chatTabs->setTabVisible(kChatTabMail, false);
+    m_chatTabs->showTab(kChatTabMail, false);
     m_chatTabs->setTabToolTip(kChatTabMail, tr("Private messages"));
     m_chatTabs->setAccessibleTabName(kChatTabMail, tr("Private messages"));
     m_chatTabs->setTabToolTip(kChatTabLobby, tr("Everyone in the lobby."));
     m_chatTabs->setTabToolTip(kChatTabRoom, tr("Everyone in your room."));
     m_chatTabs->setAccessibleTabName(kChatTabSpectators, tr("Spectators"));
-    m_chatTabs->setTabVisible(kChatTabRoom, false);
-    m_chatTabs->setTabVisible(kChatTabSpectators, false);
+    m_chatTabs->showTab(kChatTabRoom, false);
+    m_chatTabs->showTab(kChatTabSpectators, false);
     tabLay->addWidget(m_chatTabs, 1);
     cardLay->addWidget(tabRow);
 
@@ -1788,7 +1841,7 @@ void RollbackLobbyDialog::refreshChatInput()
     if (!m_chatInput || !m_chatTabs)
         return;
     const bool connected = m_client && m_client->state() == LobbyClient::ConnectionState::Connected;
-    m_chatTabs->setTabVisible(kChatTabMail, connected && m_client->socialSupported());
+    m_chatTabs->showTab(kChatTabMail, connected && m_client->socialSupported());
     const int tab = m_chatTabs->currentIndex();
     if (tab == kChatTabMail)
     {
@@ -1864,7 +1917,7 @@ void RollbackLobbyDialog::setRoomChatVisible(bool visible)
         m_chatTabs->setCurrentIndex(kChatTabLobby);
     // First: the word Spectators doesn't fit beside Room.
     refreshSpectatorTab();
-    m_chatTabs->setTabVisible(kChatTabRoom, visible);
+    m_chatTabs->showTab(kChatTabRoom, visible);
     setChatUnread(kChatTabRoom, 0);
     m_pendingMentions[kChatTabRoom].clear();
     if (visible)
@@ -2020,6 +2073,26 @@ void RollbackLobbyDialog::applyStylesheet()
     m_appliedDarkTheme = isDarkTheme();
     setStyleSheet(LobbyTheme::styleSheet());
     refreshChatTabIcons();
+    alignPickerInfo();
+}
+
+// The picker's title is its combo box's line edit, and a line edit inside a
+// combo box takes its text inset from the platform style, not the stylesheet
+// (Windows 11 starts it 4 px in), plus the line edit's own 2 px. The stats
+// line under it starts there too.
+void RollbackLobbyDialog::alignPickerInfo()
+{
+    QLineEdit* edit = m_browseRomCombo ? m_browseRomCombo->lineEdit() : nullptr;
+    if (!edit || !m_pickerInfo)
+        return;
+    constexpr int kLineEditTextMargin = 2;
+    QStyleOptionFrame frame;
+    frame.initFrom(edit);
+    frame.rect = edit->rect();
+    frame.lineWidth = 0; // a combo box's line edit has no frame
+    const int textX = edit->style()->subElementRect(QStyle::SE_LineEditContents, &frame, edit).x() +
+                      edit->textMargins().left() + kLineEditTextMargin;
+    m_pickerInfo->setContentsMargins(std::max(0, textX), 0, 0, 0);
 }
 
 void RollbackLobbyDialog::changeEvent(QEvent* event)
@@ -2028,13 +2101,75 @@ void RollbackLobbyDialog::changeEvent(QEvent* event)
     // The theme can change in Settings while this dialog is alive. Painted
     // widgets pick the new colours up on their next paint.
     if (event->type() == QEvent::ApplicationPaletteChange && m_appliedDarkTheme != isDarkTheme())
+        refreshTheme();
+}
+
+void RollbackLobbyDialog::refreshTheme()
+{
+    applyStylesheet();
+    if (m_joinPingCombo)
     {
-        applyStylesheet();
-        updateRollbackSettingControls();
-        updateStatusIndicator(m_client->state());
-        onRoomListChanged();
-        update();
+        // Its signal bar icons were drawn in the old colours.
+        const QSignalBlocker blocker(m_joinPingCombo);
+        m_joinPingCombo->clear();
+        CreateRoomDialog::fillPingLimitCombo(m_joinPingCombo);
+        updateJoinLimitControls();
     }
+    updateRollbackSettingControls();
+    updateStatusIndicator(m_client->state());
+    onRoomListChanged();
+    update();
+}
+
+void RollbackLobbyDialog::setLobbyTheme(LobbyTheme::ThemeChoice choice)
+{
+    LobbyTheme::setThemeChoice(choice);
+    QSettings("RMG-K", "n02").setValue(kLobbyThemeSetting,
+        choice == LobbyTheme::ThemeChoice::Dark    ? QStringLiteral("dark")
+        : choice == LobbyTheme::ThemeChoice::Light ? QStringLiteral("light")
+                                                   : QStringLiteral("app"));
+    if (m_appliedDarkTheme != isDarkTheme())
+        refreshTheme();
+}
+
+// Live beside the open rooms, or above them. Each way keeps its own divider.
+void RollbackLobbyDialog::setBrowseStacked(bool stacked)
+{
+    const Qt::Orientation orientation = stacked ? Qt::Vertical : Qt::Horizontal;
+    if (!m_browseSplitter || m_browseSplitter->orientation() == orientation)
+        return;
+    QSettings s("RMG-K", "n02");
+    s.setValue(browseSplitterKey(), m_browseSplitter->saveState());
+    m_browseSplitter->setOrientation(orientation);
+    restoreBrowseSplit();
+    s.setValue(kBrowseLayoutSetting, stacked ? QStringLiteral("stacked") : QStringLiteral("side"));
+}
+
+// The divider where the player left it in this layout. A saved state carries
+// its own orientation, and the layout wins: one that disagrees is dropped.
+void RollbackLobbyDialog::restoreBrowseSplit()
+{
+    const Qt::Orientation orientation = m_browseSplitter->orientation();
+    const int handleWidth = m_browseSplitter->handleWidth();
+    const QByteArray state = QSettings("RMG-K", "n02").value(browseSplitterKey()).toByteArray();
+    if (state.isEmpty() || !m_browseSplitter->restoreState(state) || m_browseSplitter->orientation() != orientation)
+    {
+        // A rejected state has already set its own handle width and collapsing.
+        m_browseSplitter->setOrientation(orientation);
+        m_browseSplitter->setHandleWidth(handleWidth);
+        m_browseSplitter->setChildrenCollapsible(false);
+        m_browseSplitter->setSizes({ 1, 1 });
+    }
+}
+
+QString RollbackLobbyDialog::browseSplitterKey() const
+{
+    // Each layout has its own, as the saved state holds the orientation. Not
+    // "BrowseSplitterState": the classic lobby keeps its rooms / matches
+    // splitter there, and both read the same settings.
+    return m_browseSplitter && m_browseSplitter->orientation() == Qt::Vertical
+        ? QStringLiteral("RollbackLobby/LiveRoomsStacked")
+        : QStringLiteral("RollbackLobby/LiveRoomsSideBySide");
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -3563,6 +3698,9 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     m_roomHasJoinLimits = false;
     m_roomMaxPing = 0;
     m_roomWiredOnly = false;
+    m_roomResizable = false;
+    m_roomMaxPlayers = 0;
+    m_roomSeatedCount = 0;
     if (m_chatViewRoom) m_chatViewRoom->clear();
     setRoomChatVisible(false);
     if (m_startBtn) m_startBtn->setEnabled(false);
@@ -3770,6 +3908,8 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     m_roomMaxPing = 0;
     m_roomWiredOnly = false;
     updateJoinLimitControls();
+    m_roomResizable = false;
+    updateRoomSizeControls();
     switchToInRoomView();
 
     if (m_createRoomBtn) m_createRoomBtn->setEnabled(false);
@@ -4058,6 +4198,11 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     // still had a live local match (host dropped it for everyone).
     const QString prevState = m_currentRoomState;
     m_currentRoomState = state;
+    // So is the room's size, while it waits.
+    m_roomResizable = roomState.value("resizable").toBool();
+    m_roomMaxPlayers = maxPlayers;
+    m_roomSeatedCount = int(roomState.value("players").toArray().size());
+    updateRoomSizeControls();
     if (prevState == "in_game" && state != "in_game" &&
         (m_emulationActive || m_awaitingEmulationStart))
     {
@@ -4193,16 +4338,10 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     }
     for (int i = 0; i < 4; ++i)
     {
-        if (i >= maxPlayers) m_seats[i].row->setVisible(false);
-        else
-        {
-            m_seats[i].row->setVisible(true);
-            if (!filled[i])
-            {
-                m_seats[i].userId = 0;
-                renderSeatEmpty(m_seats[i]);
-            }
-        }
+        // A seat past the room's size may be one the host just took away.
+        if (!filled[i])
+            renderSeatEmpty(m_seats[i]);
+        m_seats[i].row->setVisible(i < maxPlayers);
     }
 
     // Seat reorder is host-only and pre-match. Show the drag grip on occupied,
@@ -4445,6 +4584,33 @@ void RollbackLobbyDialog::updateJoinLimitControls()
         const bool custom = !m_predictionAuto || m_roomMaxPing > 0 || m_roomWiredOnly;
         m_roomSettingsButton->setIconColorOverride(custom ? LobbyTheme::tokens().accentInk : QColor());
     }
+}
+
+void RollbackLobbyDialog::updateRoomSizeControls()
+{
+    if (!m_roomSizeBox)
+        return;
+    const bool iAmHost = m_client && m_currentRoomId != 0 && m_currentRoomHostId == m_client->selfUserId();
+    const bool waiting = m_currentRoomState == QLatin1String("waiting") && !matchTransportInProgress();
+    m_roomSizeBox->setVisible(m_roomResizable);
+    for (QAbstractButton* button : m_roomSizeGroup->buttons())
+    {
+        const int seats = m_roomSizeGroup->id(button);
+        if (seats == m_roomMaxPlayers)
+            button->setChecked(true);
+        // Fewer seats than players seated would leave someone without one.
+        button->setEnabled(iAmHost && waiting && seats >= m_roomSeatedCount);
+    }
+    if (!iAmHost)
+        m_roomSizeHint->setText(m_currentRoomHostName.isEmpty()
+            ? tr("Set by the host")
+            : tr("Set by the host (%1)").arg(m_currentRoomHostName));
+    else if (!waiting)
+        m_roomSizeHint->setText(tr("Can't be changed during a match."));
+    else if (m_roomSeatedCount > 2)
+        m_roomSizeHint->setText(tr("Not fewer than the %1 players seated.").arg(m_roomSeatedCount));
+    else
+        m_roomSizeHint->setText(tr("Anyone in a seat you take away moves to a free one."));
 }
 
 bool RollbackLobbyDialog::confirmLateJoin()
@@ -5541,6 +5707,7 @@ void RollbackLobbyDialog::refreshSettingHints()
             ? tr("Set by the host")
             : tr("Set by the host (%1)").arg(m_currentRoomHostName));
     updateJoinLimitControls();
+    updateRoomSizeControls();
 }
 
 // The match is over for this client. Stop steering the engine so the next
@@ -6655,7 +6822,7 @@ void RollbackLobbyDialog::setSpectatorChatVisible(bool visible)
     // Before hiding: Qt would otherwise move on to the next visible tab, not Lobby.
     if (!visible && m_chatTabs->currentIndex() == kChatTabSpectators)
         m_chatTabs->setCurrentIndex(kChatTabLobby);
-    m_chatTabs->setTabVisible(kChatTabSpectators, visible);
+    m_chatTabs->showTab(kChatTabSpectators, visible);
     setChatUnread(kChatTabSpectators, 0);
     m_pendingMentions[kChatTabSpectators].clear();
     if (visible)

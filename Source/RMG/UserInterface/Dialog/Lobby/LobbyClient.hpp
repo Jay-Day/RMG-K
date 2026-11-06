@@ -241,6 +241,9 @@ public:
     void updateRoomLateJoin(bool enabled);
     // Host-only: who may join from now on. Players already seated stay.
     void updateRoomJoinLimits(int maxPing, bool wiredOnly);
+    // Host-only, waiting room: how many seats it has. The server won't go
+    // below the players seated, and moves anyone in a seat that goes away.
+    void updateRoomMaxPlayers(int maxPlayers);
     // Host-only, waiting room: the save the next match starts from, as shown
     // to the room. The bytes themselves go to the players in the pre-match
     // manifest (setPrematchSaveData), never through the server.

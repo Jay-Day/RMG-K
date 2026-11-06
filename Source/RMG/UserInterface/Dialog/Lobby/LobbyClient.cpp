@@ -3723,6 +3723,13 @@ void LobbyClient::updateRoomJoinLimits(int maxPing, bool wiredOnly)
     sendEnvelope("ROOM_UPDATE_JOIN_LIMITS", d);
 }
 
+void LobbyClient::updateRoomMaxPlayers(int maxPlayers)
+{
+    QJsonObject d;
+    d["maxPlayers"] = maxPlayers;
+    sendEnvelope("ROOM_UPDATE_MAX_PLAYERS", d);
+}
+
 void LobbyClient::updateRoomSaveData(bool enabled, const QString& label, const QStringList& kinds,
                                      int bytes, const QString& hash)
 {

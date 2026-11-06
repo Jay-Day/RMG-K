@@ -6349,5 +6349,50 @@ Everyone here when the game starts can still save a replay; whoever joins mid-ga
         <source>Auto stays at 0: everyone in this match plays on this PC.</source>
         <translation>この試合の全員がこのPCでプレイしているため、自動は0のままです。</translation>
     </message>
+    <message>
+        <source>Players</source>
+        <comment>how many seats the room has</comment>
+        <translation>プレイヤー数</translation>
+    </message>
+    <message>
+        <source>Can&apos;t be changed during a match.</source>
+        <translation>対戦中は変更できません。</translation>
+    </message>
+    <message>
+        <source>Not fewer than the %1 players seated.</source>
+        <translation>着席している%1人より少なくはできません。</translation>
+    </message>
+    <message>
+        <source>Anyone in a seat you take away moves to a free one.</source>
+        <translation>なくした席のプレイヤーは空いている席に移動します。</translation>
+    </message>
+    <message>
+        <source>Theme</source>
+        <translation>テーマ</translation>
+    </message>
+    <message>
+        <source>Same as the app</source>
+        <translation>アプリと同じ</translation>
+    </message>
+    <message>
+        <source>Dark</source>
+        <translation>ダーク</translation>
+    </message>
+    <message>
+        <source>Light</source>
+        <translation>ライト</translation>
+    </message>
+    <message>
+        <source>Live and open rooms</source>
+        <translation>進行中の対戦とルーム一覧</translation>
+    </message>
+    <message>
+        <source>Side by side</source>
+        <translation>横に並べる</translation>
+    </message>
+    <message>
+        <source>Live above the rooms</source>
+        <translation>進行中の対戦を上に</translation>
+    </message>
 </context>
 </TS>

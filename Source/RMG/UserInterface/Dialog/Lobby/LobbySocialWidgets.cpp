@@ -291,6 +291,12 @@ void LobbyMenu::paintEvent(QPaintEvent*)
 
 // ── ChatTabBar ───────────────────────────────────────────────────────
 
+void ChatTabBar::showTab(int index, bool visible)
+{
+    if (isTabVisible(index) != visible)
+        setTabVisible(index, visible);
+}
+
 QSize ChatTabBar::tabSizeHint(int index) const
 {
     QSize size = QTabBar::tabSizeHint(index);

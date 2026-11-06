@@ -75,6 +75,11 @@ class ChatTabBar : public QTabBar
 public:
     using QTabBar::QTabBar;
 
+    // Use this, not setTabVisible: that, given a tab's current visibility,
+    // also drops a relayout an earlier call still owes, so a hidden tab could
+    // leave a gap where it was.
+    void showTab(int index, bool visible);
+
 protected:
     QSize tabSizeHint(int index) const override;
 };
