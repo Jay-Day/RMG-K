@@ -156,6 +156,8 @@
     <addaction name="action_Rollback_Lobby"/>
     <addaction name="action_Netplay_P2P"/>
     <addaction name="action_Netplay_BrowseSessions"/>
+    <addaction name="separator"/>
+    <addaction name="action_Toolbar_Playback"/>
    </widget>
    <widget class="QMenu" name="menuRollback">
     <property name="title">
@@ -205,12 +207,12 @@
    <addaction name="action_System_Shutdown"/>
    <addaction name="separator"/>
    <addaction name="action_Netplay_Start"/>
+   <addaction name="action_Toolbar_Playback"/>
    <addaction name="separator"/>
    <addaction name="action_View_Fullscreen"/>
    <addaction name="action_Settings_Settings"/>
    <addaction name="action_Settings_Plugins"/>
    <addaction name="action_Toolbar_Input"/>
-   <addaction name="action_Toolbar_Playback"/>
   </widget>
   <action name="action_System_StartRom">
    <property name="icon">
@@ -484,10 +486,10 @@
   </action>
   <action name="action_Toolbar_Playback">
    <property name="icon">
-    <iconset theme="play-line"/>
+    <iconset theme="movie-2-line"/>
    </property>
    <property name="text">
-    <string>&amp;Playback</string>
+    <string>&amp;Replays</string>
    </property>
   </action>
   <action name="action_View_Fullscreen">

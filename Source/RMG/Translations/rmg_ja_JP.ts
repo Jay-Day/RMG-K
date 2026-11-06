@@ -895,8 +895,8 @@
             <translation>プラグイン(&amp;P)</translation>
         </message>
         <message>
-            <source>&amp;Playback</source>
-            <translation>再生(&amp;P)</translation>
+            <source>&amp;Replays</source>
+            <translation>リプレイ(&amp;R)</translation>
         </message>
         <message>
             <source>&amp;Fullscreen</source>
@@ -3345,28 +3345,28 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>途中参加</translation>
         </message>
         <message>
-            <source>Late join is on in this room. Only the host saves a local replay, so Record locally is off for you.</source>
-            <translation>このルームでは途中参加がオンです。ローカルにリプレイを保存するのはホストだけなので、あなたの「ローカルに保存」はオフになります。</translation>
+            <source>Late join is on in this room. Players who join mid-game don't get a replay of it.</source>
+            <translation>このルームは途中参加がオンです。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
         </message>
         <message>
-            <source>Late join is on. Players can join while a game is running, and only you save a local replay.</source>
-            <translation>途中参加をオンにしました。ゲーム中でもプレイヤーが参加でき、ローカルにリプレイを保存するのはあなただけです。</translation>
+            <source>Late join is on. Players can join while a game is running; they won't get a replay of it.</source>
+            <translation>途中参加をオンにしました。ゲーム中でもプレイヤーが参加できますが、途中参加したプレイヤーにはそのゲームのリプレイは保存されません。</translation>
         </message>
         <message>
             <source>Late join is off.</source>
             <translation>途中参加をオフにしました。</translation>
         </message>
         <message>
-            <source>The host turned on late join. Only the host saves a local replay, so Record locally is off for you.</source>
-            <translation>ホストが途中参加をオンにしました。ローカルにリプレイを保存するのはホストだけなので、あなたの「ローカルに保存」はオフになります。</translation>
+            <source>The host turned on late join. Players who join mid-game don't get a replay of it.</source>
+            <translation>ホストが途中参加をオンにしました。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
         </message>
         <message>
             <source>The host turned off late join.</source>
             <translation>ホストが途中参加をオフにしました。</translation>
         </message>
         <message>
-            <source>Late join is on, so only the host saves a local replay.</source>
-            <translation>途中参加がオンのため、ローカルにリプレイを保存するのはホストだけです。</translation>
+            <source>You joined while a game is running, so you won't get a replay of this one.</source>
+            <translation>ゲーム中に参加したため、このゲームのリプレイは保存されません。</translation>
         </message>
         <message>
             <source>The host turned on late join: players can join while a game is running.</source>
@@ -3382,33 +3382,33 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         </message>
         <message>
             <source>Let players join while a game is running. You add them with Add to Game.
-While it's on, only you save a local replay.</source>
+Everyone here when the game starts can still save a replay; whoever joins mid-game can't.</source>
             <translation>ゲーム中でもプレイヤーが参加できるようにします。参加したプレイヤーは「ゲームに追加」で追加します。
-オンの間、ローカルにリプレイを保存するのはあなただけです。</translation>
+ゲーム開始時にいるプレイヤーは引き続きリプレイを保存できますが、途中参加したプレイヤーは保存できません。</translation>
         </message>
         <message>
             <source>Late join is on.</source>
             <translation>途中参加がオンです。</translation>
         </message>
         <message>
-            <source>Local recording is off for everyone but you.</source>
-            <translation>あなた以外の全員のローカル保存はオフです。</translation>
+            <source>You joined mid-game, so you won't get a replay of this game.</source>
+            <translation>ゲームの途中で参加したため、このゲームのリプレイは保存されません。</translation>
         </message>
         <message>
-            <source>Only the host saves a local replay, so Record locally is off for you.</source>
-            <translation>ローカルにリプレイを保存するのはホストだけなので、あなたの「ローカルに保存」はオフです。</translation>
+            <source>Players who join mid-game won't get a replay of it.</source>
+            <translation>途中参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
         </message>
         <message>
             <source>Turn on late join?</source>
             <translation>途中参加をオンにしますか？</translation>
         </message>
         <message>
-            <source>Turning on late join turns off local recording for everyone in this room except you.</source>
-            <translation>途中参加をオンにすると、このルームのあなた以外の全員のローカル保存がオフになります。</translation>
+            <source>Players who join while a game is running won't get a replay of it.</source>
+            <translation>ゲーム中に参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
         </message>
         <message>
-            <source>Players can then join while a game is running, and you add them with Add to Game. Only your replay (.krec) is saved, since you're the one player sure to be in the whole game. Live Replay isn't affected.</source>
-            <translation>ゲーム中でもプレイヤーが参加できるようになり、「ゲームに追加」で追加できます。ゲームの最初から最後まで必ずいるのはあなただけなので、保存されるのはあなたのリプレイ（.krec）のみです。ライブリプレイには影響しません。</translation>
+            <source>Players can then join mid-game, and you add them with Add to Game. Everyone in the room when a game starts can still save a replay (.krec) of it, and Live Replay isn't affected. A replay can't start part way through a game, so whoever joins later doesn't get one.</source>
+            <translation>ゲームの途中でもプレイヤーが参加でき、あなたが「ゲームに追加」で加えます。ゲーム開始時にルームにいるプレイヤーは引き続きリプレイ（.krec）を保存でき、ライブリプレイにも影響はありません。リプレイはゲームの途中からは始められないため、あとから参加したプレイヤーには保存されません。</translation>
         </message>
         <message>
             <source>Turn On Late Join</source>
@@ -3417,10 +3417,6 @@ While it's on, only you save a local replay.</source>
         <message>
             <source>Need at least 2 players to start, or turn on Late join to start alone.</source>
             <translation>開始するには2人以上のプレイヤーが必要です。1人で開始するには途中参加をオンにしてください。</translation>
-        </message>
-        <message>
-            <source>Late join is on, so this game isn't saved to your PC. The host's replay covers it.</source>
-            <translation>途中参加がオンのため、このゲームはあなたのPCに保存されません。ホストのリプレイに記録されます。</translation>
         </message>
         <message>
             <source>Late join is on in this room. Only the host saves a local replay, so Save replay is off for you.</source>
@@ -7003,24 +6999,8 @@ Your frame delay can be changed during the warmup. Prediction defaults to 7 fram
     <context>
         <name>KailleraPlaybackDialog</name>
         <message>
-            <source>%1 / %2  (frame %3 / %4)</source>
-            <translation>%1 / %2  (フレーム %3 / %4)</translation>
-        </message>
-        <message>
-            <source>  —  jumping (%1%)</source>
-            <translation>  —  移動中 (%1%)</translation>
-        </message>
-        <message>
-            <source>Playback</source>
-            <translation>再生</translation>
-        </message>
-        <message>
             <source>Stop the current playback to watch %1.</source>
             <translation>%1 を見るには、再生中のリプレイを停止してください。</translation>
-        </message>
-        <message>
-            <source>Failed to load recording: %1</source>
-            <translation>録画を読み込めませんでした: %1</translation>
         </message>
         <message>
             <source>Ranked Replay</source>
@@ -7029,30 +7009,6 @@ Your frame delay can be changed during the warmup. Prediction defaults to 7 fram
         <message>
             <source>This ranked replay can't be played: %1</source>
             <translation>このランクリプレイは再生できません: %1</translation>
-        </message>
-        <message>
-            <source>Jump to:</source>
-            <translation>ジャンプ:</translation>
-        </message>
-        <message>
-            <source>Start</source>
-            <translation>最初</translation>
-        </message>
-        <message>
-            <source>Watch from the beginning</source>
-            <translation>最初から見る</translation>
-        </message>
-        <message>
-            <source>Game %1</source>
-            <translation>第%1ゲーム</translation>
-        </message>
-        <message>
-            <source>Bookmark</source>
-            <translation>ブックマーク</translation>
-        </message>
-        <message>
-            <source>Watch from %1 (%2)</source>
-            <translation>%1 から見る (%2)</translation>
         </message>
     </context>
     <context>
@@ -7387,20 +7343,6 @@ Your frame delay can be changed during the warmup. Prediction defaults to 7 fram
         <translation>非表示</translation>
     </message>
     <message>
-        <source>Late join is on in this room. Players who join mid-game don&apos;t get a replay of it.</source>
-        <translation>このルームは途中参加がオンです。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
-    </message>
-    <message>
-        <source>Late join is on. Players can join while a game is running; they won&apos;t get a replay of it.</source>
-        <translation>途中参加をオンにしました。ゲーム中でもプレイヤーが参加できますが、途中参加したプレイヤーにはそのゲームのリプレイは保存されません。</translation>
-    </message>
-    <message>
-        <source>Let players join while a game is running. You add them with Add to Game.
-Everyone here when the game starts can still save a replay; whoever joins mid-game can&apos;t.</source>
-        <translation>ゲーム中でもプレイヤーが参加できるようにします。参加者は「ゲームに追加」で加えます。
-ゲーム開始時にいるプレイヤーは引き続きリプレイを保存できますが、途中参加したプレイヤーは保存できません。</translation>
-    </message>
-    <message>
         <source>Not taking challenges</source>
         <translation>対戦の申し込みを受け付けていません</translation>
     </message>
@@ -7417,24 +7359,12 @@ Everyone here when the game starts can still save a replay; whoever joins mid-ga
         <translation>変更しても、すでにいるプレイヤーはそのまま残ります。</translation>
     </message>
     <message>
-        <source>Players can then join mid-game, and you add them with Add to Game. Everyone in the room when a game starts can still save a replay (.krec) of it, and Live Replay isn&apos;t affected. A replay can&apos;t start part way through a game, so whoever joins later doesn&apos;t get one.</source>
-        <translation>ゲームの途中でもプレイヤーが参加でき、あなたが「ゲームに追加」で加えます。ゲーム開始時にルームにいるプレイヤーは引き続きリプレイ（.krec）を保存でき、ライブリプレイにも影響はありません。リプレイはゲームの途中からは始められないため、あとから参加したプレイヤーには保存されません。</translation>
-    </message>
-    <message>
         <source>Players on Wi-Fi</source>
         <translation>Wi-Fiのプレイヤー</translation>
     </message>
     <message>
         <source>Players on Wi-Fi can&apos;t join.</source>
         <translation>Wi-Fiのプレイヤーは参加できません。</translation>
-    </message>
-    <message>
-        <source>Players who join mid-game won&apos;t get a replay of it.</source>
-        <translation>途中参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
-    </message>
-    <message>
-        <source>Players who join while a game is running won&apos;t get a replay of it.</source>
-        <translation>ゲーム中に参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
     </message>
     <message>
         <source>Players whose ping to the host is higher can&apos;t join.</source>
@@ -7465,10 +7395,6 @@ Everyone here when the game starts can still save a replay; whoever joins mid-ga
         <translation>そのルームは有線のみで、あなたはWi-Fiで接続しています。</translation>
     </message>
     <message>
-        <source>The host turned on late join. Players who join mid-game don&apos;t get a replay of it.</source>
-        <translation>ホストが途中参加をオンにしました。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
-    </message>
-    <message>
         <source>They turned challenges off. You can still send them a message.</source>
         <translation>相手は対戦の申し込みをオフにしています。メッセージは送れます。</translation>
     </message>
@@ -7483,14 +7409,6 @@ Everyone here when the game starts can still save a replay; whoever joins mid-ga
     <message>
         <source>Wired only</source>
         <translation>有線のみ</translation>
-    </message>
-    <message>
-        <source>You joined mid-game, so you won&apos;t get a replay of this game.</source>
-        <translation>ゲームの途中で参加したため、このゲームのリプレイは保存されません。</translation>
-    </message>
-    <message>
-        <source>You joined while a game is running, so you won&apos;t get a replay of this one.</source>
-        <translation>ゲーム中に参加したため、このゲームのリプレイは保存されません。</translation>
     </message>
     <message>
         <source>Your ping to that room&apos;s host is higher than the room allows.</source>
@@ -7689,4 +7607,218 @@ Everyone here when the game starts can still save a replay; whoever joins mid-ga
         <translation>進行中の対戦を上に</translation>
     </message>
 </context>
+        <context>
+        <name>KailleraPlaybackDialog</name>
+        <message>
+            <source>Replays</source>
+            <translation>リプレイ</translation>
+        </message>
+        <message>
+            <source>Date</source>
+            <translation>日付</translation>
+        </message>
+        <message>
+            <source>Players</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>Game</source>
+            <translation>ゲーム</translation>
+        </message>
+        <message>
+            <source>Duration</source>
+            <translation>長さ</translation>
+        </message>
+        <message>
+            <source>Size</source>
+            <translation>サイズ</translation>
+        </message>
+        <message>
+            <source>Filename</source>
+            <translation>ファイル名</translation>
+        </message>
+        <message>
+            <source>Click or drag to jump</source>
+            <translation>クリックまたはドラッグで移動</translation>
+        </message>
+        <message>
+            <source>Jump to %1</source>
+            <translation>%1 へ移動</translation>
+        </message>
+        <message>
+            <source>Play</source>
+            <translation>再生</translation>
+        </message>
+        <message>
+            <source>Pause</source>
+            <translation>一時停止</translation>
+        </message>
+        <message>
+            <source>« 10s</source>
+            <translation>« 10秒</translation>
+        </message>
+        <message>
+            <source>10s »</source>
+            <translation>10秒 »</translation>
+        </message>
+        <message>
+            <source>Step</source>
+            <translation>コマ送り</translation>
+        </message>
+        <message>
+            <source>Stop</source>
+            <translation>停止</translation>
+        </message>
+        <message>
+            <source>Add Bookmark</source>
+            <translation>ブックマークを追加</translation>
+        </message>
+        <message>
+            <source>Delete</source>
+            <translation>削除</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>更新</translation>
+        </message>
+        <message>
+            <source>Export MP4</source>
+            <translation>MP4 書き出し</translation>
+        </message>
+        <message>
+            <source>Open Folder</source>
+            <translation>フォルダーを開く</translation>
+        </message>
+        <message>
+            <source>Jump back 10 seconds</source>
+            <translation>10秒戻る</translation>
+        </message>
+        <message>
+            <source>Jump forward 10 seconds</source>
+            <translation>10秒進む</translation>
+        </message>
+        <message>
+            <source>Pause, then advance one frame</source>
+            <translation>一時停止して1フレーム進める</translation>
+        </message>
+        <message>
+            <source>Bookmark this moment of the recording</source>
+            <translation>録画のこの場面をブックマークする</translation>
+        </message>
+        <message>
+            <source>Speed</source>
+            <translation>速度</translation>
+        </message>
+        <message>
+            <source>Playback speed</source>
+            <translation>再生速度</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>閉じる</translation>
+        </message>
+        <message>
+            <source>%1 / %2  (frame %3 / %4)</source>
+            <translation>%1 / %2  (フレーム %3 / %4)</translation>
+        </message>
+        <message>
+            <source>  —  jumping (%1%)</source>
+            <translation>  —  移動中 (%1%)</translation>
+        </message>
+        <message>
+            <source>Jumping back to %1...</source>
+            <translation>%1 に戻っています...</translation>
+        </message>
+        <message>
+            <source>Failed to load recording: %1</source>
+            <translation>録画を読み込めませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Show chat</source>
+            <translation>チャットを表示</translation>
+        </message>
+        <message>
+            <source>Show the recording&apos;s chat messages the way they appeared on screen</source>
+            <translation>録画のチャットを、画面に表示されたとおりに表示します</translation>
+        </message>
+        <message>
+            <source>Bookmarks</source>
+            <translation>ブックマーク</translation>
+        </message>
+        <message>
+            <source>This recording&apos;s extra data comes from a newer version of Dale64, so its bookmarks can&apos;t be changed here.</source>
+            <translation>この録画の追加データは新しいバージョンのDale64で作成されたため、ここではブックマークを変更できません。</translation>
+        </message>
+        <message>
+            <source>The bookmarks couldn&apos;t be saved: %1</source>
+            <translation>ブックマークを保存できませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Bookmark %1</source>
+            <translation>ブックマーク %1</translation>
+        </message>
+        <message>
+            <source>Name the bookmark at %1:</source>
+            <translation>%1 のブックマーク名:</translation>
+        </message>
+        <message>
+            <source>Add</source>
+            <translation>追加</translation>
+        </message>
+        <message>
+            <source>Rename Bookmark</source>
+            <translation>ブックマーク名を変更</translation>
+        </message>
+        <message>
+            <source>The recording&apos;s bookmarks changed; they&apos;re shown again.</source>
+            <translation>録画のブックマークが変更されたため、表示し直しました。</translation>
+        </message>
+        <message>
+            <source>Delete Bookmark</source>
+            <translation>ブックマークを削除</translation>
+        </message>
+        <message>
+            <source>Delete the bookmark &quot;%1&quot; at %2?</source>
+            <translation>%2 のブックマーク「%1」を削除しますか？</translation>
+        </message>
+        <message>
+            <source>Game %1</source>
+            <translation>第%1ゲーム</translation>
+        </message>
+        <message>
+            <source>Bookmark</source>
+            <translation>ブックマーク</translation>
+        </message>
+        <message>
+            <source>Jump to:</source>
+            <translation>ジャンプ:</translation>
+        </message>
+        <message>
+            <source>Start</source>
+            <translation>最初</translation>
+        </message>
+        <message>
+            <source>Watch from the beginning</source>
+            <translation>最初から見る</translation>
+        </message>
+        <message>
+            <source>Watch from %1 (%2). Right-click to rename or delete it.</source>
+            <translation>%1 から見る (%2)。右クリックで名前の変更や削除ができます。</translation>
+        </message>
+        <message>
+            <source>Watch from %1 (%2)</source>
+            <translation>%1 から見る (%2)</translation>
+        </message>
+        <message>
+            <source>Rename...</source>
+            <translation>名前を変更...</translation>
+        </message>
+    </context>
+    <context>
+        <name>PlaybackTimeline</name>
+        <message>
+            <source>Timeline</source>
+            <translation>タイムライン</translation>
+        </message>
+    </context>
 </TS>

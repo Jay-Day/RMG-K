@@ -22,7 +22,14 @@
 #include <QElapsedTimer>
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QScrollArea>
+#include <QVector>
+
+#include <functional>
+
+class PlaybackTimeline;
 
 class KailleraPlaybackDialog : public QDialog
 {
@@ -39,7 +46,8 @@ public:
     // whether `path` is the recording being played
     bool isPlaying(const QString& path) const;
 
-    // jumps the playback to a .krec record (starts it when stopped)
+    // jumps the playback to a .krec record (starts the selected recording
+    // when stopped)
     void seekTo(int record);
 
 private slots:
@@ -47,6 +55,11 @@ private slots:
     void onPlaybackStop();
     void onPlaybackPause();
     void onPlaybackStepForward();
+    void onPlaybackBack();
+    void onPlaybackForward();
+    void onPlaybackAddBookmark();
+    void onPlaybackSpeedChanged(int index);
+    void onPlaybackSelectionChanged();
     void onPlaybackDelete();
     void onPlaybackRefresh();
     void onPlaybackOpenFolder();
@@ -55,7 +68,6 @@ private slots:
     void onPlaybackTimer();
     void onExportProcessOutput();
     void onExportProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
-    void onPlaybackSelectionChanged();
 
 private:
     struct ExportSettings
@@ -63,18 +75,41 @@ private:
         QString outputPath;
         int renderWidth = 960;
         int renderHeight = 720;
-        bool includeKailleraChat = true;
+        bool includeChat = false;
         bool labelPorts = false;
     };
 
+    // a bookmark in a recording's metadata
+    struct Bookmark
+    {
+        int record = 0;
+        QString label;    // as shown
+        QString kind;     // "user" for the ones added here
+        int index = -1;   // in the metadata's bookmarks array
+    };
+
     void setupUI();
-    // Ranked replays: metadata appended to the .krec (module, ruleset,
-    // bookmarks, write journal). Returns false when the recording has none.
+    // replay metadata appended to the .krec (bookmarks; ranked replays add
+    // their module and write journal). False when the recording has none.
     static bool loadReplayMetadata(const QString& krecPath, QJsonObject& metadata);
     // stages the recording's ranked module in replay mode; false = cancelled
     bool stageRankedReplay(const QString& krecPath);
+    // changes a recording's bookmarks; false (after telling the user) when
+    // they can't be saved
+    bool editBookmarks(const QString& krecPath, const std::function<void(QJsonArray&)>& edit);
+    void renameBookmark(const Bookmark& bookmark);
+    void deleteBookmark(const Bookmark& bookmark);
+    // the recording the bookmarks and timeline belong to: the one playing,
+    // else the selected one
+    QString timelineRecordingPath() const;
+    int selectedRecordingFrames() const;
+    void refreshBookmarks();
     void startPlayback(const QString& krecPath);
+    // restarting = stopping to replay from the start (a jump back)
+    void stopPlayback(bool restarting);
     void finishSeek();
+    void updateTimeline();
+    void syncSpeedCombo();
     void updatePlaybackControls();
     void populatePlaybackList();
     QString getSelectedRecordingPath() const;
@@ -91,7 +126,7 @@ private:
                             const QString& ffmpegPath,
                             int renderWidth,
                             int renderHeight,
-                            bool includeKailleraChat,
+                            bool includeChat,
                             bool labelPorts,
                             int totalFrames);
     void processExportOutputText(const QString& text, bool finalizePartialLine = false);
@@ -107,18 +142,32 @@ private:
     QPushButton* m_btnPlay = nullptr;
     QPushButton* m_btnPause = nullptr;
     QPushButton* m_btnStepForward = nullptr;
+    QPushButton* m_btnBack = nullptr;
+    QPushButton* m_btnForward = nullptr;
+    QPushButton* m_btnAddBookmark = nullptr;
     QPushButton* m_btnStop = nullptr;
+    QLabel* m_speedLabel = nullptr;
+    QComboBox* m_speedCombo = nullptr;
+    PlaybackTimeline* m_timeline = nullptr;
+    QScrollArea* m_bookmarkScroll = nullptr;
+    QWidget* m_bookmarkRow = nullptr;      // one button per bookmark
+    QHBoxLayout* m_bookmarkLayout = nullptr;
+    QVector<Bookmark> m_bookmarks;         // of timelineRecordingPath()
+    QString m_bookmarksPath;
+    QString m_activeRecordingPath;   // recording being played
+    int m_seekTarget = -1;           // fast-forwarding to this record
+    int m_seekFrom = 0;              // the record that jump started from
+    int m_restartSeekTarget = -1;    // seek after restarting the playback
+    bool m_seekPause = false;        // pause when the jump lands
+    int m_speed = 100;               // playback speed picked here, in percent
+    bool m_speedApplied = false;     // m_speed set on the running emulation
+    int m_playbackTotal = 0;         // records in the recording being played
+    bool m_stepping = false;         // a frame step's resume/pause is running
     QPushButton* m_btnPBDelete = nullptr;
     QPushButton* m_btnPBRefresh = nullptr;
     QPushButton* m_btnExport = nullptr;
     QPushButton* m_btnOpenFolder = nullptr;
     QLabel* m_frameLabel = nullptr;
-    QWidget* m_bookmarkRow = nullptr;      // one button per bookmark
-    QHBoxLayout* m_bookmarkLayout = nullptr;
-    bool m_modernButtons = false;
-    QString m_activeRecordingPath;   // recording being played
-    int m_seekTarget = -1;           // fast-forwarding to this record
-    int m_restartSeekTarget = -1;    // seek after restarting the playback
     bool m_playbackWasActive = false;
     bool m_isPaused = false;
     bool m_exportCanceled = false;

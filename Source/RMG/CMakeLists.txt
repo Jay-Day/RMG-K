@@ -122,6 +122,7 @@ if (NETPLAY)
         UserInterface/KailleraUIBridge.cpp
         UserInterface/Dialog/Kaillera/KailleraNetplayDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraPlaybackDialog.cpp
+        UserInterface/Dialog/Kaillera/PlaybackTimeline.cpp
         UserInterface/Dialog/Kaillera/KailleraServerBrowserDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraOptionsDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraP2PDialog.cpp
@@ -167,6 +168,7 @@ if (NETPLAY)
     if (WIN32)
         list(APPEND RMG_SOURCES
             Utilities/KailleraExport/KrecMp4Export.cpp
+            Utilities/KailleraExport/ChatOverlay.cpp
             Utilities/KailleraExport/EmulatorProxy.cpp
             Utilities/KailleraExport/PifReplay.cpp
             Utilities/KailleraExport/FrameCapture.cpp

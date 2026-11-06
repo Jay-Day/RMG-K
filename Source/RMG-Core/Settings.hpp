@@ -580,6 +580,9 @@ enum class SettingsID
     Ranked_DevBestOf,
     Ranked_DevPorts,
 
+    // Appended so the IDs above stay the same
+    Kaillera_ExportShowChat,
+
     Invalid
 };
 

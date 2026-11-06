@@ -1,5 +1,6 @@
 #include "FrameCapture.hpp"
 
+#include "ChatOverlay.hpp"
 #include "PifReplay.hpp"
 
 #include <RMG-Core/Directories.hpp>
@@ -62,6 +63,7 @@ static EncodeSlotState s_SlotStates[kEncodeSlotCount] = {
 static std::vector<uint8_t> s_RawBuffers[kEncodeSlotCount];
 static std::vector<uint8_t> s_FlippedBuffer;
 static int s_QueuedSlotIndices[kEncodeSlotCount] = { 0, 0 };
+static int s_SlotFrames[kEncodeSlotCount] = { 0, 0 }; // output frame in each slot
 static int s_QueueHead = 0;
 static int s_QueueTail = 0;
 static int s_QueueCount = 0;
@@ -70,6 +72,7 @@ static std::mutex s_EncodeMutex;
 static std::condition_variable s_EncodeWorkCv;
 static std::condition_variable s_EncodeSpaceCv;
 static PortLabelConfig s_PortLabelConfig;
+static bool s_ChatOverlay = false;
 
 // The labels for one frame size, drawn once. Qt lays the text out, so any script
 // works and fonts it lacks are found on the system. Only the strip they sit in is kept.
@@ -362,6 +365,10 @@ static void EncodeWorkerMain()
         }
 
         drawPortLabels(s_FlippedBuffer.data(), width, height);
+        if (s_ChatOverlay)
+        {
+            DrawChatOverlay(s_FlippedBuffer.data(), width, height, s_SlotFrames[slotIndex]);
+        }
 
         std::string errorMessage;
         if (!s_Encoder->writeFrame(s_FlippedBuffer.data(), width, height, &errorMessage))
@@ -439,7 +446,8 @@ void InitializeFrameCapture(EmulatorProxy* emulator,
                             FfmpegEncoder* encoder,
                             const FfmpegEncoderConfig& encoderConfig,
                             int expectedFrameCount,
-                            const PortLabelConfig& portLabelConfig)
+                            const PortLabelConfig& portLabelConfig,
+                            bool chatOverlay)
 {
     s_Emulator = emulator;
     s_Encoder = encoder;
@@ -460,6 +468,7 @@ void InitializeFrameCapture(EmulatorProxy* emulator,
     s_QueueCount = 0;
     s_PortLabelConfig = portLabelConfig;
     s_PortLabelStrip = QImage();
+    s_ChatOverlay = chatOverlay;
     for (int i = 0; i < kEncodeSlotCount; ++i)
     {
         s_SlotStates[i] = EncodeSlotState::Free;
@@ -569,6 +578,11 @@ void FrameCaptureCallback(unsigned int)
         s_SpeedLimiterDisabled = true;
     }
 
+    if (s_ChatOverlay)
+    {
+        AdvanceChatOverlay(GetPifReplayFrameIndex(), s_SubmittedFrames);
+    }
+
     const int slotIndex = reserveFreeSlot();
     if (slotIndex < 0)
     {
@@ -599,6 +613,7 @@ void FrameCaptureCallback(unsigned int)
         return;
     }
 
+    s_SlotFrames[slotIndex] = s_SubmittedFrames;
     if (!queueFilledSlot(slotIndex))
     {
         s_Emulator->stop();

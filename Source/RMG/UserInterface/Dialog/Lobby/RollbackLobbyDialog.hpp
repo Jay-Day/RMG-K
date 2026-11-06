@@ -1024,6 +1024,7 @@ private:
         QSet<quint64> awaitingCut;                // host: players yet to stop
         bool stateSent = false;                   // host
         bool cutReported = false;                 // player
+        QByteArray manifest;                      // joiner: held until the open game closes
         bool launched = false;                    // joiner
         bool readySent = false;                   // joiner
         qint64 readyMs = 0;                       // joiner, host: when it was ready
@@ -1132,6 +1133,8 @@ private:
     QString m_sessionTeammate;
     // the chosen teammate who hasn't searched with us as theirs yet
     QString m_sessionWaitingFor;
+    // Any game open on this PC, a live replay or an offline game included.
+    bool m_localGameOpen          = false;
 
     QMap<QString, CoreRomSettings> m_roms;
     QHash<QString, QString> m_coverPaths; // by MD5; empty when there's no cover

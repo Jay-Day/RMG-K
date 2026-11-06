@@ -1,5 +1,6 @@
 #include "KrecParser.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -79,17 +80,29 @@ bool ReadKrecMetadata(const std::filesystem::path& path, std::string& json)
     return readWholeFile(path, krec) && FindKrecMetadata(krec, trailerStart, &json);
 }
 
-bool AppendKrecMetadata(const std::filesystem::path& path, const std::string& json, std::string* errorMessage)
+bool WriteKrecMetadata(const std::filesystem::path& path, const std::string& json, std::string* errorMessage)
 {
     std::string krec;
-    if (!readWholeFile(path, krec) || krec.size() < 400 || krec.compare(0, 4, "KRC1") != 0)
+    if (!readWholeFile(path, krec))
     {
         return fail(errorMessage, "Cannot read the recording");
     }
-    size_t trailerStart = 0;
+    if (krec.size() < 400 || krec.compare(0, 4, "KRC1") != 0)
+    {
+        return fail(errorMessage, "Only KRC1 recordings can hold bookmarks");
+    }
+
+    // Only the trailer changes: cut the old one off and append the new one,
+    // so an interrupted write can't damage the recorded inputs.
+    size_t trailerStart = krec.size();
     if (FindKrecMetadata(krec, trailerStart, nullptr))
     {
-        return fail(errorMessage, "The recording already has metadata");
+        std::error_code errorCode;
+        std::filesystem::resize_file(path, trailerStart, errorCode);
+        if (errorCode)
+        {
+            return fail(errorMessage, "Cannot write the recording");
+        }
     }
 
     std::string trailer;
@@ -112,35 +125,18 @@ bool AppendKrecMetadata(const std::filesystem::path& path, const std::string& js
 
 bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::string* errorMessage)
 {
-    FILE* file = fopen(path.string().c_str(), "rb");
-    if (file == nullptr)
+    // opened by its wide path: player names in file names can be in any script
+    std::string contents;
+    if (!readWholeFile(path, contents))
     {
         return fail(errorMessage, "Cannot open recording file");
     }
-
-    if (fseek(file, 0, SEEK_END) != 0)
+    if (contents.size() < 272)
     {
-        fclose(file);
-        return fail(errorMessage, "Failed to seek recording file");
-    }
-
-    const long fileLength = ftell(file);
-    if (fileLength < 272)
-    {
-        fclose(file);
         return fail(errorMessage, "Recording file is too short");
     }
 
-    rewind(file);
-
-    std::vector<uint8_t> buffer(static_cast<size_t>(fileLength));
-    if (fread(buffer.data(), 1, buffer.size(), file) != buffer.size())
-    {
-        fclose(file);
-        return fail(errorMessage, "Failed to read recording file");
-    }
-
-    fclose(file);
+    const std::vector<uint8_t> buffer(contents.begin(), contents.end());
 
     const std::string magic = readCStringField(buffer.data(), 4);
     const bool isKrc1 = (magic == "KRC1");
@@ -240,22 +236,13 @@ bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::st
         }
         else if (type == 0x08)
         {
-            while (scan < end && *scan != 0)
-            {
-                ++scan;
-            }
-            if (scan < end)
-            {
-                ++scan;
-            }
-            while (scan < end && *scan != 0)
-            {
-                ++scan;
-            }
-            if (scan < end)
-            {
-                ++scan;
-            }
+            KrecChatLine line;
+            line.record = outData.totalInputFrames;
+            line.nick = readCStringField(scan, static_cast<size_t>(end - scan));
+            scan += std::min(line.nick.size() + 1, static_cast<size_t>(end - scan));
+            line.message = readCStringField(scan, static_cast<size_t>(end - scan));
+            scan += std::min(line.message.size() + 1, static_cast<size_t>(end - scan));
+            outData.chat.push_back(std::move(line));
         }
         else if (type == 0x16)
         {

@@ -1,11 +1,11 @@
 #include "KrecMp4Export.hpp"
 
+#include "ChatOverlay.hpp"
 #include "EmulatorProxy.hpp"
 #include "FfmpegEncoder.hpp"
 #include "FrameCapture.hpp"
 #include "KrecParser.hpp"
 #include "PifReplay.hpp"
-#include "OnScreenDisplay.hpp"
 
 #include <QCommandLineParser>
 #include <QJsonDocument>
@@ -45,7 +45,7 @@ struct ReplayExportOptions
     int renderHeight = 480;
     int crf = 23;
     double fps = 60.0;
-    bool includeKailleraChat = true;
+    bool includeChat = false;
     bool labelPorts = false;
     bool verbose = false;
 };
@@ -60,7 +60,7 @@ static constexpr const char* kExportOutputOption = "export-output";
 static constexpr const char* kExportFfmpegOption = "export-ffmpeg";
 static constexpr const char* kExportWidthOption = "export-width";
 static constexpr const char* kExportHeightOption = "export-height";
-static constexpr const char* kExportNoKailleraChatOption = "export-no-kaillera-chat";
+static constexpr const char* kExportChatOption = "export-chat";
 static constexpr const char* kExportLabelPortsOption = "export-label-ports";
 static constexpr const char* kExportVerboseOption = "export-verbose";
 
@@ -211,7 +211,7 @@ static bool parseOptions(const QCommandLineParser& parser,
     outOptions.romPath = std::filesystem::path(romValue.toStdString());
     outOptions.outputPath = std::filesystem::path(outputValue.toStdString());
     outOptions.ffmpegPath = resolveFfmpegPath(parser);
-    outOptions.includeKailleraChat = !parser.isSet(kExportNoKailleraChatOption);
+    outOptions.includeChat = parser.isSet(kExportChatOption);
     outOptions.labelPorts = parser.isSet(kExportLabelPortsOption);
     outOptions.verbose = parser.isSet(kExportVerboseOption);
 
@@ -441,14 +441,19 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     InitializePifReplay(&krecData);
     emulator.setPifCallback(PifReplayCallback);
 
-    OnScreenDisplaySetKailleraChatEnabled(options.includeKailleraChat);
-
     PortLabelConfig portLabelConfig;
     portLabelConfig.enabled = options.labelPorts;
     portLabelConfig.playerCount = krecData.header.numPlayers;
     portLabelConfig.playerNames = krecData.header.playerNames;
 
-    InitializeFrameCapture(&emulator, &encoder, encoderConfig, krecData.totalInputFrames, portLabelConfig);
+    const bool chatOverlay = options.includeChat && !krecData.chat.empty();
+    if (chatOverlay)
+    {
+        InitializeChatOverlay(krecData.chat, options.fps, portLabelConfig.enabled && portLabelConfig.playerCount > 0);
+        fprintf(stderr, "Showing %zu chat lines\n", krecData.chat.size());
+    }
+
+    InitializeFrameCapture(&emulator, &encoder, encoderConfig, krecData.totalInputFrames, portLabelConfig, chatOverlay);
     s_RankedJournalActive = loadRankedJournal(options.krecPath);
     if (s_RankedJournalActive)
     {
@@ -462,6 +467,7 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
 
     const m64p_error executeResult = emulator.execute();
     FlushFrameCapture();
+    ShutdownChatOverlay();
     encoder.close();
 
     std::string frameCaptureError;
