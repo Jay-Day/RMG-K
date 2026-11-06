@@ -78,6 +78,7 @@ void EmulationThread::SetLobbyNetplay(QStringList remotePeers, int localPort, in
 
 void EmulationThread::run(void)
 {
+    this->nativeThreadId = reinterpret_cast<quintptr>(QThread::currentThreadId());
     this->inhibitScreensaver();
 
     emit this->on_Emulation_Started();

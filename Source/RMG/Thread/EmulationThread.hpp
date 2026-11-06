@@ -18,6 +18,8 @@
 #include <QString>
 #include <QThread>
 
+#include <atomic>
+
 enum class VidExtRenderMode
 {
     OpenGL  = 0,
@@ -47,7 +49,11 @@ class EmulationThread : public QThread
 
     void run(void) override;
 
+    // the native ID of the thread running the last emulation (0 before one ran)
+    quintptr GetNativeThreadId(void) const { return this->nativeThreadId; }
+
   private:
+    std::atomic<quintptr> nativeThreadId{0};
     QString rom;
     QString disk;
     QString address;

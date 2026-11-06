@@ -5030,6 +5030,10 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, [](const QString& message) { OnScreenDisplaySetCenterMessage(message.toStdString()); });
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::portLabelsChanged,
             this, []() { OnScreenDisplaySetKailleraPortLabelNames(GetLiveKailleraPortLabelNames()); });
+
+    // The lobby opened over a game already running.
+    if (this->emulationThread && this->emulationThread->isRunning())
+        this->rollbackLobbyDialog->notifyEmulationStarted();
 }
 #endif
 
@@ -5287,7 +5291,7 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     }
 
     // A late joiner's replay would start mid-game with nothing to restore
-    // from, so it records nothing; the host's replay covers the whole match.
+    // from, so it records nothing; the players who started the match have all of it.
     if (!lateJoiner)
     {
         // A match that starts from save data keeps it in the replay file.
@@ -5319,6 +5323,12 @@ void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
 {
     // Only show in-game Kaillera chat (not lobby chat).
     if (!CoreHasInitKaillera() || !this->emulationThread->isRunning())
+    {
+        return;
+    }
+
+    // a playback jump skips the chat it fast-forwards past
+    if (CoreIsKailleraPlaybackMode() && CoreIsPlaybackSeeking())
     {
         return;
     }
@@ -7001,18 +7011,73 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
 
 void MainWindow::on_VidExt_Quit(void)
 {
+    QWidget* renderWidget = nullptr;
     if (this->ui_VidExtRenderMode == VidExtRenderMode::OpenGL)
     {
-        this->ui_Widgets->removeWidget(this->ui_Widget_OpenGL->GetWidget());
-        this->ui_Widget_OpenGL->GetWidget()->deleteLater();
+        renderWidget = this->ui_Widget_OpenGL->GetWidget();
         this->ui_Widget_OpenGL = nullptr;
     }
     else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
     {
-        this->ui_Widgets->removeWidget(this->ui_Widget_Vulkan->GetWidget());
-        this->ui_Widget_Vulkan->GetWidget()->deleteLater();
+        renderWidget = this->ui_Widget_Vulkan->GetWidget();
         this->ui_Widget_Vulkan = nullptr;
+    }
+
+    if (renderWidget != nullptr)
+    {
+        this->ui_Widgets->removeWidget(renderWidget);
+#ifdef _WIN32
+        this->retireRenderWidget(renderWidget);
+#else
+        renderWidget->deleteLater();
+#endif
     }
 
     this->ui_VidExtRenderMode = VidExtRenderMode::Invalid;
 }
+
+#ifdef _WIN32
+void MainWindow::retireRenderWidget(QWidget* widget)
+{
+    // the emulation thread is blocked in VidExt_Quit here, so it's alive
+    const DWORD threadId = static_cast<DWORD>(this->emulationThread->GetNativeThreadId());
+    HANDLE thread = threadId != 0 ? OpenThread(SYNCHRONIZE, FALSE, threadId) : nullptr;
+    if (thread == nullptr)
+    {
+        widget->deleteLater();
+        return;
+    }
+
+    widget->hide();
+    this->ui_RetiredRenderWidgets.append({widget, thread});
+    if (this->ui_RetiredRenderWidgetTimer == nullptr)
+    {
+        this->ui_RetiredRenderWidgetTimer = new QTimer(this);
+        this->ui_RetiredRenderWidgetTimer->setInterval(20);
+        connect(this->ui_RetiredRenderWidgetTimer, &QTimer::timeout, this, &MainWindow::destroyRetiredRenderWidgets);
+    }
+    this->ui_RetiredRenderWidgetTimer->start();
+}
+
+void MainWindow::destroyRetiredRenderWidgets(void)
+{
+    for (auto it = this->ui_RetiredRenderWidgets.begin(); it != this->ui_RetiredRenderWidgets.end();)
+    {
+        if (WaitForSingleObject(static_cast<HANDLE>(it->thread), 0) != WAIT_OBJECT_0)
+        {
+            ++it;
+            continue;
+        }
+        CloseHandle(static_cast<HANDLE>(it->thread));
+        if (!it->widget.isNull())
+        {
+            it->widget->deleteLater();
+        }
+        it = this->ui_RetiredRenderWidgets.erase(it);
+    }
+    if (this->ui_RetiredRenderWidgets.isEmpty())
+    {
+        this->ui_RetiredRenderWidgetTimer->stop();
+    }
+}
+#endif
