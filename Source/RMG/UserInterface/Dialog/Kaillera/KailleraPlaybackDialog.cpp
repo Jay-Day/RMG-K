@@ -1625,7 +1625,7 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
     m_exportProcess->setProcessChannelMode(QProcess::MergedChannels);
 
     /* Hack for AppImages - this runs the RMG-K binary directly, which doesn't have the environment
-     * that would be set by AppRun
+     * that would be set by AppRun and thus fails to load libRMG-Core
      *
      * This is also true for upstream RMG, but they don't invoke a separate process like this
      * so it's a problem only in this case
