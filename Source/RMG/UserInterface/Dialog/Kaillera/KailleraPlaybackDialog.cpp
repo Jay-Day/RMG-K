@@ -1623,7 +1623,23 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
 
     m_exportProcess = new QProcess(this);
     m_exportProcess->setProcessChannelMode(QProcess::MergedChannels);
-    m_exportProcess->setProgram(QCoreApplication::applicationFilePath());
+
+    /* Hack for AppImages - this runs the RMG-K binary directly, which doesn't have the environment
+     * that would be set by AppRun
+     *
+     * This is also true for upstream RMG, but they don't invoke a separate process like this
+     * so it's a problem only in this case
+     *
+     * Thus if it's the AppImage, run AppRun instead of the RMG-K binary
+     */
+#ifndef APPIMAGE_UPDATER
+    const QString program = QCoreApplication::applicationFilePath();
+#else
+    const QString program(QCoreApplication::applicationFilePath().remove("shared/bin/RMG-K") + "AppRun");
+#endif
+
+    m_exportProcess->setProgram(program);
+
     QStringList exportArguments = {
         "--export-krec", recordingPath,
         "--export-rom", romPath,
