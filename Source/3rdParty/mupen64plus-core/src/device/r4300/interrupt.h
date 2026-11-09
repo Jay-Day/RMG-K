@@ -22,6 +22,7 @@
 #ifndef M64P_DEVICE_R4300_INTERRUPT_H
 #define M64P_DEVICE_R4300_INTERRUPT_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "api/m64p_types.h"
@@ -51,7 +52,7 @@ void interrupt_set_rollback_input_active(int active);
 void remove_interrupt_event(struct cp0* cp0);
 
 int save_eventqueue_infos(const struct cp0* cp0, char *buf);
-void load_eventqueue_infos(struct cp0* cp0, const char *buf);
+void load_eventqueue_infos(struct cp0* cp0, const char *buf, size_t size);
 
 void reset_hard_handler(void* opaque);
 
