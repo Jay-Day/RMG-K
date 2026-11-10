@@ -237,10 +237,18 @@ void read_ai_regs(void* opaque, uint32_t address, uint32_t* value)
         *value = get_remaining_dma_length(ai);
         if (*value < ai->last_read)
         {
-            unsigned int diff = ai->fifo[0].length - ai->last_read;
-            unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[ai->fifo[0].address/4];
-            if (main_frame_audio_enabled())
+            /* The DMA's address and length are whatever the game wrote to the
+             * AI registers, or whatever a savestate held, unchecked: push only
+             * samples that lie inside RDRAM. Skipping a push drops audio output
+             * only, which isn't emulated state, so it can't change the game. */
+            const size_t dram_size = ai->ri->rdram->dram_size;
+            const uint32_t start = ai->fifo[0].address & ~UINT32_C(3);
+            const uint32_t length = ai->fifo[0].length;
+            if (ai->last_read <= length && start <= dram_size && length <= dram_size - start
+                && main_frame_audio_enabled())
             {
+                unsigned int diff = length - ai->last_read;
+                unsigned char *p = (unsigned char*)&ai->ri->rdram->dram[start/4];
                 uint64_t begin = l_AiRollbackStatsEnabled ? ai_rollback_now_us() : 0;
                 ai->iaout->push_samples(ai->aout, p + diff, ai->last_read - *value);
                 if (l_AiRollbackStatsEnabled)

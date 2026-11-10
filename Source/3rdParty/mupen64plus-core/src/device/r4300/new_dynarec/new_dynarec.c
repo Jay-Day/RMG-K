@@ -1916,6 +1916,18 @@ void* ERET_new(void)
     }
 }
 
+/* The memory_map entry for TLB-mapped page `page`: a host address, shifted
+ * right by 2, that compiled code adds the virtual address to, or -1 for an
+ * unmapped page. tlb_map() only maps physical pages below 0x20000000, the
+ * size of the block RDRAM starts (init_mem_base), but the TLB lookup table
+ * and the ranges tlb_map() works from also come straight from savestates, so
+ * a value outside that block must not become a pointer into host memory. */
+static uintptr_t tlb_page_memory_map(uint32_t lut, u_int page)
+{
+  if(!(lut&0x80000000)||(lut&0x7FFFF000)>=0x20000000) return (uintptr_t)-1;
+  return ((uintptr_t)g_dev.rdram.dram+(uintptr_t)((lut&0xFFFFF000)-0x80000000)-(page<<12))>>2;
+}
+
 static void TLBWI_new(int pcaddr, int count)
 {
   unsigned int i;
@@ -1955,7 +1967,7 @@ static void TLBWI_new(int pcaddr, int count)
     if(i<0x80000||i>0xBFFFF)
     {
       if(r4300->cp0.tlb.LUT_r[i]) {
-        state->memory_map[i]=((uintptr_t)g_dev.rdram.dram+(uintptr_t)((r4300->cp0.tlb.LUT_r[i]&0xFFFFF000)-0x80000000)-(i<<12))>>2;
+        state->memory_map[i]=tlb_page_memory_map(r4300->cp0.tlb.LUT_r[i],i);
         // FIXME: should make sure the physical page is invalid too
         if(!r4300->cp0.tlb.LUT_w[i]||!r4300->cached_interp.invalid_code[i]) {
           state->memory_map[i]|=WRITE_PROTECT; // Write protect
@@ -1976,7 +1988,7 @@ static void TLBWI_new(int pcaddr, int count)
     if(i<0x80000||i>0xBFFFF)
     {
       if(r4300->cp0.tlb.LUT_r[i]) {
-        state->memory_map[i]=((uintptr_t)g_dev.rdram.dram+(uintptr_t)((r4300->cp0.tlb.LUT_r[i]&0xFFFFF000)-0x80000000)-(i<<12))>>2;
+        state->memory_map[i]=tlb_page_memory_map(r4300->cp0.tlb.LUT_r[i],i);
         // FIXME: should make sure the physical page is invalid too
         if(!r4300->cp0.tlb.LUT_w[i]||!r4300->cached_interp.invalid_code[i]) {
           state->memory_map[i]|=WRITE_PROTECT; // Write protect
@@ -2031,7 +2043,7 @@ static void TLBWR_new(int pcaddr, int count)
     if(i<0x80000||i>0xBFFFF)
     {
       if(r4300->cp0.tlb.LUT_r[i]) {
-        state->memory_map[i]=((uintptr_t)g_dev.rdram.dram+(uintptr_t)((r4300->cp0.tlb.LUT_r[i]&0xFFFFF000)-0x80000000)-(i<<12))>>2;
+        state->memory_map[i]=tlb_page_memory_map(r4300->cp0.tlb.LUT_r[i],i);
         // FIXME: should make sure the physical page is invalid too
         if(!r4300->cp0.tlb.LUT_w[i]||!r4300->cached_interp.invalid_code[i]) {
           state->memory_map[i]|=WRITE_PROTECT; // Write protect
@@ -2052,7 +2064,7 @@ static void TLBWR_new(int pcaddr, int count)
     if(i<0x80000||i>0xBFFFF)
     {
       if(r4300->cp0.tlb.LUT_r[i]) {
-        state->memory_map[i]=((uintptr_t)g_dev.rdram.dram+(uintptr_t)((r4300->cp0.tlb.LUT_r[i]&0xFFFFF000)-0x80000000)-(i<<12))>>2;
+        state->memory_map[i]=tlb_page_memory_map(r4300->cp0.tlb.LUT_r[i],i);
         // FIXME: should make sure the physical page is invalid too
         if(!r4300->cp0.tlb.LUT_w[i]||!r4300->cached_interp.invalid_code[i]) {
           state->memory_map[i]|=WRITE_PROTECT; // Write protect
@@ -2935,7 +2947,7 @@ void invalidate_block(u_int block)
   // If there is a valid TLB entry for this page, remove write protect
   if(block<0x100000&&g_dev.r4300.cp0.tlb.LUT_w[block]) {
     assert(g_dev.r4300.cp0.tlb.LUT_r[block]==g_dev.r4300.cp0.tlb.LUT_w[block]);
-    g_dev.r4300.new_dynarec_hot_state.memory_map[block]=((uintptr_t)g_dev.rdram.dram+(uintptr_t)((g_dev.r4300.cp0.tlb.LUT_w[block]&0xFFFFF000)-0x80000000)-(block<<12))>>2;
+    g_dev.r4300.new_dynarec_hot_state.memory_map[block]=tlb_page_memory_map(g_dev.r4300.cp0.tlb.LUT_w[block],block);
     u_int real_block=g_dev.r4300.cp0.tlb.LUT_w[block]>>12;
     g_dev.r4300.cached_interp.invalid_code[real_block]=1;
     if(real_block>=0x80000&&real_block<0x80800) g_dev.r4300.new_dynarec_hot_state.memory_map[real_block]=((uintptr_t)g_dev.rdram.dram-(uintptr_t)0x80000000)>>2;
@@ -2969,7 +2981,7 @@ static void invalidate_all_pages(void)
   // TLB
   for(page=0;page<0x100000;page++) {
     if(g_dev.r4300.cp0.tlb.LUT_r[page]) {
-      g_dev.r4300.new_dynarec_hot_state.memory_map[page]=((uintptr_t)g_dev.rdram.dram+(uintptr_t)((g_dev.r4300.cp0.tlb.LUT_r[page]&0xFFFFF000)-0x80000000)-(page<<12))>>2;
+      g_dev.r4300.new_dynarec_hot_state.memory_map[page]=tlb_page_memory_map(g_dev.r4300.cp0.tlb.LUT_r[page],page);
       if(!g_dev.r4300.cp0.tlb.LUT_w[page]||!g_dev.r4300.cached_interp.invalid_code[page])
         g_dev.r4300.new_dynarec_hot_state.memory_map[page]|=WRITE_PROTECT; // Write protect
     }

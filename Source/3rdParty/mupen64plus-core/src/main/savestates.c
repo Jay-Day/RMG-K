@@ -946,7 +946,7 @@ static int savestates_load_m64p(struct device* dev, char *filepath)
     // assert(savestateData+savestateSize == curr)
 
     to_little_endian_buffer(queue, 4, 256);
-    load_eventqueue_infos(&dev->r4300.cp0, queue);
+    load_eventqueue_infos(&dev->r4300.cp0, queue, sizeof(queue));
 
 #ifdef NEW_DYNAREC
     // Default this to 1, it will be updated by the correct save state version later
@@ -1589,7 +1589,7 @@ static int savestates_load_pj64(struct device* dev,
     *((unsigned int*)&buffer[12]) = cp0_regs[CP0_COMPARE_REG];
     *((unsigned int*)&buffer[16]) = 0xFFFFFFFF;
 
-    load_eventqueue_infos(&dev->r4300.cp0, buffer);
+    load_eventqueue_infos(&dev->r4300.cp0, buffer, sizeof(buffer));
 
     // FPCR
     *r4300_cp1_fcr0(&dev->r4300.cp1) = GETDATA(curr, uint32_t);

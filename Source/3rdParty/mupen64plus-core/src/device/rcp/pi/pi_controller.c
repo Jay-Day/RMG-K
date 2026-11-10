@@ -109,8 +109,13 @@ static void dma_pi_write(struct pi_controller* pi)
     /* PI seems to treat the first 128 bytes differently, see https://n64brew.dev/wiki/Peripheral_Interface#Unaligned_DMA_transfer */
     if (length >= 0x7f && (length & 1))
         length += 1;
-    if (length <= 0x80)
-        length -= dram_addr & 0x7;
+    if (length <= 0x80) {
+        /* A short transfer to a misaligned address can be shorter than the
+         * misalignment; unsigned, it wrapped to ~4 GB and the cart handlers'
+         * bounds checks wrapped with it. */
+        const uint32_t misalign = dram_addr & 0x7;
+        length = (length > misalign) ? length - misalign : 0;
+    }
     unsigned int cycles = handler->dma_write(opaque, dram, dram_addr, cart_addr, length);
 
     post_framebuffer_write(&pi->dp->fb, dram_addr, length);

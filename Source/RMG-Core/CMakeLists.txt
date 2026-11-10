@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD 20)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MINIZIP REQUIRED minizip)
+# Linked directly: Compression.cpp calls zlib itself, and minizip only
+# lists it as a private dependency on some distributions.
+find_package(ZLIB REQUIRED)
 if (WIN32)
     pkg_check_modules(ICONV REQUIRED iconv)
 endif(WIN32)
@@ -38,6 +41,7 @@ set(RMG_CORE_SOURCES
     Callback.cpp
     Settings.cpp
     Archive.cpp
+    Compression.cpp
     Library.cpp
     Netplay.cpp
     Kaillera.cpp
@@ -82,6 +86,7 @@ endif(WIN32)
 
 target_link_libraries(RMG-Core PRIVATE
     ${MINIZIP_LIBRARIES}
+    ZLIB::ZLIB
     lzma
 )
 
