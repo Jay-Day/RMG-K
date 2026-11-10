@@ -21,7 +21,6 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
-#include <format>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -292,10 +291,10 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
 #endif
 
     const std::filesystem::path corePath = CoreGetCoreDirectory() / (coreLibFileName + fileExt);
-    const std::filesystem::path inputPluginPath = getPluginPath("Input", std::format("RMG-Input{}", fileExt).c_str());
-    const std::filesystem::path rspPluginPath = getPluginPath("RSP", std::format("mupen64plus-rsp-hle{}", fileExt).c_str());
-    const std::filesystem::path gfxPluginPath = getPluginPath("GFX", std::format("mupen64plus-video-GLideN64{}", fileExt).c_str());
-    const std::filesystem::path audioPluginPath = getPluginPath("Audio", std::format("RMG-Audio-Capture{}", fileExt).c_str());
+    const std::filesystem::path inputPluginPath = getPluginPath("Input", ("RMG-Input" + fileExt).c_str());
+    const std::filesystem::path rspPluginPath = getPluginPath("RSP", ("mupen64plus-rsp-hle" + fileExt).c_str());
+    const std::filesystem::path gfxPluginPath = getPluginPath("GFX", ("mupen64plus-video-GLideN64" + fileExt).c_str());
+    const std::filesystem::path audioPluginPath = getPluginPath("Audio", ("RMG-Audio-Capture" + fileExt).c_str());
 
     const std::filesystem::path dataDirectory = CoreGetSharedDataDirectory();
 

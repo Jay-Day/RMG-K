@@ -4,7 +4,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include <format>
 
 #ifdef _WIN32
 #include <io.h>
@@ -13,7 +12,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <poll.h>
-#include <locale>
+#include <locale.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -516,10 +515,25 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
 
     return runFfmpegCommand(command, errorMessage);
 #else
+    char timeStampBuffer[64];
+    char audioFreqBuffer[64];
+
+    //std::format is not used for compatibility with older systems
+    //Otherwise, std::locale and std::format would be simpler options
+    auto currentLocale = setlocale(LC_ALL, NULL);
+
     //Use default C locale for formatting numbers
-    std::locale cLocale("C");
-    std::string timestampStr = std::format(cLocale, "{:g}", timestampScale);
-    std::string audioFreqStr = std::format(cLocale, "{:d}", audioFrequency);
+    setlocale(LC_NUMERIC, "C");
+
+    //Print to buffers
+    std::snprintf(timeStampBuffer, sizeof(timeStampBuffer), "%g", timestampScale);
+    std::snprintf(audioFreqBuffer, sizeof(audioFreqBuffer), "%d", audioFrequency);
+
+    //Set locale back
+    setlocale(LC_ALL, currentLocale);
+
+    std::string timestampStr(timeStampBuffer);
+    std::string audioFreqStr(audioFreqBuffer);
 
     std::vector<std::string> arguments =
     {
@@ -637,16 +651,30 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
 
     setvbuf(m_Pipe, nullptr, _IOFBF, 1 << 20);
 #else
+    char videoSizeBuffer[16];
+    char fpsBuffer[16];
+
     std::vector<std::string> encoderFlags = buildVideoEncoderFlagsPosix(m_SelectedVideoEncoder, config.crf);
     fprintf(stderr,
             "Using FFmpeg video encoder: %s%s\n",
             m_SelectedVideoEncoder.c_str(),
             m_HardwareAccelerated ? " (hardware)" : " (CPU)");
 
+    auto currentLocale = setlocale(LC_ALL, NULL);
+
     //Use default C locale for formatting numbers
-    std::locale cLocale("C");
-    std::string videoSizeStr = std::format(cLocale, "{}x{}", config.width, config.height);
-    std::string fpsStr = std::format(cLocale, "{:g}", config.fps);
+    setlocale(LC_NUMERIC, "C");
+
+    //Print to buffers
+    std::snprintf(videoSizeBuffer, sizeof(videoSizeBuffer), "%dx%d", config.width, config.height);
+    std::snprintf(fpsBuffer, sizeof(fpsBuffer), "%g", config.fps);
+
+    //Set locale back
+    setlocale(LC_ALL, currentLocale);
+
+    std::string videoSizeStr(videoSizeBuffer);
+    std::string fpsStr(fpsBuffer);
+
     std::vector<std::string> command =
         {
           config.ffmpegPath, "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "rgb24",
