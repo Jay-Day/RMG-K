@@ -186,11 +186,13 @@ bool playbackLoad(const char* filename);
 // Live spectate: play a .krec that is still being received over the network.
 // playbackBeginStream() arms an empty growing buffer; playbackAppendBytes()
 // feeds krec bytes as they arrive (the game auto-starts once the header is in);
-// playbackStopStream() ends it. Playback starts once this many input frames are
-// buffered and, if starved, stalls until the same cushion has been rebuilt.
+// playbackStopStream() ends it. playbackAppendBytes() returns false when the
+// stream is too large or malformed to keep playing. Playback starts once this
+// many input frames are buffered and, if starved, stalls until the same
+// cushion has been rebuilt.
 constexpr int LIVE_REPLAY_BUFFER_FRAMES = 120; // approximately 2 seconds at 60 Hz
 bool playbackBeginStream();
-void playbackAppendBytes(const void* data, int len);
+bool playbackAppendBytes(const void* data, int len);
 void playbackStopStream();
 
 // Check if playback is currently active

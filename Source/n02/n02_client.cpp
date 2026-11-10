@@ -576,6 +576,7 @@ public:
     bool   headerParsed = false;
     bool   streamBufferPrimed = false;
     bool   streamBuffering = false;
+    bool   malformed = false;        // a record no recorder writes was seen
 
     std::vector<size_t> frameIndex;  // offsets of 0x12 (input) records
     int currentFrameIdx = 0;
@@ -595,6 +596,7 @@ public:
         pos = 0; headerSize = 0; scanPos = 0;
         streaming = false; headerParsed = false;
         streamBufferPrimed = false; streamBuffering = false;
+        malformed = false;
         frameIndex.clear(); currentFrameIdx = 0;
         portEvents.clear();
         memset(headerNames, 0, sizeof(headerNames));
@@ -652,6 +654,29 @@ static void notify_playback_port_names() {
         playback_port_names_callback(recording_player_names);
 }
 
+// The most a live stream may hold. The lobby ends a broadcast at the same
+// size; hours of 4-player input are a few MB.
+constexpr size_t MAX_STREAM_BYTES = 64u * 1024 * 1024;
+
+// The longest name and chat line a record's reader takes (see player_MPV),
+// terminator included. Recorders write far shorter ones.
+constexpr size_t MAX_RECORD_NICK_BYTES = 100;
+constexpr size_t MAX_RECORD_CHAT_BYTES = 500;
+
+// Finds the NUL that ends the string at d[from]. Returns n while it hasn't
+// arrived yet. A string with no NUL inside maxBytes is malformed: without the
+// limit every new chunk would search the whole unterminated tail again.
+static size_t find_record_str_end(const char* d, size_t from, size_t n, size_t maxBytes, bool& malformed) {
+    const size_t limit = (n - from < maxBytes) ? n : from + maxBytes;
+    size_t z = from;
+    while (z < limit && d[z] != 0) z++;
+    if (z < limit)
+        return z;
+    if (limit < n || n - from >= maxBytes)
+        malformed = true;
+    return n;
+}
+
 static int streamBufferedFrames(const PlayBackBufferC& pb) {
     const int buffered = static_cast<int>(pb.frameIndex.size()) - pb.currentFrameIdx;
     return buffered > 0 ? buffered : 0;
@@ -670,18 +695,17 @@ static bool streamRecordComplete(PlayBackBufferC& pb) {
         memcpy(&rlen, pb.data.data() + p + 1, 2);
         return p + 3 + (size_t)rlen <= n;
     } else if (t == 0x14) {
-        size_t z = p + 1;
-        while (z < n && pb.data[z] != 0) z++;
+        bool malformed = false;
+        size_t z = find_record_str_end(pb.data.data(), p + 1, n, MAX_RECORD_NICK_BYTES, malformed);
         if (z >= n) return false;     // nick NUL not yet present
         z++;
         return z + 4 <= n;
     } else if (t == 0x08) {
-        size_t z = p + 1;
-        while (z < n && pb.data[z] != 0) z++;
+        bool malformed = false;
+        size_t z = find_record_str_end(pb.data.data(), p + 1, n, MAX_RECORD_NICK_BYTES, malformed);
         if (z >= n) return false;
         z++;
-        size_t z2 = z;
-        while (z2 < n && pb.data[z2] != 0) z2++;
+        const size_t z2 = find_record_str_end(pb.data.data(), z, n, MAX_RECORD_CHAT_BYTES, malformed);
         return z2 < n;                // both strings terminated
     }
     return false;
@@ -739,8 +763,7 @@ static void scanFrames() {
             pb.frameIndex.push_back(scan);
             scan += 3 + (size_t)rlen;
         } else if (t == 0x14) {
-            size_t z = scan + 1;
-            while (z < n && d[z] != 0) z++;
+            size_t z = find_record_str_end(d, scan + 1, n, MAX_RECORD_NICK_BYTES, pb.malformed);
             if (z >= n) break;
             z++;
             if (z + 4 > n) break;
@@ -751,12 +774,10 @@ static void scanFrames() {
             pb.portEvents.push_back(event);
             scan = z + 4;
         } else if (t == 0x08) {
-            size_t z = scan + 1;
-            while (z < n && d[z] != 0) z++;
+            size_t z = find_record_str_end(d, scan + 1, n, MAX_RECORD_NICK_BYTES, pb.malformed);
             if (z >= n) break;
             z++;
-            size_t z2 = z;
-            while (z2 < n && d[z2] != 0) z2++;
+            const size_t z2 = find_record_str_end(d, z, n, MAX_RECORD_CHAT_BYTES, pb.malformed);
             if (z2 >= n) break;
             scan = z2 + 1;
         } else {
@@ -977,14 +998,18 @@ static bool player_beginStream() {
     return true;
 }
 
-static void player_appendStream(const void* data, int len) {
+// Returns false once the stream can't be played any further: it outgrew
+// MAX_STREAM_BYTES or holds a malformed record. The caller ends the stream.
+static bool player_appendStream(const void* data, int len) {
     if (data == nullptr || len <= 0)
-        return;
+        return true;
     {
         std::lock_guard<std::recursive_mutex> lock(playbackMutex);
         PlayBackBufferC& pb = PlayBackBuffer;
         if (!pb.streaming)
-            return;
+            return true;
+        if (pb.malformed || pb.data.size() + static_cast<size_t>(len) > MAX_STREAM_BYTES)
+            return false;
         const char* p = (const char*)data;
         pb.data.insert(pb.data.end(), p, p + len);
         if (!pb.headerParsed) {
@@ -996,8 +1021,11 @@ static void player_appendStream(const void* data, int len) {
         }
         if (pb.headerParsed)
             scanFrames();
+        if (pb.malformed)
+            return false;
     }
     playbackCondition.notify_all();
+    return true;
 }
 
 static void player_stopStream() {
@@ -1382,8 +1410,8 @@ bool playbackBeginStream() {
     return player_beginStream();
 }
 
-void playbackAppendBytes(const void* data, int len) {
-    player_appendStream(data, len);
+bool playbackAppendBytes(const void* data, int len) {
+    return player_appendStream(data, len);
 }
 
 void playbackStopStream() {

@@ -83,6 +83,10 @@ namespace
     // 2 KiB EEPROM + 32 KiB SRAM + 128 KiB FlashRAM plus a few headers.
     constexpr int MAX_SAVE_SECTION_RAW_BYTES = 256 * 1024;
 
+    // The largest pre-match manifest a spectator or late joiner takes; the
+    // lobby holds broadcasters to the same size (broadcast.go).
+    constexpr int MAX_RELAYED_MANIFEST_BYTES = 512 * 1024;
+
     // Inflates qCompress() output (a 4-byte big-endian size, then a zlib
     // stream) from another machine. qUncompress() trusts that size, and keeps
     // growing past it, so a few bytes could make it allocate gigabytes; here
@@ -125,11 +129,13 @@ namespace
         return packed.size() < raw.size() ? packed : raw;
     }
 
-    bool decodeSpectateKeyframe(const QByteArray& encoded, QByteArray& raw)
+    // maxRawBytes is the most the decoded blob may hold.
+    bool decodeSpectateKeyframe(const QByteArray& encoded, QByteArray& raw,
+                                int maxRawBytes = MAX_KEYFRAME_RAW_BYTES)
     {
         if (!encoded.startsWith(KEYFRAME_ZLIB_MAGIC))
         {
-            if (encoded.isEmpty() || encoded.size() > MAX_KEYFRAME_RAW_BYTES)
+            if (encoded.isEmpty() || encoded.size() > maxRawBytes)
                 return false;
             raw = encoded; // keyframe from a pre-compression broadcaster
             return true;
@@ -141,7 +147,7 @@ namespace
         quint32 rawSizeBE = 0;
         std::memcpy(&rawSizeBE, encoded.constData() + KEYFRAME_ZLIB_MAGIC.size(), sizeof(rawSizeBE));
         const quint32 expectedSize = qFromBigEndian(rawSizeBE);
-        if (expectedSize == 0 || expectedSize > MAX_KEYFRAME_RAW_BYTES)
+        if (expectedSize == 0 || expectedSize > quint32(maxRawBytes))
             return false;
 
         // The compressed copy carries its own size too; it must agree.
@@ -2088,12 +2094,17 @@ void LobbyClient::handleMatchAdmitBegin(const QJsonObject& data)
         peers.append(parseMatchPeer(v.toObject()));
     m_admitBlobId = 0;
     m_admitBlobParts.clear();
+    const quint64 admitId = static_cast<quint64>(data.value("admitId").toDouble());
+    const quint64 hostId = static_cast<quint64>(data.value("hostId").toDouble());
+    const LobbyMatchPeer joiner = parseMatchPeer(data.value("joiner").toObject());
+    const bool joinerIsSelf = m_selfUserId != 0 && joiner.userId == m_selfUserId;
+    m_admitJoinId = joinerIsSelf ? admitId : 0;
+    m_admitJoinHostId = joinerIsSelf ? hostId : 0;
     emit matchAdmitBegin(static_cast<quint64>(data.value("matchId").toDouble()),
-                         static_cast<quint64>(data.value("admitId").toDouble()),
+                         admitId,
                          data.value("epoch").toInt(),
                          qBound(0, data.value("seats").toInt(), 4),
-                         static_cast<quint64>(data.value("hostId").toDouble()),
-                         parseMatchPeer(data.value("joiner").toObject()), peers);
+                         hostId, joiner, peers);
 }
 
 void LobbyClient::handleMatchAdmitSignal(const QJsonObject& data)
@@ -2111,9 +2122,18 @@ void LobbyClient::handleMatchAdmitSignal(const QJsonObject& data)
     }
 
     // A blob step arrives as `count` chunks, in order over the one socket.
+    // Only the host of the join that is adding this client sends one, and
+    // only the settings and the game state travel this way.
     const int index = data.value("index").toInt();
     if (count > MAX_RECEIVED_CHUNK_COUNT || index < 0 || index >= count)
         return;
+    const bool isManifest = step == QStringLiteral("manifest");
+    if (admitId == 0 || admitId != m_admitJoinId ||
+        static_cast<quint64>(data.value("fromUserId").toDouble()) != m_admitJoinHostId ||
+        (!isManifest && step != QStringLiteral("state")))
+        return;
+    const int maxRawBytes = isManifest ? MAX_RELAYED_MANIFEST_BYTES : MAX_KEYFRAME_RAW_BYTES;
+    const int maxEncodedBytes = maxRawBytes + 6 + 4;
     if (index == 0 || m_admitBlobId != admitId || m_admitBlobStep != step ||
         m_admitBlobParts.size() != count)
     {
@@ -2126,7 +2146,7 @@ void LobbyClient::handleMatchAdmitSignal(const QJsonObject& data)
     qsizetype held = part.size();
     for (const QByteArray& other : std::as_const(m_admitBlobParts))
         held += other.size();
-    if (part.size() > MAX_RECEIVED_CHUNK_BYTES || held > MAX_KEYFRAME_ENCODED_BYTES)
+    if (part.size() > MAX_RECEIVED_CHUNK_BYTES || held > maxEncodedBytes)
     {
         // Too big to be a real blob; drop it, and the step times out.
         qWarning() << "Rollback lobby late join: dropped an oversized" << step;
@@ -2147,7 +2167,7 @@ void LobbyClient::handleMatchAdmitSignal(const QJsonObject& data)
     m_admitBlobId = 0;
 
     QByteArray raw;
-    if (!decodeSpectateKeyframe(encoded, raw))
+    if (!decodeSpectateKeyframe(encoded, raw, maxRawBytes))
     {
         qWarning() << "Rollback lobby late join: couldn't decode" << step;
         raw.clear();
@@ -2272,6 +2292,8 @@ void LobbyClient::handleSpectateKeyframe(const QJsonObject& data)
     const int frame      = data.value("frame").toInt();
     const int chunkIndex = data.value("chunkIndex").toInt();
     const int chunkCount = data.value("chunkCount").toInt();
+    if (matchId == 0 || matchId != m_spectateMatchId)
+        return; // not the match being watched
     const QByteArray raw = QByteArray::fromBase64(data.value("data").toString().toLatin1());
     if (chunkCount <= 0 || chunkCount > MAX_RECEIVED_CHUNK_COUNT ||
         chunkIndex < 0 || chunkIndex >= chunkCount || raw.size() > MAX_RECEIVED_CHUNK_BYTES)
@@ -2336,14 +2358,18 @@ void LobbyClient::handleSpectateKeyframe(const QJsonObject& data)
 
 void LobbyClient::handleSpectateEnd(const QJsonObject& data)
 {
-    emit spectateEnded(static_cast<quint64>(data.value("matchId").toDouble()),
-                       data.value("reason").toString());
+    const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
+    if (matchId == m_spectateMatchId)
+        m_spectateMatchId = 0;
+    emit spectateEnded(matchId, data.value("reason").toString());
 }
 
 void LobbyClient::handleSpectateFail(const QJsonObject& data)
 {
-    emit spectateFailed(static_cast<quint64>(data.value("matchId").toDouble()),
-                        data.value("reason").toString());
+    const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
+    if (matchId == m_spectateMatchId)
+        m_spectateMatchId = 0;
+    emit spectateFailed(matchId, data.value("reason").toString());
 }
 
 void LobbyClient::handleBroadcastViewerCount(const QJsonObject& data)
@@ -3603,7 +3629,7 @@ bool LobbyClient::applySpectateManifest(const QByteArray& manifest)
 {
     uint64_t manifestHash = 0;
     size_t cheatCount = 0;
-    if (manifest.isEmpty() || manifest.size() > 512 * 1024 ||
+    if (manifest.isEmpty() || manifest.size() > MAX_RELAYED_MANIFEST_BYTES ||
         !applyPrematchManifest(manifest.toStdString(), manifestHash, cheatCount))
         return false;
     qInfo() << "Rollback lobby spectator prematch complete"
@@ -3658,6 +3684,7 @@ void LobbyClient::startSpectate(quint64 matchId)
 {
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
+    m_spectateMatchId = matchId;
     sendEnvelope("SPECTATE_START", d);
 }
 
@@ -3665,6 +3692,8 @@ void LobbyClient::stopSpectate(quint64 matchId)
 {
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
+    if (matchId == m_spectateMatchId)
+        m_spectateMatchId = 0;
     sendEnvelope("SPECTATE_STOP", d);
 }
 

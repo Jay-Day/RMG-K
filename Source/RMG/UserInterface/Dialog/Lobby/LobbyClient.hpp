@@ -477,11 +477,19 @@ private:
     QByteArray m_prematchManifest;
     std::optional<CoreNetplaySaveData> m_prematchSaveData;
     int m_matchSeats = 0;
+    // The late join this client is being added by, and the host who sends its
+    // blobs (0 when there is none). Blob chunks for anything else are dropped
+    // before they are buffered.
+    quint64 m_admitJoinId = 0;
+    quint64 m_admitJoinHostId = 0;
     // Chunks of the blob step being received.
     quint64 m_admitBlobId = 0;
     QString m_admitBlobStep;
     QList<QByteArray> m_admitBlobParts;
 
+    // The match startSpectate() asked to watch (0 when none). Keyframe chunks
+    // for any other match are dropped before they are buffered.
+    quint64    m_spectateMatchId = 0;
     // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
     int        m_kfRecvFrame = -1;
     int        m_kfRecvCount = 0;
