@@ -518,13 +518,14 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
 #else
     //Use default C locale for formatting numbers
     std::locale cLocale("C");
+    std::string timestampStr = std::format(cLocale, "{:g}", timestampScale);
+    std::string audioFreqStr = std::format(cLocale, "{:d}", audioFrequency);
+
     std::vector<std::string> arguments =
     {
-        ffmpegPath, "-v", "error", "-y", "-itsscale", std::format(cLocale, "{:g}", timestampScale),
-        "-i", std::format("{}", videoPath), "-f", "s16le", "-ar",
-        std::format(cLocale, "{:d}", audioFrequency), "-ac", "2", "-i",
-        std::format("{}", audioPath), "-c:v", "copy", "-c:a", "aac", "-strict", "-2",
-        "-b:a", "192k", "-shortest", std::format("{}", outputPath)
+        ffmpegPath, "-v", "error", "-y", "-itsscale", timestampStr, "-i", videoPath, "-f", "s16le",
+        "-ar", audioFreqStr, "-ac", "2", "-i", audioPath, "-c:v", "copy", "-c:a", "aac", "-strict",
+        "-2", "-b:a", "192k", "-shortest", outputPath
     };
 
     return runFfmpegCommandPosix(arguments, errorMessage);
@@ -644,11 +645,12 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
 
     //Use default C locale for formatting numbers
     std::locale cLocale("C");
+    std::string videoSizeStr = std::format(cLocale, "{}x{}", config.width, config.height);
+    std::string fpsStr = std::format(cLocale, "{:g}", config.fps);
     std::vector<std::string> command =
         {
-          config.ffmpegPath, "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
-          std::format(cLocale, "{}x{}", config.width, config.height), "-framerate",
-          std::format(cLocale, "{:g}", config.fps), "-i", "pipe:0"
+          config.ffmpegPath, "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "rgb24",
+          "-video_size", videoSizeStr, "-framerate", fpsStr, "-i", "pipe:0"
         };
 
     for (int i = 0; i < encoderFlags.size(); i++)

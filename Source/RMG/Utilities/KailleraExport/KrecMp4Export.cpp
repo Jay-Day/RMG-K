@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <format>
 
 #ifdef _WIN32
 #include <windows.h>
