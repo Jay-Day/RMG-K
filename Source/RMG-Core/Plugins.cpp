@@ -687,6 +687,21 @@ CORE_EXPORT bool CorePluginsSetGfxSkipRendering(bool skip, unsigned int* skipped
     return true;
 }
 
+using SetSkipHiddenRendering = void (CALL *)(int);
+
+CORE_EXPORT bool CorePluginsSetGfxSkipHiddenRendering(bool skip)
+{
+    auto& plugin = get_plugin(CorePluginType::Gfx);
+    const auto setSkipRendering = plugin.IsHooked() ? reinterpret_cast<SetSkipHiddenRendering>(
+        CoreGetLibrarySymbol(plugin.GetHandle(), "RmgkSetSkipHiddenRendering")) : nullptr;
+    if (setSkipRendering == nullptr)
+    {
+        return false;
+    }
+    setSkipRendering(skip ? 1 : 0);
+    return true;
+}
+
 // Only called on the UI thread while emulation is stopped, before opening input
 // configuration. Join the worker before handing exclusive USB access to preview.
 CORE_EXPORT void CorePauseRaphnetMonitoring(bool pause)

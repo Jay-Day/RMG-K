@@ -28,6 +28,7 @@
 #include "Error.hpp"
 #include "Library.hpp"
 #include "NetplaySave.hpp"
+#include "Plugins.hpp"
 #include "Settings.hpp"
 #ifdef NETPLAY
 #include "LobbyIce.hpp"
@@ -3254,7 +3255,23 @@ int rollback_execute_begin_frame(void* userData)
                     const auto runFrameBeginTime = timingEnabled
                         ? std::chrono::steady_clock::now()
                         : std::chrono::steady_clock::time_point{};
-                    if (!CoreRollbackRunFrame(CoreFrameOutput_None))
+                    // A re-simulated frame is never shown: the frame that ends
+                    // this update draws the picture, so its display lists
+                    // need no drawing. RMGK_ROLLBACK_RENDER=1 keeps drawing
+                    // them, to compare.
+                    static const bool keepRendering = []()
+                    {
+                        const char* value = std::getenv("RMGK_ROLLBACK_RENDER");
+                        return value != nullptr && value[0] == '1';
+                    }();
+                    const bool skipRendering =
+                        !keepRendering && CorePluginsSetGfxSkipHiddenRendering(true);
+                    const bool ranFrame = CoreRollbackRunFrame(CoreFrameOutput_None);
+                    if (skipRendering)
+                    {
+                        CorePluginsSetGfxSkipHiddenRendering(false);
+                    }
+                    if (!ranFrame)
                     {
                         write_gekko_log("advance_frame result=fail reason=run_frame");
                         return 0;

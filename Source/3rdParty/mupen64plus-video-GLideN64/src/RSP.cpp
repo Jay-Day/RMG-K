@@ -34,6 +34,10 @@ RSPInfo		RSP;
 static std::atomic<bool> s_skipRendering(false);
 static std::atomic<u32> s_skippedDLists(0);
 static std::atomic<u32> s_renderedDLists(0);
+// RMG-K: the same skip for frames rollback re-simulates and never shows. Every
+// player has to end up with the same memory whether or not a frame was
+// re-simulated, so it only applies while drawing can't write to RDRAM.
+static std::atomic<bool> s_skipHiddenRendering(false);
 
 void RSP_SetSkipRendering(bool _skip, u32 * _skipped, u32 * _rendered)
 {
@@ -119,6 +123,11 @@ bool _canSkipDList(u32 * _segments)
 			previous = cmd;
 	}
 	return false;
+}
+
+void RSP_SetSkipHiddenRendering(bool _skip)
+{
+	s_skipHiddenRendering = _skip;
 }
 
 static
@@ -263,7 +272,8 @@ void RSP_ProcessDList()
 			*REG.SP_STATUS |= 0x800;   // set sig4
 		}
 
-		if (s_skipRendering) {
+		const bool skipHidden = s_skipHiddenRendering && config.frameBufferEmulation.enable == 0;
+		if (s_skipRendering || skipHidden) {
 			u32 segments[16];
 			memcpy(segments, gSP.segment, sizeof(segments));
 			if (_canSkipDList(segments)) {
@@ -274,10 +284,12 @@ void RSP_ProcessDList()
 				*REG.DPC_STATUS &= ~(0x020 | 0x040 | 0x008); // pipe busy | cmd busy | start gclk
 				CheckInterrupts();
 				RSP.busy = false;
-				++s_skippedDLists;
+				if (s_skipRendering)
+					++s_skippedDLists;
 				return;
 			}
-			++s_renderedDLists;
+			if (s_skipRendering)
+				++s_renderedDLists;
 		}
 	}
 
