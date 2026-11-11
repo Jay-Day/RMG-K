@@ -2783,6 +2783,10 @@ A local replay is saved only if Record locally is checked.</source>
             <translation>対戦開始に失敗しました: リモートプレイヤーが見つかりません。</translation>
         </message>
         <message>
+            <source>Match start failed: the game that was open didn&apos;t close.</source>
+            <translation>対戦開始に失敗しました: 開いていたゲームを終了できませんでした。</translation>
+        </message>
+        <message>
             <source>Already in a room</source>
             <translation>ルームに参加中</translation>
         </message>
