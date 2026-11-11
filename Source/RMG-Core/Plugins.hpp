@@ -81,6 +81,11 @@ bool CorePluginsShutdown(void);
 // skipped/rendered receive the display lists skipped and still rendered since the last call.
 bool CorePluginsSetGfxSkipRendering(bool skip, unsigned int* skipped = nullptr, unsigned int* rendered = nullptr);
 
+// The same for the frames a rollback re-simulates and never shows. The plugin
+// only skips while its drawing can't change what the game sees. Returns false
+// when the plugin can't.
+bool CorePluginsSetGfxSkipHiddenRendering(bool skip);
+
 // -1: unavailable, 0: no valid response, 1: normal/checking, 2: slow USB.
 int CoreGetRaphnetHealth(void);
 void CorePauseRaphnetMonitoring(bool pause);

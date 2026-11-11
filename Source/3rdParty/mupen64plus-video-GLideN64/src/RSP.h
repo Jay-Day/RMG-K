@@ -29,5 +29,6 @@ void RSP_ProcessDList();
 void RSP_LoadMatrix( f32 mtx[4][4], u32 address );
 void RSP_CheckDLCounter();
 void RSP_SetSkipRendering(bool _skip, u32 * _skipped, u32 * _rendered);
+void RSP_SetSkipHiddenRendering(bool _skip);
 
 #endif
