@@ -577,6 +577,9 @@ enum class SettingsID
     // Appended so the IDs above stay the same
     Kaillera_ExportShowChat,
 
+    // Game Stats / Replay Settings
+    GameStats_ReplayEnabled,
+
     Invalid
 };
 

@@ -37,6 +37,13 @@ bool CoreApi::Hook(m64p_dynlib_handle handle)
     HOOK_FUNC(handle, Core, GetAPIVersions);
     HOOK_FUNC(handle, Core, ErrorMessage);
 
+    // always exported by the core regardless of the DEBUGGER build flag,
+    // but only functional when the core was built with DEBUGGER=1
+    HOOK_FUNC(handle, , DebugMemGetPointer);
+    HOOK_FUNC(handle, , DebugMemRead8);
+    HOOK_FUNC(handle, , DebugMemRead16);
+    HOOK_FUNC(handle, , DebugMemRead32);
+
     this->handle = handle;
     this->hooked = true;
     return true;
@@ -55,6 +62,11 @@ bool CoreApi::Unhook(void)
     UNHOOK_FUNC(Core, GetRomSettings);
     UNHOOK_FUNC(Core, GetAPIVersions);
     UNHOOK_FUNC(Core, ErrorMessage);
+
+    UNHOOK_FUNC(, DebugMemGetPointer);
+    UNHOOK_FUNC(, DebugMemRead8);
+    UNHOOK_FUNC(, DebugMemRead16);
+    UNHOOK_FUNC(, DebugMemRead32);
 
     this->handle = nullptr;
     this->hooked = false;

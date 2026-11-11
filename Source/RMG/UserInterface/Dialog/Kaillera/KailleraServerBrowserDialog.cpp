@@ -1537,6 +1537,17 @@ QWidget* KailleraServerBrowserDialog::createGameRoomWidget()
     m_recordCheck = new QCheckBox("Record game", rightWidget);
     rightVBox->addWidget(m_recordCheck);
 
+#ifdef RMGK_GAME_STATS
+    // Independent .rmgr toggle - separate file, separate checkbox. Hidden
+    // until m_currentGameName is known to be Smash Remix 2.0.1.
+    m_replayRecordCheck = new QCheckBox("Record replay (.rmgr)", rightWidget);
+    m_replayRecordCheck->setToolTip(
+        "Record this match's inputs and game state to a .rmgr file, "
+        "separate from the .krec above.\nSmash Remix 2.0.1 only.");
+    m_replayRecordCheck->setVisible(false);
+    rightVBox->addWidget(m_replayRecordCheck);
+#endif
+
     m_fpsLabel = new QLabel("<span style='color:#8b8b8b;'>Rate</span> <span style='font-weight:600;'>0 fps / 0 pps</span>", rightWidget);
     m_fpsLabel->setObjectName("KailleraStatValue");
     m_fpsLabel->setTextFormat(Qt::RichText);
@@ -1634,6 +1645,15 @@ void KailleraServerBrowserDialog::connectSignals()
     connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
         n02_kaillera_recording_enabled = checked;
     });
+
+#ifdef RMGK_GAME_STATS
+    // Wire Record replay checkbox to the .rmgr override, independent of the
+    // krec flag above.
+    m_replayRecordCheck->setChecked(CoreSettingsGetBoolValue(SettingsID::GameStats_ReplayEnabled));
+    connect(m_replayRecordCheck, &QCheckBox::toggled, this, [](bool checked) {
+        Replay::SetEnabledOverride(checked);
+    });
+#endif
 }
 
 void KailleraServerBrowserDialog::switchToLobby()
@@ -1641,6 +1661,10 @@ void KailleraServerBrowserDialog::switchToLobby()
     m_inGameRoom = false;
     m_isHost = false;
     m_currentGameName.clear();
+#ifdef RMGK_GAME_STATS
+    if (m_replayRecordCheck)
+        m_replayRecordCheck->setVisible(false);
+#endif
     m_currentGameId = 0;
     m_roomMaxPlayers = 0;
     m_statsTimer->stop();
@@ -1818,6 +1842,10 @@ void KailleraServerBrowserDialog::requestCreateGame(const QString& gameName)
 
     m_currentGameName = gameName;
     m_currentGameId = 0;
+#ifdef RMGK_GAME_STATS
+    if (m_replayRecordCheck)
+        m_replayRecordCheck->setVisible(m_currentGameName == "SmashRemix2.0.1");
+#endif
     QByteArray nameBytes = gameName.toUtf8();
     kaillera_create_game(nameBytes.data());
 }
@@ -2301,6 +2329,10 @@ bool KailleraServerBrowserDialog::tryJoinGameFromTable(QTableWidget* table, int 
 
     m_currentGameName = gameName;
     m_currentGameId = gameId;
+#ifdef RMGK_GAME_STATS
+    if (m_replayRecordCheck)
+        m_replayRecordCheck->setVisible(m_currentGameName == "SmashRemix2.0.1");
+#endif
     QByteArray gameBytes = gameName.toUtf8();
     kaillera_join_game(gameId, gameBytes.constData());
     return true;
@@ -2767,6 +2799,10 @@ void KailleraServerBrowserDialog::onPlayerLeft(QString name, unsigned short id)
         QTimer::singleShot(0, this, [this, pendingGameName, pendingGameId]() {
             m_currentGameName = pendingGameName;
             m_currentGameId = pendingGameId;
+#ifdef RMGK_GAME_STATS
+            if (m_replayRecordCheck)
+                m_replayRecordCheck->setVisible(m_currentGameName == "SmashRemix2.0.1");
+#endif
             QByteArray gameBytes = pendingGameName.toUtf8();
             kaillera_join_game(pendingGameId, gameBytes.constData());
         });
@@ -2806,6 +2842,15 @@ void KailleraServerBrowserDialog::onPlayerDropped(QString name, int player)
 
 void KailleraServerBrowserDialog::onGameStarted(QString game, int player, int numPlayers)
 {
+#ifdef RMGK_GAME_STATS
+    // Make this checkbox authoritative for the match, in case something else
+    // touched the shared override since it was last set.
+    if (m_replayRecordCheck)
+    {
+        Replay::SetEnabledOverride(m_replayRecordCheck->isChecked());
+    }
+#endif
+
     const QString color = infoMessageColor();
     m_gameChat->append("<span style='color:" + color + ";'>" + timestamp(color)
         + "* Starting: " + game.toHtmlEscaped()
