@@ -4377,6 +4377,12 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QStr
     {
         return; // already spectating
     }
+    // Switching from one live replay to another launches as the last game
+    // reports finished, when its thread may still be on its way out.
+    if (this->emulationThread->isRunning() && !CoreIsEmulationRunning())
+    {
+        this->emulationThread->wait(500);
+    }
     if (this->emulationThread->isRunning())
     {
         this->showErrorMessage("Busy", "Stop the current game before watching a live replay.");
