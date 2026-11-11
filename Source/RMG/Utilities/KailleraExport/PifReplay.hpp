@@ -9,10 +9,7 @@ namespace KailleraExport
 void InitializePifReplay(const KrecData* krecData);
 void ResetPifReplayFrameSync(void);
 // input records the replay has read
-int GetPifReplayFrameIndex(void);
-bool IsPifReplayFinished(void);
-void PifReplayCallback(struct pif* pifState);
-
+//
 // How many of the .krec's own input frames have been consumed so far this
 // export - i.e. how many real emulated frames into the *original* recording
 // session this point in headless replay corresponds to, independent of how
@@ -22,5 +19,7 @@ void PifReplayCallback(struct pif* pifState);
 // divided by 60 is the number of real-world seconds elapsed since the
 // .krec's own recording-start timestamp - see Replay::SetRecordedAtBaseOverride().
 int GetPifReplayFrameIndex(void);
+bool IsPifReplayFinished(void);
+void PifReplayCallback(struct pif* pifState);
 
 } // namespace KailleraExport
