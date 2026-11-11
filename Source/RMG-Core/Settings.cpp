@@ -344,6 +344,9 @@ static l_Setting get_setting(SettingsID settingId)
     case SettingsID::Kaillera_ExportLabelPorts:
         setting = {SETTING_SECTION_KAILLERA, "ExportLabelPorts", true};
         break;
+    case SettingsID::Kaillera_ExportShowChat:
+        setting = {SETTING_SECTION_KAILLERA, "ExportShowChat", false};
+        break;
 
     case SettingsID::Rollback_VerboseStats:
         setting = {SETTING_SECTION_ROLLBACK, "VerboseStats", false};
@@ -359,6 +362,9 @@ static l_Setting get_setting(SettingsID settingId)
         break;
     case SettingsID::Rollback_StallDiagnostics:
         setting = {SETTING_SECTION_ROLLBACK, "StallDiagnostics", false};
+        break;
+    case SettingsID::Rollback_EmulationDiagnostics:
+        setting = {SETTING_SECTION_ROLLBACK, "EmulationDiagnostics", false};
         break;
     case SettingsID::Rollback_PingDiagnostics:
         setting = {SETTING_SECTION_ROLLBACK, "PingDiagnostics", false};

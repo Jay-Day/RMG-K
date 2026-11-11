@@ -1,5 +1,6 @@
 #include "FrameCapture.hpp"
 
+#include "ChatOverlay.hpp"
 #include "PifReplay.hpp"
 
 #include <algorithm>
@@ -38,14 +39,7 @@ static bool s_EncoderOpened = false;
 static std::atomic<int> s_CapturedFrames = 0;
 static int s_SubmittedFrames = 0;
 static int s_ExpectedFrameCount = 0;
-static bool s_SpeedConfigured = false;
-static int s_CurrentSpeedFactor = 0;
-static int s_MinSpeedFactor = 0;
-static int s_MaxSpeedFactor = 0;
-static int s_SpeedStep = 0;
-static int s_GovernorWindowFrames = 0;
-static int s_GovernorBackpressureEvents = 0;
-static int s_GovernorPeakQueueDepth = 0;
+static bool s_SpeedLimiterDisabled = false;
 static bool s_EncodeThreadStarted = false;
 static bool s_EncodeShutdown = false;
 static std::atomic<bool> s_EncodeFailed = false;
@@ -59,6 +53,7 @@ static EncodeSlotState s_SlotStates[kEncodeSlotCount] = {
 static std::vector<uint8_t> s_RawBuffers[kEncodeSlotCount];
 static std::vector<uint8_t> s_FlippedBuffer;
 static int s_QueuedSlotIndices[kEncodeSlotCount] = { 0, 0 };
+static int s_SlotFrames[kEncodeSlotCount] = { 0, 0 }; // output frame in each slot
 static int s_QueueHead = 0;
 static int s_QueueTail = 0;
 static int s_QueueCount = 0;
@@ -67,6 +62,7 @@ static std::mutex s_EncodeMutex;
 static std::condition_variable s_EncodeWorkCv;
 static std::condition_variable s_EncodeSpaceCv;
 static PortLabelConfig s_PortLabelConfig;
+static bool s_ChatOverlay = false;
 
 using GlyphRows = std::array<uint8_t, 7>;
 
@@ -294,32 +290,6 @@ static bool allSlotsIdleLocked()
     return true;
 }
 
-static void applySpeedFactor(int speedFactor, const char* reason)
-{
-    if (s_Emulator == nullptr)
-    {
-        return;
-    }
-
-    if (speedFactor <= 0 || speedFactor == s_CurrentSpeedFactor)
-    {
-        return;
-    }
-
-    int value = speedFactor;
-    s_Emulator->coreDoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_FACTOR, &value);
-    s_CurrentSpeedFactor = speedFactor;
-
-    if (reason != nullptr && reason[0] != '\0')
-    {
-        fprintf(stderr, "Using replay export speed target: %d%% (%s)\n", speedFactor, reason);
-    }
-    else
-    {
-        fprintf(stderr, "Using replay export speed target: %d%%\n", speedFactor);
-    }
-}
-
 static void releaseSlot(int slotIndex)
 {
     {
@@ -365,20 +335,6 @@ static void notifyEncodeFailure(const std::string& message)
 static int reserveFreeSlot()
 {
     std::unique_lock<std::mutex> lock(s_EncodeMutex);
-    bool hadFreeSlot = false;
-    for (int i = 0; i < kEncodeSlotCount; ++i)
-    {
-        if (s_SlotStates[i] == EncodeSlotState::Free)
-        {
-            hadFreeSlot = true;
-            break;
-        }
-    }
-    if (!hadFreeSlot)
-    {
-        s_GovernorBackpressureEvents++;
-    }
-
     s_EncodeSpaceCv.wait(lock, []()
     {
         if (s_EncodeFailed.load())
@@ -428,48 +384,10 @@ static bool queueFilledSlot(int slotIndex)
         s_QueuedSlotIndices[s_QueueTail] = slotIndex;
         s_QueueTail = (s_QueueTail + 1) % kEncodeSlotCount;
         s_QueueCount++;
-        s_GovernorPeakQueueDepth = std::max(s_GovernorPeakQueueDepth, s_QueueCount);
     }
 
     s_EncodeWorkCv.notify_one();
     return true;
-}
-
-static void maybeAdjustSpeedFactor()
-{
-    if (!s_SpeedConfigured)
-    {
-        return;
-    }
-
-    s_GovernorWindowFrames++;
-    if (s_GovernorWindowFrames < 240)
-    {
-        return;
-    }
-
-    int nextSpeedFactor = s_CurrentSpeedFactor;
-    const char* reason = nullptr;
-
-    if (s_GovernorBackpressureEvents > 0 || s_GovernorPeakQueueDepth >= kEncodeSlotCount)
-    {
-        nextSpeedFactor = std::max(s_MinSpeedFactor, s_CurrentSpeedFactor - s_SpeedStep);
-        reason = "auto-tuned down";
-    }
-    else if (s_CurrentSpeedFactor < s_MaxSpeedFactor)
-    {
-        nextSpeedFactor = std::min(s_MaxSpeedFactor, s_CurrentSpeedFactor + s_SpeedStep);
-        reason = "auto-tuned up";
-    }
-
-    s_GovernorWindowFrames = 0;
-    s_GovernorBackpressureEvents = 0;
-    s_GovernorPeakQueueDepth = 0;
-
-    if (nextSpeedFactor != s_CurrentSpeedFactor)
-    {
-        applySpeedFactor(nextSpeedFactor, reason);
-    }
 }
 
 static void EncodeWorkerMain()
@@ -524,6 +442,10 @@ static void EncodeWorkerMain()
         }
 
         drawPortLabels(s_FlippedBuffer.data(), width, height);
+        if (s_ChatOverlay)
+        {
+            DrawChatOverlay(s_FlippedBuffer.data(), width, height, s_SlotFrames[slotIndex]);
+        }
 
         std::string errorMessage;
         if (!s_Encoder->writeFrame(s_FlippedBuffer.data(), width, height, &errorMessage))
@@ -601,7 +523,8 @@ void InitializeFrameCapture(EmulatorProxy* emulator,
                             FfmpegEncoder* encoder,
                             const FfmpegEncoderConfig& encoderConfig,
                             int expectedFrameCount,
-                            const PortLabelConfig& portLabelConfig)
+                            const PortLabelConfig& portLabelConfig,
+                            bool chatOverlay)
 {
     s_Emulator = emulator;
     s_Encoder = encoder;
@@ -610,14 +533,7 @@ void InitializeFrameCapture(EmulatorProxy* emulator,
     s_CapturedFrames.store(0);
     s_SubmittedFrames = 0;
     s_ExpectedFrameCount = expectedFrameCount;
-    s_SpeedConfigured = false;
-    s_CurrentSpeedFactor = 0;
-    s_MinSpeedFactor = 0;
-    s_MaxSpeedFactor = 0;
-    s_SpeedStep = 0;
-    s_GovernorWindowFrames = 0;
-    s_GovernorBackpressureEvents = 0;
-    s_GovernorPeakQueueDepth = 0;
+    s_SpeedLimiterDisabled = false;
     s_EncodeThreadStarted = false;
     s_EncodeShutdown = false;
     s_EncodeFailed.store(false);
@@ -628,6 +544,7 @@ void InitializeFrameCapture(EmulatorProxy* emulator,
     s_QueueTail = 0;
     s_QueueCount = 0;
     s_PortLabelConfig = portLabelConfig;
+    s_ChatOverlay = chatOverlay;
     for (int i = 0; i < kEncodeSlotCount; ++i)
     {
         s_SlotStates[i] = EncodeSlotState::Free;
@@ -728,23 +645,18 @@ void FrameCaptureCallback(unsigned int)
         s_EncoderOpened = true;
     }
 
-    if (!s_SpeedConfigured)
+    if (!s_SpeedLimiterDisabled)
     {
-        if (s_Encoder->isHardwareAccelerated())
-        {
-            s_MinSpeedFactor = 500;
-            s_MaxSpeedFactor = 1500;
-            s_SpeedStep = 100;
-            applySpeedFactor(s_MinSpeedFactor, "auto start");
-        }
-        else
-        {
-            s_MinSpeedFactor = 300;
-            s_MaxSpeedFactor = 500;
-            s_SpeedStep = 50;
-            applySpeedFactor(s_MinSpeedFactor, "cpu fallback");
-        }
-        s_SpeedConfigured = true;
+        // Run as fast as possible: waiting for a free encode slot below holds
+        // emulation back whenever the encoder falls behind.
+        int limiter = 0;
+        s_Emulator->coreDoCommand(M64CMD_CORE_STATE_SET, M64CORE_SPEED_LIMITER, &limiter);
+        s_SpeedLimiterDisabled = true;
+    }
+
+    if (s_ChatOverlay)
+    {
+        AdvanceChatOverlay(GetPifReplayFrameIndex(), s_SubmittedFrames);
     }
 
     const int slotIndex = reserveFreeSlot();
@@ -777,6 +689,7 @@ void FrameCaptureCallback(unsigned int)
         return;
     }
 
+    s_SlotFrames[slotIndex] = s_SubmittedFrames;
     if (!queueFilledSlot(slotIndex))
     {
         s_Emulator->stop();
@@ -784,7 +697,6 @@ void FrameCaptureCallback(unsigned int)
     }
 
     s_SubmittedFrames++;
-    maybeAdjustSpeedFactor();
 }
 
 } // namespace KailleraExport

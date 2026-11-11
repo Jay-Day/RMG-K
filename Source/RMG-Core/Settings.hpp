@@ -110,6 +110,7 @@ enum class SettingsID
     Rollback_VerbosePifInputLogging,
     Rollback_VerboseGlideInputLogging,
     Rollback_StallDiagnostics,
+    Rollback_EmulationDiagnostics,
     Rollback_PacingTrace,
     Rollback_PacingMode,
     Rollback_PingDiagnostics,
@@ -572,6 +573,9 @@ enum class SettingsID
 
     // raphnetraw Input Plugin Settings
     RaphnetRaw_Player1AdapterPort,
+
+    // Appended so the IDs above stay the same
+    Kaillera_ExportShowChat,
 
     // Game Stats / Replay Settings
     GameStats_ReplayEnabled,

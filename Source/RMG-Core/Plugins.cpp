@@ -662,6 +662,31 @@ CORE_EXPORT bool CorePluginsConfigureInputLive(void (*showDialog)(void*), void* 
     return result == M64ERR_SUCCESS;
 }
 
+using SetSkipRendering = void (CALL *)(int, unsigned int*, unsigned int*);
+
+CORE_EXPORT bool CorePluginsSetGfxSkipRendering(bool skip, unsigned int* skipped, unsigned int* rendered)
+{
+    auto& plugin = get_plugin(CorePluginType::Gfx);
+    const auto setSkipRendering = plugin.IsHooked() ? reinterpret_cast<SetSkipRendering>(
+        CoreGetLibrarySymbol(plugin.GetHandle(), "RmgkSetSkipRendering")) : nullptr;
+    if (setSkipRendering == nullptr)
+    {
+        return false;
+    }
+    unsigned int skippedCount = 0;
+    unsigned int renderedCount = 0;
+    setSkipRendering(skip ? 1 : 0, &skippedCount, &renderedCount);
+    if (skipped != nullptr)
+    {
+        *skipped = skippedCount;
+    }
+    if (rendered != nullptr)
+    {
+        *rendered = renderedCount;
+    }
+    return true;
+}
+
 // Only called on the UI thread while emulation is stopped, before opening input
 // configuration. Join the worker before handing exclusive USB access to preview.
 CORE_EXPORT void CorePauseRaphnetMonitoring(bool pause)

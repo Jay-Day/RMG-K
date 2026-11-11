@@ -895,8 +895,8 @@
             <translation>プラグイン(&amp;P)</translation>
         </message>
         <message>
-            <source>&amp;Playback</source>
-            <translation>再生(&amp;P)</translation>
+            <source>&amp;Replays</source>
+            <translation>リプレイ(&amp;R)</translation>
         </message>
         <message>
             <source>&amp;Fullscreen</source>
@@ -1201,6 +1201,14 @@ Try connecting the adapter to a different USB port, preferably directly on your 
             <source>Input Settings</source>
             <translation>入力設定</translation>
         </message>
+        <message>
+            <source>Stop &amp;Watching</source>
+            <translation>観戦をやめる(&amp;W)</translation>
+        </message>
+        <message>
+            <source>S&amp;hutdown</source>
+            <translation>シャットダウン(&amp;H)</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::SettingsDialog</name>
@@ -1387,6 +1395,14 @@ When disabled, each new room starts on Auto. Applies the next time you enter a r
         <message>
             <source>Unnamed controller</source>
             <translation>名前のないコントローラー</translation>
+        </message>
+        <message>
+            <source>%1 KB</source>
+            <translation>%1 KB</translation>
+        </message>
+        <message>
+            <source>blank</source>
+            <translation>空</translation>
         </message>
     </context>
     <context>
@@ -3213,8 +3229,8 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>ゲームに参加しています...</translation>
         </message>
         <message>
-            <source>%1 is joining the game…</source>
-            <translation>%1がゲームに参加しています…</translation>
+            <source>%1 is joining the game...</source>
+            <translation>%1がゲームに参加しています...</translation>
         </message>
         <message>
             <source>%1 is joining the game</source>
@@ -3255,6 +3271,14 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         <message>
             <source>%1 couldn't join</source>
             <translation>%1は参加できませんでした</translation>
+        </message>
+        <message>
+            <source>Lost the connection to every other player, so your game was closed. The host can add you back.</source>
+            <translation>他のすべてのプレイヤーとの接続が切れたため、ゲームを終了しました。ホストがあなたを再びゲームに追加できます。</translation>
+        </message>
+        <message>
+            <source>You were dropped from the match when the connection to the lobby was lost. Reconnect and the host can add you back.</source>
+            <translation>ロビーとの接続が切れたため、対戦から外されました。再接続すると、ホストがあなたを再びゲームに追加できます。</translation>
         </message>
         <message>
             <source>they're on a different RMG-K version</source>
@@ -3332,5 +3356,643 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <source>something went wrong (%1)</source>
             <translation>問題が発生しました（%1）</translation>
         </message>
+        <message>
+            <source>Late join</source>
+            <translation>途中参加</translation>
+        </message>
+        <message>
+            <source>Late join is on in this room. Players who join mid-game don't get a replay of it.</source>
+            <translation>このルームは途中参加がオンです。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+        </message>
+        <message>
+            <source>Late join is on. Players can join while a game is running; they won't get a replay of it.</source>
+            <translation>途中参加をオンにしました。ゲーム中でもプレイヤーが参加できますが、途中参加したプレイヤーにはそのゲームのリプレイは保存されません。</translation>
+        </message>
+        <message>
+            <source>Late join is off.</source>
+            <translation>途中参加をオフにしました。</translation>
+        </message>
+        <message>
+            <source>The host turned on late join. Players who join mid-game don't get a replay of it.</source>
+            <translation>ホストが途中参加をオンにしました。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+        </message>
+        <message>
+            <source>The host turned off late join.</source>
+            <translation>ホストが途中参加をオフにしました。</translation>
+        </message>
+        <message>
+            <source>You joined while a game is running, so you won't get a replay of this one.</source>
+            <translation>ゲーム中に参加したため、このゲームのリプレイは保存されません。</translation>
+        </message>
+        <message>
+            <source>The host turned on late join: players can join while a game is running.</source>
+            <translation>ホストが途中参加をオンにしています。ゲーム中でもプレイヤーが参加できます。</translation>
+        </message>
+        <message>
+            <source>The host has late join turned off.</source>
+            <translation>ホストが途中参加をオフにしています。</translation>
+        </message>
+        <message>
+            <source>Late join can't be changed during a match.</source>
+            <translation>対戦中は途中参加の設定を変更できません。</translation>
+        </message>
+        <message>
+            <source>Let players join while a game is running. You add them with Add to Game.
+Everyone here when the game starts can still save a replay; whoever joins mid-game can't.</source>
+            <translation>ゲーム中でもプレイヤーが参加できるようにします。参加したプレイヤーは「ゲームに追加」で追加します。
+ゲーム開始時にいるプレイヤーは引き続きリプレイを保存できますが、途中参加したプレイヤーは保存できません。</translation>
+        </message>
+        <message>
+            <source>Late join is on.</source>
+            <translation>途中参加がオンです。</translation>
+        </message>
+        <message>
+            <source>You joined mid-game, so you won't get a replay of this game.</source>
+            <translation>ゲームの途中で参加したため、このゲームのリプレイは保存されません。</translation>
+        </message>
+        <message>
+            <source>Players who join mid-game won't get a replay of it.</source>
+            <translation>途中参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+        </message>
+        <message>
+            <source>Turn on late join?</source>
+            <translation>途中参加をオンにしますか？</translation>
+        </message>
+        <message>
+            <source>Players who join while a game is running won't get a replay of it.</source>
+            <translation>ゲーム中に参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+        </message>
+        <message>
+            <source>Players can then join mid-game, and you add them with Add to Game. Everyone in the room when a game starts can still save a replay (.krec) of it, and Live Replay isn't affected. A replay can't start part way through a game, so whoever joins later doesn't get one.</source>
+            <translation>ゲームの途中でもプレイヤーが参加でき、あなたが「ゲームに追加」で加えます。ゲーム開始時にルームにいるプレイヤーは引き続きリプレイ（.krec）を保存でき、ライブリプレイにも影響はありません。リプレイはゲームの途中からは始められないため、あとから参加したプレイヤーには保存されません。</translation>
+        </message>
+        <message>
+            <source>Turn On Late Join</source>
+            <translation>途中参加をオンにする</translation>
+        </message>
+        <message>
+            <source>Need at least 2 players to start, or turn on Late join to start alone.</source>
+            <translation>開始するには2人以上のプレイヤーが必要です。1人で開始するには途中参加をオンにしてください。</translation>
+        </message>
+        <message>
+            <source>Save data</source>
+            <translation>セーブデータ</translation>
+        </message>
+        <message>
+            <source>Change...</source>
+            <translation>変更...</translation>
+        </message>
+        <message>
+            <source>Pick another save for the next match to start from.</source>
+            <translation>次の対戦で使うセーブを選び直します。</translation>
+        </message>
+        <message>
+            <source>Save As...</source>
+            <translation>名前を付けて保存...</translation>
+        </message>
+        <message>
+            <source>Save the game's save data to a file on your PC.</source>
+            <translation>ゲームのセーブデータをPCのファイルに保存します。</translation>
+        </message>
+        <message>
+            <source>Keep updated</source>
+            <translation>自動更新</translation>
+        </message>
+        <message>
+            <source>Save data is off. The next match starts from a blank save.</source>
+            <translation>セーブデータをオフにしました。次の対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>The host turned off save data. The next match starts from a blank save.</source>
+            <translation>ホストがセーブデータをオフにしました。次の対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>The next match starts from your save: %1.</source>
+            <translation>次の対戦はあなたのセーブから始まります：%1。</translation>
+        </message>
+        <message>
+            <source>This room uses save data. Matches start from the host's save: %1.</source>
+            <translation>このルームはセーブデータを使います。対戦はホストのセーブから始まります：%1。</translation>
+        </message>
+        <message>
+            <source>The host picked save data: %1. The next match starts from it.</source>
+            <translation>ホストがセーブデータを選びました：%1。次の対戦はこのセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Save data is on. The next match starts from a blank save.</source>
+            <translation>セーブデータをオンにしました。次の対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>This room uses save data. The next match starts from a blank save.</source>
+            <translation>このルームはセーブデータを使います。次の対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>The host picked a blank save. The next match starts from it.</source>
+            <translation>ホストが空のセーブを選びました。次の対戦はこのセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Blank save</source>
+            <translation>空のセーブ</translation>
+        </message>
+        <message>
+            <source>Matches in this room start from the host's save data.</source>
+            <translation>このルームの対戦はホストのセーブデータから始まります。</translation>
+        </message>
+        <message>
+            <source>Matches in this room start from a blank save.</source>
+            <translation>このルームの対戦は空のセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Save data can't be changed during a match.</source>
+            <translation>対戦中はセーブデータを変更できません。</translation>
+        </message>
+        <message>
+            <source>Start the match from a save you pick, for games that need one (unlocks, settings, progress).
+The game saves to memory only during the match: nobody's own save files are touched.</source>
+            <translation>選んだセーブから対戦を始めます（隠し要素、設定、進行状況が必要なゲーム向け）。
+対戦中のセーブはメモリ上だけで行われ、誰のセーブファイルも変更されません。</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n s ago</source>
+            <translation>
+                <numerusform>%n秒前</numerusform>
+            </translation>
+        </message>
+        <message numerus="yes">
+            <source>%n min ago</source>
+            <translation>
+                <numerusform>%n分前</numerusform>
+            </translation>
+        </message>
+        <message>
+            <source>the host's save</source>
+            <translation>ホストのセーブ</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Save data:&lt;/b&gt; %1</source>
+            <translation>&lt;b&gt;セーブデータ：&lt;/b&gt;%1</translation>
+        </message>
+        <message>
+            <source>the game saved %1</source>
+            <translation>%1にゲームがセーブ</translation>
+        </message>
+        <message>
+            <source>not changed yet</source>
+            <translation>まだ変更なし</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Save data:&lt;/b&gt; the last match changed the save</source>
+            <translation>&lt;b&gt;セーブデータ：&lt;/b&gt;前回の対戦でセーブが変わりました</translation>
+        </message>
+        <message>
+            <source>the next match continues from it</source>
+            <translation>次の対戦はこのセーブの続きから</translation>
+        </message>
+        <message>
+            <source>the next match starts from %1 again</source>
+            <translation>次の対戦は再び%1から</translation>
+        </message>
+        <message>
+            <source>&lt;b&gt;Starting save:&lt;/b&gt; %1</source>
+            <translation>&lt;b&gt;開始時のセーブ：&lt;/b&gt;%1</translation>
+        </message>
+        <message>
+            <source>%1 KB</source>
+            <translation>%1 KB</translation>
+        </message>
+        <message>
+            <source>picked by the host</source>
+            <translation>ホストが選択</translation>
+        </message>
+        <message>
+            <source>kept in %1 (%2)</source>
+            <translation>%1に保存済み（%2）</translation>
+        </message>
+        <message>
+            <source>kept in %1</source>
+            <translation>%1に保存済み</translation>
+        </message>
+        <message>
+            <source>Pick a file, then rewrite it each time the game saves.</source>
+            <translation>ファイルを選ぶと、ゲームがセーブするたびにそのファイルを書き換えます。</translation>
+        </message>
+        <message>
+            <source>Rewrite %1 each time the game saves.</source>
+            <translation>ゲームがセーブするたびに%1を書き換えます。</translation>
+        </message>
+        <message>
+            <source>Couldn't update %1 (%2). Keep updated is off.</source>
+            <translation>%1を更新できませんでした（%2）。自動更新をオフにしました。</translation>
+        </message>
+        <message>
+            <source>The game's save is kept in %1.</source>
+            <translation>ゲームのセーブは%1に保存されています。</translation>
+        </message>
+        <message>
+            <source>The game saved during this match. Use Save As to keep a copy.</source>
+            <translation>この対戦中にゲームがセーブしました。コピーを残すには「名前を付けて保存」を使ってください。</translation>
+        </message>
+        <message>
+            <source> (continued)</source>
+            <translation>（続き）</translation>
+        </message>
+        <message>
+            <source>Save Game Save</source>
+            <translation>ゲームのセーブを保存</translation>
+        </message>
+        <message>
+            <source>Couldn't save %1: %2</source>
+            <translation>%1を保存できませんでした：%2</translation>
+        </message>
+        <message>
+            <source>Saved to %1. It's kept updated while you play.</source>
+            <translation>%1に保存しました。プレイ中は自動で更新されます。</translation>
+        </message>
+        <message>
+            <source>Saved to %1.</source>
+            <translation>%1に保存しました。</translation>
+        </message>
+        <message>
+            <source>This room uses save data, which %1 can't play with yet. They need a newer RMG-K, or turn Save data off.</source>
+            <translation>このルームはセーブデータを使いますが、%1はまだ対応していません。新しいRMG-Kに更新してもらうか、セーブデータをオフにしてください。</translation>
+        </message>
+        <message>
+            <source>You don't have the ROM this match is using (%1).
+
+Add it to your ROM directory and refresh the list, then try again.</source>
+            <translation>この対戦で使われているROM（%1）がありません。
+
+ROMディレクトリへ追加して一覧を更新してから、もう一度お試しください。</translation>
+        </message>
+        <message>
+            <source>Lag Stats</source>
+            <translation>ラグ統計</translation>
+        </message>
+        <message>
+            <source>See who is holding the match up: every player's frame rate, frame time, waits and ping. Or type /lagstat in the chat.</source>
+            <translation>対戦を遅らせているのが誰かを確認します：全プレイヤーのフレームレート、フレーム時間、待ち時間、Ping。チャットで /lagstat と入力しても表示できます。</translation>
+        </message>
+        <message>
+            <source>Lag stats need a rollback match: try /lagstat while one is running, or right after it.</source>
+            <translation>ラグ統計はロールバック対戦で使えます：対戦中か、対戦の直後に /lagstat を試してください。</translation>
+        </message>
     </context>
-    </TS>
+    <context>
+        <name>UserInterface::Dialog::StartingSaveDialog</name>
+        <message>
+            <source>Starting Save Data</source>
+            <translation>開始時のセーブデータ</translation>
+        </message>
+        <message>
+            <source>Everyone in the match starts from this save. During the match the game saves to memory only, so nobody's own save files are read or changed.</source>
+            <translation>対戦の全員がこのセーブから始めます。対戦中のセーブはメモリ上だけで行われるため、誰のセーブファイルも読み込まれたり変更されたりしません。</translation>
+        </message>
+        <message>
+            <source>Browse for a Save File...</source>
+            <translation>セーブファイルを参照...</translation>
+        </message>
+        <message>
+            <source>Continue from where each match left off</source>
+            <translation>前回の対戦の続きから始める</translation>
+        </message>
+        <message>
+            <source>When a match changes the save, the next match starts from the changed save.
+Turn this off to start every match from the save picked here.</source>
+            <translation>対戦でセーブが変わると、次の対戦は変わったセーブから始まります。
+オフにすると、毎回ここで選んだセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Use This Save</source>
+            <translation>このセーブを使う</translation>
+        </message>
+        <message>
+            <source>Your save for this game</source>
+            <translation>このゲームのあなたのセーブ</translation>
+        </message>
+        <message>
+            <source>%1 · changed %2</source>
+            <translation>%1 · %2に更新</translation>
+        </message>
+        <message>
+            <source>Where the last match left off</source>
+            <translation>前回の対戦の続き</translation>
+        </message>
+        <message>
+            <source>%1 · from this room</source>
+            <translation>%1 · このルームから</translation>
+        </message>
+        <message>
+            <source>netplay save · %1</source>
+            <translation>ネットプレイのセーブ · %1</translation>
+        </message>
+        <message>
+            <source>with %1</source>
+            <translation>プレイヤー：%1</translation>
+        </message>
+        <message>
+            <source>Choose Save Data</source>
+            <translation>セーブデータを選択</translation>
+        </message>
+        <message>
+            <source>Save data (*.rmgsave *.eep *.sra *.fla);;All files (*)</source>
+            <translation>セーブデータ (*.rmgsave *.eep *.sra *.fla);;すべてのファイル (*)</translation>
+        </message>
+        <message>
+            <source>RMG-K couldn't read %1 as save data.</source>
+            <translation>RMG-Kは%1をセーブデータとして読み込めませんでした。</translation>
+        </message>
+        <message>
+            <source>emulator save file · %1</source>
+            <translation>エミュレーターのセーブファイル · %1</translation>
+        </message>
+        <message>
+            <source>Blank save</source>
+            <translation>空のセーブ</translation>
+        </message>
+        <message>
+            <source>new cartridge · nothing saved yet</source>
+            <translation>新品のカートリッジ · まだセーブなし</translation>
+        </message>
+        <message>
+            <source>%1 starts as on a new cartridge, with nothing saved. Use Save As during the match to keep what the game saves.</source>
+            <translation>%1は新品のカートリッジと同じく、何もセーブされていない状態から始まります。ゲームがセーブした内容を残すには、対戦中に「名前を付けて保存」を使ってください。</translation>
+        </message>
+        <message>
+            <source>Holds: nothing yet</source>
+            <translation>内容：まだなし</translation>
+        </message>
+        <message>
+            <source>Holds: %1</source>
+            <translation>内容：%1</translation>
+        </message>
+        <message>
+            <source>Made with a different ROM (%1). Pick a save made for %2.</source>
+            <translation>別のROM（%1）で作られたセーブです。%2用のセーブを選んでください。</translation>
+        </message>
+        <message>
+            <source>An emulator save file doesn't say which game it's from. Make sure it's for %1.</source>
+            <translation>エミュレーターのセーブファイルにはゲーム名が記録されていません。%1用か確認してください。</translation>
+        </message>
+        <message>
+            <source>Made for %1.</source>
+            <translation>%1用のセーブです。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::SaveNetplaySaveDialog</name>
+        <message>
+            <source>Save Game Save</source>
+            <translation>ゲームのセーブを保存</translation>
+        </message>
+        <message>
+            <source>Saves the game's save data as everyone has it now. Only your copy is written.</source>
+            <translation>全員が持っている現在のセーブデータを保存します。書き込まれるのはあなたのコピーだけです。</translation>
+        </message>
+        <message>
+            <source>Name:</source>
+            <translation>名前:</translation>
+        </message>
+        <message>
+            <source>Folder:</source>
+            <translation>フォルダー:</translation>
+        </message>
+        <message>
+            <source>Browse...</source>
+            <translation>参照...</translation>
+        </message>
+        <message>
+            <source>Keep this file updated while you play</source>
+            <translation>プレイ中はこのファイルを自動で更新する</translation>
+        </message>
+        <message>
+            <source>Rewrites the file each time the game saves, once every player's game agrees on it.</source>
+            <translation>ゲームがセーブするたびに、全プレイヤーのゲームで確定した内容でファイルを書き換えます。</translation>
+        </message>
+        <message>
+            <source>Choose a Folder</source>
+            <translation>フォルダーを選択</translation>
+        </message>
+        <message>
+            <source>Give the save a name and a folder.</source>
+            <translation>セーブの名前とフォルダーを入力してください。</translation>
+        </message>
+        <message>
+            <source>%1 already exists. Replace it?</source>
+            <translation>%1はすでにあります。置き換えますか？</translation>
+        </message>
+    </context>
+        <context>
+        <name>KailleraPlaybackDialog</name>
+        <message>
+            <source>Replays</source>
+            <translation>リプレイ</translation>
+        </message>
+        <message>
+            <source>Date</source>
+            <translation>日付</translation>
+        </message>
+        <message>
+            <source>Players</source>
+            <translation>プレイヤー</translation>
+        </message>
+        <message>
+            <source>Game</source>
+            <translation>ゲーム</translation>
+        </message>
+        <message>
+            <source>Duration</source>
+            <translation>長さ</translation>
+        </message>
+        <message>
+            <source>Size</source>
+            <translation>サイズ</translation>
+        </message>
+        <message>
+            <source>Filename</source>
+            <translation>ファイル名</translation>
+        </message>
+        <message>
+            <source>Click or drag to jump</source>
+            <translation>クリックまたはドラッグで移動</translation>
+        </message>
+        <message>
+            <source>Jump to %1</source>
+            <translation>%1 へ移動</translation>
+        </message>
+        <message>
+            <source>Play</source>
+            <translation>再生</translation>
+        </message>
+        <message>
+            <source>Pause</source>
+            <translation>一時停止</translation>
+        </message>
+        <message>
+            <source>« 10s</source>
+            <translation>« 10秒</translation>
+        </message>
+        <message>
+            <source>10s »</source>
+            <translation>10秒 »</translation>
+        </message>
+        <message>
+            <source>Step</source>
+            <translation>コマ送り</translation>
+        </message>
+        <message>
+            <source>Stop</source>
+            <translation>停止</translation>
+        </message>
+        <message>
+            <source>Add Bookmark</source>
+            <translation>ブックマークを追加</translation>
+        </message>
+        <message>
+            <source>Delete</source>
+            <translation>削除</translation>
+        </message>
+        <message>
+            <source>Refresh</source>
+            <translation>更新</translation>
+        </message>
+        <message>
+            <source>Export MP4</source>
+            <translation>MP4 書き出し</translation>
+        </message>
+        <message>
+            <source>Open Folder</source>
+            <translation>フォルダーを開く</translation>
+        </message>
+        <message>
+            <source>Jump back 10 seconds</source>
+            <translation>10秒戻る</translation>
+        </message>
+        <message>
+            <source>Jump forward 10 seconds</source>
+            <translation>10秒進む</translation>
+        </message>
+        <message>
+            <source>Pause, then advance one frame</source>
+            <translation>一時停止して1フレーム進める</translation>
+        </message>
+        <message>
+            <source>Bookmark this moment of the recording</source>
+            <translation>録画のこの場面をブックマークする</translation>
+        </message>
+        <message>
+            <source>Speed</source>
+            <translation>速度</translation>
+        </message>
+        <message>
+            <source>Playback speed</source>
+            <translation>再生速度</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>閉じる</translation>
+        </message>
+        <message>
+            <source>%1 / %2  (frame %3 / %4)</source>
+            <translation>%1 / %2  (フレーム %3 / %4)</translation>
+        </message>
+        <message>
+            <source>  —  jumping (%1%)</source>
+            <translation>  —  移動中 (%1%)</translation>
+        </message>
+        <message>
+            <source>Jumping back to %1...</source>
+            <translation>%1 に戻っています...</translation>
+        </message>
+        <message>
+            <source>Failed to load recording: %1</source>
+            <translation>録画を読み込めませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Show chat</source>
+            <translation>チャットを表示</translation>
+        </message>
+        <message>
+            <source>Show the recording&apos;s chat messages the way they appeared on screen</source>
+            <translation>録画のチャットを、画面に表示されたとおりに表示します</translation>
+        </message>
+        <message>
+            <source>Bookmarks</source>
+            <translation>ブックマーク</translation>
+        </message>
+        <message>
+            <source>This recording&apos;s extra data comes from a newer version of RMG-K, so its bookmarks can&apos;t be changed here.</source>
+            <translation>この録画の追加データは新しいバージョンの RMG-K で作成されたため、ここではブックマークを変更できません。</translation>
+        </message>
+        <message>
+            <source>The bookmarks couldn&apos;t be saved: %1</source>
+            <translation>ブックマークを保存できませんでした: %1</translation>
+        </message>
+        <message>
+            <source>Bookmark %1</source>
+            <translation>ブックマーク %1</translation>
+        </message>
+        <message>
+            <source>Name the bookmark at %1:</source>
+            <translation>%1 のブックマーク名:</translation>
+        </message>
+        <message>
+            <source>Add</source>
+            <translation>追加</translation>
+        </message>
+        <message>
+            <source>Rename Bookmark</source>
+            <translation>ブックマーク名を変更</translation>
+        </message>
+        <message>
+            <source>The recording&apos;s bookmarks changed; they&apos;re shown again.</source>
+            <translation>録画のブックマークが変更されたため、表示し直しました。</translation>
+        </message>
+        <message>
+            <source>Delete Bookmark</source>
+            <translation>ブックマークを削除</translation>
+        </message>
+        <message>
+            <source>Delete the bookmark &quot;%1&quot; at %2?</source>
+            <translation>%2 のブックマーク「%1」を削除しますか？</translation>
+        </message>
+        <message>
+            <source>Game %1</source>
+            <translation>第%1ゲーム</translation>
+        </message>
+        <message>
+            <source>Bookmark</source>
+            <translation>ブックマーク</translation>
+        </message>
+        <message>
+            <source>Jump to:</source>
+            <translation>ジャンプ:</translation>
+        </message>
+        <message>
+            <source>Start</source>
+            <translation>最初</translation>
+        </message>
+        <message>
+            <source>Watch from the beginning</source>
+            <translation>最初から見る</translation>
+        </message>
+        <message>
+            <source>Watch from %1 (%2). Right-click to rename or delete it.</source>
+            <translation>%1 から見る (%2)。右クリックで名前の変更や削除ができます。</translation>
+        </message>
+        <message>
+            <source>Watch from %1 (%2)</source>
+            <translation>%1 から見る (%2)</translation>
+        </message>
+        <message>
+            <source>Rename...</source>
+            <translation>名前を変更...</translation>
+        </message>
+    </context>
+    <context>
+        <name>PlaybackTimeline</name>
+        <message>
+            <source>Timeline</source>
+            <translation>タイムライン</translation>
+        </message>
+    </context>
+</TS>

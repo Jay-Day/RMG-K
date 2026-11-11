@@ -100,6 +100,19 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_HideCursorInEmulation = false;
     bool ui_HideCursorInFullscreenEmulation = false;
 #ifdef _WIN32
+    // Render widgets of ended emulations, destroyed once the thread that
+    // rendered into them has exited: destroying the window while that thread
+    // exits can deadlock OpenGL drivers (NVIDIA's DXGI-layered present).
+    struct RetiredRenderWidget
+    {
+        QPointer<QWidget> widget;
+        void* thread = nullptr; // HANDLE, signaled when the thread exits
+    };
+    QList<RetiredRenderWidget> ui_RetiredRenderWidgets;
+    QTimer* ui_RetiredRenderWidgetTimer = nullptr;
+    void retireRenderWidget(QWidget* widget);
+    void destroyRetiredRenderWidgets(void);
+
     bool ui_ExclusiveFullscreen = false;
     bool ui_DisplayModeChanged  = false;
     std::wstring ui_DisplayModeDevice;
@@ -174,6 +187,9 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     // Bounds the "stop the old game, retry in 50ms" relaunch loop so a previous
     // emulation that refuses to stop can't spin forever (hung background game).
     int  ui_RollbackRelaunchAttempts = 0;
+    // When the last lobby notice (someone waiting to join, joining, ...) went
+    // to the overlay. Notices closer together than that are skipped.
+    qint64 ui_LobbyOverlayNoticeMs = 0;
     // Spectating a broadcast match via streaming krec playback (distinct from the
     // lobby *match* flow above — the spectator runs playback, not GekkoNet).
     bool    ui_SpectateActive  = false;
@@ -284,6 +300,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool handleNetplayChatKeyPress(QKeyEvent *event);
     void updateNetplayChatPrompt(void);
     void closeNetplayChatPrompt(void);
+    // /lagstat typed in the in-game chat: the lag report on the overlay.
+    void showLagReportOverlay(bool wholeMatch);
 #endif // NETPLAY
 
     void on_QGuiApplication_applicationStateChanged(Qt::ApplicationState state);

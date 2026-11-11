@@ -69,6 +69,17 @@ bool CoreIsSynchronizedNetplayActive(void);
 // used for synchronization in netplay/Kaillera
 int CoreGetCurrentFrameCount(void);
 
+// Playback seeking. Fast-forwards a krec playback, without the speed limiter and
+// without rendering where possible, until `record` input records were played,
+// then restores normal output on that record. Updates the target of a running seek.
+// pauseOnArrival pauses emulation on that record (a seek started while paused).
+// Returns false when not playing back or already at `record`.
+bool CoreStartPlaybackSeek(int record, bool pauseOnArrival = false);
+// stops a seek, restoring normal output
+void CoreStopPlaybackSeek(void);
+// returns whether a seek is running
+bool CoreIsPlaybackSeeking(void);
+
 // Spectate keyframe restore. Stage a full in-memory savestate for the
 // spectator's emulation to load on its emulation thread before it consumes the first
 // recorded input. frame identifies the first krec record after the saved state.

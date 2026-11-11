@@ -38,6 +38,16 @@
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
+#ifdef _WIN32
+// Laptops with two GPUs run apps they don't know on the integrated one: ask
+// the NVIDIA (Optimus) and AMD (PowerXpress) drivers for the discrete GPU.
+extern "C"
+{
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 //
 // Local Functions
 //
@@ -235,7 +245,7 @@ int main(int argc, char **argv)
     QCommandLineOption exportFfmpegOption("export-ffmpeg", "Internal replay export mode: FFmpeg executable", "path");
     QCommandLineOption exportWidthOption("export-width", "Internal replay export mode: render width", "pixels");
     QCommandLineOption exportHeightOption("export-height", "Internal replay export mode: render height", "pixels");
-    QCommandLineOption exportNoKailleraChatOption("export-no-kaillera-chat", "Internal replay export mode: hide Kaillera chat overlay");
+    QCommandLineOption exportChatOption("export-chat", "Internal replay export mode: show the recording's chat");
     QCommandLineOption exportLabelPortsOption("export-label-ports", "Internal replay export mode: label controller ports");
     QCommandLineOption exportVerboseOption("export-verbose", "Internal replay export mode: verbose export logging");
     // Shares export-krec/export-rom with the MP4 export options above (same
@@ -249,7 +259,7 @@ int main(int argc, char **argv)
     exportFfmpegOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportWidthOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportHeightOption.setFlags(QCommandLineOption::HiddenFromHelp);
-    exportNoKailleraChatOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    exportChatOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportLabelPortsOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportVerboseOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportRmgrOutputOption.setFlags(QCommandLineOption::HiddenFromHelp);
@@ -272,7 +282,7 @@ int main(int argc, char **argv)
     parser.addOption(exportFfmpegOption);
     parser.addOption(exportWidthOption);
     parser.addOption(exportHeightOption);
-    parser.addOption(exportNoKailleraChatOption);
+    parser.addOption(exportChatOption);
     parser.addOption(exportLabelPortsOption);
     parser.addOption(exportVerboseOption);
     parser.addOption(exportRmgrOutputOption);

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 extern "C"
 {
@@ -104,8 +105,34 @@ typedef enum
     M64CMD_PIF_OPEN,
     M64CMD_ROM_SET_SETTINGS,
     M64CMD_DISK_OPEN,
-    M64CMD_DISK_CLOSE
+    M64CMD_DISK_CLOSE,
+    // RMG-K's commands, in m64p_types.h order.
+    M64CMD_RUN_FRAMES,
+    M64CMD_ROLLBACK_SAVE_STATE,
+    M64CMD_ROLLBACK_LOAD_STATE,
+    M64CMD_ROLLBACK_FREE_STATE,
+    M64CMD_ROLLBACK_SET_INPUT_CALLBACK,
+    M64CMD_ROLLBACK_SET_INPUT_PLAYERS,
+    M64CMD_ROLLBACK_SET_DETERMINISTIC,
+    M64CMD_ROLLBACK_SAMPLE_INPUT,
+    M64CMD_ROLLBACK_EXECUTE,
+    M64CMD_ROLLBACK_RUN_FRAME,
+    M64CMD_ROLLBACK_GET_RUN_FRAME_STATS,
+    M64CMD_ROLLBACK_SET_VERBOSE_STATS,
+    M64CMD_ROLLBACK_SET_TIMESYNC_SCALE,
+    M64CMD_FRAME_OUTPUT_SET,
+    M64CMD_ROLLBACK_SET_SAVE_DATA,
+    M64CMD_ROLLBACK_GET_SAVE_DATA
 } m64p_command;
+
+// As in m64p_types.h: the save a replay's match started from.
+enum { M64SAVEDATA_KINDS = 3 };
+typedef struct
+{
+    unsigned char* data[M64SAVEDATA_KINDS];
+    int            size[M64SAVEDATA_KINDS];
+    unsigned int   generation;
+} m64p_save_data;
 
 typedef enum
 {
@@ -226,6 +253,9 @@ public:
     bool openRom(const std::string& romPath);
     bool attachPlugins();
     void applyDeterministicSettings();
+    // Starts the game from the save its match did, in memory only. Each
+    // buffer is EEPROM, SRAM, FlashRAM in turn; empty starts that one blank.
+    bool setSaveData(const std::vector<std::vector<uint8_t>>& kinds);
     void configureControllersForReplay(int numPlayers);
     void setPifCallback(pif_sync_callback_t callback);
     void setFrameCallback(m64p_frame_callback callback);

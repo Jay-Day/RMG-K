@@ -21,7 +21,7 @@ find_package(Git)
 if (GIT_FOUND)
     # Check if the current commit has an exact tag match
     execute_process(
-        COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match
+        COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match --match "v*"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         RESULT_VARIABLE GIT_TAG_RESULT
         OUTPUT_VARIABLE GIT_TAG_VERSION
@@ -44,6 +44,18 @@ if (GIT_FOUND)
         )
         if (${GIT_RESULT} EQUAL 0)
             set(GIT_VERSION "vdev-${GIT_COMMIT_COUNT}")
+            # Append the commit so a test build can be traced back to its source
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} rev-parse --short=8 HEAD
+                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                RESULT_VARIABLE GIT_HASH_RESULT
+                OUTPUT_VARIABLE GIT_COMMIT_HASH
+                ERROR_QUIET
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+            )
+            if (${GIT_HASH_RESULT} EQUAL 0)
+                set(GIT_VERSION "vdev-${GIT_COMMIT_COUNT}-${GIT_COMMIT_HASH}")
+            endif()
         endif()
     endif()
 endif(GIT_FOUND)
@@ -52,6 +64,12 @@ if (NOT GIT_FOUND OR NOT ${GIT_RESULT} EQUAL 0)
         message(WARNING "git failed to retrieve the current revision, falling back to VERSION file!")
     endif()
     file(STRINGS "VERSION" GIT_VERSION)
+endif()
+
+# vdev builds default to the test lobby, tagged releases to prod.
+# Checked before the override below so faking a version doesn't change servers.
+if (GIT_VERSION MATCHES "^vdev-")
+    set(RMGK_TEST_BUILD ON)
 endif()
 
 if (KAILLERA_APP_VERSION_OVERRIDE)

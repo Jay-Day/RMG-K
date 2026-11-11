@@ -12,6 +12,7 @@
 
 #include <array>
 #include <string>
+#include <vector>
 
 // attempts to initialize the OSD
 bool OnScreenDisplayInit(void);
@@ -60,6 +61,12 @@ void OnScreenDisplaySetCenterMessage(const std::string& message);
 // Sets persistent live-replay audience text in the normal OSD message stack.
 // Pass an empty string to hide it.
 void OnScreenDisplaySetLiveReplayStatus(const std::string& message);
+
+// Shows a lag report panel at the top of the screen for `seconds`: a headline,
+// a line of detail, then a table whose first row is the column header.
+// seconds <= 0 hides it.
+void OnScreenDisplaySetLagReport(const std::string& headline, const std::string& detail,
+                                 const std::vector<std::vector<std::string>>& table, int seconds);
 
 // renders the OSD
 void OnScreenDisplayRender(void);

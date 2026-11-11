@@ -43,6 +43,7 @@
 #include "device/rcp/si/si_controller.h"
 #include "plugin/plugin.h"
 #include "main/netplay.h"
+#include "main/main.h"
 #include "main/pif_sync_callback.h"
 #include "osal/files.h"
 
@@ -393,6 +394,7 @@ static void rollback_sync_input(struct pif* pif)
 
     memcpy(l_rollback_input_values, input_values, sizeof(l_rollback_input_values));
     l_rollback_input_valid = 1;
+    main_rollback_log_inputs(input_values, l_rollback_input_players);
 
     for (k = 0; k < (size_t)l_rollback_input_players && k < PIF_CHANNELS_COUNT; ++k) {
         struct pif_channel* channel = &pif->channels[k];
@@ -732,6 +734,14 @@ void update_pif_ram(struct pif* pif)
                 skipped_raw_pif_channel = 1;
             }
             rollback_force_controller_absent(&pif->channels[k]);
+            continue;
+        }
+        /* A recording being played back drives this channel through the sync
+         * callback, which overwrites it anyway: don't make a raw input plugin
+         * talk to its hardware for it (that would cap fast-forwarding at the
+         * adapter's polling rate). */
+        if (pif_sync_drives_channel(k) && k < NUM_CONTROLLER && Controls[k].RawData) {
+            rollback_force_controller_present(&pif->channels[k]);
             continue;
         }
         rollback_log_pif_channel("native-before", k, &pif->channels[k]);

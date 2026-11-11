@@ -15,6 +15,10 @@ if (PORTABLE_INSTALL)
     add_definitions(-DPORTABLE_INSTALL)
 endif(PORTABLE_INSTALL)
 
+if (RMGK_TEST_BUILD)
+    add_definitions(-DRMGK_TEST_BUILD)
+endif(RMGK_TEST_BUILD)
+
 if (UPDATER)
     find_package(Qt6 COMPONENTS Network REQUIRED)
     add_definitions(-DUPDATER)
@@ -121,6 +125,7 @@ if (NETPLAY)
         UserInterface/KailleraUIBridge.cpp
         UserInterface/Dialog/Kaillera/KailleraNetplayDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraPlaybackDialog.cpp
+        UserInterface/Dialog/Kaillera/PlaybackTimeline.cpp
         UserInterface/Dialog/Kaillera/KailleraServerBrowserDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraOptionsDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraP2PDialog.cpp
@@ -129,6 +134,9 @@ if (NETPLAY)
         UserInterface/Dialog/Lobby/LobbyConnectDialog.cpp
         UserInterface/Dialog/Lobby/CreateRoomDialog.cpp
         UserInterface/Dialog/Lobby/RollbackLobbyDialog.cpp
+        UserInterface/Dialog/Lobby/LagStats.cpp
+        UserInterface/Dialog/Lobby/LagStatsDialog.cpp
+        UserInterface/Dialog/Lobby/NetplaySaveDialogs.cpp
         UserInterface/Dialog/Netplay/NetplayCommon.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.ui
@@ -145,11 +153,12 @@ if (NETPLAY)
         UserInterface/Widget/Netplay/CreateNetplaySessionWidget.cpp
         UserInterface/Widget/Netplay/CreateNetplaySessionEmptyWidget.cpp
         UserInterface/Widget/Netplay/CreateNetplaySessionEmptyWidget.ui
+        Utilities/KailleraExport/KrecParser.cpp
     )
     if (WIN32)
         list(APPEND RMG_SOURCES
             Utilities/KailleraExport/KrecMp4Export.cpp
-            Utilities/KailleraExport/KrecParser.cpp
+            Utilities/KailleraExport/ChatOverlay.cpp
             Utilities/KailleraExport/EmulatorProxy.cpp
             Utilities/KailleraExport/PifReplay.cpp
             Utilities/KailleraExport/FrameCapture.cpp

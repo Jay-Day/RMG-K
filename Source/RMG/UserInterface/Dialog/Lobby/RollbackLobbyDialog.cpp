@@ -27,11 +27,15 @@
 #include "RollbackLobbyDialog.hpp"
 #include "LobbyConnectDialog.hpp"
 #include "CreateRoomDialog.hpp"
+#include "LagStatsDialog.hpp"
 #include "LobbyRegions.hpp"
+#include "NetplaySaveDialogs.hpp"
 
 #include <RMG-Core/Callback.hpp>
+#include <RMG-Core/Error.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Kaillera.hpp>
+#include <RMG-Core/NetplaySave.hpp>
 #include <RMG-Core/rmgk_gekko.hpp> // request_disconnect_player (instant peer drop)
 
 #include "n02_client.h" // setRecordingStreamSink (broadcast tee)
@@ -65,6 +69,9 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QSignalBlocker>
 #include <QShowEvent>
 #include <QCloseEvent>
 #include <QMouseEvent>
@@ -172,6 +179,13 @@ namespace
         return isDarkTheme()
             ? StatusColors{ "#4CAF50", "#FFCA28", "#EF5350", "#BDBDBD" }
             : StatusColors{ "#2E7D32", "#F9A825", "#C62828", "#9E9E9E" };
+    }
+
+    // Amber for warning text. The light theme's wait color is too pale to read
+    // as a sentence, so it uses the deeper goldenrod of the P3 accent.
+    QString warnTextHex()
+    {
+        return isDarkTheme() ? QString(statusColors().wait) : QStringLiteral("#b5790a");
     }
 
     QString humanState(LobbyClient::ConnectionState s)
@@ -652,7 +666,11 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
               | Qt::WindowMinMaxButtonsHint
               | Qt::WindowCloseButtonHint)
 {
+#ifdef RMGK_TEST_BUILD
+    setWindowTitle(tr("RMG-K Lobby") + " [TEST]");
+#else
     setWindowTitle(tr("RMG-K Lobby"));
+#endif
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setWindowModality(Qt::NonModal);
     resize(1180, 720);
@@ -668,6 +686,7 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     }
 
     m_client = new LobbyClient(this);
+    m_lagStats = new LagStatsExchange([this](quint64 userId) { return m_client->measuredPingMs(userId); }, this);
 
     buildUi();
     applyStylesheet();
@@ -1250,8 +1269,10 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_recordCheck = new QCheckBox(tr("Record locally"), this);
     const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
     n02_kaillera_recording_enabled = recordingDefault;
+    m_recordLocallyChoice = recordingDefault;
     m_recordCheck->setChecked(recordingDefault);
-    connect(m_recordCheck, &QCheckBox::toggled, this, [](bool checked) {
+    connect(m_recordCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_recordLocallyChoice = checked;
         n02_kaillera_recording_enabled = checked;
     });
     toggleRow->addWidget(m_recordCheck);
@@ -1271,6 +1292,47 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     });
     toggleRow->addWidget(m_broadcastCheck);
 
+    // Off in every new room. The server repeats the host and waiting checks.
+    m_lateJoinCheck = new QCheckBox(tr("Late join"), this);
+    m_lateJoinCheck->setVisible(false);
+    connect(m_lateJoinCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_suppressSettingsSignal) return;
+        if (m_currentRoomId == 0 || !m_client || m_currentRoomHostId != m_client->selfUserId())
+            return;
+        if (checked && !confirmLateJoin())
+        {
+            m_suppressSettingsSignal = true;
+            m_lateJoinCheck->setChecked(false);
+            m_suppressSettingsSignal = false;
+            return;
+        }
+        m_client->updateRoomLateJoin(checked);
+    });
+    toggleRow->addWidget(m_lateJoinCheck);
+
+    // Off in every new room: the match starts from a blank save. The server
+    // repeats the host and waiting checks.
+    m_saveDataCheck = new QCheckBox(tr("Save data"), this);
+    m_saveDataCheck->setObjectName("SaveDataCheck");
+    m_saveDataCheck->setVisible(false);
+    connect(m_saveDataCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_suppressSettingsSignal) return;
+        if (m_currentRoomId == 0 || !m_client || m_currentRoomHostId != m_client->selfUserId())
+            return;
+        if (checked && !m_hostSaveChoice && !pickStartingSave())
+        {
+            m_suppressSettingsSignal = true;
+            m_saveDataCheck->setChecked(false);
+            m_suppressSettingsSignal = false;
+            return;
+        }
+        if (checked)
+            publishHostSaveChoice();
+        else
+            m_client->updateRoomSaveData(false);
+    });
+    toggleRow->addWidget(m_saveDataCheck);
+
 #ifdef RMGK_GAME_STATS
     // Independent .rmgr toggle - separate file, separate checkbox, doesn't
     // interact with m_recordCheck/m_broadcastCheck at all. Hidden until
@@ -1288,11 +1350,67 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     });
     toggleRow->addWidget(m_replayRecordCheck);
 #endif
-
     toggleRow->addStretch(1);
-    updateRecordingControls();
 
     lay->addLayout(toggleRow);
+
+    m_lateJoinNote = new QLabel(this);
+    m_lateJoinNote->setTextFormat(Qt::RichText);
+    m_lateJoinNote->setWordWrap(true);
+    m_lateJoinNote->setVisible(false);
+    lay->addWidget(m_lateJoinNote);
+
+    // Which save the match starts from; during and after a match, how the
+    // game's save stands and the buttons to keep a copy.
+    m_saveDataRow = new QWidget(this);
+    auto* saveRow = new QHBoxLayout(m_saveDataRow);
+    saveRow->setContentsMargins(0, 0, 0, 0);
+    saveRow->setSpacing(SPACING_DEFAULT);
+    m_saveDataNote = new QLabel(m_saveDataRow);
+    m_saveDataNote->setObjectName("SaveDataNote");
+    m_saveDataNote->setTextFormat(Qt::RichText);
+    m_saveDataNote->setWordWrap(true);
+    saveRow->addWidget(m_saveDataNote, 1);
+    m_saveDataChangeBtn = new QPushButton(tr("Change..."), m_saveDataRow);
+    m_saveDataChangeBtn->setObjectName("SaveDataChangeBtn");
+    m_saveDataChangeBtn->setAutoDefault(false);
+    m_saveDataChangeBtn->setDefault(false);
+    m_saveDataChangeBtn->setToolTip(tr("Pick another save for the next match to start from."));
+    connect(m_saveDataChangeBtn, &QPushButton::clicked, this, [this]() {
+        if (pickStartingSave())
+            publishHostSaveChoice();
+    });
+    saveRow->addWidget(m_saveDataChangeBtn);
+    m_saveDataSaveAsBtn = new QPushButton(tr("Save As..."), m_saveDataRow);
+    m_saveDataSaveAsBtn->setObjectName("SaveDataSaveAsBtn");
+    m_saveDataSaveAsBtn->setAutoDefault(false);
+    m_saveDataSaveAsBtn->setDefault(false);
+    m_saveDataSaveAsBtn->setToolTip(tr("Save the game's save data to a file on your PC."));
+    connect(m_saveDataSaveAsBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::saveMatchSaveAs);
+    saveRow->addWidget(m_saveDataSaveAsBtn);
+    m_saveDataKeepCheck = new QCheckBox(tr("Keep updated"), m_saveDataRow);
+    m_saveDataKeepCheck->setObjectName("SaveDataKeepCheck");
+    connect(m_saveDataKeepCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_suppressSettingsSignal) return;
+        if (checked && m_keepCopyFile.isEmpty())
+        {
+            m_keepCopyEnabled = true;
+            saveMatchSaveAs();
+            if (m_keepCopyFile.isEmpty())
+                m_keepCopyEnabled = false;
+        }
+        else
+        {
+            m_keepCopyEnabled = checked;
+            if (checked && m_matchSave)
+                writeMatchSave(m_keepCopyFile);
+        }
+        updateSaveDataControls();
+    });
+    saveRow->addWidget(m_saveDataKeepCheck);
+    m_saveDataRow->setVisible(false);
+    lay->addWidget(m_saveDataRow);
+    updateRecordingControls();
 
     // Delay is local to each player and is published for the seat display.
     auto applyDelay = [this]() {
@@ -1410,8 +1528,18 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_leaveBtn->setToolTip(tr("Leave the room and return to the lobby."));
     connect(m_leaveBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::onLeaveRoomClicked);
 
+    m_lagStatsBtn = new QPushButton(tr("Lag Stats"), this);
+    m_lagStatsBtn->setObjectName("LagStatsBtn");
+    m_lagStatsBtn->setMinimumHeight(HERO_BUTTON_HEIGHT);
+    m_lagStatsBtn->setAutoDefault(false);
+    m_lagStatsBtn->setDefault(false);
+    m_lagStatsBtn->setCursor(Qt::PointingHandCursor);
+    m_lagStatsBtn->setToolTip(tr("See who is holding the match up: every player's frame rate, frame time, waits and ping. Or type /lagstat in the chat."));
+    connect(m_lagStatsBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::showLagStats);
+
     actionRow->addWidget(m_startBtn, 1);
     actionRow->addStretch(0);
+    actionRow->addWidget(m_lagStatsBtn);
     actionRow->addWidget(m_dropBtn);
     actionRow->addWidget(m_leaveBtn);
     lay->addLayout(actionRow);
@@ -1889,16 +2017,17 @@ void RollbackLobbyDialog::applyStylesheet()
 
         // Active Rooms / Ongoing Matches — styled as tables: square 1px outline,
         // a distinct header row, and light column / row separators.
-        "QTreeWidget#RoomsTree, QTreeWidget#MatchesTree {"
+        "QTreeWidget#RoomsTree, QTreeWidget#MatchesTree, QTreeWidget#LagTree {"
         "  border: 1px solid %1;"
         "  background-color: palette(base);"
         "}"
-        "QTreeWidget#RoomsTree::item, QTreeWidget#MatchesTree::item {"
+        "QTreeWidget#RoomsTree::item, QTreeWidget#MatchesTree::item, QTreeWidget#LagTree::item {"
         "  padding: 3px 4px;"
         "  border-bottom: 1px solid rgba(127, 127, 127, 0.12);"
         "}"
         "QTreeWidget#RoomsTree QHeaderView::section,"
-        " QTreeWidget#MatchesTree QHeaderView::section {"
+        " QTreeWidget#MatchesTree QHeaderView::section,"
+        " QTreeWidget#LagTree QHeaderView::section {"
         "  background-color: rgba(127, 127, 127, 0.12);"
         "  color: palette(text);"
         "  border: none;"
@@ -1908,7 +2037,8 @@ void RollbackLobbyDialog::applyStylesheet()
         "  font-weight: 600;"
         "}"
         "QTreeWidget#RoomsTree QHeaderView::section:last,"
-        " QTreeWidget#MatchesTree QHeaderView::section:last {"
+        " QTreeWidget#MatchesTree QHeaderView::section:last,"
+        " QTreeWidget#LagTree QHeaderView::section:last {"
         "  border-right: none;"
         "}"
 
@@ -1960,7 +2090,8 @@ void RollbackLobbyDialog::applyStylesheet()
 
         // Secondary action buttons — Create Room / Drop / Leave read as a set,
         // matching the P2P hosting screen's secondary buttons.
-        "QPushButton#CreateRoomBtn, QPushButton#DropBtn, QPushButton#LeaveBtn {"
+        "QPushButton#CreateRoomBtn, QPushButton#DropBtn, QPushButton#LeaveBtn,"
+        " QPushButton#LagStatsBtn, QPushButton#LagCopyBtn {"
         "  border: 1px solid %1;"
         "  border-radius: 7px;"
         "  padding: 4px 14px;"
@@ -1968,15 +2099,16 @@ void RollbackLobbyDialog::applyStylesheet()
         "  background-color: palette(button);"
         "}"
         "QPushButton#CreateRoomBtn:hover, QPushButton#DropBtn:hover,"
-        " QPushButton#LeaveBtn:hover {"
+        " QPushButton#LeaveBtn:hover, QPushButton#LagStatsBtn:hover, QPushButton#LagCopyBtn:hover {"
         "  border-color: palette(dark);"
         "  background-color: palette(light);"
         "}"
         "QPushButton#CreateRoomBtn:pressed, QPushButton#DropBtn:pressed,"
-        " QPushButton#LeaveBtn:pressed {"
+        " QPushButton#LeaveBtn:pressed, QPushButton#LagStatsBtn:pressed, QPushButton#LagCopyBtn:pressed {"
         "  background-color: palette(midlight);"
         "}"
-        "QPushButton#CreateRoomBtn:disabled, QPushButton#DropBtn:disabled {"
+        "QPushButton#CreateRoomBtn:disabled, QPushButton#DropBtn:disabled,"
+        " QPushButton#LagCopyBtn:disabled {"
         "  color: palette(mid);"
         "}"
 
@@ -3322,6 +3454,10 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     CoreRefreshKailleraRecordingStorageStatus();
     const bool recordingDefault = CoreGetKailleraEffectiveRecordingDefault();
     n02_kaillera_recording_enabled = recordingDefault;
+    m_recordLocallyChoice = recordingDefault;
+    m_roomHasLateJoinOption = false;
+    m_roomLateJoinEnabled = false;
+    m_lateJoinEnabledSeen = false;
     if (m_recordCheck)
         m_recordCheck->setChecked(recordingDefault);
 
@@ -3533,6 +3669,94 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_roomLateJoin = roomState.value("lateJoin").toBool(false);
     m_canStartAlone = roomState.value("canStartAlone").toBool(false);
 
+    // Late join is the host's choice per room. Everyone hears when it changes,
+    // and a player entering a room with it on hears it too: whoever joins once
+    // a game is running doesn't get a replay of it.
+    m_roomHasLateJoinOption = roomState.contains("lateJoinEnabled");
+    {
+        const bool lateJoinEnabled = roomState.value("lateJoinEnabled").toBool(false);
+        if (!m_lateJoinEnabledSeen)
+        {
+            if (lateJoinEnabled && !iAmHost)
+                appendChatSystemLine(CHANNEL_ROOM,
+                    tr("Late join is on in this room. Players who join mid-game don't get a replay of it."));
+        }
+        else if (lateJoinEnabled != m_roomLateJoinEnabled)
+        {
+            if (iAmHost)
+                appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
+                    ? tr("Late join is on. Players can join while a game is running; they won't get a replay of it.")
+                    : tr("Late join is off."));
+            else
+                appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
+                    ? tr("The host turned on late join. Players who join mid-game don't get a replay of it.")
+                    : tr("The host turned off late join."));
+        }
+        m_lateJoinEnabledSeen = true;
+        m_roomLateJoinEnabled = lateJoinEnabled;
+    }
+    if (m_lateJoinCheck)
+    {
+        m_suppressSettingsSignal = true;
+        m_lateJoinCheck->setChecked(m_roomLateJoinEnabled);
+        m_suppressSettingsSignal = false;
+        m_lateJoinCheck->setVisible(m_roomHasLateJoinOption);
+    }
+
+    // Save data is the host's choice per room too. Everyone hears which save
+    // the next match starts from, and when it changes.
+    m_roomHasSaveDataOption = roomState.contains("saveData");
+    {
+        const QJsonObject saveData = roomState.value("saveData").toObject();
+        const bool enabled = saveData.value("enabled").toBool(false);
+        const QString label = saveData.value("label").toString();
+        const QString hash = saveData.value("hash").toString();
+        QStringList kinds;
+        for (const auto& kind : saveData.value("kinds").toArray())
+            kinds << kind.toString();
+        const bool changed = enabled != m_roomSaveDataEnabled || (enabled && hash != m_roomSaveDataHash);
+        // A blank save holds nothing yet: the match makes the game's first save.
+        const bool blank = enabled && kinds.isEmpty();
+        if (m_roomHasSaveDataOption && changed && (m_saveDataSeen || enabled))
+        {
+            const QString what = QStringLiteral("%1 (%2)").arg(label, kinds.join(QStringLiteral(" + ")));
+            if (!enabled)
+                appendChatSystemLine(CHANNEL_ROOM, iAmHost
+                    ? tr("Save data is off. The next match starts from a blank save.")
+                    : tr("The host turned off save data. The next match starts from a blank save."));
+            else if (blank)
+                appendChatSystemLine(CHANNEL_ROOM, iAmHost
+                    ? tr("Save data is on. The next match starts from a blank save.")
+                    : !m_saveDataSeen ? tr("This room uses save data. The next match starts from a blank save.")
+                                      : tr("The host picked a blank save. The next match starts from it."));
+            else if (iAmHost)
+                appendChatSystemLine(CHANNEL_ROOM, tr("The next match starts from your save: %1.").arg(what));
+            else if (!m_saveDataSeen)
+                appendChatSystemLine(CHANNEL_ROOM, tr("This room uses save data. Matches start from the host's save: %1.").arg(what));
+            else
+                appendChatSystemLine(CHANNEL_ROOM, tr("The host picked save data: %1. The next match starts from it.").arg(what));
+        }
+        m_saveDataSeen = m_roomHasSaveDataOption;
+        m_roomSaveDataEnabled = enabled;
+        m_roomSaveDataLabel = label;
+        m_roomSaveDataKinds = kinds;
+        m_roomSaveDataBytes = saveData.value("bytes").toInt();
+        m_roomSaveDataHash = hash;
+    }
+    if (m_saveDataCheck)
+    {
+        m_suppressSettingsSignal = true;
+        m_saveDataCheck->setChecked(m_roomSaveDataEnabled);
+        m_suppressSettingsSignal = false;
+        m_saveDataCheck->setVisible(m_roomHasSaveDataOption);
+    }
+    if (m_publishSaveChoiceWhenWaiting && iAmHost && state == "waiting")
+    {
+        m_publishSaveChoiceWhenWaiting = false;
+        if (m_roomSaveDataEnabled)
+            publishHostSaveChoice();
+    }
+
     // Pacing is host-authoritative and applies to every seat. Mirror it into the
     // engine setting now (host included) so the match starts on the room's model;
     // reset_gekko_log() reads Rollback_PacingMode when the session begins.
@@ -3696,6 +3920,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         const quint64 selfId = m_client->selfUserId();
         QSet<quint64> outOfMatch;
         m_lateJoinCapableUsers.clear();
+        m_saveDataCapableUsers.clear();
         bool selfOutOfMatch = false;
         for (const auto& v : players)
         {
@@ -3703,6 +3928,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             const quint64 uid = static_cast<quint64>(p.value("userId").toDouble());
             if (p.value("lateJoin").toBool())
                 m_lateJoinCapableUsers.insert(uid);
+            if (p.value("saveData").toBool())
+                m_saveDataCapableUsers.insert(uid);
             if (state == "in_game" && !p.value("inMatch").toBool(true))
             {
                 outOfMatch.insert(uid);
@@ -3721,6 +3948,12 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
                 appendChatSystemLine(CHANNEL_ROOM, iAmHost
                     ? tr("%1 is waiting to join. Click Add to Game on their seat to bring them in.").arg(who)
                     : tr("%1 is waiting to join. The host can add them to the game.").arg(who));
+                constexpr qint64 kWaitingNoticeGapMs = 30000;
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                const auto last = m_waitingNoticeMs.constFind(uid);
+                if (last != m_waitingNoticeMs.constEnd() && nowMs - *last < kWaitingNoticeGapMs)
+                    continue;
+                m_waitingNoticeMs.insert(uid, nowMs);
                 emit overlayMessage(iAmHost
                     ? tr("%1 is waiting to join (Add to Game in the lobby)").arg(who)
                     : tr("%1 is waiting to join").arg(who));
@@ -3741,6 +3974,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
             m_announcedWaitingSelf = false;
         }
         m_outOfMatchUsers = outOfMatch;
+        // Joining mid-game means no replay of this one.
+        updateRecordingControls();
     }
 
     // Flash + chime when a *new* player takes a seat. Compare this ROOM_STATE's
@@ -3786,6 +4021,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
 
 void RollbackLobbyDialog::updateRecordingControls()
 {
+    updateSaveDataControls();
     if (!m_recordCheck || !m_broadcastCheck)
         return;
 
@@ -3794,8 +4030,23 @@ void RollbackLobbyDialog::updateRecordingControls()
     const bool liveReplayEnabled = m_broadcastCheck->isChecked();
     const bool editable = m_currentRoomState == "waiting" && !matchTransportInProgress();
 
+    // Everyone in the room when a game starts can record it. A player who joins
+    // mid-game can't: their replay would start part way through, with nothing
+    // to start from. The box shows off for them meanwhile and goes back to
+    // their own choice afterwards.
+    const bool joiningMidGame = m_client && m_outOfMatchUsers.contains(m_client->selfUserId()) &&
+        m_currentRoomState == QLatin1String("in_game") && !matchTransportInProgress();
+    {
+        const QSignalBlocker blocker(m_recordCheck);
+        m_recordCheck->setChecked(!joiningMidGame && m_recordLocallyChoice);
+    }
     m_recordCheck->setEnabled(editable);
-    if (!editable)
+    if (joiningMidGame)
+    {
+        m_recordCheck->setToolTip(
+            tr("You joined while a game is running, so you won't get a replay of this one."));
+    }
+    else if (!editable)
     {
         m_recordCheck->setToolTip(
             tr("Recording can't be changed during a match."));
@@ -3825,6 +4076,307 @@ void RollbackLobbyDialog::updateRecordingControls()
             tr("Let others in the lobby watch this match live.\n"
                            "A local replay is saved only if Record locally is checked."));
     }
+
+    if (!m_lateJoinCheck || !m_lateJoinNote)
+        return;
+    m_lateJoinCheck->setEnabled(iAmHost && editable);
+    if (!iAmHost)
+    {
+        m_lateJoinCheck->setToolTip(m_roomLateJoinEnabled
+            ? tr("The host turned on late join: players can join while a game is running.")
+            : tr("The host has late join turned off."));
+    }
+    else if (!editable)
+    {
+        m_lateJoinCheck->setToolTip(
+            tr("Late join can't be changed during a match."));
+    }
+    else
+    {
+        m_lateJoinCheck->setToolTip(
+            tr("Let players join while a game is running. You add them with Add to Game.\n"
+               "Everyone here when the game starts can still save a replay; whoever joins mid-game can't."));
+    }
+    m_lateJoinNote->setVisible(m_roomLateJoinEnabled);
+    if (m_roomLateJoinEnabled)
+    {
+        m_lateJoinNote->setText(QString("<span style='color:%1; font-weight:600;'>⚠ %2</span> %3")
+            .arg(warnTextHex(), tr("Late join is on."),
+                 joiningMidGame ? tr("You joined mid-game, so you won't get a replay of this game.")
+                                : tr("Players who join mid-game won't get a replay of it.")));
+    }
+}
+
+bool RollbackLobbyDialog::confirmLateJoin()
+{
+    QMessageBox box(QMessageBox::Warning, tr("Turn on late join?"),
+        tr("Players who join while a game is running won't get a replay of it."),
+        QMessageBox::Cancel, this);
+    box.setInformativeText(
+        tr("Players can then join mid-game, and you add them with Add to Game. "
+           "Everyone in the room when a game starts can still save a replay (.krec) of it, "
+           "and Live Replay isn't affected. A replay can't start part way through a game, "
+           "so whoever joins later doesn't get one."));
+    QPushButton* turnOn = box.addButton(tr("Turn On Late Join"), QMessageBox::AcceptRole);
+    box.setDefaultButton(QMessageBox::Cancel);
+    box.exec();
+    // The room may have moved on while the box was open.
+    return box.clickedButton() == turnOn && m_currentRoomId != 0 && m_client &&
+        m_currentRoomHostId == m_client->selfUserId() && m_currentRoomState == "waiting";
+}
+
+// ── Save data ─────────────────────────────────────────────────────────
+//
+// With the room's Save data option on, the host picks the save the next
+// match starts from. It reaches every player in the pre-match manifest, and
+// during the match the game saves to memory only (the core's save sandbox),
+// so no player's own save files are read or changed. Rollbacks restore the
+// saves with the rest of the state. Once every peer has confirmed the frames
+// after a change, the engine publishes the new save; any player can write it
+// to a file, and keep that file updated as the game saves.
+
+void RollbackLobbyDialog::updateSaveDataControls()
+{
+    if (!m_saveDataRow || !m_saveDataCheck)
+        return;
+
+    const bool iAmHost = m_client && m_currentRoomId != 0 &&
+        m_currentRoomHostId == m_client->selfUserId();
+    const bool editable = m_currentRoomState == "waiting" && !matchTransportInProgress();
+    const bool inRoom = m_currentRoomId != 0;
+
+    m_saveDataCheck->setEnabled(iAmHost && editable);
+    m_saveDataCheck->setToolTip(!iAmHost
+        ? (m_roomSaveDataEnabled ? tr("Matches in this room start from the host's save data.")
+                                 : tr("Matches in this room start from a blank save."))
+        : !editable ? tr("Save data can't be changed during a match.")
+                    : tr("Start the match from a save you pick, for games that need one (unlocks, settings, progress).\n"
+                         "The game saves to memory only during the match: nobody's own save files are touched."));
+
+    const bool haveMatchSave = m_matchSave.has_value() && (m_matchSaveActive || m_matchSaveChanged || m_keepCopyEnabled);
+    const bool showRow = (inRoom && m_roomSaveDataEnabled) || haveMatchSave;
+    m_saveDataRow->setVisible(showRow);
+    if (!showRow)
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    auto ago = [nowMs](qint64 ms) {
+        const qint64 seconds = std::max<qint64>(0, (nowMs - ms) / 1000);
+        if (seconds < 60)
+            return tr("%n s ago", nullptr, int(seconds));
+        return tr("%n min ago", nullptr, int(seconds / 60));
+    };
+
+    QStringList parts;
+    // The host's label is in the host's language; a blank save reads in ours.
+    const QString label = m_roomSaveDataEnabled && m_roomSaveDataKinds.isEmpty() ? tr("Blank save")
+        : m_roomSaveDataLabel.isEmpty() ? tr("the host's save") : m_roomSaveDataLabel;
+    if (m_matchSaveActive)
+    {
+        parts << tr("<b>Save data:</b> %1").arg(label.toHtmlEscaped());
+        parts << (m_matchSaveChanged ? tr("the game saved %1").arg(ago(m_matchSaveChangedMs))
+                                     : tr("not changed yet"));
+    }
+    else if (m_matchSaveChanged && m_matchSave)
+    {
+        parts << tr("<b>Save data:</b> the last match changed the save");
+        if (iAmHost && m_hostSaveChoice && m_roomSaveDataEnabled)
+            parts << (m_hostSaveChoice->ContinueAfterMatch ? tr("the next match continues from it")
+                                                           : tr("the next match starts from %1 again").arg(label.toHtmlEscaped()));
+    }
+    else
+    {
+        parts << tr("<b>Starting save:</b> %1").arg(label.toHtmlEscaped());
+        if (!m_roomSaveDataKinds.isEmpty())
+            parts << QStringLiteral("%1 · %2").arg(m_roomSaveDataKinds.join(QStringLiteral(" + ")),
+                                                   tr("%1 KB").arg((m_roomSaveDataBytes + 1023) / 1024));
+        if (!iAmHost)
+            parts << tr("picked by the host");
+    }
+    if (m_keepCopyEnabled && !m_keepCopyFile.isEmpty())
+    {
+        const QString name = QFileInfo(m_keepCopyFile).completeBaseName().toHtmlEscaped();
+        parts << (m_keepCopyWrittenMs > 0 ? tr("kept in %1 (%2)").arg(name, ago(m_keepCopyWrittenMs))
+                                          : tr("kept in %1").arg(name));
+    }
+    m_saveDataNote->setText(parts.join(QStringLiteral(" · ")));
+
+    m_saveDataChangeBtn->setVisible(iAmHost && editable && m_roomSaveDataEnabled);
+    m_saveDataSaveAsBtn->setVisible(m_matchSave.has_value() && (m_matchSaveActive || m_matchSaveChanged));
+    m_saveDataKeepCheck->setVisible(m_matchSave.has_value() && m_matchSaveActive);
+    {
+        const QSignalBlocker blocker(m_saveDataKeepCheck);
+        m_saveDataKeepCheck->setChecked(m_keepCopyEnabled);
+    }
+    m_saveDataKeepCheck->setToolTip(m_keepCopyFile.isEmpty()
+        ? tr("Pick a file, then rewrite it each time the game saves.")
+        : tr("Rewrite %1 each time the game saves.").arg(QDir::toNativeSeparators(m_keepCopyFile)));
+}
+
+bool RollbackLobbyDialog::pickStartingSave()
+{
+    const QString romFile = localRomPathForMd5(m_currentRoomMd5);
+    std::optional<CoreNetplaySaveData> lastMatch;
+    if (m_matchSaveChanged && m_matchSave)
+        lastMatch = m_matchSave;
+
+    StartingSaveDialog dialog(romFile, m_currentRoomMd5, m_currentRoomGame, m_hostSaveChoice, lastMatch, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return false;
+    // The room may have moved on while the dialog was open.
+    if (m_currentRoomId == 0 || !m_client || m_currentRoomHostId != m_client->selfUserId() ||
+        m_currentRoomState != "waiting")
+        return false;
+
+    m_hostSaveChoice = dialog.choice();
+    return true;
+}
+
+void RollbackLobbyDialog::publishHostSaveChoice()
+{
+    if (!m_client || !m_hostSaveChoice)
+        return;
+    const CoreNetplaySaveData& data = m_hostSaveChoice->Data;
+    m_client->updateRoomSaveData(true, m_hostSaveChoice->Label, netplaySaveKindLabels(data),
+                                 int(data.TotalBytes()), netplaySaveHash(data));
+}
+
+void RollbackLobbyDialog::beginMatchSave()
+{
+    // The manifest just applied staged the starting save (blank without one).
+    m_matchSaveActive = m_roomSaveDataEnabled || !CoreGetNetplaySaveData().IsEmpty();
+    if (!m_matchSaveActive)
+    {
+        updateSaveDataControls();
+        return;
+    }
+
+    m_matchSave = CoreGetNetplaySaveData();
+    m_matchSaveChanged = false;
+    m_matchSaveChangedMs = 0;
+    m_keepCopyWrittenMs = 0;
+    if (!m_saveDataTimer)
+    {
+        m_saveDataTimer = new QTimer(this);
+        m_saveDataTimer->setInterval(500);
+        connect(m_saveDataTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onSaveDataTick);
+    }
+    m_saveDataTimer->start();
+    updateSaveDataControls();
+}
+
+void RollbackLobbyDialog::onSaveDataTick()
+{
+    CoreNetplaySaveData data;
+    uint32_t generation = 0;
+    if (CoreTakeConfirmedSaveData(data, generation))
+    {
+        m_matchSave = std::move(data);
+        m_matchSaveChanged = true;
+        m_matchSaveChangedMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_keepCopyEnabled && !m_keepCopyFile.isEmpty())
+        {
+            QString error;
+            if (!writeMatchSave(m_keepCopyFile, &error))
+            {
+                m_keepCopyEnabled = false;
+                appendChatSystemLine(CHANNEL_ROOM, tr("Couldn't update %1 (%2). Keep updated is off.")
+                    .arg(QDir::toNativeSeparators(m_keepCopyFile), error));
+            }
+        }
+    }
+    updateSaveDataControls();
+}
+
+void RollbackLobbyDialog::finishMatchSave()
+{
+    if (!m_matchSaveActive)
+        return;
+    onSaveDataTick();
+    if (m_saveDataTimer)
+        m_saveDataTimer->stop();
+    m_matchSaveActive = false;
+    // Nothing after this match may boot with its save by accident.
+    CoreClearNetplaySaveData();
+
+    const bool iAmHost = m_client && m_currentRoomId != 0 &&
+        m_currentRoomHostId == m_client->selfUserId();
+    if (m_matchSaveChanged && m_matchSave)
+    {
+        if (m_keepCopyEnabled && !m_keepCopyFile.isEmpty())
+            appendChatSystemLine(CHANNEL_ROOM, tr("The game's save is kept in %1.")
+                .arg(QDir::toNativeSeparators(m_keepCopyFile)));
+        else
+            appendChatSystemLine(CHANNEL_ROOM, tr("The game saved during this match. Use Save As to keep a copy."));
+
+        // The next match picks up where this one left off.
+        if (iAmHost && m_hostSaveChoice && m_hostSaveChoice->ContinueAfterMatch && m_roomSaveDataEnabled)
+        {
+            QString label = m_hostSaveChoice->Label;
+            const QString suffix = tr(" (continued)");
+            if (!label.endsWith(suffix))
+                label += suffix;
+            m_hostSaveChoice->Data = *m_matchSave;
+            m_hostSaveChoice->Label = label;
+            m_hostSaveChoice->File.clear();
+            // The room may already be waiting again: our game can close after
+            // the server's ROOM_STATE says so.
+            if (m_currentRoomState == "waiting")
+                publishHostSaveChoice();
+            else
+                m_publishSaveChoiceWhenWaiting = true;
+        }
+    }
+    updateSaveDataControls();
+}
+
+void RollbackLobbyDialog::saveMatchSaveAs()
+{
+    if (!m_matchSave)
+        return;
+    SaveNetplaySaveDialog dialog(m_currentRoomGame, m_keepCopyFile, m_keepCopyEnabled || m_keepCopyFile.isEmpty(), this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const QString file = dialog.filePath();
+    QString error;
+    if (!writeMatchSave(file, &error))
+    {
+        QMessageBox::warning(this, tr("Save Game Save"), tr("Couldn't save %1: %2")
+            .arg(QDir::toNativeSeparators(file), error));
+        return;
+    }
+    m_keepCopyFile = file;
+    m_keepCopyEnabled = dialog.keepUpdated() && m_matchSaveActive;
+    appendChatSystemLine(CHANNEL_ROOM, m_keepCopyEnabled
+        ? tr("Saved to %1. It's kept updated while you play.").arg(QDir::toNativeSeparators(file))
+        : tr("Saved to %1.").arg(QDir::toNativeSeparators(file)));
+    updateSaveDataControls();
+}
+
+bool RollbackLobbyDialog::writeMatchSave(const QString& file, QString* error)
+{
+    if (!m_matchSave)
+        return false;
+
+    CoreNetplaySaveInfo info;
+    info.Name = QFileInfo(file).completeBaseName().toStdString();
+    info.GoodName = m_currentRoomGame.toStdString();
+    info.RomMD5 = m_currentRoomMd5.toStdString();
+    info.CreatedUnix = QDateTime::currentSecsSinceEpoch();
+    for (const auto& seat : m_seats)
+    {
+        if (seat.userId != 0)
+            info.Players.push_back(lobbyUserName(seat.userId).toStdString());
+    }
+    if (!CoreWriteNetplaySaveFile(file.toStdU32String(), *m_matchSave, info))
+    {
+        if (error)
+            *error = QString::fromStdString(CoreGetError());
+        return false;
+    }
+    m_keepCopyWrittenMs = QDateTime::currentMSecsSinceEpoch();
+    return true;
 }
 
 void RollbackLobbyDialog::refreshStartButton()
@@ -3857,13 +4409,28 @@ void RollbackLobbyDialog::refreshStartButton()
     bool pingsReady = alone;
     if (m_client && !alone)
         m_client->worstRoomPingMs(seatedUserIds, &pingsReady);
-    const bool canStart      = iAmHost && waiting && enoughPlayers && pingsReady;
+    // Every player's client must take the save, or the match can't start.
+    QStringList needSaveData;
+    if (m_roomSaveDataEnabled)
+    {
+        for (quint64 uid : seatedUserIds)
+        {
+            if (!m_saveDataCapableUsers.contains(uid))
+                needSaveData << lobbyUserName(uid);
+        }
+    }
+    const bool canStart      = iAmHost && waiting && enoughPlayers && pingsReady && needSaveData.isEmpty();
 
     m_startBtn->setEnabled(canStart);
     m_startBtn->setToolTip(
         !iAmHost         ? tr("Only the host can start the game.")
         : !waiting       ? tr("Already in a match.")
-        : !enoughPlayers ? tr("Need at least 2 players to start.")
+        : !needSaveData.isEmpty() ? tr("This room uses save data, which %1 can't play with yet. "
+                                       "They need a newer RMG-K, or turn Save data off.")
+                                       .arg(needSaveData.join(QStringLiteral(", ")))
+        : !enoughPlayers ? (seated == 1 && m_roomHasLateJoinOption && !m_roomLateJoinEnabled
+                              ? tr("Need at least 2 players to start, or turn on Late join to start alone.")
+                              : tr("Need at least 2 players to start."))
         : !pingsReady    ? tr("Measuring every player-to-player path…")
         : alone          ? tr("Start playing now. You can add anyone who joins the room to the game.")
                          : QString());
@@ -3895,6 +4462,7 @@ void RollbackLobbyDialog::onLeaveRoomClicked()
 
 void RollbackLobbyDialog::notifyEmulationStarted()
 {
+    m_localGameOpen = true;
     if (!m_awaitingEmulationStart) return;
     m_awaitingEmulationStart = false;
     m_emulationActive = true;
@@ -3914,6 +4482,15 @@ void RollbackLobbyDialog::notifyEmulationStarted()
             (unsigned long long)m_currentMatchId);
         CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
     }
+    if (!m_matchWatchTimer)
+    {
+        m_matchWatchTimer = new QTimer(this);
+        m_matchWatchTimer->setInterval(1000);
+        connect(m_matchWatchTimer, &QTimer::timeout, this, &RollbackLobbyDialog::onMatchWatchTick);
+    }
+    m_matchWatchEpoch = -1;
+    m_matchWatchSeenSlots.clear();
+    m_matchWatchTimer->start();
     refreshAdmitButtons();
     if (m_lateJoin.role == LateJoinRole::Joiner)
         return;
@@ -3923,6 +4500,7 @@ void RollbackLobbyDialog::notifyEmulationStarted()
 
 void RollbackLobbyDialog::notifyEmulationFinished()
 {
+    m_localGameOpen = false;
     // Always close out a broadcast if one is running, even on paths that fall
     // through the early-return below (it flushes the tail + sends BROADCAST_END).
     stopBroadcast();
@@ -3932,7 +4510,10 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     const quint64 matchId = m_currentMatchId;
     m_emulationActive = false;
     m_awaitingEmulationStart = false;
+    if (m_matchWatchTimer)
+        m_matchWatchTimer->stop();
     endLiveRollbackSettings();
+    finishMatchSave();
     if (m_client)
         m_client->setMatchTransportActive(false);
     updateRecordingControls();
@@ -3948,8 +4529,10 @@ void RollbackLobbyDialog::notifyEmulationFinished()
     m_currentMatchId = 0;
     emit liveReplayViewerCountCleared();
     if (m_dropBtn) m_dropBtn->setEnabled(false);
-    // A hand-off can't outlive our game.
-    if (m_lateJoin.role != LateJoinRole::None)
+    // A hand-off can't outlive our game. A joiner's game starts at launch;
+    // before that, the game that closed is the one it replaces.
+    if (m_lateJoin.role != LateJoinRole::None &&
+        (m_lateJoin.role != LateJoinRole::Joiner || m_lateJoin.launched))
         abortLateJoin(QStringLiteral("game_closed"), true);
     refreshAdmitButtons();
 
@@ -3970,6 +4553,79 @@ void RollbackLobbyDialog::notifyEmulationFinished()
         });
     }
 
+}
+
+// A game that has lost its match plays on alone, and while it runs it holds
+// on to the lobby: the player can't reconnect, or be added back. End it once
+// that has happened:
+//  - Off the lobby, the server has dropped us from the match, and the other
+//    players stop sending us input, so the game stands still. (When the lobby
+//    itself restarts, everyone keeps playing.)
+//  - Every other player has gone, after GekkoNet's long silence timeout,
+//    without the lobby saying so. The host can play on and add players.
+void RollbackLobbyDialog::onMatchWatchTick()
+{
+    if (!m_emulationActive)
+    {
+        m_matchWatchTimer->stop();
+        return;
+    }
+    if (m_lateJoin.role != LateJoinRole::None)
+        return;
+
+    RollbackLagStats stats;
+    rmgk_gekko::lag_stats(stats);
+    if (!stats.valid || !stats.active || stats.peers.empty())
+        return;
+
+    // Peers start out unconnected in every session, including the one a late
+    // join moves the match to.
+    const int epoch = rmgk_gekko::session_epoch();
+    if (epoch != m_matchWatchEpoch)
+    {
+        m_matchWatchEpoch = epoch;
+        m_matchWatchSeenSlots.clear();
+    }
+    bool anyConnected = false;
+    for (const auto& peer : stats.peers)
+    {
+        if (!peer.connected)
+            continue;
+        anyConnected = true;
+        m_matchWatchSeenSlots.insert(peer.slot);
+    }
+    const bool everyoneGone = !anyConnected && !m_matchWatchSeenSlots.isEmpty();
+
+    constexpr int kOfflineDroppedStallMs = 10000;
+    const bool lobbyUp = m_client && m_client->state() == LobbyClient::ConnectionState::Connected;
+    const bool iAmHost = m_client && m_currentRoomHostId == m_client->selfUserId();
+    if (lobbyUp && !(everyoneGone && !iAmHost))
+        return;
+    if (!lobbyUp && !everyoneGone && stats.stalledMs < kOfflineDroppedStallMs)
+        return;
+
+    {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "Lobby→match watch: closing the game lobby=%d everyone_gone=%d stalled_ms=%d",
+            int(lobbyUp), int(everyoneGone), stats.stalledMs);
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, buf);
+    }
+    m_matchWatchTimer->stop();
+    if (lobbyUp)
+    {
+        appendChatSystemLine(CHANNEL_ROOM,
+            tr("Lost the connection to every other player, so your game was closed. The host can add you back."));
+        if (m_currentMatchId != 0)
+            m_client->reportMatchFinished(m_currentMatchId);
+    }
+    else
+    {
+        // Shown by the reconnect prompt once the game has closed.
+        m_connectPromptMessage =
+            tr("You were dropped from the match when the connection to the lobby was lost. "
+               "Reconnect and the host can add you back.");
+    }
+    emit closeMatchRequested();
 }
 
 void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int slot, const QString& reason)
@@ -3997,9 +4653,11 @@ void RollbackLobbyDialog::onMatchPeerLeft(quint64 matchId, quint64 userId, int s
     if (slot > 0)
         rmgk_gekko::request_disconnect_player(slot);
 
-    // The port is empty now. The replay's header has already been written.
+    // The port is empty now. The replay's header has already been written, so
+    // the replay and its live viewers learn it from a port change record.
     if (slot >= 1 && slot <= 4)
     {
+        n02::recordingQueuePortChange(slot, recording_player_names[slot - 1], false);
         recording_player_names[slot - 1][0] = '\0';
         emit portLabelsChanged();
     }
@@ -4390,10 +5048,31 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
         abortLateJoin(QStringLiteral("left_room"), false);
     m_roomLateJoin = false;
     m_canStartAlone = false;
+    m_roomHasLateJoinOption = false;
+    m_roomLateJoinEnabled = false;
+    m_lateJoinEnabledSeen = false;
+    if (m_lateJoinCheck) m_lateJoinCheck->setVisible(false);
     m_outOfMatchUsers.clear();
+    m_waitingNoticeMs.clear();
     m_lateJoinCapableUsers.clear();
     m_admitRequestedUserId = 0;
     m_announcedWaitingSelf = false;
+    m_roomHasSaveDataOption = false;
+    m_roomSaveDataEnabled = false;
+    m_saveDataSeen = false;
+    m_roomSaveDataHash.clear();
+    m_saveDataCapableUsers.clear();
+    m_hostSaveChoice.reset();
+    m_publishSaveChoiceWhenWaiting = false;
+    if (!m_matchSaveActive)
+    {
+        m_matchSave.reset();
+        m_matchSaveChanged = false;
+        m_keepCopyFile.clear();
+        m_keepCopyEnabled = false;
+    }
+    if (m_saveDataCheck) m_saveDataCheck->setVisible(false);
+    updateSaveDataControls();
     if (m_emulationActive || m_awaitingEmulationStart)
         emit closeMatchRequested();
 
@@ -4422,6 +5101,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_knownSeatedUsers.clear();
     m_roomSeatsSeen = false;
     m_localDelayPublished = false;
+    updateRecordingControls();
 
     if (m_chatViewRoom) m_chatViewRoom->clear();
     if (m_roomChatInput) m_roomChatInput->setEnabled(false);
@@ -4574,6 +5254,30 @@ void RollbackLobbyDialog::sendSpectatorChat(const QString& message)
     m_client->sendChat(CHANNEL_SPECTATE, text);
 }
 
+LagReport RollbackLobbyDialog::lagReport(bool wholeMatch) const
+{
+    const quint64 selfId = m_client ? m_client->selfUserId() : 0;
+    const QList<LagPlayer> players = m_lagStats->players(selfId, [this, selfId](quint64 userId) {
+        return userId == selfId && !m_username.isEmpty() ? m_username : lobbyUserName(userId);
+    });
+    return LagStats::build(players, wholeMatch);
+}
+
+void RollbackLobbyDialog::appendLagReport(const LagReport& report)
+{
+    if (report.severity != LagReport::Severity::None)
+        appendChatLine(CHANNEL_ROOM, LagStats::chatHtml(report, isDarkTheme()));
+}
+
+void RollbackLobbyDialog::showLagStats()
+{
+    if (m_lagStatsDialog == nullptr)
+        m_lagStatsDialog = new LagStatsDialog([this](bool wholeMatch) { return lagReport(wholeMatch); }, this);
+    m_lagStatsDialog->show();
+    m_lagStatsDialog->raise();
+    m_lagStatsDialog->activateWindow();
+}
+
 void RollbackLobbyDialog::appendChatLine(const QString& channel, const QString& text)
 {
     QTextEdit* target = m_chatViewLobby;
@@ -4614,6 +5318,17 @@ bool RollbackLobbyDialog::handleSlashCommand(const QString& channel, const QStri
             m_client->sendAdminAuth(pw);
             sysline(tr("Authenticating…"));
         }
+        return true;
+    }
+
+    bool lagWholeMatch = false;
+    if (LagStats::parseCommand(text, &lagWholeMatch))
+    {
+        const LagReport report = lagReport(lagWholeMatch);
+        if (report.severity == LagReport::Severity::None)
+            sysline(tr("Lag stats need a rollback match: try /lagstat while one is running, or right after it."));
+        else
+            appendChatLine(channel, LagStats::chatHtml(report, isDarkTheme()));
         return true;
     }
 
@@ -5149,6 +5864,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
 
     m_currentMatchId = matchId;
     m_awaitingEmulationStart = true;
+    m_lagStats->reset();
     updateRecordingControls();
 
     // The engine follows these live values for the whole match. Seeding them
@@ -5210,6 +5926,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     {
         n02_kaillera_recording_enabled = m_recordCheck->isChecked();
     }
+    // Everyone who starts the match can record it, late join or not. A late
+    // joiner never gets here: MainWindow opens no replay for them.
 
 #ifdef RMGK_GAME_STATS
     // Same reassertion, for the independent .rmgr toggle - only present (and
@@ -5269,6 +5987,11 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
 
     appendChatSystemLine(CHANNEL_ROOM, tr("Synchronizing pre-match settings..."));
+    if (m_client->selfUserId() == m_currentRoomHostId)
+    {
+        m_client->setPrematchSaveData(m_roomSaveDataEnabled && m_hostSaveChoice
+            ? std::optional<CoreNetplaySaveData>(m_hostSaveChoice->Data) : std::nullopt);
+    }
     QString prematchError;
     if (!m_client->syncPrematchManifest(peers, local.slot, m_currentRoomHostId,
                                         localRomFile, prematchError))
@@ -5277,6 +6000,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         return;
     }
     appendChatSystemLine(CHANNEL_ROOM, tr("Pre-match sync complete."));
+    beginMatchSave();
 
     // Share the exact settings just synced to the players. Arm the stream sink
     // before matchReady begins capture, leaving local recording independent.
@@ -5416,9 +6140,18 @@ void RollbackLobbyDialog::onMatchAdmitBegin(quint64 matchId, quint64 admitId, in
     if (joiner.userId == selfId)
     {
         m_lateJoin.role = LateJoinRole::Joiner;
-        // Watching the match? The game is about to take over the window.
+        // The game is about to take over the window. Whatever is open there
+        // (say, a live replay of this match) closes first: its shutdown
+        // clears the match settings the host sends, so they wait until it's gone.
         if (m_spectatingMatchId != 0)
+        {
             stopSpectating();
+            emit spectateStreamClosed(QStringLiteral("late_join"));
+        }
+        else if (m_localGameOpen)
+        {
+            emit closeMatchRequested();
+        }
         for (const auto& peer : peers)
             m_client->ensureIcePeer(peer.userId);
         appendChatSystemLine(CHANNEL_ROOM, tr("The host is adding you to the game…"));
@@ -5444,7 +6177,8 @@ void RollbackLobbyDialog::onMatchAdmitBegin(quint64 matchId, quint64 admitId, in
         {
             appendChatSystemLine(CHANNEL_ROOM, tr("The host is adding %1 to the game…").arg(joiner.username));
         }
-        emit overlayMessage(tr("%1 is joining the game…").arg(joiner.username));
+        // The overlay font has no "…" glyph.
+        emit overlayMessage(tr("%1 is joining the game...").arg(joiner.username));
     }
     else
     {
@@ -5541,12 +6275,15 @@ void RollbackLobbyDialog::onMatchAdmitBlob(quint64 matchId, quint64 admitId, con
 
     if (step == QStringLiteral("manifest") && !m_lateJoin.launched)
     {
-        if (raw.isEmpty() || !m_client->applySpectateManifest(raw))
+        if (raw.isEmpty())
         {
             abortLateJoin(QStringLiteral("manifest_failed"), true);
             return;
         }
-        launchAsLateJoiner();
+        // The tick launches once the game that was open has closed.
+        m_lateJoin.manifest = raw;
+        if (!m_localGameOpen)
+            launchAsLateJoiner();
     }
     else if (step == QStringLiteral("state") && m_lateJoin.launched)
     {
@@ -5562,6 +6299,13 @@ void RollbackLobbyDialog::onMatchAdmitBlob(quint64 matchId, quint64 admitId, con
 
 void RollbackLobbyDialog::launchAsLateJoiner()
 {
+    if (!m_client->applySpectateManifest(m_lateJoin.manifest))
+    {
+        abortLateJoin(QStringLiteral("manifest_failed"), true);
+        return;
+    }
+    beginMatchSave();
+
     const quint64 selfId = m_client->selfUserId();
     const QString romFile = localRomPathForMd5(m_currentRoomMd5);
     if (romFile.isEmpty())
@@ -5662,14 +6406,16 @@ bool RollbackLobbyDialog::connectedToLateJoiner() const
 
 void RollbackLobbyDialog::applyLateJoinRoster()
 {
-    // Label the joiner's port in the overlay (and, on the host, in nothing
-    // else: the replay header was written when the match began).
+    // Label the joiner's port in the overlay. The replay header was written
+    // when the match began, so the replay and its live viewers learn the
+    // name from a port change record.
     const int slot = m_lateJoin.joiner.slot;
     if (slot >= 1 && slot <= 4)
     {
         const QByteArray nameBytes = m_lateJoin.joiner.username.toUtf8();
         std::strncpy(recording_player_names[slot - 1], nameBytes.constData(), 31);
         recording_player_names[slot - 1][31] = '\0';
+        n02::recordingQueuePortChange(slot, recording_player_names[slot - 1], true);
     }
     emit portLabelsChanged();
 }
@@ -5779,7 +6525,9 @@ void RollbackLobbyDialog::onLateJoinTick()
     {
         if (!lj.launched)
         {
-            if (nowMs - lj.startedMs > kLateJoinReadyTimeoutMs)
+            if (!lj.manifest.isEmpty() && !m_localGameOpen)
+                launchAsLateJoiner();
+            else if (nowMs - lj.startedMs > kLateJoinReadyTimeoutMs)
                 abortLateJoin(QStringLiteral("manifest_timeout"), true);
             return;
         }

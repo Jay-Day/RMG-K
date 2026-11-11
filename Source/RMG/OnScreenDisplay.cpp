@@ -83,6 +83,12 @@ static std::mutex l_LiveReplayStatusMutex;
 // Port labels and the center message change on the UI thread during a match
 // while the emulation thread draws them.
 static std::mutex l_KailleraOverlayMutex;
+// The /lagstat panel, shown until l_LagReportUntil. Guarded by
+// l_KailleraOverlayMutex like the other match overlays.
+static std::string l_LagReportHeadline;
+static std::string l_LagReportDetail;
+static std::vector<std::vector<std::string>> l_LagReportTable;
+static std::chrono::time_point<std::chrono::steady_clock> l_LagReportUntil;
 
 static float OnScreenDisplayEaseOutCubic(float t)
 {
@@ -335,6 +341,82 @@ static void OnScreenDisplayRenderCenterMessage(void)
     ImGui::End();
 
     ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
+static bool OnScreenDisplayLagReportVisible(void)
+{
+    return !l_LagReportHeadline.empty() && std::chrono::steady_clock::now() < l_LagReportUntil;
+}
+
+// The /lagstat panel: a headline, a line of detail and one row per player,
+// centered at the top so it stays clear of the message stack's corners.
+static void OnScreenDisplayRenderLagReport(void)
+{
+    std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
+    if (!OnScreenDisplayLagReportVisible())
+    {
+        return;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    float contentHeight = io.DisplaySize.y;
+    if (io.DisplaySize.x <= io.DisplaySize.y * (4.0f / 3.0f))
+        contentHeight = io.DisplaySize.x * (3.0f / 4.0f);
+    const float baseScale = std::max(1.0f, contentHeight / 480.0f);
+    const float fontScale = (baseScale * 12.0f) / (l_BaseFontSize * std::max(l_MessageScale, 0.1f));
+    const ImVec2 padding(12.0f * baseScale, 9.0f * baseScale);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.74f));
+    ImGui::PushStyleColor(ImGuiCol_Text,     ImVec4(l_TextRed, l_TextGreen, l_TextBlue, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, padding);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * baseScale);
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(7.0f * baseScale, 1.0f * baseScale));
+
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, l_MessagePaddingY),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(io.DisplaySize.x - l_MessagePaddingX * 2.0f, io.DisplaySize.y));
+    ImGui::Begin("Lag Report", nullptr,
+        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::SetWindowFontScale(fontScale);
+    // Sentences wrap at about the table's width rather than stretching the panel.
+    const float wrapWidth = std::max(100.0f, std::min(io.DisplaySize.x - (l_MessagePaddingX + padding.x) * 2.0f,
+                                                      540.0f * baseScale));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
+    ImGui::TextUnformatted(l_LagReportHeadline.c_str());
+    if (!l_LagReportDetail.empty())
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(l_TextRed, l_TextGreen, l_TextBlue, 0.72f));
+        ImGui::TextUnformatted(l_LagReportDetail.c_str());
+        ImGui::PopStyleColor();
+    }
+    ImGui::PopTextWrapPos();
+    const int columns = l_LagReportTable.empty() ? 0 : static_cast<int>(l_LagReportTable.front().size());
+    if (columns > 0 && ImGui::BeginTable("LagReportTable", columns, ImGuiTableFlags_SizingFixedFit))
+    {
+        for (size_t row = 0; row < l_LagReportTable.size(); row++)
+        {
+            ImGui::TableNextRow();
+            for (int column = 0; column < columns; column++)
+            {
+                ImGui::TableSetColumnIndex(column);
+                const std::vector<std::string>& cells = l_LagReportTable[row];
+                const std::string cell = column < static_cast<int>(cells.size()) ? cells[static_cast<size_t>(column)] : std::string();
+                if (row == 0)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(l_TextRed, l_TextGreen, l_TextBlue, 0.6f));
+                ImGui::TextUnformatted(cell.c_str());
+                if (row == 0)
+                    ImGui::PopStyleColor();
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::End();
+
+    ImGui::PopStyleVar(3);
     ImGui::PopStyleColor(2);
 }
 
@@ -626,6 +708,16 @@ void OnScreenDisplaySetCenterMessage(const std::string& message)
     l_CenterMessage = message;
 }
 
+void OnScreenDisplaySetLagReport(const std::string& headline, const std::string& detail,
+                                 const std::vector<std::vector<std::string>>& table, int seconds)
+{
+    std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
+    l_LagReportHeadline = seconds > 0 ? headline : std::string();
+    l_LagReportDetail = detail;
+    l_LagReportTable = table;
+    l_LagReportUntil = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(seconds, 0));
+}
+
 void OnScreenDisplaySetLiveReplayStatus(const std::string& message)
 {
     // Keep this even before ImGui initializes: a spectator may receive the
@@ -693,14 +785,17 @@ void OnScreenDisplayRender(void)
     }
     bool hasPortLabels = false;
     bool hasCenterMessage = false;
+    bool hasLagReport = false;
     {
         std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
         hasPortLabels = l_KailleraPortLabelsEnabled && l_KailleraPortLabelPlayerCount > 0;
         hasCenterMessage = !l_CenterMessage.empty();
+        hasLagReport = OnScreenDisplayLagReportVisible();
     }
     const bool hasLiveReplayStatus = l_LiveReplayStatusEnabled && !liveReplayStatus.empty();
     const bool hasMessages = l_Enabled && (hasVisibleQueueMessage || l_InputPromptActive ||
-                                           hasPortLabels || hasCenterMessage || hasLiveReplayStatus);
+                                           hasPortLabels || hasCenterMessage || hasLiveReplayStatus ||
+                                           hasLagReport);
 
     if (!hasMessages)
     {
@@ -862,6 +957,7 @@ void OnScreenDisplayRender(void)
     ImGui::PopStyleColor(2);
 
     OnScreenDisplayRenderKailleraPortLabels();
+    OnScreenDisplayRenderLagReport();
     OnScreenDisplayRenderCenterMessage();
 
     ImGui::Render();

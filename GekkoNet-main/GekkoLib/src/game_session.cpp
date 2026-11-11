@@ -1,6 +1,8 @@
 #include "session.h"
 
+#include <algorithm>
 #include <cassert>
+#include <chrono>
 
 namespace {
 
@@ -416,6 +418,25 @@ i32 Gekko::GameSession::CurrentFrame()
 i32 Gekko::GameSession::ConfirmedFrame()
 {
     return _sync.GetMinReceivedFrame();
+}
+
+bool Gekko::GameSession::PeerStats(i32 handle, GekkoPeerStats* stats)
+{
+    for (auto& remote : _msg.remotes) {
+        if (remote->handle != handle) {
+            continue;
+        }
+        stats->last_received_frame = _sync.GetLastReceivedFrom(handle);
+        stats->connected = remote->GetStatus() == Connected;
+        stats->frames_ahead = _started ? remote->adv_history.GetAverageAdvantage() : 0.f;
+        // last_received_message is on the steady clock in milliseconds.
+        const u64 heard = remote->stats.last_received_message;
+        const u64 now = (u64)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        stats->silent_ms = heard == 0 || now < heard ? 0u : (u32)std::min<u64>(now - heard, 0xffffffffu);
+        return true;
+    }
+    return false;
 }
 
 void Gekko::GameSession::DisconnectPlayer(i32 handle)

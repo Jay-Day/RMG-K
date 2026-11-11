@@ -177,6 +177,17 @@ typedef struct GekkoNetworkStats {
     float jitter;
 } GekkoNetworkStats;
 
+typedef struct GekkoPeerStats {
+    // newest frame whose input from this actor has arrived (-1 before any).
+    int last_received_frame;
+    // gekko_frames_ahead against this actor alone: positive when this session
+    // runs ahead of it.
+    float frames_ahead;
+    // how long since anything arrived from this actor, as of the last poll.
+    unsigned int silent_ms;
+    bool connected;
+} GekkoPeerStats;
+
 // Public Facing API
 GEKKONET_API bool gekko_create(GekkoSession** session, GekkoSessionType session_type);
 
@@ -241,6 +252,10 @@ GEKKONET_API int gekko_current_frame(GekkoSession* session);
 // After an update_session call has run its events, every frame up to here is
 // final: no late input can roll it back any more.
 GEKKONET_API int gekko_confirmed_frame(GekkoSession* session);
+
+// How a game session stands with one remote actor (see GekkoPeerStats).
+// Returns false when `handle` isn't a remote player of a game session.
+GEKKONET_API bool gekko_peer_stats(GekkoSession* session, int handle, GekkoPeerStats* stats);
 
 #ifndef GEKKONET_NO_ASIO
 

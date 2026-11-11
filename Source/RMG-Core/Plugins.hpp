@@ -76,6 +76,11 @@ bool CoreDetachPlugins(void);
 // shuts down all currently used plugins
 bool CorePluginsShutdown(void);
 
+// Asks the graphics plugin to skip rendering display lists where the game can't
+// tell, while a recording fast-forwards. Returns false when the plugin can't.
+// skipped/rendered receive the display lists skipped and still rendered since the last call.
+bool CorePluginsSetGfxSkipRendering(bool skip, unsigned int* skipped = nullptr, unsigned int* rendered = nullptr);
+
 // -1: unavailable, 0: no valid response, 1: normal/checking, 2: slow USB.
 int CoreGetRaphnetHealth(void);
 void CorePauseRaphnetMonitoring(bool pause);

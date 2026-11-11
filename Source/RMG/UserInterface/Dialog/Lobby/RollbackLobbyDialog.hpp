@@ -10,6 +10,8 @@
 #ifdef NETPLAY
 
 #include "LobbyClient.hpp"
+#include "LagStats.hpp"
+#include "NetplaySaveDialogs.hpp"
 
 #include <QDialog>
 #include <QHash>
@@ -82,6 +84,13 @@ public:
     // MainWindow calls this when a spectate playback session ends (emulation
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
+
+    // Lag stats for the running rollback match (or the last one), built from
+    // our own numbers and the other players' reports. /lagstat in the in-game
+    // chat shows this on the overlay and adds it to the room chat.
+    LagReport lagReport(bool wholeMatch) const;
+    void appendLagReport(const LagReport& report);
+    void showLagStats();
 
 signals:
     // Fired when the server has issued MATCH_BEGIN. Each entry in remotePeers
@@ -374,6 +383,23 @@ private:
     // since pings arrive asynchronously after seats populate.
     void refreshStartButton();
     void updateRecordingControls();
+    // Host turning late join on: warns that other players won't record locally.
+    bool confirmLateJoin();
+
+    // Save data (host-only room option): the match starts from a save the
+    // host picked, the game saves to memory, and any player can keep a copy.
+    void updateSaveDataControls();
+    // Host: pick the save the next match starts from; false when cancelled.
+    bool pickStartingSave();
+    // Host: tell the room which save that is.
+    void publishHostSaveChoice();
+    // The match's save is the starting save until the game changes it.
+    void beginMatchSave();
+    void onSaveDataTick();
+    // Match over: take the last agreed save and offer to keep it.
+    void finishMatchSave();
+    void saveMatchSaveAs();
+    bool writeMatchSave(const QString& file, QString* error = nullptr);
 
     LobbyClient* m_client = nullptr;
 
@@ -437,6 +463,24 @@ private:
     // match (the player who checks it records, same as the p2p/kaillera lobbies).
     // Drives the shared n02_kaillera_recording_enabled flag; not synced to the room.
     QCheckBox* m_recordCheck     = nullptr;
+    // The player's own choice. While late join keeps non-hosts from recording,
+    // the box shows off and this keeps what to restore.
+    bool       m_recordLocallyChoice = false;
+
+    // Host-only room option: the next match can take players mid-game. While
+    // it's on, only the host records locally (see updateRecordingControls).
+    // Hidden on servers without the option.
+    QCheckBox* m_lateJoinCheck = nullptr;
+    QLabel*    m_lateJoinNote  = nullptr;   // the recording warning, while on
+
+    // Host-only room option: the next match starts from the host's pick of
+    // save data instead of a blank save. Hidden on servers without it.
+    QCheckBox*   m_saveDataCheck     = nullptr;
+    QWidget*     m_saveDataRow       = nullptr;
+    QLabel*      m_saveDataNote      = nullptr;   // which save, and how the match's stands
+    QPushButton* m_saveDataChangeBtn = nullptr;   // host, waiting room
+    QPushButton* m_saveDataSaveAsBtn = nullptr;   // everyone, from match start
+    QCheckBox*   m_saveDataKeepCheck = nullptr;   // keep the Save As file updated
 
     // Independent per-player toggle for the .rmgr replay feature (separate
     // from .krec) - mirrors m_recordCheck's pattern exactly, driving
@@ -492,6 +536,12 @@ private:
     QPushButton* m_startBtn      = nullptr;
     QPushButton* m_dropBtn       = nullptr;
     QPushButton* m_leaveBtn      = nullptr;
+    QPushButton* m_lagStatsBtn   = nullptr;
+
+    // Trades lag numbers with the other players during a match, for /lagstat
+    // and the Lag Stats window.
+    LagStatsExchange* m_lagStats = nullptr;
+    class LagStatsDialog* m_lagStatsDialog = nullptr;
 
     // Hero / browse-view action buttons
     QPushButton* m_quickMatchBtn = nullptr;   // primary CTA (blue)
@@ -550,6 +600,7 @@ private:
         QSet<quint64> awaitingCut;                // host: players yet to stop
         bool stateSent = false;                   // host
         bool cutReported = false;                 // player
+        QByteArray manifest;                      // joiner: held until the open game closes
         bool launched = false;                    // joiner
         bool readySent = false;                   // joiner
         qint64 readyMs = 0;                       // joiner, host: when it was ready
@@ -564,13 +615,54 @@ private:
     bool m_roomLateJoin = false;
     // From ROOM_STATE: the host may start with nobody else seated.
     bool m_canStartAlone = false;
+    // From ROOM_STATE "lateJoinEnabled": the host turned late join on. Older
+    // servers don't send it; their matches take late joiners whenever every
+    // player's client can.
+    bool m_roomHasLateJoinOption = false;
+    bool m_roomLateJoinEnabled = false;
+    bool m_lateJoinEnabledSeen = false;   // this room's first ROOM_STATE arrived
     // In a match with nobody else in it yet.
     bool m_playingAlone = false;
     int autoFrameDelay() const;
     QSet<quint64> m_outOfMatchUsers;
     QSet<quint64> m_lateJoinCapableUsers;
+
+    // From ROOM_STATE "saveData": present when the room has the option.
+    bool m_roomHasSaveDataOption = false;
+    bool m_roomSaveDataEnabled = false;
+    bool m_saveDataSeen = false;
+    QString m_roomSaveDataLabel;
+    QStringList m_roomSaveDataKinds;
+    int m_roomSaveDataBytes = 0;
+    QString m_roomSaveDataHash;
+    // Seated members whose client can play with save data.
+    QSet<quint64> m_saveDataCapableUsers;
+    // Host: what the next match starts from.
+    std::optional<NetplaySaveChoice> m_hostSaveChoice;
+    // Host: the room hears about a continued save once it's waiting again
+    // (the server takes no save data changes while the match is in game).
+    bool m_publishSaveChoiceWhenWaiting = false;
+    // The match's save as every player's game agrees on it. Kept after the
+    // match, for Save As, until the next one starts.
+    std::optional<CoreNetplaySaveData> m_matchSave;
+    bool m_matchSaveActive = false;    // a match with save data is running
+    bool m_matchSaveChanged = false;   // the game wrote it this match
+    qint64 m_matchSaveChangedMs = 0;
+    QString m_keepCopyFile;            // the Save As file kept updated
+    bool m_keepCopyEnabled = false;
+    qint64 m_keepCopyWrittenMs = 0;
+    QTimer* m_saveDataTimer = nullptr;
     quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet
     bool m_announcedWaitingSelf = false;
+    // When each member's "waiting to join" last went to the overlay, so one
+    // who keeps leaving and rejoining the room shows there once in a while.
+    QHash<quint64, qint64> m_waitingNoticeMs;
+    // Ends our game once we're no longer part of the match (see
+    // onMatchWatchTick), so we can be added back instead of playing on alone.
+    QTimer* m_matchWatchTimer = nullptr;
+    int m_matchWatchEpoch = -1;
+    QSet<int> m_matchWatchSeenSlots;   // remotes connected in that session
+    void onMatchWatchTick();
     QString lobbyUserName(quint64 userId) const;
     void onAdmitClicked(quint64 userId);
     void launchAsLateJoiner();
@@ -593,6 +685,8 @@ private:
     bool m_awaitingEmulationStart = false;
     bool m_emulationActive        = false;
     bool m_quickMatchActive       = false;
+    // Any game open on this PC, a live replay or an offline game included.
+    bool m_localGameOpen          = false;
 
     QMap<QString, CoreRomSettings> m_roms;
 };

@@ -165,6 +165,7 @@ public:
 #include <RMG-Core/CachedRomHeaderAndSettings.hpp>
 #include <RMG-Core/SpeedLimiter.hpp>
 #include <RMG-Core/Directories.hpp>
+#include <RMG-Core/NetplaySave.hpp>
 #include <RMG-Core/SpeedFactor.hpp>
 #include <RMG-Core/Screenshot.hpp>
 #include <RMG-Core/Emulation.hpp>
@@ -1666,6 +1667,14 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->configureUI(app, showUI);
 #ifdef NETPLAY
     this->refreshKailleraRecordingStorageStatus(true);
+    // A replay or live replay relabels its ports when a player leaves or joins
+    // mid-match. Called on the playback's thread; the labels have a lock.
+    n02::setPlaybackPortNamesCallback([](const char (*names)[32]) {
+        std::array<std::string, 4> labels;
+        for (size_t i = 0; i < labels.size(); ++i)
+            labels[i] = names[i];
+        OnScreenDisplaySetKailleraPortLabelNames(labels);
+    });
 #endif // NETPLAY
 
     this->connectActionSignals();
@@ -2224,6 +2233,9 @@ QString MainWindow::getWindowTitle(void)
     windowTitle += " (";
     windowTitle += QString::fromStdString(CoreGetVersion());
     windowTitle += ")";
+#ifdef RMGK_TEST_BUILD
+    windowTitle += " [TEST]";
+#endif
 
     return windowTitle;
 }
@@ -2717,6 +2729,8 @@ void MainWindow::updateActions(bool inEmulation, bool isPaused)
     this->action_System_Shutdown->setShortcut(QKeySequence(keyBinding));
 #ifdef NETPLAY
     this->action_System_Shutdown->setEnabled(inEmulation && !CoreHasInitNetplay());
+    // while watching a live replay, shutting down stops watching
+    this->action_System_Shutdown->setText(this->ui_SpectateActive ? tr("Stop &Watching") : tr("S&hutdown"));
 #else
     this->action_System_Shutdown->setEnabled(inEmulation && !CoreHasInitNetplay());
 #endif
@@ -3506,9 +3520,7 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 }
                 this->ui_SpectateFastForward = false;
                 this->ui_SpectateBannerPending = false;
-                CoreSetFrameOutput(CoreFrameOutput_All);
-                if (CoreGetSpeedFactor() != 100)
-                    CoreSetSpeedFactor(100);
+                CoreStopPlaybackSeek();
 
                 constexpr int barW = 18;
                 int pct = 100 * behind / n02::LIVE_REPLAY_BUFFER_FRAMES;
@@ -3540,43 +3552,47 @@ void MainWindow::timerEvent(QTimerEvent *event)
             const int settle   = n02::LIVE_REPLAY_BUFFER_FRAMES;     // stay ~2 s behind
             const int reengage = n02::LIVE_REPLAY_BUFFER_FRAMES * 2; // re-catch at ~4 s
 
-            // Hysteresis: engage catch-up only when we're well behind, then run
-            // until we're close. Without the gap, normal live-stream jitter near
-            // the edge would flip the headless toggle on/off and flicker the
-            // screen. The initial join (behind = whole backlog) always engages.
-            const bool wantFastForward = this->ui_SpectateFastForward
-                ? (behind > settle)
-                : (behind > reengage);
-
-            if (wantFastForward)
+            // Catch-up is a playback seek to `settle` records before the buffered
+            // edge: headless, unthrottled, and stopped by the core on that record.
+            // Hysteresis: engage only when well behind, and end when the core
+            // arrives. Without the gap, normal live-stream jitter near the edge
+            // would flip the headless toggle on/off and flicker the screen. The
+            // initial join (behind = whole backlog) always engages.
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            if (!this->ui_SpectateFastForward && behind > reengage &&
+                CoreStartPlaybackSeek(n02::playbackGetTotalFrames() - settle))
             {
-                // Fully headless catch-up (video off) — max speed, and headless boot-replay
-                // stays in sync. The OSD can't paint without a presented frame, so the
-                // loading bar lives in the WINDOW TITLE instead (set on the UI thread below,
-                // which runs regardless of whether the emulator presents anything).
-                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-                if (!this->ui_SpectateFastForward)
-                {
-                    this->ui_SpectateFastForward = true;
-                    this->ui_SpectateBannerPending = false;
-                    // Arm the loading-bar estimator + remember the title to restore.
-                    this->ui_SpectateInitialBehind  = behind > 1 ? behind : 1;
-                    this->ui_SpectateCatchupRate    = 0.0;
-                    this->ui_SpectateRateLastBehind = behind;
-                    this->ui_SpectateRateLastMs     = nowMs;
-                    this->ui_SpectateSavedTitle     = this->windowTitle();
-                }
-                CoreSetFrameOutput(CoreFrameOutput_Pacing | CoreFrameOutput_Input); // headless (no Video)
-                // Flat-out until caught up — no taper near the edge. A spectator is
-                // data-bound: it can't pass the live edge (it idles once the buffer
-                // runs dry), so there's nothing to overshoot.
-                if (CoreGetSpeedFactor() != 1000)
-                    CoreSetSpeedFactor(1000);
+                this->ui_SpectateFastForward = true;
+                this->ui_SpectateBannerPending = false;
+                // Arm the loading-bar estimator + remember the title to restore.
+                this->ui_SpectateInitialBehind  = behind > 1 ? behind : 1;
+                this->ui_SpectateCatchupRate    = 0.0;
+                this->ui_SpectateRateLastBehind = behind;
+                this->ui_SpectateRateLastMs     = nowMs;
+                this->ui_SpectateSavedTitle     = this->windowTitle();
+            }
+            else if (this->ui_SpectateFastForward && !CoreIsPlaybackSeeking())
+            {
+                // Reached the settle point — restore the title; the core already
+                // resumed rendering at realtime, so the next presented frame is live.
+                OnScreenDisplaySetCenterMessage("");
+                this->setWindowTitle(this->ui_SpectateSavedTitle);
+                this->ui_SpectateFastForward = false;
+                this->ui_SpectateBannerPending = false;
+            }
 
-                // Loading bar + ETA. The live edge grows while we catch up, so we
-                // estimate from how fast "behind" is actually shrinking (sampled ~10/s
-                // so the per-sample frame delta is meaningful), not an assumed speed
-                // multiplier. Progress is against the backlog we started this run with.
+            if (this->ui_SpectateFastForward)
+            {
+                // The edge keeps growing while we catch up: follow it.
+                CoreStartPlaybackSeek(n02::playbackGetTotalFrames() - settle);
+
+                // Loading bar + ETA. The OSD can't paint without a presented frame, so
+                // the bar lives in the WINDOW TITLE instead (set on the UI thread, which
+                // runs regardless of whether the emulator presents anything). The live
+                // edge grows while we catch up, so we estimate from how fast "behind" is
+                // actually shrinking (sampled ~10/s so the per-sample frame delta is
+                // meaningful), not an assumed speed multiplier. Progress is against the
+                // backlog we started this run with.
                 if (nowMs - this->ui_SpectateRateLastMs >= 100)
                 {
                     const double dtSec  = (nowMs - this->ui_SpectateRateLastMs) / 1000.0;
@@ -3608,17 +3624,6 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 }
                 // Bar goes in the title (UI thread) so it updates even with zero presents.
                 this->setWindowTitle(QString::fromStdString(msg));
-            }
-            else if (this->ui_SpectateFastForward)
-            {
-                // Reached the live edge — restore the title, resume rendering at realtime;
-                // the next presented frame goes live.
-                OnScreenDisplaySetCenterMessage("");
-                this->setWindowTitle(this->ui_SpectateSavedTitle);
-                CoreSetFrameOutput(CoreFrameOutput_All);
-                CoreSetSpeedFactor(100);
-                this->ui_SpectateFastForward = false;
-                this->ui_SpectateBannerPending = false;
             }
         }
     }
@@ -3975,6 +3980,14 @@ void MainWindow::on_Action_System_Shutdown(void)
     {
         this->on_Action_System_Pause();
     }
+
+#ifdef NETPLAY
+    if (this->ui_SpectateActive)
+    {
+        this->stopLobbySpectate();
+        return;
+    }
+#endif
 
     if (!CoreIsEmulationRunning())
     {
@@ -4498,8 +4511,7 @@ void MainWindow::stopLobbySpectate()
     CoreClearSpectateKeyframe(); // drop any staged keyframe
     OnScreenDisplaySetCenterMessage(""); // clear the buffering banner if we stop mid-catch-up
     OnScreenDisplaySetLiveReplayStatus("");
-    CoreSetSpeedFactor(100);
-    CoreSetFrameOutput(CoreFrameOutput_All); // undo any headless catch-up state
+    CoreStopPlaybackSeek(); // undo any headless catch-up state
     n02::playbackStopStream();
     if (this->emulationThread->isRunning())
     {
@@ -4524,6 +4536,7 @@ void MainWindow::cleanupLobbySpectateSession()
     }
     this->ui_SpectateCleanupPending = false;
     CoreSetNetplayCheats({}); // also clear a manifest staged before the ROM opened
+    CoreClearNetplaySaveData();
 
     if (this->kailleraSessionManager != nullptr)
     {
@@ -4989,16 +5002,28 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_LiveReplayViewerCountChanged);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountCleared,
             this, []() { OnScreenDisplaySetLiveReplayStatus(""); });
-    // Late join notices for the running game.
+    // Late join notices for the running game. Someone joining and leaving the
+    // room over and over sends one after another; the lobby's chat keeps them
+    // all, so the overlay shows at most one every few seconds.
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::overlayMessage,
             this, [this](const QString& message) {
-                if (this->emulationThread && this->emulationThread->isRunning())
-                    OnScreenDisplaySetMessage(message.toStdString());
+                if (!this->emulationThread || !this->emulationThread->isRunning())
+                    return;
+                constexpr qint64 kNoticeGapMs = 3000;
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                if (nowMs - this->ui_LobbyOverlayNoticeMs < kNoticeGapMs)
+                    return;
+                this->ui_LobbyOverlayNoticeMs = nowMs;
+                OnScreenDisplaySetMessage(message.toStdString());
             });
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::overlayCenterMessage,
             this, [](const QString& message) { OnScreenDisplaySetCenterMessage(message.toStdString()); });
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::portLabelsChanged,
             this, []() { OnScreenDisplaySetKailleraPortLabelNames(GetLiveKailleraPortLabelNames()); });
+
+    // The lobby opened over a game already running.
+    if (this->emulationThread && this->emulationThread->isRunning())
+        this->rollbackLobbyDialog->notifyEmulationStarted();
 }
 #endif
 
@@ -5250,9 +5275,14 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     }
 
     // A late joiner's replay would start mid-game with nothing to restore
-    // from, so it records nothing; the host's replay covers the whole match.
+    // from, so it records nothing; the players who started the match have all of it.
     if (!lateJoiner)
     {
+        // A match that starts from save data keeps it in the replay file.
+        std::string saveData;
+        if (!CoreGetNetplaySaveData().IsEmpty())
+            CoreSerializeNetplaySaveData(CoreGetNetplaySaveData(), saveData);
+        n02::recordingSetSaveData(saveData);
         const std::string recAppName = "RMG-K " + CoreGetVersion();
         n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
                            localPlayer, seatCount);
@@ -5277,6 +5307,12 @@ void MainWindow::on_Kaillera_ChatReceived(QString nickname, QString message)
 {
     // Only show in-game Kaillera chat (not lobby chat).
     if (!CoreHasInitKaillera() || !this->emulationThread->isRunning())
+    {
+        return;
+    }
+
+    // a playback jump skips the chat it fast-forwards past
+    if (CoreIsKailleraPlaybackMode() && CoreIsPlaybackSeeking())
     {
         return;
     }
@@ -5431,7 +5467,13 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
             if (!message.isEmpty())
             {
                 const QString normalizedMessage = NormalizeOsdKailleraChatMessage(message);
-                if (this->ui_SpectateActive)
+                bool lagWholeMatch = false;
+                if (Dialog::LagStats::parseCommand(normalizedMessage, &lagWholeMatch))
+                {
+                    // Answered here; it never goes out as chat.
+                    this->showLagReportOverlay(lagWholeMatch);
+                }
+                else if (this->ui_SpectateActive)
                 {
                     // Live replay viewers chat only among themselves; the
                     // match's players never see it. The server echoes our own
@@ -5579,6 +5621,35 @@ void MainWindow::closeNetplayChatPrompt(void)
     this->ui_NetplayChatInputActive = false;
     this->ui_NetplayChatInput.clear();
     OnScreenDisplaySetInputPrompt("");
+}
+
+void MainWindow::showLagReportOverlay(bool wholeMatch)
+{
+    Dialog::LagReport report;
+    if (this->ui_LobbyNetplaySession && this->rollbackLobbyDialog != nullptr)
+    {
+        // Also kept in the room chat, to read after the match.
+        report = this->rollbackLobbyDialog->lagReport(wholeMatch);
+        this->rollbackLobbyDialog->appendLagReport(report);
+    }
+    else
+    {
+        // Outside the lobby nobody sends us their numbers; this side's view
+        // of the match still tells who it waited on.
+        const QString localNickname = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::Kaillera_Username)).trimmed();
+        report = Dialog::LagStats::build(
+            Dialog::LagStats::localPlayers(0, [&localNickname](quint64) { return localNickname.isEmpty() ? tr("You") : localNickname; }),
+            wholeMatch);
+    }
+
+    if (report.severity == Dialog::LagReport::Severity::None)
+    {
+        OnScreenDisplaySetMessage(tr("Lag stats need a rollback match.").toStdString());
+        return;
+    }
+    const QString headline = tr("Lag check, %1: %2").arg(report.window, report.headline);
+    OnScreenDisplaySetLagReport(headline.toStdString(), report.details.value(0).toStdString(),
+                                Dialog::LagStats::overlayTable(report), 12);
 }
 #endif // NETPLAY
 
@@ -6842,18 +6913,73 @@ void MainWindow::startVerifyDebugReplay(bool withGraphics, bool stress)
 
 void MainWindow::on_VidExt_Quit(void)
 {
+    QWidget* renderWidget = nullptr;
     if (this->ui_VidExtRenderMode == VidExtRenderMode::OpenGL)
     {
-        this->ui_Widgets->removeWidget(this->ui_Widget_OpenGL->GetWidget());
-        this->ui_Widget_OpenGL->GetWidget()->deleteLater();
+        renderWidget = this->ui_Widget_OpenGL->GetWidget();
         this->ui_Widget_OpenGL = nullptr;
     }
     else if (this->ui_VidExtRenderMode == VidExtRenderMode::Vulkan)
     {
-        this->ui_Widgets->removeWidget(this->ui_Widget_Vulkan->GetWidget());
-        this->ui_Widget_Vulkan->GetWidget()->deleteLater();
+        renderWidget = this->ui_Widget_Vulkan->GetWidget();
         this->ui_Widget_Vulkan = nullptr;
+    }
+
+    if (renderWidget != nullptr)
+    {
+        this->ui_Widgets->removeWidget(renderWidget);
+#ifdef _WIN32
+        this->retireRenderWidget(renderWidget);
+#else
+        renderWidget->deleteLater();
+#endif
     }
 
     this->ui_VidExtRenderMode = VidExtRenderMode::Invalid;
 }
+
+#ifdef _WIN32
+void MainWindow::retireRenderWidget(QWidget* widget)
+{
+    // the emulation thread is blocked in VidExt_Quit here, so it's alive
+    const DWORD threadId = static_cast<DWORD>(this->emulationThread->GetNativeThreadId());
+    HANDLE thread = threadId != 0 ? OpenThread(SYNCHRONIZE, FALSE, threadId) : nullptr;
+    if (thread == nullptr)
+    {
+        widget->deleteLater();
+        return;
+    }
+
+    widget->hide();
+    this->ui_RetiredRenderWidgets.append({widget, thread});
+    if (this->ui_RetiredRenderWidgetTimer == nullptr)
+    {
+        this->ui_RetiredRenderWidgetTimer = new QTimer(this);
+        this->ui_RetiredRenderWidgetTimer->setInterval(20);
+        connect(this->ui_RetiredRenderWidgetTimer, &QTimer::timeout, this, &MainWindow::destroyRetiredRenderWidgets);
+    }
+    this->ui_RetiredRenderWidgetTimer->start();
+}
+
+void MainWindow::destroyRetiredRenderWidgets(void)
+{
+    for (auto it = this->ui_RetiredRenderWidgets.begin(); it != this->ui_RetiredRenderWidgets.end();)
+    {
+        if (WaitForSingleObject(static_cast<HANDLE>(it->thread), 0) != WAIT_OBJECT_0)
+        {
+            ++it;
+            continue;
+        }
+        CloseHandle(static_cast<HANDLE>(it->thread));
+        if (!it->widget.isNull())
+        {
+            it->widget->deleteLater();
+        }
+        it = this->ui_RetiredRenderWidgets.erase(it);
+    }
+    if (this->ui_RetiredRenderWidgets.isEmpty())
+    {
+        this->ui_RetiredRenderWidgetTimer->stop();
+    }
+}
+#endif

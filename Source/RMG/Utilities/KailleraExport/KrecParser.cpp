@@ -1,9 +1,12 @@
 #include "KrecParser.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <fstream>
+#include <iterator>
 
 namespace KailleraExport
 {
@@ -68,37 +71,114 @@ static bool fail(std::string* errorMessage, const std::string& message)
     return false;
 }
 
+static constexpr char kMetaBegin[] = "RMGKMETA";
+static constexpr char kMetaEnd[]    = "RMGKEND1";
+static constexpr size_t kMarkerSize = 8;
+static constexpr size_t kDropRecordSize = 6; // 0x14, empty nick, int32 player
+
+bool FindKrecMetadata(const std::string& krec, size_t& trailerStart, std::string* json)
+{
+    const size_t footer = 4 + kMarkerSize;
+    if (krec.size() < 400 + kDropRecordSize + kMarkerSize + footer ||
+        std::memcmp(krec.data() + krec.size() - kMarkerSize, kMetaEnd, kMarkerSize) != 0)
+    {
+        return false;
+    }
+    uint32_t length = 0;
+    std::memcpy(&length, krec.data() + krec.size() - footer, sizeof(length));
+    if (length > krec.size() - 400 - kDropRecordSize - kMarkerSize - footer)
+    {
+        return false;
+    }
+    const size_t jsonStart = krec.size() - footer - length;
+    trailerStart = jsonStart - kMarkerSize - kDropRecordSize;
+    if (static_cast<uint8_t>(krec[trailerStart]) != 0x14 || krec[trailerStart + 1] != 0 ||
+        std::memcmp(krec.data() + jsonStart - kMarkerSize, kMetaBegin, kMarkerSize) != 0)
+    {
+        return false;
+    }
+    if (json != nullptr)
+    {
+        json->assign(krec, jsonStart, length);
+    }
+    return true;
+}
+
+static bool readWholeFile(const std::filesystem::path& path, std::string& out)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open())
+    {
+        return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    return true;
+}
+
+bool ReadKrecMetadata(const std::filesystem::path& path, std::string& json)
+{
+    std::string krec;
+    size_t trailerStart = 0;
+    return readWholeFile(path, krec) && FindKrecMetadata(krec, trailerStart, &json);
+}
+
+bool WriteKrecMetadata(const std::filesystem::path& path, const std::string& json, std::string* errorMessage)
+{
+    std::string krec;
+    if (!readWholeFile(path, krec))
+    {
+        return fail(errorMessage, "Cannot read the recording");
+    }
+    if (krec.size() < 400 || krec.compare(0, 4, "KRC1") != 0)
+    {
+        return fail(errorMessage, "Only KRC1 recordings can hold bookmarks");
+    }
+
+    // Only the trailer changes: cut the old one off and append the new one,
+    // so an interrupted write can't damage the recorded inputs.
+    size_t trailerStart = krec.size();
+    if (FindKrecMetadata(krec, trailerStart, nullptr))
+    {
+        std::error_code errorCode;
+        std::filesystem::resize_file(path, trailerStart, errorCode);
+        if (errorCode)
+        {
+            return fail(errorMessage, "Cannot write the recording");
+        }
+    }
+
+    std::string trailer;
+    trailer.push_back(static_cast<char>(0x14));
+    trailer.push_back('\0');
+    trailer.append(krec, 264, 4); // the recording's local player
+    trailer.append(kMetaBegin, kMarkerSize);
+    trailer.append(json);
+    const uint32_t length = static_cast<uint32_t>(json.size());
+    trailer.append(reinterpret_cast<const char*>(&length), sizeof(length));
+    trailer.append(kMetaEnd, kMarkerSize);
+
+    std::ofstream file(path, std::ios::binary | std::ios::app);
+    if (!file.is_open() || !file.write(trailer.data(), static_cast<std::streamsize>(trailer.size())))
+    {
+        return fail(errorMessage, "Cannot write the recording");
+    }
+    return true;
+}
+
 bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::string* errorMessage)
 {
-    FILE* file = fopen(path.string().c_str(), "rb");
-    if (file == nullptr)
+    // opened by its wide path: player names in file names can be in any script
+    std::string contents;
+    if (!readWholeFile(path, contents))
     {
         return fail(errorMessage, "Cannot open recording file");
     }
-
-    if (fseek(file, 0, SEEK_END) != 0)
+    if (contents.size() < 272)
     {
-        fclose(file);
-        return fail(errorMessage, "Failed to seek recording file");
-    }
-
-    const long fileLength = ftell(file);
-    if (fileLength < 272)
-    {
-        fclose(file);
         return fail(errorMessage, "Recording file is too short");
     }
 
-    rewind(file);
-
-    std::vector<uint8_t> buffer(static_cast<size_t>(fileLength));
-    if (fread(buffer.data(), 1, buffer.size(), file) != buffer.size())
-    {
-        fclose(file);
-        return fail(errorMessage, "Failed to read recording file");
-    }
-
-    fclose(file);
+    const std::vector<uint8_t> buffer(contents.begin(), contents.end());
 
     const std::string magic = readCStringField(buffer.data(), 4);
     const bool isKrc1 = (magic == "KRC1");
@@ -202,22 +282,29 @@ bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::st
         }
         else if (type == 0x08)
         {
-            while (scan < end && *scan != 0)
+            KrecChatLine line;
+            line.record = outData.totalInputFrames;
+            line.nick = readCStringField(scan, static_cast<size_t>(end - scan));
+            scan += std::min(line.nick.size() + 1, static_cast<size_t>(end - scan));
+            line.message = readCStringField(scan, static_cast<size_t>(end - scan));
+            scan += std::min(line.message.size() + 1, static_cast<size_t>(end - scan));
+            outData.chat.push_back(std::move(line));
+        }
+        else if (type == 0x16)
+        {
+            uint32_t length = 0;
+            if (scan + 4 > end)
             {
-                ++scan;
+                break;
             }
-            if (scan < end)
+            memcpy(&length, scan, sizeof(uint32_t));
+            scan += 4;
+            if (static_cast<size_t>(end - scan) < length)
             {
-                ++scan;
+                break;
             }
-            while (scan < end && *scan != 0)
-            {
-                ++scan;
-            }
-            if (scan < end)
-            {
-                ++scan;
-            }
+            outData.saveData.assign(reinterpret_cast<const char*>(scan), length);
+            scan += length;
         }
         else
         {
