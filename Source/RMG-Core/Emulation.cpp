@@ -875,17 +875,6 @@ static void apply_game_coresettings_overlay(void)
 }
 
 #ifdef NETPLAY
-// Force HLE RSP plugin for Kaillera netplay - must be called BEFORE ROM open
-// so the setting takes effect when plugins are loaded
-static void apply_kaillera_rsp_override(void)
-{
-#ifdef _WIN32
-    CoreSettingsSetValue(SettingsID::Core_RSP_Plugin, std::string("mupen64plus-rsp-hle.dll"));
-#else
-    CoreSettingsSetValue(SettingsID::Core_RSP_Plugin, std::string("mupen64plus-rsp-hle.so"));
-#endif
-}
-
 // Force deterministic settings for Kaillera netplay to prevent desync
 // These settings MUST be identical across all clients
 // Called AFTER overlays so user/game settings don't override these
@@ -984,12 +973,10 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     bool        netplay = !address.empty();
 
 #ifdef NETPLAY
-    // Apply RSP plugin override and reload plugins BEFORE ROM open
-    if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0))
-    {
-        apply_kaillera_rsp_override();
-        CoreApplyPluginSettings();  // Force reload with HLE RSP
-    }
+    const bool syncedNetplay = netplay &&
+        (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0);
+#else
+    const bool syncedNetplay = false;
 #endif
 
     if (!CoreOpenRom(n64rom))
@@ -998,6 +985,16 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     }
 
     if (!CoreApplyRomPluginSettings())
+    {
+        CoreApplyPluginSettings();
+        CoreCloseRom();
+        return false;
+    }
+
+    // Synced play (netplay, replays, live replays) needs every machine on the
+    // same emulated timing whatever graphics plugin it draws with. Done after
+    // the ROM's own plugin choices, so it follows the plugin actually loaded.
+    if (!CorePluginsApplyNetplayMode(syncedNetplay))
     {
         CoreApplyPluginSettings();
         CoreCloseRom();

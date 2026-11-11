@@ -687,6 +687,59 @@ CORE_EXPORT bool CorePluginsSetGfxSkipRendering(bool skip, unsigned int* skipped
     return true;
 }
 
+CORE_EXPORT bool CorePluginsApplyNetplayMode(bool synced)
+{
+    auto& gfxPlugin = get_plugin(CorePluginType::Gfx);
+
+    if (synced)
+    {
+        // GLideN64 draws from display lists, which needs the HLE RSP. The other
+        // graphics plugins need the RSP emulated: cxd4 gives the same result
+        // after a rollback, ParaLLEl-RSP doesn't (it keeps state of its own
+        // across a load).
+        const std::string gfxFile = std::filesystem::path(
+            l_PluginFiles[static_cast<int>(CorePluginType::Gfx) - 1]).filename().string();
+        const bool hle = gfxFile.find("GLideN64") != std::string::npos;
+#ifdef _WIN32
+        const std::string extension = ".dll";
+#else
+        const std::string extension = ".so";
+#endif
+        if (!hle)
+        {
+            // cxd4 has to run the microcode itself here, with nothing that
+            // depends on host timing.
+            CoreSettingsSetValue("rsp-cxd4", "DisplayListToGraphicsPlugin", false);
+            CoreSettingsSetValue("rsp-cxd4", "AudioListToAudioPlugin", false);
+            CoreSettingsSetValue("rsp-cxd4", "WaitForCPUHost", false);
+            CoreSettingsSetValue("rsp-cxd4", "SupportCPUSemaphoreLock", false);
+        }
+        const std::array<std::string, 4> settings =
+        {
+            (hle ? "mupen64plus-rsp-hle" : "mupen64plus-rsp-cxd4") + extension,
+            std::string(), std::string(), std::string()
+        };
+        if (!apply_plugin_settings(settings))
+        {
+            return false;
+        }
+        if (!l_Plugins[static_cast<int>(CorePluginType::Rsp) - 1].IsHooked())
+        {
+            CoreSetError("CorePluginsApplyNetplayMode Failed: " + settings[0] + " is missing, netplay needs it");
+            return false;
+        }
+    }
+
+    using SetNetplayTiming = void (CALL *)(int);
+    const auto setNetplayTiming = gfxPlugin.IsHooked() ? reinterpret_cast<SetNetplayTiming>(
+        CoreGetLibrarySymbol(gfxPlugin.GetHandle(), "RmgkSetNetplayTiming")) : nullptr;
+    if (setNetplayTiming != nullptr)
+    {
+        setNetplayTiming(synced ? 1 : 0);
+    }
+    return true;
+}
+
 // Only called on the UI thread while emulation is stopped, before opening input
 // configuration. Join the worker before handing exclusive USB access to preview.
 CORE_EXPORT void CorePauseRaphnetMonitoring(bool pause)

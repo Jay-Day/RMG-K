@@ -17,6 +17,7 @@ static std::unique_ptr<Vulkan::WSI> wsi;
 static std::unique_ptr<MupenWSIPlatform> wsi_platform;
 
 int32_t vk_rescaling;
+bool rmgk_netplay_timing;
 bool vk_ssreadbacks;
 bool vk_ssdither;
 uint32_t vk_overscan_left;
@@ -444,7 +445,10 @@ void vk_process_commands()
 		{
 			uint32_t width = viCalculateHorizonalWidth(*GET_GFX_INFO(VI_H_START_REG), *GET_GFX_INFO(VI_X_SCALE_REG), *GET_GFX_INFO(VI_WIDTH_REG));
 			uint32_t height = viCalculateVerticalHeight(*GET_GFX_INFO(VI_V_START_REG), *GET_GFX_INFO(VI_Y_SCALE_REG));
-			*GET_GFX_INFO(DPC_CLOCK_REG) = width * height * 2;
+			// RMG-K: this delays the DP interrupt by a rough render time. In
+			// netplay every graphics plugin has to raise it at the same point,
+			// and the others don't delay it.
+			*GET_GFX_INFO(DPC_CLOCK_REG) = rmgk_netplay_timing ? 0 : width * height * 2;
 
 			processor->wait_for_timeline(processor->signal_timeline());
 
