@@ -387,6 +387,12 @@ EXPORT void CALL SetRenderingCallback(void (*callback)(int))
     render_callback = callback;
 }
 
+// RMG-K: on while a session has to stay in sync with other machines.
+extern "C" EXPORT void CALL RmgkSetNetplayTiming(int enabled)
+{
+    rmgk_netplay_timing = enabled != 0;
+}
+
 EXPORT void CALL ResizeVideoOutput(int width, int height)
 {
     window_width = width;
