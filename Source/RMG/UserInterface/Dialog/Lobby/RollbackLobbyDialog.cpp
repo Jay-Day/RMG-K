@@ -47,9 +47,11 @@
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/NetplaySave.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/rmgk_gekko.hpp> // request_disconnect_player (instant peer drop)
 
 #include "n02_client.h" // setRecordingStreamSink (broadcast tee)
+#include "Utilities/Translation.hpp"
 
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
@@ -1306,6 +1308,12 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     });
     switches->addWidget(m_saveDataCheck, 1, 1);
     switches->setColumnStretch(2, 1);
+    // Game options go in the rows below, once the room's game is known.
+    m_sessionSwitches = switches;
+    m_gameOptionsResync = new QTimer(this);
+    m_gameOptionsResync->setSingleShot(true);
+    m_gameOptionsResync->setInterval(3000);
+    connect(m_gameOptionsResync, &QTimer::timeout, this, &RollbackLobbyDialog::updateGameOptionControls);
     sessionCol->addLayout(switches);
     sessionCol->addStretch(1);
     netLay->addLayout(sessionCol, 7);
@@ -3532,6 +3540,8 @@ void RollbackLobbyDialog::onRoomListChanged()
             match.inRoom = m_currentRoomId != 0;
             for (const QString& name : r.playerNames)
                 match.players.append({ name, countries.value(name), connections.value(name) });
+            match.gameOptions = gameOptionLabels(r.romMd5, r.gameOptions);
+            match.gameOptionsTip = gameOptionsTip(r.romMd5, r.gameOptions);
             matches.append(match);
             if (!r.lateJoin)
                 continue;
@@ -3558,6 +3568,8 @@ void RollbackLobbyDialog::onRoomListChanged()
         room.anyWifi = roomsWithWifi.contains(r.id);
         room.maxPing = r.maxPing;
         room.wiredOnly = r.wiredOnly;
+        room.gameOptions = gameOptionLabels(r.romMd5, r.gameOptions);
+        room.gameOptionsTip = gameOptionsTip(r.romMd5, r.gameOptions);
 
         // Your ping to the host — the real measurement once one exists, the
         // region estimate until then — so a room can be judged before joining.
@@ -4045,6 +4057,28 @@ void RollbackLobbyDialog::onRoomCreateFailed(const QString& reason)
     QMessageBox::warning(this, tr("Couldn't create room"), reason);
 }
 
+namespace
+{
+    // The game options packs' translations follow the language the UI was
+    // started in.
+    const std::string& gameOptionLanguage()
+    {
+        static const std::string language = Translation::ResolvedLanguage().toStdString();
+        return language;
+    }
+
+    // This client's own pack's entry for one of a game's options, if it has one.
+    std::optional<CoreGameOptionInfo> ownGameOption(const QString& romMd5, const QString& id)
+    {
+        for (CoreGameOptionInfo& info : CoreGetGameOptions(romMd5.toStdString(), gameOptionLanguage()))
+        {
+            if (QString::fromStdString(info.Id) == id)
+                return std::move(info);
+        }
+        return std::nullopt;
+    }
+}
+
 void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
 {
     const quint64 roomId = static_cast<quint64>(roomState.value("id").toDouble());
@@ -4174,6 +4208,62 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         m_saveDataCheck->setChecked(m_roomSaveDataEnabled);
         m_suppressSettingsSignal = false;
         m_saveDataCheck->setVisible(m_roomHasSaveDataOption);
+    }
+    // Game options are the host's choice per room too, and the server keeps
+    // the list. Everyone hears when one goes on or off, and whoever enters a
+    // room with some on hears which: they decide what can be played.
+    m_roomGameOptionsOffered = roomState.value("gameOptionsOffered").toBool();
+    {
+        const QList<LobbyClient::LobbyGameOption> options = LobbyClient::parseGameOptions(roomState.value("gameOptions"));
+        const auto has = [](const QList<LobbyClient::LobbyGameOption>& list, const QString& id) {
+            return std::any_of(list.cbegin(), list.cend(), [&id](const auto& option) { return option.id == id; });
+        };
+        // With this client's pack, a line says what the option does. (Japanese
+        // sentences follow one another without a space.)
+        const auto withDescription = [this](const QString& line, const LobbyClient::LobbyGameOption& option) {
+            const std::optional<CoreGameOptionInfo> own = ownGameOption(m_currentRoomMd5, option.id);
+            if (!own || own->Description.empty())
+                return line;
+            const QString gap = line.endsWith(QChar(0x3002)) ? QString() : QStringLiteral(" ");
+            return line + gap + QString::fromStdString(own->Description).toHtmlEscaped();
+        };
+        if (!m_gameOptionsSeen)
+        {
+            for (const auto& option : options)
+            {
+                if (iAmHost)
+                    break;
+                const QString label = gameOptionLabels(m_currentRoomMd5, { option }).value(0).toHtmlEscaped();
+                appendChatSystemLine(CHANNEL_ROOM, withDescription(tr("%1 is on in this room.").arg(label), option));
+            }
+        }
+        else
+        {
+            for (const auto& option : options)
+            {
+                if (has(m_roomGameOptions, option.id))
+                    continue;
+                const QString label = gameOptionLabels(m_currentRoomMd5, { option }).value(0).toHtmlEscaped();
+                appendChatSystemLine(CHANNEL_ROOM, withDescription(
+                    iAmHost ? tr("%1 is on.").arg(label) : tr("The host turned on %1.").arg(label), option));
+            }
+            for (const auto& option : m_roomGameOptions)
+            {
+                if (has(options, option.id))
+                    continue;
+                const QString label = gameOptionLabels(m_currentRoomMd5, { option }).value(0).toHtmlEscaped();
+                appendChatSystemLine(CHANNEL_ROOM, iAmHost ? tr("%1 is off.").arg(label)
+                                                           : tr("The host turned off %1.").arg(label));
+            }
+        }
+        m_gameOptionsSeen = true;
+        m_roomGameOptions = options;
+        m_hostGameOptionIds.clear();
+        if (iAmHost)
+        {
+            for (const auto& option : options)
+                m_hostGameOptionIds.push_back(option.id.toStdString());
+        }
     }
     // Join limits are the host's too, and can change at any time.
     m_roomHasJoinLimits = roomState.contains("joinLimits");
@@ -4366,6 +4456,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         QSet<quint64> outOfMatch;
         m_lateJoinCapableUsers.clear();
         m_saveDataCapableUsers.clear();
+        m_gameOptionsCapableUsers.clear();
         bool selfOutOfMatch = false;
         for (const auto& v : players)
         {
@@ -4375,6 +4466,8 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
                 m_lateJoinCapableUsers.insert(uid);
             if (p.value("saveData").toBool())
                 m_saveDataCapableUsers.insert(uid);
+            if (p.value("gameOptions").toBool())
+                m_gameOptionsCapableUsers.insert(uid);
             if (state == "in_game" && !p.value("inMatch").toBool(true))
             {
                 outOfMatch.insert(uid);
@@ -4468,6 +4561,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
 void RollbackLobbyDialog::updateRecordingControls()
 {
     updateSaveDataControls();
+    updateGameOptionControls();
     if (!m_recordCheck || !m_broadcastCheck)
         return;
 
@@ -4889,6 +4983,182 @@ bool RollbackLobbyDialog::writeMatchSave(const QString& file, QString* error)
     return true;
 }
 
+// ── Game options ──────────────────────────────────────────────────────
+//
+// The host turns on options the game options packs offer for the room's
+// game (say, Vanilla only for Smash Remix). The server only keeps the list,
+// for the room and the room list. At match start the host's client resolves
+// them into ROM patches for the manifest, and every player, late joiner, live
+// viewer and replay patches its game the same way, so only the host needs
+// the pack. Everyone else sees the host's labels, or their own pack's.
+
+QStringList RollbackLobbyDialog::gameOptionLabels(const QString& romMd5,
+                                                  const QList<LobbyClient::LobbyGameOption>& options) const
+{
+    QStringList labels;
+    for (const auto& option : options)
+    {
+        const std::optional<CoreGameOptionInfo> own = ownGameOption(romMd5, option.id);
+        labels << (own ? QString::fromStdString(own->Label) : option.label);
+    }
+    return labels;
+}
+
+QString RollbackLobbyDialog::gameOptionsTip(const QString& romMd5,
+                                            const QList<LobbyClient::LobbyGameOption>& options) const
+{
+    QStringList lines;
+    for (const auto& option : options)
+    {
+        const std::optional<CoreGameOptionInfo> own = ownGameOption(romMd5, option.id);
+        if (own && !own->Description.empty())
+            lines << QStringLiteral("%1: %2").arg(QString::fromStdString(own->Label), QString::fromStdString(own->Description));
+        else
+            lines << (own ? QString::fromStdString(own->Label) : option.label);
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+void RollbackLobbyDialog::updateGameOptionControls()
+{
+    if (!m_sessionSwitches)
+        return;
+    const bool iAmHost = m_client && m_currentRoomId != 0 && m_currentRoomHostId == m_client->selfUserId();
+    const bool editable = m_currentRoomState == "waiting" && !matchTransportInProgress();
+
+    // This client's pack's options for the room's game, then any the host
+    // turned on that it doesn't know. Quick match and older servers get none.
+    struct Shown
+    {
+        QString id, label, description;
+        bool on = false;
+    };
+    QList<Shown> shown;
+    const auto isOn = [this](const QString& id) {
+        return std::any_of(m_roomGameOptions.cbegin(), m_roomGameOptions.cend(),
+                           [&id](const auto& option) { return option.id == id; });
+    };
+    if (m_currentRoomId != 0 && m_roomGameOptionsOffered)
+    {
+        for (const CoreGameOptionInfo& info : CoreGetGameOptions(m_currentRoomMd5.toStdString(), gameOptionLanguage()))
+        {
+            const QString id = QString::fromStdString(info.Id);
+            shown.append({ id, QString::fromStdString(info.Label), QString::fromStdString(info.Description), isOn(id) });
+        }
+        for (const auto& option : m_roomGameOptions)
+        {
+            if (std::none_of(shown.cbegin(), shown.cend(), [&option](const Shown& s) { return s.id == option.id; }))
+                shown.append({ option.id, option.label, QString(), true });
+        }
+    }
+
+    // A switch each, in the rows below Late join and Save data.
+    bool same = shown.size() == m_gameOptionChecks.size();
+    for (int i = 0; same && i < shown.size(); ++i)
+        same = m_gameOptionChecks.at(i)->property("gameOptionId").toString() == shown.at(i).id;
+    if (!same)
+    {
+        for (ToggleSwitch* check : std::as_const(m_gameOptionChecks))
+        {
+            m_sessionSwitches->removeWidget(check);
+            check->deleteLater();
+        }
+        m_gameOptionChecks.clear();
+        QWidget* parent = m_saveDataCheck ? m_saveDataCheck->parentWidget() : nullptr;
+        for (int i = 0; i < shown.size(); ++i)
+        {
+            auto* check = new ToggleSwitch(shown.at(i).label, parent);
+            check->setObjectName(QStringLiteral("GameOptionSwitch"));
+            check->setProperty("gameOptionId", shown.at(i).id);
+            const QString id = shown.at(i).id;
+            connect(check, &QCheckBox::toggled, this, [this, id](bool checked) { onGameOptionToggled(id, checked); });
+            m_sessionSwitches->addWidget(check, 2 + i / 2, i % 2);
+            m_gameOptionChecks.append(check);
+        }
+    }
+
+    for (int i = 0; i < shown.size(); ++i)
+    {
+        const Shown& s = shown.at(i);
+        ToggleSwitch* check = m_gameOptionChecks.at(i);
+        {
+            const QSignalBlocker blocker(check);
+            check->setChecked(s.on);
+        }
+        check->setText(s.label);
+        check->setEnabled(iAmHost && editable);
+        // What it does (from this client's pack), then who decides.
+        const QString who = !iAmHost ? (s.on ? tr("The host turned on %1.").arg(s.label)
+                                             : tr("The host has %1 turned off.").arg(s.label))
+                          : !editable ? tr("Game options can't be changed during a match.")
+                                      : tr("Every player's game is changed for the match, and so is its replay.");
+        check->setToolTip(s.description.isEmpty() ? who : s.description + QLatin1Char('\n') + who);
+        check->setVisible(true);
+    }
+}
+
+void RollbackLobbyDialog::onGameOptionToggled(const QString& id, bool checked)
+{
+    if (m_suppressSettingsSignal || m_currentRoomId == 0 || !m_client ||
+        m_currentRoomHostId != m_client->selfUserId() || m_currentRoomState != "waiting")
+        return;
+
+    // The room's list with this one added or taken out, in pack order, with
+    // the English labels: other clients show their own pack's when they have it.
+    QList<LobbyClient::LobbyGameOption> list;
+    std::vector<std::string> ids;
+    QString label;
+    for (const CoreGameOptionInfo& info : CoreGetGameOptions(m_currentRoomMd5.toStdString(), gameOptionLanguage()))
+    {
+        const QString infoId = QString::fromStdString(info.Id);
+        if (infoId == id)
+            label = QString::fromStdString(info.Label);
+        const bool on = infoId == id ? checked
+            : std::any_of(m_roomGameOptions.cbegin(), m_roomGameOptions.cend(),
+                          [&infoId](const auto& option) { return option.id == infoId; });
+        if (!on)
+            continue;
+        // The server takes labels of up to 48 characters.
+        QString english = QString::fromStdString(info.EnglishLabel);
+        if (english.size() > 48)
+            english.truncate(english.at(47).isHighSurrogate() ? 47 : 48);
+        list.append({ infoId, english });
+        ids.push_back(info.Id);
+    }
+
+    // Checked against the ROM now, so a ROM the pack doesn't fit says so
+    // before anyone joins expecting it; the match start checks again.
+    if (checked)
+    {
+        CoreNetplayGameOptions resolved;
+        if (!CoreResolveGameOptions(localRomPathForMd5(m_currentRoomMd5).toStdU32String(),
+                                    m_currentRoomMd5.toStdString(), ids, resolved))
+        {
+            const QString why = QString::fromStdString(CoreGetError());
+            updateGameOptionControls();
+            QMessageBox box(QMessageBox::Warning, tr("Game Options"),
+                            tr("Couldn't turn on %1.").arg(label), QMessageBox::Ok, this);
+            box.setInformativeText(why);
+            box.exec();
+            return;
+        }
+    }
+    m_client->updateRoomGameOptions(list);
+    // The switches follow the room's ROOM_STATE. The server refuses a change
+    // without a word, so they go back to what the room has if none comes.
+    m_gameOptionsResync->start();
+}
+
+void RollbackLobbyDialog::announceMatchGameOptions(const QString& channel, const QString& romMd5)
+{
+    QList<LobbyClient::LobbyGameOption> options;
+    for (const CoreNetplayGameOption& option : CoreGetNetplayGameOptions().Options)
+        options.append({ QString::fromStdString(option.Id), QString::fromStdString(option.Label) });
+    if (!options.isEmpty())
+        appendChatSystemLine(channel, tr("This match is played with %1.").arg(
+            gameOptionLabels(romMd5, options).join(QStringLiteral(", ")).toHtmlEscaped()));
+}
+
 void RollbackLobbyDialog::refreshStartButton()
 {
     if (!m_startBtn)
@@ -4934,7 +5204,19 @@ void RollbackLobbyDialog::refreshStartButton()
                 needSaveData << lobbyUserName(s.userId);
         }
     }
-    const bool canStart      = iAmHost && waiting && enoughPlayers && pingsReady && needSaveData.isEmpty();
+    // Likewise the game options: their game has to be changed the same way.
+    QStringList needGameOptions;
+    const QString gameOptionNames = gameOptionLabels(m_currentRoomMd5, m_roomGameOptions).join(QStringLiteral(", "));
+    if (!m_roomGameOptions.isEmpty())
+    {
+        for (const auto& s : m_seats)
+        {
+            if (s.userId != 0 && !m_gameOptionsCapableUsers.contains(s.userId))
+                needGameOptions << lobbyUserName(s.userId);
+        }
+    }
+    const bool canStart      = iAmHost && waiting && enoughPlayers && pingsReady && needSaveData.isEmpty() &&
+                               needGameOptions.isEmpty();
 
     m_startBtn->setEnabled(canStart);
     m_startBtn->setText(alone && seated == 1 ? tr("Start alone") : tr("Start Game"));
@@ -4945,6 +5227,9 @@ void RollbackLobbyDialog::refreshStartButton()
         : !needSaveData.isEmpty() ? tr("This room uses save data, which %1 can't play with yet. "
                                        "They need a newer Dale64, or turn Save data off.")
                                        .arg(needSaveData.join(QStringLiteral(", ")))
+        : !needGameOptions.isEmpty() ? tr("This room uses %1, which %2 can't play with yet. "
+                                          "They need a newer Dale64, or turn %1 off.")
+                                          .arg(gameOptionNames, needGameOptions.join(QStringLiteral(", ")))
         : !enoughPlayers ? (seated == 1 && m_roomHasLateJoinOption && !m_roomLateJoinEnabled
                               ? tr("Need at least 2 players to start, or turn on Late join to start alone.")
                               : tr("Need at least 2 players to start."))
@@ -5010,6 +5295,12 @@ void RollbackLobbyDialog::refreshStartButton()
             showWhy(QStringLiteral("error-warning-line"), t.warn, t.warnTint,
                     tr("%1 can't play with save data").arg(needSaveData.join(QStringLiteral(", "))),
                     tr("They need a newer Dale64, or turn Save data off."));
+        }
+        else if (!needGameOptions.isEmpty())
+        {
+            showWhy(QStringLiteral("error-warning-line"), t.warn, t.warnTint,
+                    tr("%1 can't play with %2").arg(needGameOptions.join(QStringLiteral(", ")), gameOptionNames),
+                    tr("They need a newer Dale64, or turn %1 off.").arg(gameOptionNames));
         }
         else if (!enoughPlayers)
         {
@@ -5128,6 +5419,8 @@ void RollbackLobbyDialog::notifyEmulationFinished()
         m_matchWatchTimer->stop();
     endLiveRollbackSettings();
     finishMatchSave();
+    // Nothing after this match may boot with its game options by accident.
+    CoreClearNetplayGameOptions();
     if (m_client)
         m_client->setMatchTransportActive(false);
     updateRecordingControls();
@@ -5747,6 +6040,12 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     m_roomSaveDataHash.clear();
     m_saveDataCapableUsers.clear();
     m_hostSaveChoice.reset();
+    m_hostGameOptionIds.clear();
+    m_roomGameOptionsOffered = false;
+    m_gameOptionsSeen = false;
+    m_roomGameOptions.clear();
+    m_gameOptionsCapableUsers.clear();
+    m_gameOptionsResync->stop();
     m_publishSaveChoiceWhenWaiting = false;
     if (!m_matchSaveActive)
     {
@@ -6854,6 +7153,13 @@ void RollbackLobbyDialog::onSpectateBegan(quint64 matchId, const QByteArray& man
     // prior watch of this same match. Arm the stream now; keyframe + tail follow.
     m_spectateStreamArmed = true;
     appendChatSystemLine(CHANNEL_SPECTATE, tr("Watching — buffering the match…"));
+    QString romMd5;
+    for (const auto& room : m_client->rooms())
+    {
+        if (room.matchId == matchId)
+            romMd5 = room.romMd5;
+    }
+    announceMatchGameOptions(CHANNEL_SPECTATE, romMd5);
     if (m_client->spectatorChatSupported())
         appendChatSystemLine(CHANNEL_SPECTATE, tr("The players can read this chat too."), QStringLiteral("eye-line"));
 }
@@ -7151,6 +7457,16 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     {
         m_client->setPrematchSaveData(m_roomSaveDataEnabled && m_hostSaveChoice
             ? std::optional<CoreNetplaySaveData>(m_hostSaveChoice->Data) : std::nullopt);
+        // Checked against the ROM file about to boot, so an option that no
+        // longer fits it stops the match here rather than on every player.
+        CoreNetplayGameOptions gameOptions;
+        if (!CoreResolveGameOptions(localRomFile.toStdU32String(), m_currentRoomMd5.toStdString(),
+                                    m_hostGameOptionIds, gameOptions))
+        {
+            abortMatchStart(tr("Match start failed: %1").arg(QString::fromStdString(CoreGetError())));
+            return;
+        }
+        m_client->setPrematchGameOptions(std::move(gameOptions));
     }
     QString prematchError;
     if (!m_client->syncPrematchManifest(LobbyClient::connectionPeers(peers), local.slot, m_currentRoomHostId,
@@ -7160,6 +7476,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
         return;
     }
     appendChatSystemLine(CHANNEL_ROOM, tr("Pre-match sync complete."));
+    announceMatchGameOptions(CHANNEL_ROOM, m_currentRoomMd5);
     beginMatchSave();
 
     // Share the exact settings just synced to the players. Arm the stream sink
@@ -7484,6 +7801,7 @@ void RollbackLobbyDialog::launchAsLateJoiner()
         abortLateJoin(QStringLiteral("manifest_failed"), true);
         return;
     }
+    announceMatchGameOptions(CHANNEL_ROOM, m_currentRoomMd5);
     beginMatchSave();
 
     const quint64 selfId = m_client->selfUserId();

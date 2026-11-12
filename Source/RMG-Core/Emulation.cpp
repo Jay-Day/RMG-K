@@ -20,6 +20,7 @@
 #include "Plugins.hpp"
 #include "Cheats.hpp"
 #include "NetplaySave.hpp"
+#include "GameOptions.hpp"
 #include "Error.hpp"
 #include "File.hpp"
 #include "Rom.hpp"
@@ -1089,18 +1090,26 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     {
         apply_kaillera_deterministic_settings();
     }
+    // Game options come only with a lobby match's manifest, or with the replay
+    // of one: never offline, on a Kaillera server or in a direct session.
+    const bool gameOptionsSession = netplay &&
+        (address.rfind("LOBBY|", 0) == 0 || (address == "KAILLERA" && CoreIsKailleraPlaybackMode()));
 #else
     const bool syncedSession = false;
+    const bool gameOptionsSession = false;
 #endif
 
 #ifdef RMGK_HAVE_P2P_TRANSPORT
-    // A replay file starts from the save its match did. (A live replay's
-    // viewer got that from the match's manifest already.)
+    // A replay file starts from the save its match did, with its game
+    // options. (A live replay's viewer got both from the match's manifest.)
     if (address == "KAILLERA" && CoreIsKailleraPlaybackMode() && !n02::playbackIsStream())
     {
         CoreNetplaySaveData replaySave;
+        CoreNetplayGameOptions replayOptions;
         const std::string recorded = n02::playbackSaveData();
-        if (!recorded.empty() && !CoreDeserializeNetplaySaveData(recorded, replaySave))
+        const std::string recordedOptions = n02::playbackGameOptions();
+        if ((!recorded.empty() && !CoreDeserializeNetplaySaveData(recorded, replaySave)) ||
+            (!recordedOptions.empty() && !CoreDeserializeNetplayGameOptions(recordedOptions, replayOptions)))
         {
             CoreClearCheats();
             CoreDetachPlugins();
@@ -1109,6 +1118,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             return false;
         }
         CoreSetNetplaySaveData(replaySave);
+        CoreSetNetplayGameOptions(replayOptions);
     }
 #endif
 
@@ -1116,6 +1126,19 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
     // host's pick (blank without one), so no player's own save files are read
     // or changed. Offline play turns that off and uses the save files.
     if (!CoreApplyNetplaySaveData(syncedSession))
+    {
+        CoreClearCheats();
+        CoreDetachPlugins();
+        CoreApplyPluginSettings();
+        CoreCloseRom();
+        return false;
+    }
+
+    // The match's game options patch the ROM now, before the first
+    // instruction runs. The ROM was identified (MD5, settings, save names)
+    // when it opened, so that's all done on the unpatched game, and the next
+    // CoreOpenRom reads the file again, so the patches end with this session.
+    if (!CoreApplyNetplayGameOptions(gameOptionsSession))
     {
         CoreClearCheats();
         CoreDetachPlugins();

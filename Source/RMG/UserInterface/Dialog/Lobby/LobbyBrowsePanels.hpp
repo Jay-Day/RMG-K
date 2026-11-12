@@ -49,6 +49,9 @@ struct LiveMatchView
     bool watchingOther = false; // ...or a different one
     bool inRoom = false;      // this client is seated in a room
     QList<Player> players;
+    // The host's game options, named for this client, and what they do.
+    QStringList gameOptions;
+    QString gameOptionsTip;
 };
 
 // What one joinable room looks like to this client.
@@ -76,6 +79,9 @@ struct RoomRowView
     bool wiredOnly = false;
     enum class Refusal { None, WiredOnly, PingTooHigh };
     Refusal refusal = Refusal::None;
+    // The host's game options, named for this client, and what they do.
+    QStringList gameOptions;
+    QString gameOptionsTip;
 };
 
 class LiveMatchBase;

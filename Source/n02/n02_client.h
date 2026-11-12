@@ -88,6 +88,15 @@ void recordingClose();
 constexpr unsigned char KREC_SAVE_DATA_RECORD = 0x16;
 void recordingSetSaveData(const std::string& saveData);
 
+// The game options the next lobby capture's match is played with (RMG-Core's
+// serialized "RMGKGOP1" section), or empty for none. recordingOpen() writes
+// them as a 0x17 record (u32 length + section) after the header and any 0x16
+// record, in the local file only: a live replay viewer gets them from the
+// match's manifest. Readers before game options stop at that record, which
+// beats replaying the match on the unpatched game.
+constexpr unsigned char KREC_GAME_OPTIONS_RECORD = 0x17;
+void recordingSetGameOptions(const std::string& gameOptions);
+
 // Register a sink for replay bytes (header + every flushed record), independent
 // of local file saving. Pass nullptr to clear. Set/clear only while emulation
 // is stopped; the sink is invoked on the emulation thread during play.
@@ -225,6 +234,10 @@ int playbackNumPlayers();
 // The save data a loaded .krec's match started from (its 0x16 record), empty
 // when it started blank. Valid from playbackLoad() until playback ends.
 std::string playbackSaveData();
+
+// The game options a loaded .krec's match was played with (its 0x17
+// record), empty when it had none. Valid from playbackLoad() until playback ends.
+std::string playbackGameOptions();
 
 // True while the playback is a live stream rather than a file.
 bool playbackIsStream();

@@ -26,6 +26,7 @@
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/LobbyIce.hpp>
 #include <RMG-Core/NetplaySave.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
@@ -325,18 +326,23 @@ namespace
     }
 
     // Manifest sections, in this order after the header.
-    constexpr uint32_t PREMATCH_SECTION_CHEATS    = 1u << 0;
-    constexpr uint32_t PREMATCH_SECTION_SAVE_DATA = 1u << 1;
+    constexpr uint32_t PREMATCH_SECTION_CHEATS       = 1u << 0;
+    constexpr uint32_t PREMATCH_SECTION_SAVE_DATA    = 1u << 1;
+    constexpr uint32_t PREMATCH_SECTION_GAME_OPTIONS = 1u << 2;
 
     // saveData is the host's starting save, or null to start blank. It rides
     // compressed in its own section, which clients before save data refuse;
-    // the lobby keeps them out of matches that use it.
+    // the lobby keeps them out of matches that use it. gameOptions, when there
+    // are any, ride the same way (uncompressed: they're small), and a match
+    // without them gets no section, so its manifest stays as it always was.
     bool buildPrematchManifest(const QString& romFile, const CoreNetplaySaveData* saveData,
+                               const CoreNetplayGameOptions& gameOptions,
                                std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
     {
         std::vector<CoreCheat> cheats;
         std::string cheatManifest;
         std::string saveSection;
+        std::string gameOptionsSection;
 
         if (!CoreGetEnabledNetplayCheats(romFile.toStdU32String(), cheats) || !CoreSerializeNetplayCheats(cheats, cheatManifest))
             return false;
@@ -348,18 +354,27 @@ namespace
             const QByteArray packed = qCompress(QByteArray::fromStdString(raw), 9);
             saveSection.assign(packed.constData(), size_t(packed.size()));
         }
+        const bool hasGameOptions = !gameOptions.IsEmpty();
+        if (hasGameOptions && !CoreSerializeNetplayGameOptions(gameOptions, gameOptionsSection))
+            return false;
 
         manifest.clear();
         manifest.append("RMGKPMAN", 8);
         appendPrematchU32(manifest, 1);
         appendPrematchU32(manifest, PREMATCH_SECTION_CHEATS |
-            (saveData != nullptr ? PREMATCH_SECTION_SAVE_DATA : 0u));
+            (saveData != nullptr ? PREMATCH_SECTION_SAVE_DATA : 0u) |
+            (hasGameOptions ? PREMATCH_SECTION_GAME_OPTIONS : 0u));
         appendPrematchU32(manifest, static_cast<uint32_t>(cheatManifest.size()));
         manifest.append(cheatManifest);
         if (saveData != nullptr)
         {
             appendPrematchU32(manifest, static_cast<uint32_t>(saveSection.size()));
             manifest.append(saveSection);
+        }
+        if (hasGameOptions)
+        {
+            appendPrematchU32(manifest, static_cast<uint32_t>(gameOptionsSection.size()));
+            manifest.append(gameOptionsSection);
         }
         manifestHash = prematchHashBytes(manifest);
         cheatCount = cheats.size();
@@ -380,7 +395,8 @@ namespace
         if (manifest.size() < 8 || std::memcmp(manifest.data(), "RMGKPMAN", 8) != 0 ||
             !readPrematchU32(manifest, offset, version) ||
             !readPrematchU32(manifest, offset, sectionMask) ||
-            version != 1 || (sectionMask & ~(PREMATCH_SECTION_CHEATS | PREMATCH_SECTION_SAVE_DATA)) != 0 ||
+            version != 1 ||
+            (sectionMask & ~(PREMATCH_SECTION_CHEATS | PREMATCH_SECTION_SAVE_DATA | PREMATCH_SECTION_GAME_OPTIONS)) != 0 ||
             !readPrematchU32(manifest, offset, cheatManifestLen) ||
             offset + cheatManifestLen > manifest.size())
         {
@@ -405,6 +421,18 @@ namespace
             if (raw.isEmpty() || !CoreDeserializeNetplaySaveData(raw.toStdString(), saveData))
                 return false;
         }
+        // Likewise game options: none without the section.
+        CoreNetplayGameOptions gameOptions;
+        if ((sectionMask & PREMATCH_SECTION_GAME_OPTIONS) != 0)
+        {
+            uint32_t gameOptionsLen = 0;
+            if (!readPrematchU32(manifest, offset, gameOptionsLen) || gameOptionsLen > manifest.size() - offset)
+                return false;
+            const std::string section(manifest.data() + offset, gameOptionsLen);
+            offset += gameOptionsLen;
+            if (!CoreDeserializeNetplayGameOptions(section, gameOptions) || gameOptions.IsEmpty())
+                return false;
+        }
         if (offset != manifest.size())
             return false;
 
@@ -412,6 +440,7 @@ namespace
         if (!CoreSetNetplayCheats(cheats))
             return false;
         CoreSetNetplaySaveData(saveData);
+        CoreSetNetplayGameOptions(gameOptions);
         return true;
     }
 
@@ -859,6 +888,7 @@ void LobbyClient::onWsConnected()
     data["social"] = true;
     data["spectatorChat"] = true;
     data["saveData"] = true;
+    data["gameOptions"] = true;
     if (m_challengesOff)
         data["noChallenges"] = true;
     if (!m_pendingLocalIp.isEmpty())
@@ -1149,6 +1179,7 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.privateRoom  = o.value("private").toBool();
         r.maxPing      = qMax(0, o.value("maxPing").toInt());
         r.wiredOnly    = o.value("wiredOnly").toBool();
+        r.gameOptions  = parseGameOptions(o.value("gameOptions"));
         for (const auto& n : o.value("playerNames").toArray())
             r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
@@ -2725,7 +2756,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         uint64_t manifestHash = 0;
         size_t cheatCount = 0;
         if (!buildPrematchManifest(romFile, m_prematchSaveData ? &*m_prematchSaveData : nullptr,
-                                   manifest, manifestHash, cheatCount))
+                                   m_prematchGameOptions, manifest, manifestHash, cheatCount))
         {
             error = QString::fromStdString(CoreGetError().empty()
                 ? std::string("Pre-match sync failed: could not build manifest") : CoreGetError());
@@ -2966,7 +2997,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         std::string manifest;
         uint64_t manifestHash = 0;
         size_t cheatCount = 0;
-        if (!buildPrematchManifest(romFile, nullptr, manifest, manifestHash, cheatCount))
+        if (!buildPrematchManifest(romFile, nullptr, {}, manifest, manifestHash, cheatCount))
         {
             error = QString::fromStdString(CoreGetError().empty() ? std::string("Pre-match sync failed: could not build manifest") : CoreGetError());
             return false;
@@ -3743,6 +3774,34 @@ void LobbyClient::updateRoomSaveData(bool enabled, const QString& label, const Q
         d["hash"] = hash;
     }
     sendEnvelope("ROOM_UPDATE_SAVE_DATA", d);
+}
+
+void LobbyClient::updateRoomGameOptions(const QList<LobbyGameOption>& options)
+{
+    QJsonArray list;
+    for (const LobbyGameOption& option : options)
+    {
+        QJsonObject o;
+        o["id"] = option.id;
+        o["label"] = option.label;
+        list.append(o);
+    }
+    QJsonObject d;
+    d["options"] = list;
+    sendEnvelope("ROOM_UPDATE_GAME_OPTIONS", d);
+}
+
+QList<LobbyClient::LobbyGameOption> LobbyClient::parseGameOptions(const QJsonValue& value)
+{
+    QList<LobbyGameOption> options;
+    for (const auto& v : value.toArray())
+    {
+        const QJsonObject o = v.toObject();
+        LobbyGameOption option{ o.value("id").toString(), o.value("label").toString() };
+        if (!option.id.isEmpty())
+            options.append(option);
+    }
+    return options;
 }
 
 void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)

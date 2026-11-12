@@ -1,0 +1,71 @@
+{
+  "format": 1,
+  "id": "smash-remix-2.0.1",
+  "game": "Smash Remix 2.0.1",
+  "romMd5": [
+    "2B2D6B295106C54216B7FC7A2F14346E"
+  ],
+  "options": [
+    {
+      "id": "vanilla-only",
+      "label": "Vanilla only",
+      "description": "Only the original 12 characters can be picked.",
+      "translations": {
+        "ja": {
+          "label": "初代12キャラのみ",
+          "description": "初代スマブラの12キャラクターだけを選べます。"
+        }
+      },
+      "patches": [
+        {
+          "offset": "0x02D1EE10",
+          "expect": "3C0880513508FDF4010440219108000011000014",
+          "bytes": "2C48000C1500001700000000100000153402001C",
+          "note": "get_character_id_ (RAM 0x8051EE10): the d-pad variant step becomes a filter. Ids 0x00-0x0B pass, anything else becomes NONE, so Remix portraits, bonus fighters and variants can't be hovered or picked on any CSS"
+        },
+        {
+          "offset": "0x02D1ED68",
+          "expect": "10000042",
+          "bytes": "10000029",
+          "note": "get_character_id_ (RAM 0x8051ED68): send the 12-Character Battle result through the same filter"
+        },
+        {
+          "offset": "0x02D1F24C",
+          "expect": "8E100004",
+          "bytes": "34100003",
+          "note": "CharacterSelect.get_random_char_id_ (RAM 0x8051F24C): always use Remix's VANILLA random mode (random \"?\", L-button random, new CPU panels, Tag Team random)"
+        },
+        {
+          "offset": "0x02CFBDAC",
+          "expect": "8D080004",
+          "bytes": "34080003",
+          "note": "TwelveCharBattle.get_random_char_id_ (RAM 0x804FBDAC): always use the VANILLA random mode in 12-Character Battle"
+        },
+        {
+          "offset": "0x02CF9EC0",
+          "expect": "01455021",
+          "bytes": "00005025",
+          "note": "TwelveCharBattle.update_character_set_ (RAM 0x804F9EC0): 12-Character Battle stays on the Default (vanilla) character set; Japanese/Polygon/Remix/Custom can't be chosen"
+        },
+        {
+          "offset": "0x02C9C9A0",
+          "expect": "0D0E2A1C1C0F291C1A102C1C1C11243345122B1C0C1327231C14311C1C15281C1C16301C1C17322D1C182E2F1C19251C",
+          "bytes": "1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C",
+          "note": "Character.variants.table rows 0x00-0x0B (RAM 0x8049C9A0): the vanilla fighters get no d-pad variants, so the panels don't show variant icons"
+        },
+        {
+          "offset": "0x02D1EE24",
+          "expect": "000000003C0980493529C9A000025080012A48212508FFFF01284821912900002408001C1128000A000000003408000C55090007000910213C088052350863A4",
+          "bytes": "2D0A000C1540000C250AFFE52D4A000215400009000000003408001CA0680023A060002638AA0001154000030000000034050002A06500220804EB3100000000",
+          "note": "Safety net code in the unreachable rest of the old variant step (RAM 0x8051EE24): when the VS CSS opens, a restored non-vanilla character becomes NONE (costume 0), and a CPU panel holding one is closed"
+        },
+        {
+          "offset": "0x02CF8A90",
+          "expect": "0804EB31",
+          "bytes": "08147B89",
+          "note": "TwelveCharBattle.setup_ports_and_characters_ (RAM 0x804F8A90): return to the VS CSS through that safety net"
+        }
+      ]
+    }
+  ]
+}

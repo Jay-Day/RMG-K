@@ -6567,4 +6567,63 @@ A local replay is saved only if Save replay is on.</source>
             <translation>タイムライン</translation>
         </message>
     </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>%1 is on in this room.</source>
+            <translation>このルームでは「%1」がオンです。</translation>
+        </message>
+        <message>
+            <source>%1 is on.</source>
+            <translation>「%1」をオンにしました。</translation>
+        </message>
+        <message>
+            <source>The host turned on %1.</source>
+            <translation>ホストが「%1」をオンにしました。</translation>
+        </message>
+        <message>
+            <source>%1 is off.</source>
+            <translation>「%1」をオフにしました。</translation>
+        </message>
+        <message>
+            <source>The host turned off %1.</source>
+            <translation>ホストが「%1」をオフにしました。</translation>
+        </message>
+        <message>
+            <source>The host has %1 turned off.</source>
+            <translation>ホストは「%1」をオフにしています。</translation>
+        </message>
+        <message>
+            <source>Game options can't be changed during a match.</source>
+            <translation>対戦中はゲームオプションを変更できません。</translation>
+        </message>
+        <message>
+            <source>Every player's game is changed for the match, and so is its replay.</source>
+            <translation>対戦中は全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。</translation>
+        </message>
+        <message>
+            <source>Game Options</source>
+            <translation>ゲームオプション</translation>
+        </message>
+        <message>
+            <source>Couldn't turn on %1.</source>
+            <translation>「%1」をオンにできませんでした。</translation>
+        </message>
+        <message>
+            <source>This match is played with %1.</source>
+            <translation>この対戦は「%1」で行われます。</translation>
+        </message>
+        <message>
+            <source>This room uses %1, which %2 can't play with yet. They need a newer Dale64, or turn %1 off.</source>
+            <translation>このルームは「%1」を使いますが、%2はまだ対応していません。新しいDale64に更新してもらうか、「%1」をオフにしてください。</translation>
+        </message>
+        <message>
+            <source>%1 can't play with %2</source>
+            <translation>%1は「%2」に対応していません</translation>
+        </message>
+        <message>
+            <source>They need a newer Dale64, or turn %1 off.</source>
+            <translation>新しいDale64に更新してもらうか、「%1」をオフにしてください。</translation>
+        </message>
+    </context>
 </TS>

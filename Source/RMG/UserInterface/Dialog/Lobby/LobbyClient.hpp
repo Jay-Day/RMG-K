@@ -20,6 +20,7 @@
 #include <QFutureWatcher>
 
 #include <RMG-Core/NetplaySave.hpp>
+#include <RMG-Core/GameOptions.hpp>
 
 #include <optional>
 
@@ -76,6 +77,16 @@ public:
         bool noChallenges = false; // their PC turned challenges off
     };
 
+    // A game option the host turned on (ROOM_UPDATE_GAME_OPTIONS): the pack's
+    // id and the host's English label, for clients without the pack.
+    struct LobbyGameOption
+    {
+        QString id;
+        QString label;
+    };
+    // The "gameOptions" array of ROOM_STATE or a ROOM_LIST entry.
+    static QList<LobbyGameOption> parseGameOptions(const QJsonValue& value);
+
     struct LobbyRoomSummary
     {
         quint64 id = 0;
@@ -99,6 +110,8 @@ public:
         // whether a PC on Wi-Fi is turned away.
         int maxPing = 0;
         bool wiredOnly = false;
+        // The host's game options for the next match, or the running one's.
+        QList<LobbyGameOption> gameOptions;
     };
 
     struct LobbyMatchPeer
@@ -250,8 +263,17 @@ public:
     void updateRoomSaveData(bool enabled, const QString& label = QString(),
                             const QStringList& kinds = QStringList(), int bytes = 0,
                             const QString& hash = QString());
+    // Host-only, waiting room: the game options of the next match, replacing
+    // the room's list (empty turns them off). The server refuses a bad list
+    // without a reply; ROOM_STATE says what the room has.
+    void updateRoomGameOptions(const QList<LobbyGameOption>& options);
     // Host: the save the next pre-match manifest carries; nullopt starts blank.
     void setPrematchSaveData(std::optional<CoreNetplaySaveData> data) { m_prematchSaveData = std::move(data); }
+    // Host: the game options the next pre-match manifest carries, resolved
+    // against this ROM (CoreResolveGameOptions); empty for none. Set it right
+    // before syncPrematchManifest, like the save. Every player, late joiner
+    // and live viewer stages them from the manifest (CoreGetNetplayGameOptions).
+    void setPrematchGameOptions(CoreNetplayGameOptions options) { m_prematchGameOptions = std::move(options); }
     void kickFromRoom(quint64 userId);
 
     // Host-only: swap two seats (P1-P4) to re-order players before the match.
@@ -602,6 +624,7 @@ private:
     // Exact host manifest from the successful player sync, reused by live replay.
     QByteArray m_prematchManifest;
     std::optional<CoreNetplaySaveData> m_prematchSaveData;
+    CoreNetplayGameOptions m_prematchGameOptions;
     int m_matchSeats = 0;
 
     bool m_socialSupported = false;

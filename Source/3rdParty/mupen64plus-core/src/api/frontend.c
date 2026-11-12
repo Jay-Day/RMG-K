@@ -485,6 +485,11 @@ EXPORT m64p_error CALL CoreDoCommand(m64p_command Command, int ParamInt, void *P
             if (ParamPtr == NULL)
                 return M64ERR_INPUT_ASSERT;
             return main_get_save_data((m64p_save_data*)ParamPtr);
+        case M64CMD_ROM_PATCH:
+            /* Before execution, so the recompiler never sees the old code. */
+            if (g_EmulatorRunning || !l_ROMOpen)
+                return M64ERR_INVALID_STATE;
+            return patch_rom((const m64p_rom_patch*)ParamPtr, ParamInt);
         case M64CMD_FRAME_OUTPUT_SET:
             main_set_frame_output(
                 (ParamInt & M64FRAME_OUTPUT_VIDEO) != 0,
