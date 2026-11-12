@@ -83,5 +83,4 @@ VidExt_VK_GetSurface;
 VidExt_VK_GetInstanceExtensions;
 set_pif_sync_callback;
 set_pif_sync_replay_players;
-RmgkInvalidateCachedCode;
 local: *; };

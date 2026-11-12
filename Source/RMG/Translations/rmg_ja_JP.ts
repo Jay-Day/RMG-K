@@ -7002,14 +7002,6 @@ Your frame delay can be changed during the warmup. Prediction defaults to 7 fram
             <source>Stop the current playback to watch %1.</source>
             <translation>%1 を見るには、再生中のリプレイを停止してください。</translation>
         </message>
-        <message>
-            <source>Ranked Replay</source>
-            <translation>ランクリプレイ</translation>
-        </message>
-        <message>
-            <source>This ranked replay can't be played: %1</source>
-            <translation>このランクリプレイは再生できません: %1</translation>
-        </message>
     </context>
     <context>
         <name>ReplayLink</name>
@@ -7299,6 +7291,10 @@ Your frame delay can be changed during the warmup. Prediction defaults to 7 fram
     <message>
         <source>≤ %1 ms</source>
         <translation>%1 ms以下</translation>
+    </message>
+    <message>
+        <source>Ranked play needs a newer version of Dale64.</source>
+        <translation>ランク戦には新しいバージョンのDale64が必要です。</translation>
     </message>
 </context>
 <context>
@@ -7819,6 +7815,97 @@ Your frame delay can be changed during the warmup. Prediction defaults to 7 fram
         <message>
             <source>Timeline</source>
             <translation>タイムライン</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>%1 is on in this room.</source>
+            <translation>このルームでは「%1」がオンです。</translation>
+        </message>
+        <message>
+            <source>%1 is on.</source>
+            <translation>「%1」をオンにしました。</translation>
+        </message>
+        <message>
+            <source>The host turned on %1.</source>
+            <translation>ホストが「%1」をオンにしました。</translation>
+        </message>
+        <message>
+            <source>%1 is off.</source>
+            <translation>「%1」をオフにしました。</translation>
+        </message>
+        <message>
+            <source>The host turned off %1.</source>
+            <translation>ホストが「%1」をオフにしました。</translation>
+        </message>
+        <message>
+            <source>The host has %1 turned off.</source>
+            <translation>ホストは「%1」をオフにしています。</translation>
+        </message>
+        <message>
+            <source>Game options can't be changed during a match.</source>
+            <translation>対戦中はゲームオプションを変更できません。</translation>
+        </message>
+        <message>
+            <source>Every player's game is changed for the match, and so is its replay.</source>
+            <translation>対戦中は全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。</translation>
+        </message>
+        <message>
+            <source>Game Options</source>
+            <translation>ゲームオプション</translation>
+        </message>
+        <message>
+            <source>Couldn't turn on %1.</source>
+            <translation>「%1」をオンにできませんでした。</translation>
+        </message>
+        <message>
+            <source>This match is played with %1.</source>
+            <translation>この対戦は「%1」で行われます。</translation>
+        </message>
+        <message>
+            <source>This room uses %1, which %2 can't play with yet. They need a newer Dale64, or turn %1 off.</source>
+            <translation>このルームは「%1」を使いますが、%2はまだ対応していません。新しいDale64に更新してもらうか、「%1」をオフにしてください。</translation>
+        </message>
+        <message>
+            <source>%1 can't play with %2</source>
+            <translation>%1は「%2」に対応していません</translation>
+        </message>
+        <message>
+            <source>They need a newer Dale64, or turn %1 off.</source>
+            <translation>新しいDale64に更新してもらうか、「%1」をオフにしてください。</translation>
+        </message>
+        <message>
+            <source>Match start failed: this lobby doesn&apos;t say which game options the ranked ruleset plays with, so the set wouldn&apos;t be played by its rules.</source>
+            <translation>対戦開始に失敗しました: このロビーはランクのルールセットのゲームオプションを指定していないため、セットがルール通りに行われません。</translation>
+        </message>
+        <message>
+            <source>Match start failed: the lobby sent this ranked set&apos;s game options in a form this Dale64 can&apos;t read (%1).</source>
+            <translation>対戦開始に失敗しました: ロビーから届いたこのランクセットのゲームオプションを、このDale64では読み取れません (%1)。</translation>
+        </message>
+        <message>
+            <source>Match start failed: the ranked ruleset&apos;s game options don&apos;t fit your ROM. %1</source>
+            <translation>対戦開始に失敗しました: ランクのルールセットのゲームオプションがあなたのROMに合いません。%1</translation>
+        </message>
+        <message>
+            <source>Match start failed: the host&apos;s game options aren&apos;t this ranked set&apos;s. A ranked set only plays the options its ruleset sets.</source>
+            <translation>対戦開始に失敗しました: ホストのゲームオプションがこのランクセットのものと違います。ランクセットはルールセットが決めたオプションでのみ遊べます。</translation>
+        </message>
+        <message>
+            <source>The ranked ruleset plays with %1.</source>
+            <translation>ランクのルールセットでは「%1」を使います。</translation>
+        </message>
+        <message>
+            <source>Set by the ranked ruleset</source>
+            <translation>ランクのルールセットで設定</translation>
+        </message>
+        <message>
+            <source>Set by the ranked ruleset. Nobody in the room can turn it off, the host included.</source>
+            <translation>ランクのルールセットで設定されています。ホストを含め、ルームの誰もオフにできません。</translation>
+        </message>
+        <message>
+            <source>Ranked play needs a newer version of Dale64.</source>
+            <translation>ランク戦には新しいバージョンのDale64が必要です。</translation>
         </message>
     </context>
 </TS>

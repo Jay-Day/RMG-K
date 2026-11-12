@@ -222,9 +222,11 @@ static std::filesystem::path pathFromUtf8String(const char* utf8) {
 }
 
 // The save the next lobby capture starts from (recordingSetSaveData), and the
-// one a loaded file's match started from.
+// one a loaded file's match started from. Game options likewise.
 static std::string recording_save_data;
 static std::string playback_save_data;
+static std::string recording_game_options;
+static std::string playback_game_options;
 
 // Local saving and live streaming are independent destinations for the same
 // replay bytes. A stream-only session never opens a file or creates a directory.
@@ -363,11 +365,24 @@ static void drain_recording_chat() {
     }
 }
 
+// A lobby match's record (u32 length + bytes) for the local file only.
+static void writeFileRecord(unsigned char type, const std::string& bytes) {
+    const char typeByte = static_cast<char>(type);
+    const uint32_t length = static_cast<uint32_t>(bytes.size());
+    recording_file.write(&typeByte, 1);
+    recording_file.write(reinterpret_cast<const char*>(&length), 4);
+    recording_file.write(bytes.data(), static_cast<std::streamsize>(length));
+    recording_file.flush();
+}
+
 // Begin a replay capture and write its KRC1 header to the selected destinations.
 // The caller fills recording_player_names first (used for filename and header).
 // Legacy n02 sessions save locally; rollback lobby sessions may stream only.
+// Only a lobby capture writes the lobby match's save and game options: a
+// Kaillera or P2P game never has them, whatever an earlier match left set.
 static void openRecordingFile(const char* appName, const char* game, int player,
-                              int numplayers_arg, bool saveLocally = true) {
+                              int numplayers_arg, bool saveLocally = true,
+                              bool lobbyCapture = false) {
     RecordingBuffer.reset();
     recording_frame_count.store(0, std::memory_order_relaxed);
     recording_last_path.clear();
@@ -496,14 +511,13 @@ static void openRecordingFile(const char* appName, const char* game, int player,
 
         writeRecordingBytes(header, static_cast<int>(sizeof(header)));
 
-        // The match's starting save, file only (see recordingSetSaveData).
-        if (recording_file.is_open() && !recording_save_data.empty()) {
-            const char type = static_cast<char>(n02::KREC_SAVE_DATA_RECORD);
-            const uint32_t length = static_cast<uint32_t>(recording_save_data.size());
-            recording_file.write(&type, 1);
-            recording_file.write(reinterpret_cast<const char*>(&length), 4);
-            recording_file.write(recording_save_data.data(), static_cast<std::streamsize>(length));
-            recording_file.flush();
+        // The match's starting save, then its game options, file only (see
+        // recordingSetSaveData and recordingSetGameOptions).
+        if (lobbyCapture && recording_file.is_open()) {
+            if (!recording_save_data.empty())
+                writeFileRecord(n02::KREC_SAVE_DATA_RECORD, recording_save_data);
+            if (!recording_game_options.empty())
+                writeFileRecord(n02::KREC_GAME_OPTIONS_RECORD, recording_game_options);
         }
     }
 
@@ -967,17 +981,24 @@ static bool player_play(const char* fn) {
         pb.reset_all();
         return false;
     }
-    // A match that started from save data has it right after the header.
+    // A lobby match's starting save and then its game options, when it had
+    // them, come right after the header.
     playback_save_data.clear();
-    if (pb.pos + 5 <= pb.size() &&
-        static_cast<unsigned char>(pb.data[pb.pos]) == n02::KREC_SAVE_DATA_RECORD) {
+    playback_game_options.clear();
+    const std::pair<unsigned char, std::string*> leadRecords[] = {
+        { n02::KREC_SAVE_DATA_RECORD, &playback_save_data },
+        { n02::KREC_GAME_OPTIONS_RECORD, &playback_game_options },
+    };
+    for (const auto& [type, contents] : leadRecords) {
+        if (pb.pos + 5 > pb.size() || static_cast<unsigned char>(pb.data[pb.pos]) != type)
+            continue;
         uint32_t length = 0;
         memcpy(&length, pb.data.data() + pb.pos + 1, 4);
-        if (pb.pos + 5 + length > pb.size()) {
+        if (length > pb.size() - pb.pos - 5) {
             pb.reset_all();
             return false;
         }
-        playback_save_data.assign(pb.data.data() + pb.pos + 5, length);
+        contents->assign(pb.data.data() + pb.pos + 5, length);
         pb.pos += 5 + length;
         pb.scanPos = pb.pos;
     }
@@ -1349,7 +1370,7 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
         return;
     }
     openRecordingFile(appName, gameName, localPlayer, numPlayers,
-                      n02_kaillera_recording_enabled);
+                      n02_kaillera_recording_enabled, true);
     recording_lobby_owned.store(true, std::memory_order_release);
 }
 
@@ -1363,6 +1384,10 @@ std::string recordingLastPath() {
 
 void recordingSetSaveData(const std::string& saveData) {
     recording_save_data = saveData;
+}
+
+void recordingSetGameOptions(const std::string& gameOptions) {
+    recording_game_options = gameOptions;
 }
 
 void setRecordingStreamSink(std::function<void(const void*, int)> sink) {
@@ -1496,6 +1521,11 @@ int playbackNumPlayers() {
 std::string playbackSaveData() {
     std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return PlayBackBuffer.streaming ? std::string() : playback_save_data;
+}
+
+std::string playbackGameOptions() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    return PlayBackBuffer.streaming ? std::string() : playback_game_options;
 }
 
 bool playbackIsStream() {

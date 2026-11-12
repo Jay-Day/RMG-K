@@ -11,33 +11,18 @@
 /*
  * Ranked module for Smash Remix.
  *
- * Enforcement (OnFrame, deterministic). The game's ways of changing the
- * rules are removed with code patches; the values themselves are only
- * checked each frame and written when they differ (which the patches should
- * make rare: any correction is logged once, pointing at a missed path).
- *  - patches: the hold-L settings shortcut and Remix's stock/time picker
- *    return immediately; on the character select screen (its overlay loads
- *    fresh each time) the stock/time arrows, the team toggle and Back report
- *    "not under the cursor", and the back action returns immediately
- *  - checked values: the Tournament toggle profile with the ruleset's
- *    overrides (skip results, no salty runback, only the allowed stages as
- *    random stages); normal VS mode, no per-port input delay, default stock
- *    mode; Remix's saved VS menu settings (VsRemixMenu.global_*) and the VS
- *    rules outside of battle (4 stock, 8 minutes, no items, teams off - or
- *    on with team attack in 2v2), which the CSS sets its own copy of the
- *    rules up from
- *  - stages (kVanillaStages, kRemixStages): with one allowed stage, stage
- *    select is off and every game is on it. With more, stage select is on
- *    and uses Remix's tournament layout (no variants, no hazard toggle),
- *    whose table is rewritten to show exactly the allowed stages and Random
- *    (which picks among them). Each stage's hazard mode is written to
- *    Remix's tournament hazard table, which hovering a stage and Random
- *    apply; Remix's exceptions to that table (Dream Land, Yoshi's Island DL
- *    and Saffron City DL get another mode on some pages) are patched out
- *  - boot: the N64 logo's next-scene instruction is patched to the VS
- *    character select, skipping Remix's splash and the title
- *  - as a safety net, every menu screen (title, mode select, options, ...)
- *    is sent back to the VS character select screen
+ * The module only reads the game. The lobby's game options for the ruleset
+ * (ROM patches, see Data/GameOptions) make the game play by it: boot to VS
+ * character select, menus out of reach, the rules, the Tournament toggle
+ * profile, the stages, and the teams the lobby matched. The module checks
+ * that each game was played that way and voids it when not.
+ *
+ * Observation (OnFrame, read-only): the battle state (rules, players, teams,
+ * stage), Remix's VS mode, hazard mode, per-port input delay and stock mode,
+ * the Salty Runback flag, and during a battle whether every Remix toggle
+ * holds its Tournament profile value (Toggles.profile_defaults_TE with the
+ * ruleset's overrides). The toggles the stages decide (random stages, stage
+ * select layout, hazard mode) are judged by the stage instead.
  *
  * Tracking (OnConfirmedFrame):
  *  - a game starts during the pre-GO countdown (fresh timer, status Wait),
@@ -47,12 +32,15 @@
  *  - 2v2 rulesets: team battle with team attack, all four ports human in two
  *    teams of two (any ports, team colours don't matter). The pairing is
  *    fixed by game 1, or from the start when the lobby matched teammates
- *    (RankedSessionConfig.teams; character select then opens with each
- *    team on one colour, P1's red); the winning team is the one with stocks
- *    left (more stocks between its two players on a timeout)
+ *    (RankedSessionConfig.teams; its teams game option opens character
+ *    select with each team on one colour, P1's red); the winning team is
+ *    the one with stocks left (more stocks between its two players on a
+ *    timeout)
  *  - resets, CPUs, extra players, a stage that isn't allowed (or its hazard
- *    mode differs), wrong rules, a character outside the ruleset's roster,
- *    or (2v2) other partners void the game
+ *    mode differs), wrong rules (stocks, time, items, handicap, damage
+ *    ratio, teams, team attack, VS mode, input delay, stock mode, any other
+ *    Remix setting), a character outside the ruleset's roster, a Salty
+ *    Runback restart, or (2v2) other partners void the game
  *  - RankedModule_GetLiveState: the score and, during a game that counts,
  *    each ranked port's stocks and damage percent, for when a player leaves
  *    mid-set
@@ -93,51 +81,21 @@ namespace
 //
 
 constexpr uint32_t kSceneCurrent       = 0x800A4AD0; // u8 gSCManagerSceneData.scene_curr
-constexpr uint32_t kScenePrevious      = 0x800A4AD1; // u8 scene_prev
 constexpr uint32_t kSceneIsReset       = 0x800A4AE2; // u8 A+B+Z+R reset during battle
-constexpr uint32_t kSceneInterrupt     = 0x800465D0; // u32 write 1 to load scene_curr
 constexpr uint32_t kTransferBattle     = 0x800A4D08; // SCBattleState used by VS mode
 constexpr uint32_t kSuddenDeathBattle  = 0x800A4EF8; // SCBattleState copy for sudden death
 constexpr uint32_t kActiveBattlePtr    = 0x800A50E8; // SCBattleState* in use
 
-// VS character select screen (overlay at 0x80131B00, only valid while loaded)
-constexpr uint32_t kCssSignatureA      = 0x80131B40; // unpatched instruction words that
-constexpr uint32_t kCssSignatureAValue = 0xAC780004; // identify the CSS overlay (same in
-constexpr uint32_t kCssSignatureB      = 0x80138000; // vanilla and Remix)
-constexpr uint32_t kCssSignatureBValue = 0x000E7100;
-constexpr uint32_t kCssBackToVsMode    = 0x801380F4; // mnPlayersVSBackToVSMode
-constexpr uint32_t kCssBackFirstWord   = 0x3C02800A; // lui v0, 0x800A (unpatched)
-constexpr uint32_t kMipsJrRa           = 0x03E00008;
-constexpr uint32_t kMipsNop            = 0x00000000;
-constexpr uint32_t kMipsClearV0        = 0x00001025; // or v0, r0, r0
-constexpr uint32_t kMipsClearA0        = 0x00002021; // addu a0, r0, r0
-constexpr uint32_t kMipsLoadT0         = 0x34080000; // ori t0, r0, imm
-// VS CSS overlay functions that check whether a button is under a cursor
-// (ssb64 decomp, mnplayersvs.c): a click on these buttons does nothing when
-// they return FALSE
-constexpr uint32_t kCssCheckTimeArrowR = 0x80134F64; // stock/time + arrow
-constexpr uint32_t kCssCheckTimeArrowL = 0x8013502C; // stock/time - arrow
-constexpr uint32_t kCssCheckGameMode   = 0x80135270; // Free-for-all/Team Battle
-constexpr uint32_t kCssCheckBack       = 0x80138218; // Back
-// N64 logo overlay: the instruction that picks the next scene when the logo
-// ends (Remix: its splash, scene 0x37; vanilla: the opening, 0x1C)
-constexpr uint32_t kLogoNextScene      = 0x80131C94;
-constexpr uint32_t kLogoToRemixSplash  = 0x34090037; // ori t1, r0, 0x37
-constexpr uint32_t kLogoToOpening      = 0x3409001C; // ori t1, r0, 0x1C
-constexpr uint32_t kLogoToVsCss        = 0x34090010; // ori t1, r0, 0x10
-
 // SCBattleState offsets
 constexpr uint32_t kBattleGkind        = 0x01;
 constexpr uint32_t kBattleIsTeam       = 0x02;
-constexpr uint32_t kBattleRules        = 0x03; // 1 = time, 2 = stock
+constexpr uint32_t kBattleRules        = 0x03; // 1 = time, 2 = stock (3: both)
 constexpr uint32_t kBattleTimeLimit    = 0x06; // minutes, 100 = infinite
 constexpr uint32_t kBattleStocks       = 0x07; // 0-based
-constexpr uint32_t kBattleHandicap     = 0x08;
+constexpr uint32_t kBattleHandicap     = 0x08; // 0 = off
 constexpr uint32_t kBattleTeamAttack   = 0x09;
-constexpr uint32_t kBattleStageSelect  = 0x0A;
-constexpr uint32_t kBattleDamageRatio  = 0x0B;
+constexpr uint32_t kBattleDamageRatio  = 0x0B; // percent
 constexpr uint32_t kBattleItemToggles  = 0x0C; // u32
-constexpr uint32_t kBattleResetPlayers = 0x10; // character select starts every slot from its defaults
 constexpr uint32_t kBattleGameStatus   = 0x11;
 constexpr uint32_t kBattleTimeRemain   = 0x14; // u32 tics, reset to the full limit at battle setup
 constexpr uint32_t kBattleTimePassed   = 0x18; // u32 tics, 0 until GO
@@ -153,18 +111,7 @@ constexpr uint32_t kPlayerStockCount   = 0x0B; // s8, -1 = out
 constexpr uint32_t kPlayerPlace        = 0x0D;
 constexpr uint32_t kPlayerDamage       = 0x4C; // u32, the current stock's damage percent
 
-constexpr uint8_t kSceneTitle          = 0x01;
-constexpr uint8_t kSceneN64Logo        = 0x1B;
-constexpr uint8_t kSceneModeSelect     = 0x07;
-constexpr uint8_t kSceneVsMenu         = 0x09;
-constexpr uint8_t kSceneVsOptions      = 0x0A;
-constexpr uint8_t kSceneItemSwitch     = 0x0B;
-constexpr uint8_t kSceneVsCss          = 0x10;
-constexpr uint8_t kSceneStageSelect    = 0x15;
 constexpr uint8_t kSceneVsBattle       = 0x16;
-constexpr uint8_t kSceneVsResults      = 0x18;
-constexpr uint8_t kSceneRemixOptions   = 0x39;
-constexpr uint8_t kSceneRemixModes     = 0x77;
 
 constexpr uint8_t kStatusWait          = 0;
 constexpr uint8_t kStatusGo            = 1;
@@ -174,15 +121,14 @@ constexpr uint8_t kStatusSet           = 7; // after GAME SET (and on resets)
 constexpr uint8_t kPkindHuman          = 0;
 constexpr uint8_t kPkindNone           = 2;
 
-constexpr uint8_t kTeamRed             = 0;
-constexpr uint8_t kTeamBlue            = 1;
+constexpr uint8_t kRulesTimedStock     = 3; // time and stock
+constexpr uint8_t kNoHandicap          = 0;
+constexpr uint8_t kNormalDamageRatio   = 100;
 
 // Remix Menu.entry layout
 constexpr uint32_t kEntryType          = 0x00;
 constexpr uint32_t kEntryValue         = 0x04;
-constexpr uint32_t kEntryCopyAddress   = 0x18;
 constexpr uint32_t kEntryNext          = 0x1C;
-constexpr uint32_t kEntryToggleNumber  = 0x24; // Toggles: 1-based index into profile_defaults_*
 constexpr uint32_t kEntryTitle         = 0x28; // inline string
 constexpr uint32_t kEntryTypeTitle     = 0x00;
 constexpr uint32_t kEntryTypeInput     = 0x0B;
@@ -192,17 +138,12 @@ constexpr int      kMaxHeads           = 32;
 // Remix stage select (Stages.asm): 18 icons per page, Random is the last
 constexpr uint32_t kSssIconsPerPage    = 18;
 constexpr uint32_t kTournamentPages    = 3;  // stage_table_tournament's size
-constexpr uint32_t kSssLayoutTournament = 1; // Toggles.entry_sss_layout
 constexpr uint8_t  kStageRandom        = 0xDE;
-constexpr uint8_t  kNoStage            = 0xFF; // never a hovered stage
-// Stages.swap_stage_ builds the random stage list with a run of
-//   lui a0, hi / ori a0, a0, lo / jal add_stage_to_random_list_ / ori a1, r0, id
-// (one per stage toggle); the run starts within this many bytes
-constexpr uint32_t kRandomListSearchBytes = 0x100;
-// Stages.get_stage_id_ (the hovered stage) ends within this many bytes
-constexpr uint32_t kHoveredStageSearchBytes = 0x400;
 
-constexpr const char* kModuleVersion   = "0.9.0";
+// the random stage toggles (one per stage), judged by the stage instead
+constexpr const char* kRandomStageTogglePrefix = "Toggles.entry_random_stage_";
+
+constexpr const char* kModuleVersion   = "1.0.0";
 
 //
 // Rulesets
@@ -283,12 +224,15 @@ struct RankedStage
     uint8_t hazardMode;
 };
 
-// The stages a ruleset's games may be played on, in stage select order.
+// The stages a ruleset's games may be played on, each with its hazard mode;
+// a game anywhere else, or with another hazard mode, doesn't count. The
+// lobby's stage game option for the ruleset (stages-dream-land,
+// stages-remix-ranked) makes them the only ones on offer:
 //  - one stage: stage select stays off and every game is on it
 //  - more: players pick on the stage select screen, which shows only these
 //    (and Random, which picks among them), at most 51 (3 pages of 17)
-// Each game gets its stage's hazard mode. A list is part of the ruleset hash,
-// so peers must run the same one: changing it needs a new module version
+// A list is part of the ruleset hash, so peers must run the same one:
+// changing it needs that game option changed too, a new module version
 // (kModuleVersion) and matching rulesetStages in the lobby's ranked.json.
 // Vanilla roster: Dream Land.
 const std::vector<RankedStage> kVanillaStages =
@@ -446,6 +390,15 @@ struct Observation
     uint8_t teamAttack;
     uint32_t itemToggles;
     PlayerObservation players[RANKED_MAX_PLAYERS];
+    uint8_t timeLimit;    // minutes
+    uint8_t handicap;
+    uint8_t damageRatio;
+    uint8_t inputDelay[RANKED_MAX_PLAYERS]; // InputDelay.delay_table, frames (capped at 255)
+    uint8_t stockMode[RANKED_MAX_PLAYERS];  // StockMode.stockmode_table
+    // in a battle: the first Remix toggle that isn't the ruleset's (1-based
+    // index into Instance::toggleChecks, 0 when all are) and its value
+    uint16_t toggleMismatch;
+    uint32_t toggleValue;
 };
 #pragma pack(pop)
 static_assert(sizeof(Observation) <= RANKED_MAX_OBSERVATION_SIZE, "observation too large");
@@ -470,50 +423,24 @@ struct Instance
     uint32_t inputDelayTable = 0;
     uint32_t stockModeTable = 0;
     uint32_t hazardModeEntry = 0;
-    uint32_t settingsShortcut = 0; // Toggles.settings_shortcut (hold L on the CSS)
-    uint32_t pickerPress = 0;      // CharacterSelect.check_picker_press_ (stock/time picker)
     uint32_t saltyRunbackFlag = 0; // GameEnd.is_salty_runback (word), 0 = unknown
-    // VsRemixMenu.global_* (words)
-    uint32_t globalGameMode = 0;
-    uint32_t globalTime = 0;
-    uint32_t globalStocks = 0;
-    uint32_t globalTeams = 0;
-    uint32_t globalStageSelect = 0;
-    uint32_t globalStockModeTable = 0;
     std::vector<std::pair<uint32_t, uint32_t>> overrides; // entry address, value
-    // stages
-    bool stageSelect = false;          // more than one allowed stage
-    uint32_t tournamentDefaults = 0;   // Toggles.profile_defaults_TE (Random's tournament filter)
-    uint32_t randomStageList = 0;      // Stages.swap_stage_
-    uint32_t addRandomStage = 0;       // Stages.add_stage_to_random_list_
-    uint32_t dreamLandRandomEntry = 0; // Toggles.entry_random_stage_dream_land, checks the decoding
-    uint32_t sssLayoutEntry = 0;       // Toggles.entry_sss_layout
-    uint32_t stageTable = 0;           // Stages.stage_table (a table pointer per layout)
-    uint32_t stageTablePages = 0;      // Stages.stage_table_pages (pages per layout)
-    uint32_t tournamentTable = 0;      // Stages.stage_table_tournament
-    uint32_t tournamentHazards = 0;    // Stages.tournament_hazard_mode_table (per stage id)
-    uint32_t hoveredStage = 0;         // Stages.get_stage_id_
-    // its `lli t0, <stage id>` instructions that pick out the stages whose
-    // hazard mode Remix sets by page instead of from the table
-    std::vector<uint32_t> pageHazardChecks;
+    bool stageSelect = false;      // more than one allowed stage
+    // Toggles the stage decides (hazard mode, stage select layout, random
+    // stages): the stage check judges those, not the profile.
+    std::set<uint32_t> stageEntries;
 
-    // The values the ruleset fixes, built once Remix is loaded (from constant
-    // Remix data, so every peer and every resimulated frame gets the same).
-    // Code patches remove the game's ways of changing them; the module only
-    // checks them each frame and corrects drift, which it reports once.
-    struct Pin
+    // Every other Remix toggle's ruleset value, built once Remix is loaded
+    // from constant Remix data, so every peer and every resimulated frame
+    // gets the same. A game where one differs doesn't count.
+    struct ToggleCheck
     {
-        uint32_t address;
-        uint8_t  size; // 1 or 4
+        uint32_t entry;
         uint32_t value;
+        std::string title;
     };
-    std::vector<Pin> pins;
-    bool pinsBuilt = false;
-    // logging only: values set while booting are summarized when character
-    // select is first reached, later corrections are reported once each
-    bool booted = false;
-    int bootCorrections = 0;
-    std::set<uint32_t> reportedDrift;
+    std::vector<ToggleCheck> toggleChecks;
+    bool togglesBuilt = false;
 
     // confirmed tracking state
     std::mutex stateMutex;
@@ -539,16 +466,8 @@ struct Instance
 
 // memory helpers
 
-bool has_write_code(const RankedHostApi& host)
-{
-    return host.size >= offsetof(RankedHostApi, WriteCode32) + sizeof(host.WriteCode32) &&
-           host.WriteCode32 != nullptr;
-}
-
 uint8_t  read8(Instance* i, uint32_t a)  { return i->host.Read8(i->host.context, a); }
 uint32_t read32(Instance* i, uint32_t a) { return i->host.Read32(i->host.context, a); }
-void write8(Instance* i, uint32_t a, uint8_t v)   { i->host.Write8(i->host.context, a, v); }
-void write32(Instance* i, uint32_t a, uint32_t v) { i->host.Write32(i->host.context, a, v); }
 
 bool is_ram_pointer(uint32_t pointer)
 {
@@ -616,67 +535,8 @@ bool load_symbols(const std::string& path, std::map<std::string, uint32_t>& symb
 }
 
 //
-// Enforcement
+// Ruleset checks
 //
-
-// the VS CSS overlay is resident (scene_curr alone changes before the old
-// scene unloads, so it can't tell)
-bool css_loaded(Instance* i)
-{
-    return read32(i, kCssSignatureA) == kCssSignatureAValue &&
-           read32(i, kCssSignatureB) == kCssSignatureBValue;
-}
-
-// checks a fixed value, writing it only when it differs
-void pin(Instance* i, uint32_t address, uint8_t size, uint32_t value)
-{
-    const uint32_t current = size == 1 ? read8(i, address) : read32(i, address);
-    if (current == value)
-    {
-        return;
-    }
-    if (size == 1)
-    {
-        write8(i, address, static_cast<uint8_t>(value));
-    }
-    else
-    {
-        write32(i, address, value);
-    }
-    if (!i->booted)
-    {
-        i->bootCorrections++;
-    }
-    else if (i->reportedDrift.insert(address).second)
-    {
-        module_log(i, RankedLog_Warning, "corrected %08X (%X, ruleset %X): a way to change it isn't blocked",
-            address, current, value);
-    }
-}
-
-// patches a function's first two instructions, once per load of its code
-void patch_code(Instance* i, uint32_t address, uint32_t first, uint32_t second, const char* what)
-{
-    if (address == 0 || !has_write_code(i->host) ||
-        (read32(i, address) == first && read32(i, address + 4) == second))
-    {
-        return;
-    }
-    i->host.WriteCode32(i->host.context, address + 4, second);
-    i->host.WriteCode32(i->host.context, address, first);
-    module_log(i, RankedLog_Verbose, "%s disabled", what);
-}
-
-// patches one instruction, once per load of its code
-void patch_instruction(Instance* i, uint32_t address, uint32_t value, const char* what)
-{
-    if (address == 0 || !has_write_code(i->host) || read32(i, address) == value)
-    {
-        return;
-    }
-    i->host.WriteCode32(i->host.context, address, value);
-    module_log(i, RankedLog_Verbose, "%s disabled", what);
-}
 
 const RankedStage* find_stage(Instance* i, uint8_t id)
 {
@@ -690,14 +550,7 @@ const RankedStage* find_stage(Instance* i, uint8_t id)
     return nullptr;
 }
 
-// the hazard mode a game on this stage gets (the default stage's for others)
-uint32_t stage_hazard_mode(Instance* i, uint8_t id)
-{
-    const RankedStage* stage = find_stage(i, id);
-    return stage != nullptr ? stage->hazardMode : i->ruleset->stages.front().hazardMode;
-}
-
-// a Toggles entry's title, for logs
+// a Toggles entry's title, for void reasons
 std::string entry_title(Instance* i, uint32_t entry)
 {
     std::string title;
@@ -713,174 +566,13 @@ std::string entry_title(Instance* i, uint32_t entry)
     return title;
 }
 
-// Each stage Random can pick, with its random toggle entry, read from the code
-// of Remix's random stage list (see kRandomListSearchBytes). Custom stages'
-// toggles are named by their sort order, not their id, so this is the only
-// map from a stage id to its toggle.
-std::vector<std::pair<uint8_t, uint32_t>> random_stage_entries(Instance* i)
-{
-    const uint32_t jal = 0x0C000000 | ((i->addRandomStage >> 2) & 0x03FFFFFF);
-    auto decode = [&](uint32_t at, std::pair<uint8_t, uint32_t>& out)
-    {
-        const uint32_t lui = read32(i, at);     // lui a0, hi
-        const uint32_t ori = read32(i, at + 4); // ori a0, a0, lo
-        const uint32_t id  = read32(i, at + 12); // ori a1, r0, id (jal's delay slot)
-        if ((lui >> 16) != 0x3C04 || (ori >> 16) != 0x3484 || read32(i, at + 8) != jal ||
-            (id & 0xFFFFFF00) != 0x34050000)
-        {
-            return false;
-        }
-        out = {static_cast<uint8_t>(id & 0xFF), ((lui & 0xFFFF) << 16) | (ori & 0xFFFF)};
-        return true;
-    };
-
-    std::vector<std::pair<uint8_t, uint32_t>> entries;
-    std::pair<uint8_t, uint32_t> entry;
-    uint32_t at = i->randomStageList;
-    while (at < i->randomStageList + kRandomListSearchBytes && !decode(at, entry))
-    {
-        at += 4;
-    }
-    while (decode(at, entry))
-    {
-        entries.push_back(entry);
-        at += 16;
-    }
-    return entries;
-}
-
-// Remix's tournament layout lists Dream Land, Yoshi's Island DL and Saffron
-// City DL twice with different hazard modes, so the hovered stage function
-// (get_stage_id_) sets theirs by page instead of from the hazard table: it
-// compares the stage against each with `lli t0, <stage id>`. Finds those
-// instructions, which enforce makes compare against no stage, leaving every
-// stage's hazard mode to the table (the stage list).
-std::vector<uint32_t> find_page_hazard_checks(Instance* i)
-{
-    std::vector<uint32_t> checks;
-    for (uint32_t at = i->hoveredStage; at < i->hoveredStage + kHoveredStageSearchBytes; at += 4)
-    {
-        const uint32_t word = read32(i, at);
-        if (word == kMipsJrRa)
-        {
-            break;
-        }
-        if (word == (kMipsLoadT0 | kStageDreamLand) || word == (kMipsLoadT0 | kStageYoshisIslandDl) ||
-            word == (kMipsLoadT0 | kStageSaffronDl))
-        {
-            checks.push_back(at);
-        }
-    }
-    return checks;
-}
-
-// Remix's tournament stage select layout shows exactly the allowed stages, 17
-// per page with Random last (or, if Random can't pick any of them, the stages
-// again), and its hazard table holds their hazard modes, which hovering a
-// stage (or Random picking it) applies.
-void build_stage_select(Instance* i, bool random)
-{
-    const std::vector<RankedStage>& stages = i->ruleset->stages;
-    if (read32(i, i->stageTable + kSssLayoutTournament * 4) != i->tournamentTable)
-    {
-        module_log(i, RankedLog_Error, "Remix's tournament stage table isn't at %08X: stage select shows "
-            "every tournament stage", i->tournamentTable);
-        return;
-    }
-    i->pageHazardChecks = find_page_hazard_checks(i);
-    if (i->pageHazardChecks.size() != 3)
-    {
-        module_log(i, RankedLog_Error, "found %zu of Remix's 3 per-page hazard modes: stage select may show "
-            "another hazard mode for Dream Land, Yoshi's Island DL or Saffron City DL",
-            i->pageHazardChecks.size());
-    }
-
-    const uint32_t perPage = kSssIconsPerPage - 1;
-    const uint32_t pages = static_cast<uint32_t>((stages.size() + perPage - 1) / perPage);
-    size_t next = 0;
-    for (uint32_t slot = 0; slot < pages * kSssIconsPerPage; slot++)
-    {
-        uint8_t id;
-        if (slot % kSssIconsPerPage != perPage && next < stages.size())
-        {
-            id = stages[next++].id;
-        }
-        else if (random)
-        {
-            id = kStageRandom;
-        }
-        else
-        {
-            id = stages[slot % stages.size()].id;
-        }
-        i->pins.push_back({i->tournamentTable + slot, 1, id});
-    }
-    i->pins.push_back({i->stageTablePages + kSssLayoutTournament * 4, 4, pages});
-    for (const RankedStage& stage : stages)
-    {
-        i->pins.push_back({i->tournamentHazards + stage.id, 1, stage.hazardMode});
-    }
-    module_log(i, RankedLog_Verbose, "stage select: %zu stages on %u page(s)%s", stages.size(), pages,
-        random ? "" : ", no Random");
-}
-
-// The ruleset's toggles (Toggles.load_profile_ for the profile, then the
-// overrides), the stages and the VS settings Remix keeps outside the CSS.
-void build_pins(Instance* i)
+// Each Remix toggle's ruleset value: the profile's default (in the order
+// Toggles.load_profile_ walks the entries) or the ruleset's override. Title
+// and input entries hold no value; the stage's toggles are left to the stage
+// check. Read once Remix is loaded, from constant data.
+void build_toggle_checks(Instance* i)
 {
     std::map<uint32_t, uint32_t> overrides(i->overrides.begin(), i->overrides.end());
-
-    // Random picks only the allowed stages: their random toggles on, every
-    // other one off. On the tournament layout Random also skips stages the
-    // Tournament profile doesn't default on, so the allowed ones are marked.
-    std::vector<std::pair<uint8_t, uint32_t>> randomStages = random_stage_entries(i);
-    bool decoded = !randomStages.empty();
-    for (const auto& [id, entry] : randomStages)
-    {
-        if (id == kStageDreamLand && i->dreamLandRandomEntry != 0 && entry != i->dreamLandRandomEntry)
-        {
-            decoded = false;
-        }
-    }
-    bool random = false;
-    if (decoded)
-    {
-        std::string names;
-        for (const auto& [id, entry] : randomStages)
-        {
-            const bool allowed = find_stage(i, id) != nullptr;
-            overrides[entry] = allowed ? 1 : 0;
-            if (!allowed)
-            {
-                continue;
-            }
-            random = true;
-            names += (names.empty() ? "" : ", ") + entry_title(i, entry);
-            const uint32_t toggle = read32(i, entry + kEntryToggleNumber);
-            if (toggle >= 1 && toggle <= kMaxEntriesPerHead)
-            {
-                i->pins.push_back({i->tournamentDefaults + (toggle - 1) * 4, 4, 1});
-            }
-        }
-        if (random)
-        {
-            module_log(i, RankedLog_Info, "Random picks from: %s", names.c_str());
-        }
-        else if (!i->stageSelect)
-        {
-            module_log(i, RankedLog_Error, "Random can't pick the ruleset's stage, so games may be on any stage");
-        }
-        else
-        {
-            module_log(i, RankedLog_Info, "Random can't pick any allowed stage: stage select has no Random");
-        }
-    }
-    else
-    {
-        module_log(i, RankedLog_Error, "couldn't read Remix's random stage list (%zu stages): Random isn't "
-            "limited to the allowed stages", randomStages.size());
-    }
-
     uint32_t defaults = i->profileDefaults;
     for (int head = 0; head < kMaxHeads; head++)
     {
@@ -891,193 +583,36 @@ void build_pins(Instance* i)
         }
         for (int count = 0; count < kMaxEntriesPerHead && is_ram_pointer(entry); count++)
         {
-            uint32_t type = read32(i, entry + kEntryType);
-            // with stage select the hazard mode follows the chosen stage (enforce)
-            if (i->stageSelect && entry == i->hazardModeEntry)
+            const uint32_t type = read32(i, entry + kEntryType);
+            if (type != kEntryTypeTitle && type != kEntryTypeInput)
             {
-                defaults += 4;
-            }
-            else if (type != kEntryTypeTitle && type != kEntryTypeInput)
-            {
-                auto it = overrides.find(entry);
-                uint32_t value = it != overrides.end() ? it->second : read32(i, defaults);
-                i->pins.push_back({entry + kEntryValue, 4, value});
-                // Menu's "copy curr val": an entry may shadow its value elsewhere
-                uint32_t copyAddress = read32(i, entry + kEntryCopyAddress);
-                if (it != overrides.end() && is_ram_pointer(copyAddress))
+                if (i->stageEntries.count(entry) == 0)
                 {
-                    i->pins.push_back({copyAddress + 3, 1, value & 0xFF});
+                    auto it = overrides.find(entry);
+                    i->toggleChecks.push_back({entry, it != overrides.end() ? it->second : read32(i, defaults),
+                        entry_title(i, entry)});
                 }
                 defaults += 4;
             }
             entry = read32(i, entry + kEntryNext);
         }
     }
-
-    const Ruleset* rules = i->ruleset;
-    i->pins.push_back({i->vsModeFlag, 4, 0});
-    for (uint32_t port = 0; port < RANKED_MAX_PLAYERS; port++)
-    {
-        if (i->inputDelayTable != 0)
-        {
-            i->pins.push_back({i->inputDelayTable + port * 4, 4, 0});
-        }
-        if (i->stockModeTable != 0)
-        {
-            i->pins.push_back({i->stockModeTable + port * 4, 4, 0});
-        }
-        if (i->globalStockModeTable != 0)
-        {
-            i->pins.push_back({i->globalStockModeTable + port * 4, 4, 0});
-        }
-    }
-    // Remix's saved VS menu settings, restored into the CSS when it opens
-    i->pins.push_back({i->globalGameMode, 4, 3});
-    i->pins.push_back({i->globalTime, 4, rules->timeMinutes});
-    i->pins.push_back({i->globalStocks, 4, rules->stocks});
-    i->pins.push_back({i->globalTeams, 4, rules->teamSize > 1 ? 1u : 0u});
-    i->pins.push_back({i->globalStageSelect, 4, i->stageSelect ? 1u : 0u});
-    if (i->stageSelect)
-    {
-        build_stage_select(i, random);
-    }
-    i->pinsBuilt = true;
-    module_log(i, RankedLog_Verbose, "%zu fixed values", i->pins.size());
+    i->togglesBuilt = true;
+    module_log(i, RankedLog_Verbose, "%zu Remix toggles checked against the %s profile", i->toggleChecks.size(),
+        i->ruleset->profile);
 }
 
-void enforce(Instance* i)
+// the first toggle that isn't the ruleset's (see Observation)
+void check_toggles(Instance* i, Observation& o)
 {
-    if (!i->pinsBuilt)
+    for (size_t n = 0; n < i->toggleChecks.size() && n < 0xFFFF; n++)
     {
-        build_pins(i);
-    }
-    for (const Instance::Pin& p : i->pins)
-    {
-        pin(i, p.address, p.size, p.value);
-    }
-
-    // the settings shortcut (hold L) and Remix's stock/time picker
-    patch_code(i, i->settingsShortcut, kMipsJrRa, kMipsClearA0, "settings shortcut");
-    patch_code(i, i->pickerPress, kMipsJrRa, kMipsNop, "stock/time picker");
-    // stage select's per-page hazard modes (see find_page_hazard_checks)
-    for (uint32_t address : i->pageHazardChecks)
-    {
-        patch_instruction(i, address, kMipsLoadT0 | kNoStage, "stage select per-page hazard mode");
-    }
-
-    uint8_t scene = read8(i, kSceneCurrent);
-    const Ruleset* r = i->ruleset;
-
-    // boot: when the N64 logo ends, go straight to VS character select
-    // instead of the splash and the title
-    if (scene == kSceneN64Logo && has_write_code(i->host))
-    {
-        const uint32_t next = read32(i, kLogoNextScene);
-        if (next == kLogoToRemixSplash || next == kLogoToOpening)
+        const uint32_t value = read32(i, i->toggleChecks[n].entry + kEntryValue);
+        if (value != i->toggleChecks[n].value)
         {
-            i->host.WriteCode32(i->host.context, kLogoNextScene, kLogoToVsCss);
-            module_log(i, RankedLog_Verbose, "boot goes straight to character select");
-        }
-    }
-
-    // teammates the lobby matched start on one team colour, P1's team red
-    // and the other blue. Character select, first loaded when the logo ends,
-    // keeps the slots a battle left (here: these colours, every port human,
-    // no character yet) instead of its P1+P2 vs P3+P4 defaults. Players may
-    // change colours afterwards; only the pairing counts.
-    if (scene == kSceneN64Logo && i->lobbyPairing)
-    {
-        pin(i, kTransferBattle + kBattleResetPlayers, 1, 0);
-        for (int port : i->ports)
-        {
-            const uint32_t player = kTransferBattle + kBattlePlayers + static_cast<uint32_t>(port - 1) * kPlayerStride;
-            pin(i, player + kPlayerPkind, 1, kPkindHuman);
-            pin(i, player + kPlayerTeam, 1, i->pairing[port - 1] == 1 ? kTeamRed : kTeamBlue);
-        }
-    }
-
-    if (scene == kSceneVsCss && css_loaded(i))
-    {
-        // the CSS overlay is loaded fresh each time: its rule buttons and
-        // Back do nothing, so its copy of the rules (set up from the battle
-        // state below and Remix's VS globals) can't change
-        patch_code(i, kCssCheckTimeArrowR, kMipsJrRa, kMipsClearV0, "character select stock/time + arrow");
-        patch_code(i, kCssCheckTimeArrowL, kMipsJrRa, kMipsClearV0, "character select stock/time - arrow");
-        patch_code(i, kCssCheckGameMode, kMipsJrRa, kMipsClearV0, "character select team toggle");
-        patch_code(i, kCssCheckBack, kMipsJrRa, kMipsClearV0, "character select back");
-        if (read32(i, kCssBackToVsMode) == kCssBackFirstWord)
-        {
-            patch_code(i, kCssBackToVsMode, kMipsJrRa, kMipsNop, "character select back action");
-        }
-
-        if (!i->booted)
-        {
-            i->booted = true;
-            module_log(i, RankedLog_Verbose, "set %d of %zu ruleset values while booting",
-                i->bootCorrections, i->pins.size());
-        }
-    }
-
-    // VS rules are read when a battle starts, never touch them mid battle
-    if (scene != kSceneVsBattle)
-    {
-        pin(i, kTransferBattle + kBattleIsTeam, 1, r->teamSize > 1 ? 1 : 0);
-        if (r->teamSize > 1)
-        {
-            pin(i, kTransferBattle + kBattleTeamAttack, 1, 1);
-        }
-        pin(i, kTransferBattle + kBattleRules, 1, 3);
-        pin(i, kTransferBattle + kBattleTimeLimit, 1, r->timeMinutes);
-        pin(i, kTransferBattle + kBattleStocks, 1, r->stocks);
-        pin(i, kTransferBattle + kBattleHandicap, 1, 0);
-        pin(i, kTransferBattle + kBattleStageSelect, 1, i->stageSelect ? 1 : 0);
-        pin(i, kTransferBattle + kBattleDamageRatio, 1, 100);
-        pin(i, kTransferBattle + kBattleItemToggles, 4, 0);
-        pin(i, kTransferBattle + kBattleItemRate, 1, 0);
-    }
-
-    // With stage select the hazard mode follows the stage: the stage select
-    // screen sets it for the hovered stage (and Random for the stage it
-    // picks), every other screen keeps the chosen stage's, which the battle
-    // sets its hazards up from. Leaving stage select with B keeps the last
-    // hovered stage's, so it's written back here.
-    if (i->stageSelect && scene != kSceneStageSelect)
-    {
-        const uint32_t address = i->hazardModeEntry + kEntryValue;
-        const uint32_t mode = stage_hazard_mode(i, read8(i, kTransferBattle + kBattleGkind));
-        if (read32(i, address) != mode)
-        {
-            write32(i, address, mode);
-        }
-    }
-
-    // only character select, (with stage select) stage select, battle and
-    // results are reachable: the title and every menu goes back to
-    // character select, and so does any other screen entered from them.
-    // Boot screens (and the uninitialized scene byte before the first scene)
-    // are left alone.
-    auto is_ranked_scene = [i](uint8_t s)
-    {
-        return s == kSceneVsCss || s == kSceneVsBattle || s == kSceneVsResults ||
-               (i->stageSelect && s == kSceneStageSelect);
-    };
-    uint8_t previous = read8(i, kScenePrevious);
-    bool ranked = is_ranked_scene(scene);
-    bool menu = scene == kSceneTitle || scene == kSceneModeSelect || scene == kSceneVsMenu ||
-                scene == kSceneVsOptions || scene == kSceneItemSwitch || scene == kSceneStageSelect ||
-                scene == kSceneRemixOptions || scene == kSceneRemixModes;
-    bool fromRanked = is_ranked_scene(previous);
-    if (!ranked && (menu || fromRanked))
-    {
-        // the patches above keep the game out of the menus; this is the net
-        write8(i, kScenePrevious, scene);
-        write8(i, kSceneCurrent, kSceneVsCss);
-        write32(i, kSceneInterrupt, 1);
-        if (i->reportedDrift.insert(0x100u | scene).second)
-        {
-            module_log(i, i->booted ? RankedLog_Warning : RankedLog_Verbose,
-                "sent scene 0x%02X back to character select%s", scene,
-                i->booted ? ": a way into the menus isn't blocked" : "");
+            o.toggleMismatch = static_cast<uint16_t>(n + 1);
+            o.toggleValue = value;
+            return;
         }
     }
 }
@@ -1114,6 +649,9 @@ void observe(Instance* i, Observation& o)
     o.inCountdown = o.status == kStatusWait && read32(i, battle + kBattleTimePassed) == 0 &&
                     read32(i, battle + kBattleTimeRemain) == static_cast<uint32_t>(timeLimit) * 60 * 60 &&
                     timeLimit != 0 ? 1 : 0;
+    o.timeLimit = timeLimit;
+    o.handicap = read8(i, battle + kBattleHandicap);
+    o.damageRatio = read8(i, battle + kBattleDamageRatio);
     o.vsModeFlag = static_cast<uint8_t>(read32(i, i->vsModeFlag));
     o.saltyRunback = i->saltyRunbackFlag != 0 && read32(i, i->saltyRunbackFlag) != 0 ? 1 : 0;
     o.hazardMode = static_cast<uint8_t>(read32(i, i->hazardModeEntry + kEntryValue));
@@ -1127,6 +665,20 @@ void observe(Instance* i, Observation& o)
         o.players[port].place = read8(i, player + kPlayerPlace);
         o.players[port].team = read8(i, player + kPlayerTeam);
         o.players[port].damage = static_cast<uint16_t>(std::min<uint32_t>(read32(i, player + kPlayerDamage), 999));
+        if (i->inputDelayTable != 0)
+        {
+            o.inputDelay[port] = static_cast<uint8_t>(std::min<uint32_t>(read32(i, i->inputDelayTable + port * 4), 255));
+        }
+        if (i->stockModeTable != 0)
+        {
+            o.stockMode[port] = static_cast<uint8_t>(std::min<uint32_t>(read32(i, i->stockModeTable + port * 4), 255));
+        }
+    }
+
+    // only a game's start is judged, and the settings can't change in battle
+    if (o.scene == kSceneVsBattle)
+    {
+        check_toggles(i, o);
     }
 }
 
@@ -1273,12 +825,30 @@ std::string validate_game(Instance* i, const Observation& o)
         return reason;
     }
     uint8_t wantTeam = team_set(i) ? 1 : 0;
-    if (!(o.gameRules & 2) || o.stocks != i->ruleset->stocks || o.isTeam != wantTeam ||
-        o.itemRate != 0 || o.itemToggles != 0 || (team_set(i) && o.teamAttack != 1))
+    if (o.gameRules != kRulesTimedStock || o.stocks != i->ruleset->stocks || o.timeLimit != i->ruleset->timeMinutes ||
+        o.isTeam != wantTeam || (team_set(i) && o.teamAttack != 1) || o.handicap != kNoHandicap ||
+        o.damageRatio != kNormalDamageRatio || o.itemRate != 0 || o.itemToggles != 0)
     {
         std::snprintf(reason, sizeof(reason),
-            "rules differ: rules=%u stocks=%u team=%u teamAttack=%u itemRate=%u items=%08X",
-            o.gameRules, o.stocks, o.isTeam, o.teamAttack, o.itemRate, o.itemToggles);
+            "rules differ: rules=%u stocks=%u time=%u team=%u teamAttack=%u handicap=%u damage=%u itemRate=%u items=%08X",
+            o.gameRules, o.stocks, o.timeLimit, o.isTeam, o.teamAttack, o.handicap, o.damageRatio, o.itemRate,
+            o.itemToggles);
+        return reason;
+    }
+    for (int port : i->ports)
+    {
+        if (o.inputDelay[port - 1] != 0 || o.stockMode[port - 1] != 0)
+        {
+            std::snprintf(reason, sizeof(reason), "rules differ: P%d has input delay %u, stock mode %u",
+                port, o.inputDelay[port - 1], o.stockMode[port - 1]);
+            return reason;
+        }
+    }
+    if (o.toggleMismatch != 0 && o.toggleMismatch <= i->toggleChecks.size())
+    {
+        const Instance::ToggleCheck& toggle = i->toggleChecks[o.toggleMismatch - 1];
+        std::snprintf(reason, sizeof(reason), "rules differ: Remix setting \"%s\" is %u, the ruleset's is %u",
+            toggle.title.c_str(), o.toggleValue, toggle.value);
         return reason;
     }
     if (team_set(i))
@@ -1666,31 +1236,8 @@ MODULE_EXPORT RankedModuleInstance* RankedModule_Create(const RankedHostApi* hos
     instance->hazardModeEntry   = resolve("Toggles.entry_hazard_mode", true);
     instance->inputDelayTable   = resolve("InputDelay.delay_table", false);
     instance->stockModeTable    = resolve("StockMode.stockmode_table", false);
-    instance->settingsShortcut  = resolve("Toggles.settings_shortcut", false);
-    instance->pickerPress       = resolve("CharacterSelect.check_picker_press_", false);
     instance->saltyRunbackFlag  = resolve("GameEnd.is_salty_runback", false);
-    instance->globalGameMode    = resolve("VsRemixMenu.global_game_mode", true);
-    instance->globalTime        = resolve("VsRemixMenu.global_time", true);
-    instance->globalStocks      = resolve("VsRemixMenu.global_stocks", true);
-    instance->globalTeams       = resolve("VsRemixMenu.global_teams", true);
-    instance->globalStageSelect = resolve("VsRemixMenu.global_stage_select", true);
-    instance->globalStockModeTable = resolve("VsRemixMenu.global_stockmode_table", false);
-
-    // stages
-    instance->stageSelect          = ruleset->stages.size() > 1;
-    instance->tournamentDefaults   = resolve("Toggles.profile_defaults_TE", true);
-    instance->randomStageList      = resolve("Stages.swap_stage_", true);
-    instance->addRandomStage       = resolve("Stages.add_stage_to_random_list_", true);
-    instance->dreamLandRandomEntry = resolve("Toggles.entry_random_stage_dream_land", false);
-    if (instance->stageSelect)
-    {
-        instance->sssLayoutEntry    = resolve("Toggles.entry_sss_layout", true);
-        instance->stageTable        = resolve("Stages.stage_table", true);
-        instance->stageTablePages   = resolve("Stages.stage_table_pages", true);
-        instance->tournamentTable   = resolve("Stages.stage_table_tournament", true);
-        instance->tournamentHazards = resolve("Stages.tournament_hazard_mode_table", true);
-        instance->hoveredStage      = resolve("Stages.get_stage_id_", true);
-    }
+    instance->stageSelect       = ruleset->stages.size() > 1;
 
     for (const ToggleOverride& toggle : ruleset->overrides)
     {
@@ -1708,36 +1255,36 @@ MODULE_EXPORT RankedModuleInstance* RankedModule_Create(const RankedHostApi* hos
         return nullptr;
     }
 
-    // one stage: its hazard mode for every game. Stage select uses the
-    // tournament layout, and the hazard mode follows the chosen stage.
-    if (instance->stageSelect)
+    // The stage's toggles: its hazard mode, the stage select layout and the
+    // stages Random picks from. A game counts on an allowed stage with its
+    // hazard mode, however those are set.
+    instance->stageEntries.insert(instance->hazardModeEntry);
+    if (const uint32_t layout = resolve("Toggles.entry_sss_layout", false); layout != 0)
     {
-        instance->overrides.push_back({instance->sssLayoutEntry, kSssLayoutTournament});
+        instance->stageEntries.insert(layout);
     }
-    else
+    for (const auto& [name, address] : symbols)
     {
-        instance->overrides.push_back({instance->hazardModeEntry, ruleset->stages.front().hazardMode});
+        if (name.rfind(kRandomStageTogglePrefix, 0) == 0)
+        {
+            instance->stageEntries.insert(address);
+        }
+    }
+    if (instance->inputDelayTable == 0 || instance->stockModeTable == 0)
+    {
+        module_log(instance, RankedLog_Warning, "symbol file '%s' has no %s: games don't check it",
+            symbolPath.c_str(), instance->inputDelayTable == 0 ? "InputDelay.delay_table" : "StockMode.stockmode_table");
     }
 
-    if (!has_write_code(*host))
-    {
-        module_log(instance, RankedLog_Warning, "host can't patch code; leaving the CSS can't be blocked");
-    }
-    if (instance->settingsShortcut == 0 || instance->pickerPress == 0)
-    {
-        module_log(instance, RankedLog_Warning, "symbol file '%s' predates this module (no %s): regenerate it "
-            "with GenerateRankedRemixSymbols.sh, until then that part of the CSS isn't locked",
-            symbolPath.c_str(), instance->settingsShortcut == 0 ? "Toggles.settings_shortcut" :
-            "CharacterSelect.check_picker_press_");
-    }
     std::string ports;
     for (int port : instance->ports)
     {
         ports += (ports.empty() ? "" : ", ") + std::to_string(port);
     }
-    module_log(instance, RankedLog_Info, "ruleset %s (%s), best of %d, ports %s, %zu stage%s, %zu toggle overrides",
-        ruleset->id, ruleset->teamSize > 1 ? "2v2 team battle" : "1v1", instance->bestOf, ports.c_str(),
-        ruleset->stages.size(), instance->stageSelect ? "s to pick from" : "", instance->overrides.size());
+    module_log(instance, RankedLog_Info, "ruleset %s (%s), best of %d, ports %s, %zu stage%s, %zu toggle overrides "
+        "(read-only, module %s)", ruleset->id, ruleset->teamSize > 1 ? "2v2 team battle" : "1v1", instance->bestOf,
+        ports.c_str(), ruleset->stages.size(), instance->stageSelect ? "s to pick from" : "", instance->overrides.size(),
+        kModuleVersion);
     return reinterpret_cast<RankedModuleInstance*>(instance);
 }
 
@@ -1792,8 +1339,10 @@ MODULE_EXPORT void RankedModule_OnFrame(RankedModuleInstance* handle, uint32_t f
     {
         return; // observation stays zeroed (ready = 0)
     }
-
-    enforce(i);
+    if (!i->togglesBuilt)
+    {
+        build_toggle_checks(i);
+    }
 
     Observation o{};
     observe(i, o);

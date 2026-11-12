@@ -215,7 +215,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool    ui_SpectateFastForward = false; // true while headless-catching-up to the live edge
     bool    ui_SpectateBuffering = false;   // emulation thread is waiting for a safe input cushion
     qint64  ui_SpectateExpectedOffset = 0;  // next ordered krec byte expected from the server
-    int     ui_SpectateJournalSeq = 0;      // next ranked write journal chunk expected
     bool    ui_SpectateBannerPending = false; // 1 video-on tick to bake the "buffering" banner in before going headless
     // Catch-up loading-bar estimator (reset each time fast-forward engages).
     int     ui_SpectateInitialBehind = 1;   // backlog (frames) when this catch-up started
@@ -393,7 +392,6 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QString romPath);
     void on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 offset);
     void on_Lobby_SpectateKeyframe(int frame, QByteArray savestate);
-    void on_Lobby_SpectateJournal(int seq, QByteArray journal);
     void on_Lobby_SpectateClosed(QString reason);
     void on_Lobby_LiveReplayViewerCountChanged(int viewerCount, bool isSpectator);
     void on_RomBrowser_RomListRefreshFinished(bool canceled);

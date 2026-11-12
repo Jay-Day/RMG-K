@@ -17,8 +17,9 @@
 
 //
 // Ranked sets: loads a per-game ranked module (see Ranked/RankedModuleApi.h)
-// and drives it from the emulation thread. The UI stages a session before
-// starting emulation, then polls events while it runs.
+// and drives it from the emulation thread. The module only reads the game;
+// the ruleset's changes to it are game options (GameOptions.hpp). The UI
+// stages a session before starting emulation, then polls events while it runs.
 //
 
 struct CoreRankedModuleInfo
@@ -43,16 +44,13 @@ struct CoreRankedSessionSettings
     // the lobby matched teammates; empty or all 0 = players pick in the game
     std::vector<int> Teams;
 
-    // Replay: the module's memory writes are part of the game state, so a
-    // replay applies the write journal recorded live (see
-    // CoreRankedGetLastReplayJson) instead of running the module. The module
-    // is loaded only when ModuleVersion is installed, read-only, to show the
-    // set's progress and check the recorded winners. Nothing is recorded or
-    // reported; a difference from the recording is reported as ReplayMismatch.
+    // Replay: the recording plays back on its own (its game options are in
+    // it). The module follows it only when ModuleVersion is installed, to
+    // show the set's progress and check the recorded winners; otherwise no
+    // session starts. Nothing is recorded or reported; a difference from
+    // the recording is reported as ReplayMismatch.
     bool Replay = false;
     std::string ModuleVersion;
-    // binary write journal (base64-decoded "journal.data")
-    std::string Journal;
     std::string ExpectedRulesetHash;
     // recorded winner port per game (index 0 = game 1)
     std::vector<int> ExpectedWinners;
@@ -126,20 +124,10 @@ std::string CoreRankedGetProgressJson(void);
 // under way with each player's stocks and percent. Empty when no one left.
 std::string CoreRankedGetLeftJson(void);
 
-// Live broadcasts of ranked matches (spectators need the write journal too):
-// broadcaster: takes the journal frames confirmed since the last call,
-// encoded (at most about maxBytes), false when there are none
-bool CoreRankedTakeJournalUpdate(std::string& data, size_t maxBytes);
-// spectator: before its emulation starts, makes the next session apply the
-// broadcast's journal; chunks are added with CoreRankedAppendReplayJournal
-void CoreRankedStageSpectatorJournal(void);
-// spectator: adds a journal chunk (any thread), false when malformed
-bool CoreRankedAppendReplayJournal(const std::string& data);
-
 // returns the replay metadata of the last ranked session (module, ruleset,
-// ROM, ports, .krec bookmarks and the module's write journal), empty when
-// none. Appended to the session's .krec so it plays back without the module.
-// Call after the recording is closed: the last records resolve late.
+// ROM, ports, games and .krec bookmarks), empty when none. Appended to the
+// session's .krec. Call after the recording is closed: the last records
+// resolve late.
 std::string CoreRankedGetLastReplayJson(void);
 
 #ifdef CORE_INTERNAL
@@ -173,13 +161,6 @@ void CoreRankedOnPlayerLeft(int port);
 // the rollback engine wrote .krec input record `recordIndex` (0-based) for
 // `frame`; resolves bookmarks placed at or before that frame
 void CoreRankedOnRecordWritten(int64_t frame, int recordIndex);
-
-// spectator: a keyframe load was queued, after which playback continues
-// with input record `record` (its local record 0)
-void CoreRankedReplayRebase(int record);
-
-// a savestate load completed (emulation thread)
-void CoreRankedOnStateLoaded(void);
 
 #endif // CORE_INTERNAL
 

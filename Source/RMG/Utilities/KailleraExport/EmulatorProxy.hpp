@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 extern "C"
@@ -122,7 +123,8 @@ typedef enum
     M64CMD_ROLLBACK_SET_TIMESYNC_SCALE,
     M64CMD_FRAME_OUTPUT_SET,
     M64CMD_ROLLBACK_SET_SAVE_DATA,
-    M64CMD_ROLLBACK_GET_SAVE_DATA
+    M64CMD_ROLLBACK_GET_SAVE_DATA,
+    M64CMD_ROM_PATCH
 } m64p_command;
 
 // As in m64p_types.h: the save a replay's match started from.
@@ -133,6 +135,15 @@ typedef struct
     int            size[M64SAVEDATA_KINDS];
     unsigned int   generation;
 } m64p_save_data;
+
+// As in m64p_types.h: a game option's change to the ROM image.
+typedef struct
+{
+    unsigned int         offset;
+    unsigned int         size;
+    const unsigned char* data;
+    const unsigned char* expect;
+} m64p_rom_patch;
 
 typedef enum
 {
@@ -256,6 +267,9 @@ public:
     // Starts the game from the save its match did, in memory only. Each
     // buffer is EEPROM, SRAM, FlashRAM in turn; empty starts that one blank.
     bool setSaveData(const std::vector<std::vector<uint8_t>>& kinds);
+    // Patches the open ROM the way the replay's game options did, before
+    // execute(): (offset, bytes) in .z64 byte order, all of them or none.
+    bool patchRom(const std::vector<std::pair<uint32_t, std::vector<uint8_t>>>& patches);
     void configureControllersForReplay(int numPlayers);
     void setPifCallback(pif_sync_callback_t callback);
     void setFrameCallback(m64p_frame_callback callback);
@@ -264,8 +278,6 @@ public:
     void readScreen(void* destination, int* width, int* height);
     void shutdown();
     m64p_dynlib_handle getAudioPluginHandle() const;
-    // an export of the loaded core, nullptr when missing
-    void* getCoreSymbol(const char* name) const;
 
     using CoreDoCommandFn = m64p_error (*)(m64p_command, int, void*);
     CoreDoCommandFn coreDoCommand = nullptr;

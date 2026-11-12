@@ -173,6 +173,7 @@ public:
 #include <RMG-Core/SpeedLimiter.hpp>
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/NetplaySave.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/SpeedFactor.hpp>
 #include <RMG-Core/Screenshot.hpp>
 #include <RMG-Core/Emulation.hpp>
@@ -4453,11 +4454,7 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QStr
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
     this->ui_SpectateNamesShown = false; // set once the krec header arrives
     this->ui_SpectateExpectedOffset = 0;
-    this->ui_SpectateJournalSeq = 0;
     CoreClearSpectateKeyframe(); // drop any stale keyframe from a previous spectate
-    // a ranked match's module wrote game memory: apply its write journal as
-    // it streams in (nothing to apply for unranked matches)
-    CoreRankedStageSpectatorJournal();
 
     // ~60 Hz: drive the playback state machine + fast-forward.
     if (this->ui_SpectateTimerId == 0)
@@ -4519,22 +4516,6 @@ void MainWindow::on_Lobby_SpectateKeyframe(int frame, QByteArray savestate)
                               static_cast<int>(savestate.size()), frame);
 }
 
-void MainWindow::on_Lobby_SpectateJournal(int seq, QByteArray journal)
-{
-    if (!this->ui_SpectateActive)
-    {
-        return;
-    }
-    if (seq != this->ui_SpectateJournalSeq)
-    {
-        CoreAddCallbackMessage(CoreDebugMessageType::Warning,
-            ("Live replay: ranked journal chunk " + std::to_string(seq) + " arrived, expected " +
-             std::to_string(this->ui_SpectateJournalSeq) + "; the replay may drift").c_str());
-    }
-    this->ui_SpectateJournalSeq = seq + 1;
-    CoreRankedAppendReplayJournal(journal.toStdString());
-}
-
 void MainWindow::on_Lobby_SpectateClosed(QString reason)
 {
     (void)reason;
@@ -4558,7 +4539,6 @@ void MainWindow::stopLobbySpectate()
     this->ui_SpectateMatchId = 0;
     this->ui_SpectateRomFile.clear();
     this->ui_SpectateExpectedOffset = 0;
-    CoreRankedClearStagedSession(); // in case emulation never started
     if (this->ui_SpectateTimerId != 0)
     {
         this->killTimer(this->ui_SpectateTimerId);
@@ -4598,6 +4578,7 @@ void MainWindow::cleanupLobbySpectateSession()
     this->ui_SpectateCleanupPending = false;
     CoreSetNetplayCheats({}); // also clear a manifest staged before the ROM opened
     CoreClearNetplaySaveData();
+    CoreClearNetplayGameOptions();
 
     if (this->kailleraSessionManager != nullptr)
     {
@@ -5169,8 +5150,6 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_SpectateData);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamKeyframe,
             this, &MainWindow::on_Lobby_SpectateKeyframe);
-    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamJournal,
-            this, &MainWindow::on_Lobby_SpectateJournal);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::spectateStreamClosed,
             this, &MainWindow::on_Lobby_SpectateClosed);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountChanged,
@@ -5459,11 +5438,16 @@ void MainWindow::on_Lobby_SessionRequested(QString gameName, QString romFile, QS
     // from, so it records nothing; the players who started the match have all of it.
     if (!lateJoiner)
     {
-        // A match that starts from save data keeps it in the replay file.
+        // A match that starts from save data keeps it in the replay file, and
+        // so does one played with game options.
         std::string saveData;
         if (!CoreGetNetplaySaveData().IsEmpty())
             CoreSerializeNetplaySaveData(CoreGetNetplaySaveData(), saveData);
         n02::recordingSetSaveData(saveData);
+        std::string gameOptions;
+        if (!CoreGetNetplayGameOptions().IsEmpty())
+            CoreSerializeNetplayGameOptions(CoreGetNetplayGameOptions(), gameOptions);
+        n02::recordingSetGameOptions(gameOptions);
         const std::string recAppName = "RMG-K " + CoreGetVersion();
         n02::recordingOpen(recAppName.c_str(), gameName.toStdString().c_str(),
                            localPlayer, seatCount);

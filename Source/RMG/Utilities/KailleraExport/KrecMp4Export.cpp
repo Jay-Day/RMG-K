@@ -8,8 +8,6 @@
 #include "PifReplay.hpp"
 
 #include <QCommandLineParser>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -17,8 +15,8 @@
 #include <QTemporaryDir>
 
 #include <RMG-Core/Directories.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/NetplaySave.hpp>
-#include <RMG-Core/RankedJournal.hpp>
 #include <RMG-Core/Settings.hpp>
 
 #include <cstdio>
@@ -63,49 +61,6 @@ static constexpr const char* kExportHeightOption = "export-height";
 static constexpr const char* kExportChatOption = "export-chat";
 static constexpr const char* kExportLabelPortsOption = "export-label-ports";
 static constexpr const char* kExportVerboseOption = "export-verbose";
-
-// Ranked recordings: the game module's memory writes are part of the game
-// state, so the export applies the recording's write journal like playback
-// does (see RMG-Core/RankedJournal.hpp).
-static CoreRankedJournalPlayer s_RankedJournal;
-static bool s_RankedJournalActive = false;
-static uint8_t* s_RankedRdram = nullptr;
-static void* (*s_DebugMemGetPointer)(int) = nullptr;
-static CoreRankedInvalidateCodeFn s_InvalidateCode = nullptr;
-
-static bool loadRankedJournal(const std::filesystem::path& krecPath)
-{
-    std::string json;
-    if (!ReadKrecMetadata(krecPath, json))
-    {
-        return false;
-    }
-    const QJsonObject journal = QJsonDocument::fromJson(QByteArray::fromStdString(json))
-        .object().value("journal").toObject();
-    const QByteArray data = QByteArray::fromBase64(journal.value("data").toString().toLatin1());
-    s_RankedJournal = CoreRankedJournalPlayer();
-    return !journal.isEmpty() && CoreRankedDecodeJournal(data.toStdString(), s_RankedJournal.Frames);
-}
-
-static void exportFrameCallback(unsigned int frameIndex)
-{
-    if (s_RankedJournalActive)
-    {
-        if (s_RankedRdram == nullptr && s_DebugMemGetPointer != nullptr)
-        {
-            constexpr int kDebugPointerRdram = 1; // M64P_DBG_PTR_RDRAM
-            s_RankedRdram = static_cast<uint8_t*>(s_DebugMemGetPointer(kDebugPointerRdram));
-        }
-        std::string mismatch;
-        CoreRankedJournalAdvance(s_RankedJournal, GetPifReplayFrameIndex(), s_RankedRdram,
-            s_InvalidateCode, &mismatch);
-        if (!mismatch.empty())
-        {
-            fprintf(stderr, "Ranked replay %s; the export may not match the match\n", mismatch.c_str());
-        }
-    }
-    FrameCaptureCallback(frameIndex);
-}
 
 static void printExportError(const std::string& message)
 {
@@ -420,6 +375,38 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
         }
     }
 
+    // And with the game options it was played with.
+    {
+        CoreNetplayGameOptions gameOptions;
+        if (!krecData.gameOptions.empty() &&
+            !CoreDeserializeNetplayGameOptions(krecData.gameOptions, gameOptions))
+        {
+            shutdownGuard();
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "The replay's game options are damaged";
+            }
+            return false;
+        }
+        std::vector<std::pair<uint32_t, std::vector<uint8_t>>> patches;
+        for (const CoreNetplayGameOption& option : gameOptions.Options)
+        {
+            for (const CoreGameOptionPatch& patch : option.Patches)
+            {
+                patches.emplace_back(patch.Offset, patch.Bytes);
+            }
+        }
+        if (!emulator.patchRom(patches))
+        {
+            shutdownGuard();
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "The replay's game options don't fit this ROM";
+            }
+            return false;
+        }
+    }
+
     const std::filesystem::path tempVideoPath = options.outputPath.string() + ".tmp_v.mp4";
     const std::filesystem::path tempAudioPath = options.outputPath.string() + ".tmp_a.raw";
 
@@ -454,16 +441,7 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     }
 
     InitializeFrameCapture(&emulator, &encoder, encoderConfig, krecData.totalInputFrames, portLabelConfig, chatOverlay);
-    s_RankedJournalActive = loadRankedJournal(options.krecPath);
-    if (s_RankedJournalActive)
-    {
-        s_RankedRdram = nullptr;
-        s_DebugMemGetPointer = reinterpret_cast<void* (*)(int)>(emulator.getCoreSymbol("DebugMemGetPointer"));
-        s_InvalidateCode = reinterpret_cast<CoreRankedInvalidateCodeFn>(
-            emulator.getCoreSymbol("RmgkInvalidateCachedCode"));
-        fprintf(stderr, "Ranked recording: applying %zu write journal frames\n", s_RankedJournal.Frames.size());
-    }
-    emulator.setFrameCallback(exportFrameCallback);
+    emulator.setFrameCallback(FrameCaptureCallback);
 
     const m64p_error executeResult = emulator.execute();
     FlushFrameCapture();

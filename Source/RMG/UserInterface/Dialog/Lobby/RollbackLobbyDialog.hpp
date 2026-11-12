@@ -43,6 +43,7 @@ class QTreeWidgetItem;
 class QTextEdit;
 class QLineEdit;
 class QVBoxLayout;
+class QGridLayout;
 class QPushButton;
 class QSplitter;
 class QStackedWidget;
@@ -193,8 +194,6 @@ signals:
     // A savestate keyframe (raw bytes) plus the first krec record index to consume
     // after restoring it, so catch-up is bounded regardless of match length.
     void spectateStreamKeyframe(int frame, QByteArray savestate);
-    // A ranked match's write journal chunk (seq contiguous from 0).
-    void spectateStreamJournal(int seq, QByteArray journal);
     void spectateStreamClosed(QString reason);
     // Persistent OSD audience badge. isSpectator selects the role-specific text.
     void liveReplayViewerCountChanged(int viewerCount, bool isSpectator);
@@ -282,7 +281,6 @@ private slots:
     void onSpectateBegan(quint64 matchId, const QByteArray& manifest);
     void onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset);
     void onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
-    void onSpectateJournal(quint64 matchId, int seq, const QByteArray& journal);
     void onSpectateEnded(quint64 matchId, const QString& reason);
     void onSpectateFailed(quint64 matchId, const QString& reason);
     void onBroadcastViewerCount(quint64 matchId, int viewerCount);
@@ -604,6 +602,20 @@ private:
     void saveMatchSaveAs();
     bool writeMatchSave(const QString& file, QString* error = nullptr);
 
+    // Game options (host-only room option): ROM patches from the packs in
+    // Data/GameOptions, one switch each in the Session column. Hidden on
+    // servers without them and in quick match. A ranked room shows its
+    // ruleset's instead, locked for everyone.
+    void updateGameOptionControls();
+    void updateRankedGameOptionRows();
+    void onGameOptionToggled(const QString& id, bool checked);
+    // An option's name in this client's language when its own pack for the
+    // game knows the id, else the host's label. Tips add the pack's description.
+    QStringList gameOptionLabels(const QString& romMd5, const QList<LobbyClient::LobbyGameOption>& options) const;
+    QString gameOptionsTip(const QString& romMd5, const QList<LobbyClient::LobbyGameOption>& options) const;
+    // The chat line naming the game options the match just synced plays with.
+    void announceMatchGameOptions(const QString& channel, const QString& romMd5);
+
     LobbyClient* m_client = nullptr;
 
     bool    m_connectPromptOpen = false;
@@ -885,6 +897,16 @@ private:
     LobbyButton*  m_saveDataSaveAsBtn = nullptr;   // everyone, from match start
     ToggleSwitch* m_saveDataKeepCheck = nullptr;   // keep the Save As file updated
 
+    // Host-only room option: game options, one switch per option shown
+    // (property "gameOptionId"), after the session switches in this grid.
+    QGridLayout*         m_sessionSwitches = nullptr;
+    QList<ToggleSwitch*> m_gameOptionChecks;
+    // Puts the switches back to what the room has when the server ignores a change.
+    QTimer*              m_gameOptionsResync = nullptr;
+    // A ranked room's game options (its ruleset's) instead: a locked row
+    // each, the same for everyone ("RankedGameOptionRow", property "gameOptionId").
+    QList<QWidget*>      m_rankedGameOptionRows;
+
     // When checked, the room host streams replay bytes so others can spectate,
     // independently of whether a local .krec file is saved. On the emulation thread,
     // bytes are staged into m_broadcastBuf (under m_broadcastMutex) by the n02 sink
@@ -1063,6 +1085,17 @@ private:
     QSet<quint64> m_saveDataCapableUsers;
     // Host: what the next match starts from.
     std::optional<NetplaySaveChoice> m_hostSaveChoice;
+    // Host: the game options the room's next match is played with, by id
+    // (CoreGetGameOptions), as the room shows them; empty for none. The match
+    // start resolves them against the ROM and puts them in the manifest.
+    std::vector<std::string> m_hostGameOptionIds;
+    // From ROOM_STATE: the room takes game options ("gameOptionsOffered"),
+    // the ones on for the next match or the running one, and which seated
+    // members' clients can play with them.
+    bool m_roomGameOptionsOffered = false;
+    bool m_gameOptionsSeen = false;
+    QList<LobbyClient::LobbyGameOption> m_roomGameOptions;
+    QSet<quint64> m_gameOptionsCapableUsers;
     // Host: the room hears about a continued save once it's waiting again
     // (the server takes no save data changes while the match is in game).
     bool m_publishSaveChoiceWhenWaiting = false;

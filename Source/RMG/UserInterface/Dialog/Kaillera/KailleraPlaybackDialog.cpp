@@ -19,12 +19,14 @@
 #ifdef NETPLAY
 
 #include <RMG-Core/Archive.hpp>
+#include <RMG-Core/Callback.hpp>
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Emulation.hpp>
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/Ranked.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/SpeedFactor.hpp>
 
 #include "n02_client.h"
@@ -1055,6 +1057,7 @@ void KailleraPlaybackDialog::populatePlaybackList()
 
         // Column 3: Duration — count 0x12 records
         int frames = 0;
+        QStringList gameOptionLabels;
         {
             char* scan = filebuf + headerSize;
             char* scanEnd = filebuf + len;
@@ -1086,13 +1089,20 @@ void KailleraPlaybackDialog::populatePlaybackList()
                     while (scan < scanEnd && *scan != 0) scan++;
                     if (scan < scanEnd) scan++;
                 }
-                else if (type == n02::KREC_SAVE_DATA_RECORD)
+                else if (type == n02::KREC_SAVE_DATA_RECORD || type == n02::KREC_GAME_OPTIONS_RECORD)
                 {
-                    // The match's starting save, right after the header.
+                    // The match's starting save and game options, right after the header.
                     if (scan + 4 > scanEnd) break;
                     unsigned int slen = *(unsigned int*)scan;
                     scan += 4;
                     if ((size_t)(scanEnd - scan) < slen) break;
+                    CoreNetplayGameOptions gameOptions;
+                    if (type == n02::KREC_GAME_OPTIONS_RECORD &&
+                        CoreDeserializeNetplayGameOptions(std::string(scan, slen), gameOptions))
+                    {
+                        for (const CoreNetplayGameOption& option : gameOptions.Options)
+                            gameOptionLabels << QString::fromStdString(option.Label);
+                    }
                     scan += slen;
                 }
                 else
@@ -1123,7 +1133,15 @@ void KailleraPlaybackDialog::populatePlaybackList()
         m_playbackTable->insertRow(row);
         m_playbackTable->setItem(row, 0, new QTableWidgetItem(dateStr));
         m_playbackTable->setItem(row, 1, new QTableWidgetItem(playersStr));
-        m_playbackTable->setItem(row, 2, new QTableWidgetItem(QString::fromUtf8(gameName)));
+        // A match played with game options names them: "Smash Remix 2.0.1 (Vanilla only)".
+        QString gameStr = QString::fromUtf8(gameName);
+        if (!gameOptionLabels.isEmpty())
+            gameStr = QStringLiteral("%1 (%2)").arg(gameStr, gameOptionLabels.join(QStringLiteral(", ")));
+        auto* gameItem = new QTableWidgetItem(gameStr);
+        // The column is narrow: the options often only fit in the tooltip.
+        if (!gameOptionLabels.isEmpty())
+            gameItem->setToolTip(gameStr);
+        m_playbackTable->setItem(row, 2, gameItem);
         auto* durationItem = new QTableWidgetItem(durationStr);
         durationItem->setData(Qt::UserRole, frames);
         m_playbackTable->setItem(row, 3, durationItem);
@@ -1770,10 +1788,7 @@ void KailleraPlaybackDialog::onPlaybackPlay()
 
 void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
 {
-    if (!stageRankedReplay(krecPath))
-    {
-        return;
-    }
+    stageRankedReplay(krecPath);
 
     QByteArray pathBytes = krecPath.toUtf8();
 
@@ -1986,18 +2001,20 @@ bool KailleraPlaybackDialog::loadReplayMetadata(const QString& krecPath, QJsonOb
     return metadata.value("schema").toInt() == 1;
 }
 
-bool KailleraPlaybackDialog::stageRankedReplay(const QString& krecPath)
+void KailleraPlaybackDialog::stageRankedReplay(const QString& krecPath)
 {
     CoreRankedClearStagedSession();
 
     QJsonObject metadata;
-    if (!loadReplayMetadata(krecPath, metadata) || !metadata.contains("journal"))
+    if (!loadReplayMetadata(krecPath, metadata) || !metadata.value("module").isObject())
     {
-        return true; // a plain recording
+        return; // not a ranked set
     }
 
-    // The ranked module rewrote game memory during the match; the recorded
-    // write journal reproduces that without needing the module itself.
+    // The recording's game options make the game play as it did, so the
+    // replay needs nothing else. The ranked module, when the version that
+    // recorded it is installed, only follows the set (read-only) to show
+    // its progress on screen.
     const QJsonObject module = metadata.value("module").toObject();
     CoreRankedSessionSettings settings;
     settings.ModuleId      = module.value("id").toString().toStdString();
@@ -2012,9 +2029,7 @@ bool KailleraPlaybackDialog::stageRankedReplay(const QString& krecPath)
     {
         settings.Teams.push_back(team.toInt());
     }
-    settings.Replay  = true;
-    settings.Journal = QByteArray::fromBase64(
-        metadata.value("journal").toObject().value("data").toString().toLatin1()).toStdString();
+    settings.Replay = true;
     settings.ExpectedRulesetHash = metadata.value("ruleset").toObject().value("hash").toString().toStdString();
     for (const QJsonValue& value : metadata.value("games").toArray())
     {
@@ -2030,13 +2045,12 @@ bool KailleraPlaybackDialog::stageRankedReplay(const QString& krecPath)
         }
         settings.ExpectedWinners[static_cast<size_t>(index)] = game.value("winnerPort").toInt();
     }
+    // A set the module can't follow just plays without its progress.
     if (!CoreRankedStageSession(settings))
     {
-        QMessageBox::warning(this, tr("Ranked Replay"),
-            tr("This ranked replay can't be played: %1").arg(QString::fromStdString(CoreGetError())));
-        return false;
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning,
+            ("Ranked replay without set progress: " + CoreGetError()).c_str());
     }
-    return true;
 }
 
 bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::function<void(QJsonArray&)>& edit)
@@ -2046,7 +2060,7 @@ bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::f
     std::string json;
     if (KailleraExport::ReadKrecMetadata(path, json))
     {
-        // keep everything else in it (a ranked replay's module and journal)
+        // keep everything else in it (a ranked replay's set and games)
         QJsonParseError parseError;
         const QJsonDocument document = QJsonDocument::fromJson(QByteArray::fromStdString(json), &parseError);
         if (parseError.error != QJsonParseError::NoError || !document.isObject() ||

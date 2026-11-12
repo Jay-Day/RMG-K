@@ -11,28 +11,28 @@
 /*
  * Ranked game module API (C ABI).
  *
- * A ranked game module is a shared library that teaches RMG-K how to run a
- * ranked set for one game: it enforces the ruleset inside the running game
- * and reports game/set results. RMG-K ("the host") loads it from the Ranked
- * directory next to the Plugin directory.
+ * A ranked game module is a shared library that teaches RMG-K how to judge a
+ * ranked set for one game: it watches the running game and reports game/set
+ * results. RMG-K ("the host") loads it from the Ranked directory next to the
+ * Plugin directory.
+ *
+ * A module only reads game memory. Everything that changes the game for a
+ * ranked set (rules, menus, stages) is a game option: ROM patches the lobby
+ * puts on the match, applied before the game boots and kept in the replay.
+ * So a ranked replay plays back without any module, and the module checks
+ * that each game was played the way the ruleset says, voiding it when not.
  *
  * Every frame is split into two phases:
  *
  *  1. OnFrame (speculative). Called at the boundary *before* emulated frame
  *     `frame` executes. Under rollback netplay the same frame number may be
  *     called many times (once live, again for every resimulation), and not
- *     necessarily in increasing order. The module may:
- *       - write game memory to enforce the ruleset (lock menus, force rules),
- *       - fill `observation` with whatever it needs to later judge results.
- *     Rules for OnFrame:
- *       - DETERMINISTIC: the writes and the observation must depend only on
- *         game memory. Never on wall-clock time, local settings, the local
- *         player's slot, or any state the module keeps between calls.
- *         Otherwise peers desync.
- *       - IDEMPOTENT: running it twice on the same memory must give the same
- *         memory and the same observation as running it once. The host may
- *         call it again on memory it already wrote to (rollback reloads).
- *       - The observation is taken AFTER the module's own writes.
+ *     necessarily in increasing order. The module fills `observation` with
+ *     whatever it needs to later judge results.
+ *     The observation must depend only on game memory (and on constant data
+ *     the module derives from it). Never on wall-clock time, local settings,
+ *     the local player's slot, or any state the module keeps about earlier
+ *     calls. Otherwise peers disagree about the set.
  *
  *  2. OnConfirmedFrame (authoritative). Called exactly once per frame, in
  *     strictly increasing frame order, with the observation recorded by the
@@ -44,8 +44,10 @@
  * every peer reaches the same verdict about the set.
  *
  * Memory helpers take N64 virtual addresses (0x80000000-0x807FFFFF, KSEG0 or
- * KSEG1) and handle RDRAM byte order. Out-of-range accesses read as 0 and are
- * ignored on write.
+ * KSEG1) and handle RDRAM byte order. Out-of-range reads return 0.
+ *
+ * Version 2 removed the memory writes (Write8/16/32, WriteCode32) of version
+ * 1; hosts load only modules of their own version.
  */
 
 #ifndef RMGK_RANKED_MODULE_API_H
@@ -58,7 +60,7 @@
 extern "C" {
 #endif
 
-#define RANKED_MODULE_API_VERSION 1
+#define RANKED_MODULE_API_VERSION 2
 
 /* maximum bytes a module may store per frame in OnFrame */
 #define RANKED_MAX_OBSERVATION_SIZE 128
@@ -135,20 +137,11 @@ typedef struct RankedHostApi
     uint8_t  (*Read8)(void* context, uint32_t address);
     uint16_t (*Read16)(void* context, uint32_t address);
     uint32_t (*Read32)(void* context, uint32_t address);
-    void     (*Write8)(void* context, uint32_t address, uint8_t value);
-    void     (*Write16)(void* context, uint32_t address, uint16_t value);
-    void     (*Write32)(void* context, uint32_t address, uint32_t value);
 
     void (*Log)(void* context, RankedLogLevel level, const char* message);
 
     /* only valid inside OnConfirmedFrame */
     void (*EmitEvent)(void* context, const RankedEvent* event);
-
-    /* Writes a word of game *code* and drops any recompiled copy of it, so
-       the patch takes effect under the dynamic recompiler. Use it (instead
-       of Write32) only for instructions; it is much slower. Check
-       host->size before use: older hosts don't have it. */
-    void (*WriteCode32)(void* context, uint32_t address, uint32_t value);
 } RankedHostApi;
 
 typedef struct
@@ -219,14 +212,15 @@ typedef int (*ptr_RankedModule_GetInfo)(RankedModuleInfo* info);
 typedef RankedModuleInstance* (*ptr_RankedModule_Create)(const RankedHostApi* host,
     const RankedSessionConfig* config, char* error, uint32_t errorSize);
 
-/* writes a canonical description of the effective ruleset (everything that
-   changes gameplay) to out; peers compare hashes of it before a ranked match.
+/* writes a canonical description of the ruleset the module judges by
+   (everything that decides whether a game counts) to out; peers compare
+   hashes of it.
    Returns the number of bytes needed (excluding NUL); out may be NULL
    when outSize is 0. Must not change during a session. */
 typedef uint32_t (*ptr_RankedModule_GetRulesetDescription)(RankedModuleInstance* instance,
     char* out, uint32_t outSize);
 
-/* speculative phase, see above. observation points at
+/* speculative phase, read-only, see above. observation points at
    RANKED_MAX_OBSERVATION_SIZE zeroed bytes. */
 typedef void (*ptr_RankedModule_OnFrame)(RankedModuleInstance* instance, uint32_t frame,
     uint8_t* observation);

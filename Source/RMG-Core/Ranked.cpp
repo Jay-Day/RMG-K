@@ -9,7 +9,6 @@
  */
 #define CORE_INTERNAL
 #include "Ranked.hpp"
-#include "RankedJournal.hpp"
 #include "Ranked/RankedModuleApi.h"
 #include "RomSettings.hpp"
 #include "Directories.hpp"
@@ -35,7 +34,6 @@
 #include <ctime>
 #include <fstream>
 #include <deque>
-#include <unordered_map>
 #include <mutex>
 #include <sstream>
 
@@ -62,14 +60,10 @@ struct l_RankedModule
     ptr_RankedModule_GetLiveState          GetLiveState          = nullptr;
 };
 
-using l_JournalWrite = CoreRankedJournalWrite;
-using l_JournalFrame = CoreRankedJournalFrame;
-
 struct l_ObservationSlot
 {
     int64_t Frame = -1;
     std::array<uint8_t, RANKED_MAX_OBSERVATION_SIZE> Data{};
-    std::vector<l_JournalWrite> Writes;
 };
 
 //
@@ -80,9 +74,6 @@ struct l_ObservationSlot
 static constexpr int64_t kObservationRingSize = 512;
 static constexpr uint32_t kRdramSize = 0x800000;
 
-// frames without writes still get an entry this often, so a replay keeps
-// checking that it's aligned with the recording
-static constexpr int64_t kJournalCheckpointFrames = 600;
 static constexpr size_t  kRecordHistorySize = 512;
 
 static std::mutex                l_StageMutex;
@@ -137,41 +128,16 @@ struct l_Bookmark
     std::string Kind;
     int         Game = 0;
 };
-// The write journal. Every module write that changes memory during OnFrame
-// is kept with its frame's observation and committed once the frame is
-// confirmed. Replays apply it instead of running the module, so a replay
-// doesn't depend on the module version.
-//
-// Journal frames and bookmarks carry the number of .krec records written
-// before their frame. Records are written past the rollback horizon (and the
-// last ones only when the rollback session closes, after emulation ended), so
-// this state outlives the session and is guarded by l_JournalMutex.
-static std::mutex                  l_JournalMutex;
-static bool                        l_JournalLive = false;
-static std::vector<l_JournalFrame> l_Journal;
-static size_t                      l_JournalResolved = 0;
-static int64_t                     l_LastJournalFrame = -1;
+// Bookmarks carry the number of .krec records written before their frame.
+// Records are written past the rollback horizon (and the last ones only when
+// the rollback session closes, after emulation ended), so this state
+// outlives the session and is guarded by l_RecordMutex.
+static std::mutex                  l_RecordMutex;
+static bool                        l_RecordsLive = false;
 static std::vector<l_Bookmark>     l_Bookmarks;
 static std::deque<std::pair<int64_t, int>> l_RecordHistory; // (frame, record)
-static int64_t                     l_HistoryPrevFrame = -1; // frame of the record before the history
-static size_t                      l_JournalStreamed = 0; // frames handed to a live broadcast
 static int                         l_RecordsWritten = 0;
 static std::string                 l_ReplayHeaderJson; // set when the session ends
-static bool                        l_JournalOutsideFrameWarned = false;
-// writes of the frame the module is running, nullptr outside OnFrame
-static std::vector<l_JournalWrite>* l_FrameWrites = nullptr;
-// words the module changed this frame -> index in *l_FrameWrites
-static std::unordered_map<uint32_t, size_t> l_FrameWords;
-static bool                        l_InModuleCall = false;
-
-// replay: the journal being applied. A spectator's journal arrives in chunks
-// from the UI thread while it plays, so it's guarded by l_ReplayMutex.
-static std::mutex                  l_ReplayMutex;
-static CoreRankedJournalPlayer     l_ReplayPlayer;
-static bool                        l_StagedSpectator = false; // guarded by l_StageMutex
-
-// Emulation.cpp: a spectator keyframe is staged but not loaded yet
-bool CoreSpectateKeyframeAwaitingLoad(void);
 
 //
 // Internal Functions
@@ -327,91 +293,6 @@ static uint32_t host_read32(void*, uint32_t address)
     uint32_t value;
     std::memcpy(&value, l_Rdram + offset, sizeof(value));
     return value;
-}
-
-static void invalidate_code(unsigned int address, unsigned int size)
-{
-    using ptr_RmgkInvalidateCachedCode = void (*)(unsigned int, unsigned int);
-    static ptr_RmgkInvalidateCachedCode invalidate = nullptr;
-    static bool resolved = false;
-    if (!resolved)
-    {
-        invalidate = (ptr_RmgkInvalidateCachedCode)CoreGetLibrarySymbol(
-            (CoreLibraryHandle)m64p::Core.GetHandle(), "RmgkInvalidateCachedCode");
-        resolved = true;
-        if (invalidate == nullptr)
-        {
-            ranked_log(CoreDebugMessageType::Warning,
-                "core lacks RmgkInvalidateCachedCode; code patches may not apply");
-        }
-    }
-    if (invalidate != nullptr)
-    {
-        invalidate(address, size);
-    }
-}
-
-// writes to RDRAM, returns whether memory changed
-static bool write_memory(uint8_t kind, uint32_t address, uint32_t value, uint32_t* before)
-{
-    return CoreRankedWriteMemory(l_Rdram, kind, address, value, invalidate_code, before);
-}
-
-static void module_write(uint8_t kind, uint32_t address, uint32_t value)
-{
-    // replays apply the recorded journal instead
-    if (l_Replay.load())
-    {
-        return;
-    }
-    // The journal keeps each frame's net effect per 32-bit word: a module may
-    // set a value and then override it in the same frame (a profile, then the
-    // ruleset), which must not cost a journal write every frame.
-    const uint32_t word = 0x80000000u | ((address & 0x1FFFFFFF) & ~3u);
-    uint32_t wordBefore = 0;
-    const bool haveWord = CoreRankedReadMemory(l_Rdram, kCoreRankedJournalWrite32, word, wordBefore);
-    if (!write_memory(kind, address, value, nullptr))
-    {
-        return;
-    }
-    if (l_FrameWrites != nullptr && haveWord)
-    {
-        auto [it, inserted] = l_FrameWords.try_emplace(word, l_FrameWrites->size());
-        if (inserted)
-        {
-            l_FrameWrites->push_back({kCoreRankedJournalWrite32, word, 0, wordBefore});
-        }
-        if (kind == kCoreRankedJournalWriteCode32)
-        {
-            (*l_FrameWrites)[it->second].Kind = kCoreRankedJournalWriteCode32;
-        }
-    }
-    else if (l_InModuleCall && !l_JournalOutsideFrameWarned)
-    {
-        l_JournalOutsideFrameWarned = true;
-        ranked_log(CoreDebugMessageType::Warning,
-            "module wrote memory outside OnFrame; replays of this session may desync");
-    }
-}
-
-static void host_write8(void*, uint32_t address, uint8_t value)
-{
-    module_write(kCoreRankedJournalWrite8, address, value);
-}
-
-static void host_write16(void*, uint32_t address, uint16_t value)
-{
-    module_write(kCoreRankedJournalWrite16, address, value);
-}
-
-static void host_write32(void*, uint32_t address, uint32_t value)
-{
-    module_write(kCoreRankedJournalWrite32, address, value);
-}
-
-static void host_write_code32(void*, uint32_t address, uint32_t value)
-{
-    module_write(kCoreRankedJournalWriteCode32, address, value);
 }
 
 static void host_log(void*, RankedLogLevel level, const char* message)
@@ -622,95 +503,39 @@ static int current_record_count(void)
 #endif
 }
 
-static int current_playback_record(void)
-{
-#ifdef RMGK_HAVE_P2P_TRANSPORT
-    return n02::playbackGetCurrentFrame();
-#else
-    return 0;
-#endif
-}
-
-// position of `frame` in the recording (see l_JournalFrame), false while
-// no record at or after it is written yet. Needs l_JournalMutex.
-static bool record_position(int64_t frame, int& record, uint32_t& offset)
+// the first .krec record at or after `frame`, false while none is written
+// yet. Needs l_RecordMutex.
+static bool record_position(int64_t frame, int& record)
 {
     if (!l_RollbackDriven)
     { // without rollback the frame's input is recorded as it runs
         record = current_record_count();
-        offset = 0;
         return true;
     }
-    int64_t previousFrame = l_HistoryPrevFrame;
     for (const auto& [recordFrame, index] : l_RecordHistory)
     {
         if (recordFrame >= frame)
         {
             record = index;
-            offset = static_cast<uint32_t>(frame - previousFrame - 1);
             return true;
         }
-        previousFrame = recordFrame;
     }
     return false;
 }
 
 static void add_bookmark(int64_t frame, const std::string& label, const std::string& kind, int game)
 {
-    std::lock_guard<std::mutex> lock(l_JournalMutex);
+    std::lock_guard<std::mutex> lock(l_RecordMutex);
     l_Bookmark mark;
     mark.Frame  = frame;
     mark.Label  = label;
     mark.Kind   = kind;
     mark.Game   = game;
-    uint32_t offset;
-    if (!record_position(frame, mark.Record, offset))
+    if (!record_position(frame, mark.Record))
     {
         mark.Record = -1;
     }
     l_Bookmarks.push_back(std::move(mark));
-}
-
-// commits a confirmed frame's writes (emulation thread)
-static void commit_journal_frame(int64_t frame, const std::vector<l_JournalWrite>& writes)
-{
-    if (writes.empty() && l_LastJournalFrame >= 0 &&
-        frame - l_LastJournalFrame < kJournalCheckpointFrames)
-    {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(l_JournalMutex);
-    l_JournalFrame entry;
-    entry.Frame  = frame;
-    if (!record_position(frame, entry.Record, entry.Offset))
-    {
-        entry.Record = -1;
-    }
-    entry.Writes = writes;
-    l_Journal.push_back(std::move(entry));
-    while (l_JournalResolved < l_Journal.size() && l_Journal[l_JournalResolved].Record >= 0)
-    {
-        l_JournalResolved++;
-    }
-    l_LastJournalFrame = frame;
-}
-
-static std::string base64_encode(const std::string& data)
-{
-    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((data.size() + 2) / 3 * 4);
-    for (size_t i = 0; i < data.size(); i += 3)
-    {
-        uint32_t chunk = static_cast<uint8_t>(data[i]) << 16;
-        if (i + 1 < data.size()) chunk |= static_cast<uint8_t>(data[i + 1]) << 8;
-        if (i + 2 < data.size()) chunk |= static_cast<uint8_t>(data[i + 2]);
-        out.push_back(table[(chunk >> 18) & 63]);
-        out.push_back(table[(chunk >> 12) & 63]);
-        out.push_back(i + 1 < data.size() ? table[(chunk >> 6) & 63] : '=');
-        out.push_back(i + 2 < data.size() ? table[chunk & 63] : '=');
-    }
-    return out;
 }
 
 // the session part of the replay metadata, captured when the session ends
@@ -756,8 +581,8 @@ static std::string build_replay_header_json(void)
     return json.str();
 }
 
-// completes the replay metadata with the bookmarks and the journal. Needs
-// l_JournalMutex; records not written yet count as the end of the recording.
+// completes the replay metadata with the bookmarks. Needs l_RecordMutex;
+// records not written yet count as the end of the recording.
 static std::string build_replay_json(void)
 {
     std::ostringstream json;
@@ -772,9 +597,7 @@ static std::string build_replay_json(void)
              << "\", \"game\": " << mark.Game << "}";
         first = false;
     }
-    json << (first ? "" : "\n  ") << "],\n";
-    json << "  \"journal\": {\"format\": 3, \"frames\": " << l_Journal.size()
-         << ", \"data\": \"" << base64_encode(CoreRankedEncodeJournal(l_Journal, 0, l_Journal.size(), l_RecordsWritten)) << "\"}\n";
+    json << (first ? "" : "\n  ") << "]\n";
     json << "}\n";
     return json.str();
 }
@@ -905,12 +728,8 @@ static RankedHostApi l_HostApi =
     host_read8,
     host_read16,
     host_read32,
-    host_write8,
-    host_write16,
-    host_write32,
     host_log,
     host_emit_event,
-    host_write_code32,
 };
 
 static void flag_integrity_issue(const std::string& issue)
@@ -987,28 +806,14 @@ static void capture_left_set(void)
     l_Events.push_back(std::move(event));
 }
 
-// rewinds the replay to the start of its journal (the journal itself stays:
-// a spectator's may have arrived before emulation started)
-static void reset_replay_cursor(void)
+static void reset_records(bool live)
 {
-    std::lock_guard<std::mutex> lock(l_ReplayMutex);
-    CoreRankedJournalReset(l_ReplayPlayer);
-}
-
-static void reset_journal(bool live)
-{
-    std::lock_guard<std::mutex> lock(l_JournalMutex);
-    l_JournalLive = live;
-    l_Journal.clear();
-    l_JournalResolved = 0;
-    l_LastJournalFrame = -1;
+    std::lock_guard<std::mutex> lock(l_RecordMutex);
+    l_RecordsLive = live;
     l_Bookmarks.clear();
     l_RecordHistory.clear();
-    l_HistoryPrevFrame = -1;
-    l_JournalStreamed = 0;
     l_RecordsWritten = 0;
     l_ReplayHeaderJson.clear();
-    l_JournalOutsideFrameWarned = false;
 }
 
 static void confirm_frame(int64_t frame)
@@ -1025,9 +830,7 @@ static void confirm_frame(int64_t frame)
         return;
     }
     l_InConfirmedFrame = true;
-    l_InModuleCall = true;
     l_Module.OnConfirmedFrame(l_Instance, static_cast<uint32_t>(frame), slot.Data.data());
-    l_InModuleCall = false;
     l_InConfirmedFrame = false;
 }
 
@@ -1133,7 +936,6 @@ CORE_EXPORT bool CoreRankedStageSession(const CoreRankedSessionSettings& setting
 CORE_EXPORT void CoreRankedClearStagedSession(void)
 {
     std::lock_guard<std::mutex> lock(l_StageMutex);
-    l_StagedSpectator = false;
     l_HasStagedSession = false;
     l_StagedSession = CoreRankedSessionSettings();
 }
@@ -1175,54 +977,9 @@ CORE_EXPORT uint64_t CoreRankedGetRulesetHash(void)
     return l_RulesetHash.load();
 }
 
-CORE_EXPORT void CoreRankedStageSpectatorJournal(void)
-{
-    {
-        std::lock_guard<std::mutex> lock(l_ReplayMutex);
-        l_ReplayPlayer = CoreRankedJournalPlayer();
-    }
-    std::lock_guard<std::mutex> lock(l_StageMutex);
-    l_StagedSpectator = true;
-}
-
-CORE_EXPORT bool CoreRankedAppendReplayJournal(const std::string& data)
-{
-    std::lock_guard<std::mutex> lock(l_ReplayMutex);
-    if (!CoreRankedJournalAppend(l_ReplayPlayer, data))
-    {
-        ranked_log(CoreDebugMessageType::Warning, "dropped a malformed write journal chunk");
-        return false;
-    }
-    return true;
-}
-
-CORE_EXPORT bool CoreRankedTakeJournalUpdate(std::string& data, size_t maxBytes)
-{
-    std::lock_guard<std::mutex> lock(l_JournalMutex);
-    size_t end = l_JournalStreamed;
-    size_t bytes = 0;
-    while (end < l_JournalResolved)
-    {
-        const size_t frameBytes = 14 + l_Journal[end].Writes.size() * 13;
-        if (end > l_JournalStreamed && bytes + frameBytes > maxBytes)
-        {
-            break;
-        }
-        bytes += frameBytes;
-        end++;
-    }
-    if (end == l_JournalStreamed)
-    {
-        return false;
-    }
-    data = CoreRankedEncodeJournal(l_Journal, l_JournalStreamed, end, l_RecordsWritten);
-    l_JournalStreamed = end;
-    return true;
-}
-
 CORE_EXPORT std::string CoreRankedGetLastReplayJson(void)
 {
-    std::lock_guard<std::mutex> lock(l_JournalMutex);
+    std::lock_guard<std::mutex> lock(l_RecordMutex);
     if (l_ReplayHeaderJson.empty())
     {
         return {};
@@ -1256,26 +1013,13 @@ bool CoreRankedBeginEmulation(bool netplay, bool rollbackDriven)
 {
     {
         // the previous session's records are all written by now
-        std::lock_guard<std::mutex> lock(l_JournalMutex);
-        l_JournalLive = false;
+        std::lock_guard<std::mutex> lock(l_RecordMutex);
+        l_RecordsLive = false;
     }
 
     CoreRankedSessionSettings settings;
     {
         std::lock_guard<std::mutex> lock(l_StageMutex);
-        if (l_StagedSpectator)
-        { // live spectator: applies the broadcast's journal as it arrives
-            l_StagedSpectator = false;
-            l_HasStagedSession = false;
-            reset_journal(false);
-            reset_session_state();
-            reset_replay_cursor();
-            l_Session        = CoreRankedSessionSettings();
-            l_RollbackDriven = false;
-            l_Replay         = true;
-            l_Active         = true;
-            return true;
-        }
         if (l_HasStagedSession)
         {
             settings = l_StagedSession;
@@ -1310,49 +1054,28 @@ bool CoreRankedBeginEmulation(bool netplay, bool rollbackDriven)
         return fail("a ranked set needs 2 to 4 players");
     }
 
-    reset_journal(!settings.Replay);
-    if (settings.Replay)
-    {
-        reset_session_state();
-        reset_replay_cursor();
-        std::lock_guard<std::mutex> lock(l_ReplayMutex);
-        if (!CoreRankedDecodeJournal(settings.Journal, l_ReplayPlayer.Frames))
-        {
-            return fail("the replay's write journal is damaged");
-        }
-    }
-
     // find the module by id
     std::filesystem::path modulePath;
-    for (const CoreRankedModuleInfo& info : CoreGetRankedModules())
-    {
-        if (info.Id == settings.ModuleId)
-        {
-            modulePath = info.Path;
-            break;
-        }
-    }
-    // a replay only loads the very version it was recorded with, and plays
-    // back from the journal alone without it
     std::string installedVersion;
     for (const CoreRankedModuleInfo& info : CoreGetRankedModules())
     {
         if (info.Id == settings.ModuleId)
         {
+            modulePath = info.Path;
             installedVersion = info.Version;
+            break;
         }
     }
+    // A replay plays back on its own; the module only follows it to show the
+    // set, and only the very version that recorded it.
     if (settings.Replay && (modulePath.empty() || installedVersion != settings.ModuleVersion))
     {
-        l_Session        = settings;
-        l_RollbackDriven = false;
-        l_Replay         = true;
-        l_Active         = true;
-        ranked_log(CoreDebugMessageType::Info, "replaying " + std::to_string(l_ReplayPlayer.Frames.size()) +
-            " journal frames without the module (" + settings.ModuleId + " " + settings.ModuleVersion +
-            (installedVersion.empty() ? " not installed)" : " differs from the installed " + installedVersion + ")"));
+        ranked_log(CoreDebugMessageType::Info, "replay without the set's progress (" + settings.ModuleId + " " +
+            settings.ModuleVersion + (installedVersion.empty() ? " isn't installed)"
+                                                               : " differs from the installed " + installedVersion + ")"));
         return true;
     }
+    reset_records(!settings.Replay);
     if (modulePath.empty())
     {
         return fail("ranked module '" + settings.ModuleId + "' not found in '" +
@@ -1392,19 +1115,14 @@ bool CoreRankedBeginEmulation(bool netplay, bool rollbackDriven)
 
     // the host API is valid before the first frame, but memory
     // reads return 0 until emulation has started
-    if (!settings.Replay)
-    {
-        reset_session_state();
-    }
-    l_Replay = settings.Replay; // writes during Create are dropped in replays
+    reset_session_state();
+    l_Replay = settings.Replay;
     l_Module = module;
     ranked_log(CoreDebugMessageType::Info, "loading " + module.Info.Name + " " +
         module.Info.Version + " from '" + modulePath.string() + "'");
 
     char createError[512] = {0};
-    l_InModuleCall = true;
     RankedModuleInstance* instance = module.Create(&l_HostApi, &config, createError, sizeof(createError));
-    l_InModuleCall = false;
     if (instance == nullptr)
     {
         createError[sizeof(createError) - 1] = '\0';
@@ -1462,29 +1180,11 @@ void CoreRankedEndEmulation(void)
         ranked_log(CoreDebugMessageType::Info, l_Replay.load() ? "replay ended" :
             "emulation ended before the set was decided");
     }
-    if (l_Replay.load())
-    {
-        std::lock_guard<std::mutex> lock(l_ReplayMutex);
-        ranked_log(CoreDebugMessageType::Info, "replay applied " + std::to_string(l_ReplayPlayer.Applied) +
-            " of " + std::to_string(l_ReplayPlayer.Frames.size()) + " journal frames" +
-            (l_ReplayPlayer.MismatchReported ? " (diverged)" : ""));
-    }
 
     if (!l_Replay.load())
     {
-        // frames still inside the rollback window were simulated for the
-        // last time: their records are written when the session closes
-        for (int64_t frame = std::max<int64_t>(l_NextConfirmFrame, 0);
-             l_NextConfirmFrame >= 0 && frame <= l_MaxObservedFrame; frame++)
-        {
-            const l_ObservationSlot& slot = l_ObservationRing[static_cast<size_t>(frame % kObservationRingSize)];
-            if (slot.Frame == frame)
-            {
-                commit_journal_frame(frame, slot.Writes);
-            }
-        }
         std::string header = build_replay_header_json();
-        std::lock_guard<std::mutex> lock(l_JournalMutex);
+        std::lock_guard<std::mutex> lock(l_RecordMutex);
         l_ReplayHeaderJson = std::move(header);
     }
 
@@ -1521,28 +1221,9 @@ void CoreRankedOnFrame(uint32_t frame)
     const int64_t frame64 = static_cast<int64_t>(frame);
     l_ObservationSlot& slot = l_ObservationRing[static_cast<size_t>(frame64 % kObservationRingSize)];
     slot.Data.fill(0);
-    slot.Writes.clear();
 
-    // always run the module so enforcement writes stay identical to peers;
-    // a resimulated frame replaces its earlier writes
-    l_FrameWrites = &slot.Writes;
-    l_FrameWords.clear();
-    l_InModuleCall = true;
+    // a resimulated frame replaces its earlier observation
     l_Module.OnFrame(l_Instance, frame, slot.Data.data());
-    l_InModuleCall = false;
-    l_FrameWrites = nullptr;
-
-    // keep the words that ended the frame changed, with their final value
-    size_t kept = 0;
-    for (l_JournalWrite& write : slot.Writes)
-    {
-        CoreRankedReadMemory(l_Rdram, kCoreRankedJournalWrite32, write.Address, write.Value);
-        if (write.Value != write.Before)
-        {
-            slot.Writes[kept++] = write;
-        }
-    }
-    slot.Writes.resize(kept);
 
     if (l_NextConfirmFrame >= 0 && frame64 < l_NextConfirmFrame)
     {
@@ -1585,15 +1266,6 @@ void CoreRankedConfirmThrough(int64_t frame)
                 capture_left_set();
             }
         }
-        if (!l_Replay.load())
-        {
-            const l_ObservationSlot& slot =
-                l_ObservationRing[static_cast<size_t>(l_NextConfirmFrame % kObservationRingSize)];
-            if (slot.Frame == l_NextConfirmFrame)
-            {
-                commit_journal_frame(l_NextConfirmFrame, slot.Writes);
-            }
-        }
         l_NextConfirmFrame++;
     }
 }
@@ -1605,21 +1277,6 @@ void CoreRankedOnCoreFrame(uint32_t frame)
         return;
     }
 
-    // replays apply the module's recorded writes at the same boundary the
-    // module made them, before it runs (read-only) to follow the set. A
-    // spectator waits for its keyframe: until then it's booting a state
-    // the keyframe replaces.
-    if (l_Replay.load() && ensure_rdram() && !CoreSpectateKeyframeAwaitingLoad())
-    {
-        std::lock_guard<std::mutex> lock(l_ReplayMutex);
-        std::string mismatch;
-        CoreRankedJournalAdvance(l_ReplayPlayer, current_playback_record(), l_Rdram, invalidate_code, &mismatch);
-        if (!mismatch.empty())
-        {
-            push_mismatch(0, mismatch);
-        }
-    }
-
     // frame callback fires once `frame` finished, i.e. at the
     // boundary before frame + 1, without any rollback
     CoreRankedOnFrame(frame + 1);
@@ -1628,31 +1285,19 @@ void CoreRankedOnCoreFrame(uint32_t frame)
 
 void CoreRankedOnRecordWritten(int64_t frame, int recordIndex)
 {
-    std::lock_guard<std::mutex> lock(l_JournalMutex);
-    if (!l_JournalLive)
+    std::lock_guard<std::mutex> lock(l_RecordMutex);
+    if (!l_RecordsLive)
     {
         return;
     }
 
-    const int64_t previousFrame = l_RecordHistory.empty() ? l_HistoryPrevFrame : l_RecordHistory.back().first;
     l_RecordHistory.emplace_back(frame, recordIndex);
     if (l_RecordHistory.size() > kRecordHistorySize)
     {
-        l_HistoryPrevFrame = l_RecordHistory.front().first;
         l_RecordHistory.pop_front();
     }
     l_RecordsWritten = recordIndex + 1;
 
-    while (l_JournalResolved < l_Journal.size() && l_Journal[l_JournalResolved].Frame <= frame)
-    {
-        l_JournalFrame& entry = l_Journal[l_JournalResolved];
-        if (entry.Record < 0)
-        {
-            entry.Record = recordIndex;
-            entry.Offset = static_cast<uint32_t>(entry.Frame - previousFrame - 1);
-        }
-        l_JournalResolved++;
-    }
     for (l_Bookmark& mark : l_Bookmarks)
     {
         if (mark.Record < 0 && mark.Frame <= frame)
@@ -1660,36 +1305,6 @@ void CoreRankedOnRecordWritten(int64_t frame, int recordIndex)
             mark.Record = recordIndex;
         }
     }
-}
-
-void CoreRankedReplayRebase(int record)
-{
-    std::lock_guard<std::mutex> lock(l_ReplayMutex);
-    l_ReplayPlayer.Rebase = record;
-}
-
-void CoreRankedOnStateLoaded(void)
-{
-    if (!l_Active.load() || !l_Replay.load() || !ensure_rdram())
-    {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(l_ReplayMutex);
-    if (l_ReplayPlayer.Rebase < 0)
-    {
-        return;
-    }
-
-    // the reader was rewound so its local record 0 is the keyframe's record
-    const int record = l_ReplayPlayer.Rebase;
-    std::string mismatch;
-    CoreRankedJournalRebase(l_ReplayPlayer, record, l_Rdram, invalidate_code, &mismatch);
-    if (!mismatch.empty())
-    {
-        push_mismatch(0, mismatch);
-    }
-    ranked_log(CoreDebugMessageType::Info, "replay journal realigned to the keyframe at input " +
-        std::to_string(record));
 }
 
 void CoreRankedReportDesync(const std::string& detail)

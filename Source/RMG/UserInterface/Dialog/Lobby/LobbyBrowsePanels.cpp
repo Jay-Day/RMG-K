@@ -76,6 +76,19 @@ namespace
         layout->addStretch(1);
         return note;
     }
+
+    // A room's or match's game options, on a tag beside it: they decide what
+    // can be played, so they show before anyone joins or watches. The first
+    // one's name, and how many more; the tip names them all.
+    void applyGameOptionsTag(StatusTag* tag, const QStringList& labels, const QString& tip)
+    {
+        tag->setVisible(!labels.isEmpty());
+        if (labels.isEmpty())
+            return;
+        tag->setTag(StatusTag::Kind::Amber, labels.size() > 1
+            ? QStringLiteral("%1 +%2").arg(labels.first()).arg(labels.size() - 1) : labels.first());
+        tag->setToolTip(tip);
+    }
 } // namespace
 
 // ── Live matches ─────────────────────────────────────────────────────
@@ -422,9 +435,14 @@ public:
         m_noReplayTag->setTag(StatusTag::Kind::Neutral, tr("No replay"));
         m_seats = new ElidedLabel(Role::Ok, this);
         m_seats->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
+        // With a game options tag on the line too, the game's name gives way first.
+        m_seats->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+        m_gameOptionsTag = new StatusTag(StatusTag::Kind::Amber, this);
+        m_gameOptionsTag->setVisible(false);
         sub->addWidget(m_watchingTag);
         sub->addWidget(m_rankedTag);
         sub->addWidget(m_game);
+        sub->addWidget(m_gameOptionsTag);
         sub->addWidget(m_noReplayTag);
         sub->addWidget(m_seats);
         sub->addStretch(1);
@@ -533,6 +551,7 @@ public:
         const bool joinable = canJoin();
         m_watchingTag->setVisible(view.watching);
         m_rankedTag->setVisible(view.ranked);
+        applyGameOptionsTag(m_gameOptionsTag, view.gameOptions, view.gameOptionsTip);
         m_noReplayTag->setVisible(view.matchId == 0 && joinable);
         m_seats->setVisible(view.openSeats > 0);
         m_seats->setText(view.openSeats == 1 ? tr("1 seat open") : tr("%1 seats open").arg(view.openSeats));
@@ -678,6 +697,7 @@ private:
     StatusTag* m_watchingTag = nullptr;
     StatusTag* m_rankedTag = nullptr;
     ElidedLabel* m_game = nullptr;
+    StatusTag* m_gameOptionsTag = nullptr;
     StatusTag* m_noReplayTag = nullptr;
     ElidedLabel* m_seats = nullptr;
     QWidget* m_meta = nullptr;
@@ -721,11 +741,14 @@ public:
         m_game = new ElidedLabel(Role::Muted, this);
         m_game->setFont(LobbyTheme::uiFont(11));
         m_game->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        m_gameOptionsTag = new StatusTag(StatusTag::Kind::Amber, this);
+        m_gameOptionsTag->setVisible(false);
         top->addWidget(m_markIcon);
         top->addWidget(m_mark);
         top->addSpacing(2);
         top->addWidget(m_rankedTag);
         top->addWidget(m_game, 1);
+        top->addWidget(m_gameOptionsTag);
         middle->addLayout(top);
         m_players = new PlayersLine(this);
         middle->addWidget(m_players);
@@ -768,6 +791,7 @@ public:
         m_game->setText(view.roomName.isEmpty() || view.roomName == view.game
             ? view.game : view.game + QStringLiteral(" · ") + view.roomName);
         m_game->setToolTip(m_game->text());
+        applyGameOptionsTag(m_gameOptionsTag, view.gameOptions, view.gameOptionsTip);
         m_players->set(view.players, view.roomName, LobbyTheme::uiFont(17, QFont::Bold));
         m_viewers->setText(tr("%1 watching").arg(view.viewers));
         updateDuration();
@@ -818,6 +842,7 @@ private:
     StatusTag* m_rankedTag = nullptr;
     ElidedLabel* m_mark = nullptr;
     ElidedLabel* m_game = nullptr;
+    StatusTag* m_gameOptionsTag = nullptr;
     PlayersLine* m_players = nullptr;
     QLabel* m_viewers = nullptr;
     QLabel* m_time = nullptr;
@@ -1227,10 +1252,13 @@ public:
         m_pingLimit = new QLabel(this);
         m_pingLimit->setFont(LobbyTheme::uiFont(11));
         m_pingLimit->setProperty("role", "muted");
+        m_gameOptionsTag = new StatusTag(StatusTag::Kind::Amber, this);
+        m_gameOptionsTag->setVisible(false);
         nameRow->addWidget(m_lock);
         nameRow->addWidget(m_ranked);
         nameRow->addWidget(m_inGame);
         nameRow->addWidget(m_name, 1);
+        nameRow->addWidget(m_gameOptionsTag);
         nameRow->addWidget(m_wired);
         nameRow->addSpacing(2);
         nameRow->addWidget(m_pingLimitBars);
@@ -1288,6 +1316,7 @@ public:
         m_inGame->setVisible(view.inGame);
         m_name->setText(view.name);
         m_name->setToolTip(view.name);
+        applyGameOptionsTag(m_gameOptionsTag, view.gameOptions, view.gameOptionsTip);
         m_wired->setVisible(view.wiredOnly);
         m_pingLimitBars->setVisible(view.maxPing > 0);
         m_pingLimit->setVisible(view.maxPing > 0);
@@ -1450,6 +1479,7 @@ private:
     StatusTag* m_ranked = nullptr;
     StatusTag* m_inGame = nullptr;
     ElidedLabel* m_name = nullptr;
+    StatusTag* m_gameOptionsTag = nullptr;
     IconLabel* m_wired = nullptr;
     QLabel* m_pingLimitBars = nullptr;
     QLabel* m_pingLimit = nullptr;

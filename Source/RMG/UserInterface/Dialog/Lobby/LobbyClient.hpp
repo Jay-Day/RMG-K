@@ -20,6 +20,7 @@
 #include <QFutureWatcher>
 
 #include <RMG-Core/NetplaySave.hpp>
+#include <RMG-Core/GameOptions.hpp>
 
 #include <optional>
 
@@ -131,6 +132,25 @@ public:
         int teamSize = 1; // 2 = 2v2 team battles
     };
 
+    // A game option the host turned on (ROOM_UPDATE_GAME_OPTIONS): the pack's
+    // id and the host's English label, for clients without the pack.
+    struct LobbyGameOption
+    {
+        QString id;
+        QString label;
+    };
+    // The "gameOptions" array of ROOM_STATE or a ROOM_LIST entry.
+    static QList<LobbyGameOption> parseGameOptions(const QJsonValue& value);
+    // Whether a ranked MATCH_BEGIN's "ranked" object says which game options
+    // the set plays with. A lobby that doesn't decide them leaves the ruleset
+    // unenforced, so its ranked matches mustn't start.
+    static bool rankedGameOptionsDecided(const QJsonObject& ranked);
+    // A ranked MATCH_BEGIN's game options, patches and expected bytes
+    // included, in the lobby's order, from its "ranked" object. False, with
+    // error saying why, when they're missing or malformed. Not checked
+    // against a ROM or the limits (CoreVerifyGameOptions does that).
+    static bool parseRankedGameOptions(const QJsonObject& ranked, CoreNetplayGameOptions& options, QString& error);
+
     struct LobbyRoomSummary
     {
         quint64 id = 0;
@@ -156,6 +176,8 @@ public:
         // whether a PC on Wi-Fi is turned away.
         int maxPing = 0;
         bool wiredOnly = false;
+        // The host's game options for the next match, or the running one's.
+        QList<LobbyGameOption> gameOptions;
     };
 
     struct LobbyMatchPeer
@@ -345,8 +367,25 @@ public:
     void updateRoomSaveData(bool enabled, const QString& label = QString(),
                             const QStringList& kinds = QStringList(), int bytes = 0,
                             const QString& hash = QString());
+    // Host-only, waiting room: the game options of the next match, replacing
+    // the room's list (empty turns them off). The server refuses a bad list
+    // without a reply; ROOM_STATE says what the room has.
+    void updateRoomGameOptions(const QList<LobbyGameOption>& options);
     // Host: the save the next pre-match manifest carries; nullopt starts blank.
     void setPrematchSaveData(std::optional<CoreNetplaySaveData> data) { m_prematchSaveData = std::move(data); }
+    // Host: the game options the next pre-match manifest carries, resolved
+    // against this ROM (CoreResolveGameOptions); empty for none. Set it right
+    // before syncPrematchManifest, like the save. Every player, late joiner
+    // and live viewer stages them from the manifest (CoreGetNetplayGameOptions).
+    void setPrematchGameOptions(CoreNetplayGameOptions options) { m_prematchGameOptions = std::move(options); }
+    // Ranked: the lobby's game options for the next sync, checked against
+    // this ROM; nullopt for a match whose host decides them. The host's
+    // manifest must carry exactly these, or the sync fails (on a player,
+    // without answering the host) and prematchGameOptionsRefused() says so.
+    // After a sync they're what's staged, expected bytes included. Set it
+    // right before syncPrematchManifest, like the save.
+    void setRequiredGameOptions(std::optional<CoreNetplayGameOptions> options) { m_requiredGameOptions = std::move(options); }
+    bool prematchGameOptionsRefused() const { return m_prematchGameOptionsRefused; }
     void kickFromRoom(quint64 userId);
 
     // Host-only: swap two seats (P1-P4) to re-order players before the match.
@@ -451,8 +490,6 @@ public:
     // How often to upload a keyframe, from the lobby's last MATCH_BEGIN.
     qint64 broadcastKeyframeIntervalMs() const { return m_broadcastKeyframeIntervalMs; }
     void sendBroadcastEnd(quint64 matchId);
-    // Ranked matches: the next chunk of the game module's write journal.
-    void sendBroadcastJournal(quint64 matchId, const QByteArray& journal);
 
     // Spectate (pull a broadcast match's krec stream back down).
     void startSpectate(quint64 matchId);
@@ -619,8 +656,6 @@ signals:
     // A reassembled savestate keyframe (still compressed) plus the first krec record
     // index to consume after restoring it.
     void spectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate);
-    // Write journal chunk seq (contiguous from 0) of a ranked match.
-    void spectateJournal(quint64 matchId, int seq, const QByteArray& journal);
     void spectateEnded(quint64 matchId, const QString& reason);
     void spectateFailed(quint64 matchId, const QString& reason);
     // Authoritative audience size, sent to the broadcaster and active spectators.
@@ -764,6 +799,12 @@ private:
     // Exact host manifest from the successful player sync, reused by live replay.
     QByteArray m_prematchManifest;
     std::optional<CoreNetplaySaveData> m_prematchSaveData;
+    CoreNetplayGameOptions m_prematchGameOptions;
+    std::optional<CoreNetplayGameOptions> m_requiredGameOptions;
+    bool m_prematchGameOptionsRefused = false;
+    // After a manifest is applied: stages the required game options, false
+    // when the manifest's aren't them.
+    bool applyRequiredGameOptions();
     int m_matchSeats = 0;
 
     bool m_socialSupported = false;

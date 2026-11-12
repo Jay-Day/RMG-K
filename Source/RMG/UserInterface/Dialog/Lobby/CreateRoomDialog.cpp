@@ -558,6 +558,7 @@ void CreateRoomDialog::showCreateFailure(const QString& reason)
     else if (reason == "invalid_payload") human = tr("Server rejected the room settings.");
     else if (reason == "not_verified") human = tr("Log into an account to create ranked rooms.");
     else if (reason == "ranked_unavailable") human = tr("This game can't be played ranked on this server.");
+    else if (reason == "ranked_needs_update") human = tr("Ranked play needs a newer version of Dale64.");
     else if (reason == "not_enough_seats") human = tr("It needs a seat for everyone on this PC.");
     else if (reason == "local_players") human = tr("Ranked takes one player per PC. Remove your local players first.");
     m_statusLabel->setText(QString(tr("Couldn't create room: %1")).arg(human));

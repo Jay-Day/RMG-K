@@ -90,10 +90,11 @@ private:
 
     void setupUI();
     // replay metadata appended to the .krec (bookmarks; ranked replays add
-    // their module and write journal). False when the recording has none.
+    // their set and games). False when the recording has none.
     static bool loadReplayMetadata(const QString& krecPath, QJsonObject& metadata);
-    // stages the recording's ranked module in replay mode; false = cancelled
-    bool stageRankedReplay(const QString& krecPath);
+    // a ranked set's recording: stages its module read-only in replay mode,
+    // to show the set's progress, when that version is installed
+    void stageRankedReplay(const QString& krecPath);
     // changes a recording's bookmarks; false (after telling the user) when
     // they can't be saved
     bool editBookmarks(const QString& krecPath, const std::function<void(QJsonArray&)>& edit);

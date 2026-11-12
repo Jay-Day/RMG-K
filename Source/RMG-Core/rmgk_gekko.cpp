@@ -3315,8 +3315,8 @@ int rollback_execute_begin_frame(void* userData)
                 {
                     return 0;
                 }
-                // ranked module observes/enforces at the boundary before this
-                // frame runs, for resimulated and live frames alike
+                // ranked module observes the boundary before this frame
+                // runs, for resimulated and live frames alike
                 CoreRankedOnFrame(static_cast<uint32_t>(event->data.adv.frame));
                 if (timingEnabled)
                 {
