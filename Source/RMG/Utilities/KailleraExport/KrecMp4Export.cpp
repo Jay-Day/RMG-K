@@ -15,6 +15,7 @@
 #include <QTemporaryDir>
 
 #include <RMG-Core/Directories.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/NetplaySave.hpp>
 #include <RMG-Core/Settings.hpp>
 
@@ -369,6 +370,38 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
             if (errorMessage != nullptr)
             {
                 *errorMessage = "Failed to set the replay's save data";
+            }
+            return false;
+        }
+    }
+
+    // And with the game options it was played with.
+    {
+        CoreNetplayGameOptions gameOptions;
+        if (!krecData.gameOptions.empty() &&
+            !CoreDeserializeNetplayGameOptions(krecData.gameOptions, gameOptions))
+        {
+            shutdownGuard();
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "The replay's game options are damaged";
+            }
+            return false;
+        }
+        std::vector<std::pair<uint32_t, std::vector<uint8_t>>> patches;
+        for (const CoreNetplayGameOption& option : gameOptions.Options)
+        {
+            for (const CoreGameOptionPatch& patch : option.Patches)
+            {
+                patches.emplace_back(patch.Offset, patch.Bytes);
+            }
+        }
+        if (!emulator.patchRom(patches))
+        {
+            shutdownGuard();
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "The replay's game options don't fit this ROM";
             }
             return false;
         }

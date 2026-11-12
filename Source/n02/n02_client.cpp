@@ -108,6 +108,7 @@ char * gamelist = 0;
 ///////////////////////////////////////////////////////////////////////////////
 
 static std::ofstream recording_file;
+static std::string recording_last_path;
 static std::filesystem::path recording_directory_path = std::filesystem::path("records");
 
 // Optional sink that receives replay bytes independently of local file saving
@@ -168,6 +169,51 @@ static std::filesystem::path pathFromUtf8String(const std::string& utf8) {
 #endif
 }
 
+// The longest start of s, at most maxBytes long, that ends on a whole character.
+static size_t utf8PrefixLength(const std::string& s, size_t maxBytes) {
+    if (s.size() <= maxBytes) {
+        return s.size();
+    }
+    size_t length = maxBytes;
+    while (length > 0 && (static_cast<unsigned char>(s[length]) & 0xC0) == 0x80) {
+        length--;
+    }
+    return length;
+}
+
+// Copy of s with anything that isn't valid UTF-8 replaced. A path built from
+// invalid bytes throws, and nothing above openRecordingFile catches that.
+static std::string validUtf8Name(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char lead = static_cast<unsigned char>(s[i]);
+        size_t length = 0;
+        if (lead < 0x80) length = 1;
+        else if (lead >= 0xC2 && lead <= 0xDF) length = 2;
+        else if (lead >= 0xE0 && lead <= 0xEF) length = 3;
+        else if (lead >= 0xF0 && lead <= 0xF4) length = 4;
+
+        bool valid = length > 0 && i + length <= s.size();
+        for (size_t j = 1; valid && j < length; j++) {
+            valid = (static_cast<unsigned char>(s[i + j]) & 0xC0) == 0x80;
+        }
+        if (valid && length >= 3) {
+            const unsigned char second = static_cast<unsigned char>(s[i + 1]);
+            valid = !(lead == 0xE0 && second < 0xA0) && !(lead == 0xED && second > 0x9F) &&
+                    !(lead == 0xF0 && second < 0x90) && !(lead == 0xF4 && second > 0x8F);
+        }
+        if (valid) {
+            out.append(s, i, length);
+            i += length;
+        } else {
+            out += '_';
+            i++;
+        }
+    }
+    return out;
+}
+
 static std::filesystem::path pathFromUtf8String(const char* utf8) {
     if (utf8 == nullptr) {
         return std::filesystem::path();
@@ -176,9 +222,11 @@ static std::filesystem::path pathFromUtf8String(const char* utf8) {
 }
 
 // The save the next lobby capture starts from (recordingSetSaveData), and the
-// one a loaded file's match started from.
+// one a loaded file's match started from. Game options likewise.
 static std::string recording_save_data;
 static std::string playback_save_data;
+static std::string recording_game_options;
+static std::string playback_game_options;
 
 // Local saving and live streaming are independent destinations for the same
 // replay bytes. A stream-only session never opens a file or creates a directory.
@@ -317,13 +365,27 @@ static void drain_recording_chat() {
     }
 }
 
+// A lobby match's record (u32 length + bytes) for the local file only.
+static void writeFileRecord(unsigned char type, const std::string& bytes) {
+    const char typeByte = static_cast<char>(type);
+    const uint32_t length = static_cast<uint32_t>(bytes.size());
+    recording_file.write(&typeByte, 1);
+    recording_file.write(reinterpret_cast<const char*>(&length), 4);
+    recording_file.write(bytes.data(), static_cast<std::streamsize>(length));
+    recording_file.flush();
+}
+
 // Begin a replay capture and write its KRC1 header to the selected destinations.
 // The caller fills recording_player_names first (used for filename and header).
 // Legacy n02 sessions save locally; rollback lobby sessions may stream only.
+// Only a lobby capture writes the lobby match's save and game options: a
+// Kaillera or P2P game never has them, whatever an earlier match left set.
 static void openRecordingFile(const char* appName, const char* game, int player,
-                              int numplayers_arg, bool saveLocally = true) {
+                              int numplayers_arg, bool saveLocally = true,
+                              bool lobbyCapture = false) {
     RecordingBuffer.reset();
     recording_frame_count.store(0, std::memory_order_relaxed);
+    recording_last_path.clear();
 
     if (saveLocally) {
         // A local filesystem error must not prevent an otherwise valid stream.
@@ -345,7 +407,7 @@ static void openRecordingFile(const char* appName, const char* game, int player,
         {
             if (recording_player_names[i][0] != 0)
             {
-                std::string name(recording_player_names[i]);
+                std::string name = validUtf8Name(recording_player_names[i]);
                 // Replace characters unsafe for filenames
                 for (char& c : name)
                 {
@@ -412,19 +474,21 @@ static void openRecordingFile(const char* appName, const char* game, int player,
                 for (int i = 0; i < numNames; i++)
                 {
                     filename += "-";
-                    filename += names[i].substr(0, lengths[i]);
+                    filename += names[i].substr(0, utf8PrefixLength(names[i], lengths[i]));
                 }
             }
         }
 
         filename += ".krec";
 
-        std::filesystem::path recordingPath = recording_directory_path / filename;
+        std::filesystem::path recordingPath = recording_directory_path / pathFromUtf8String(filename);
         recording_file.open(recordingPath, std::ios::binary | std::ios::trunc);
 
         if (!recording_file.is_open()) {
             std::string pathString = recordingPath.string();
             kprintf("recording %s failed", pathString.c_str());
+        } else {
+            recording_last_path = recordingPath.string();
         }
     }
 
@@ -447,14 +511,13 @@ static void openRecordingFile(const char* appName, const char* game, int player,
 
         writeRecordingBytes(header, static_cast<int>(sizeof(header)));
 
-        // The match's starting save, file only (see recordingSetSaveData).
-        if (recording_file.is_open() && !recording_save_data.empty()) {
-            const char type = static_cast<char>(n02::KREC_SAVE_DATA_RECORD);
-            const uint32_t length = static_cast<uint32_t>(recording_save_data.size());
-            recording_file.write(&type, 1);
-            recording_file.write(reinterpret_cast<const char*>(&length), 4);
-            recording_file.write(recording_save_data.data(), static_cast<std::streamsize>(length));
-            recording_file.flush();
+        // The match's starting save, then its game options, file only (see
+        // recordingSetSaveData and recordingSetGameOptions).
+        if (lobbyCapture && recording_file.is_open()) {
+            if (!recording_save_data.empty())
+                writeFileRecord(n02::KREC_SAVE_DATA_RECORD, recording_save_data);
+            if (!recording_game_options.empty())
+                writeFileRecord(n02::KREC_GAME_OPTIONS_RECORD, recording_game_options);
         }
     }
 
@@ -918,17 +981,24 @@ static bool player_play(const char* fn) {
         pb.reset_all();
         return false;
     }
-    // A match that started from save data has it right after the header.
+    // A lobby match's starting save and then its game options, when it had
+    // them, come right after the header.
     playback_save_data.clear();
-    if (pb.pos + 5 <= pb.size() &&
-        static_cast<unsigned char>(pb.data[pb.pos]) == n02::KREC_SAVE_DATA_RECORD) {
+    playback_game_options.clear();
+    const std::pair<unsigned char, std::string*> leadRecords[] = {
+        { n02::KREC_SAVE_DATA_RECORD, &playback_save_data },
+        { n02::KREC_GAME_OPTIONS_RECORD, &playback_game_options },
+    };
+    for (const auto& [type, contents] : leadRecords) {
+        if (pb.pos + 5 > pb.size() || static_cast<unsigned char>(pb.data[pb.pos]) != type)
+            continue;
         uint32_t length = 0;
         memcpy(&length, pb.data.data() + pb.pos + 1, 4);
-        if (pb.pos + 5 + length > pb.size()) {
+        if (length > pb.size() - pb.pos - 5) {
             pb.reset_all();
             return false;
         }
-        playback_save_data.assign(pb.data.data() + pb.pos + 5, length);
+        contents->assign(pb.data.data() + pb.pos + 5, length);
         pb.pos += 5 + length;
         pb.scanPos = pb.pos;
     }
@@ -1279,6 +1349,17 @@ int recordingFrameCount() {
     return recording_frame_count.load(std::memory_order_relaxed);
 }
 
+void recordingSetPlayerName(int index, const char* utf8Name) {
+    if (index < 0 || index >= 4) {
+        return;
+    }
+    const std::string name = utf8Name != nullptr ? utf8Name : "";
+    const size_t length = utf8PrefixLength(name, sizeof(recording_player_names[index]) - 1);
+    // Clear the rest too: port change records compare whole names.
+    memset(recording_player_names[index], 0, sizeof(recording_player_names[index]));
+    memcpy(recording_player_names[index], name.data(), length);
+}
+
 void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers) {
     // Close any recording left open from a previous match, then start a fresh
     // one when either local saving or streaming is enabled. The local flag only
@@ -1289,7 +1370,7 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
         return;
     }
     openRecordingFile(appName, gameName, localPlayer, numPlayers,
-                      n02_kaillera_recording_enabled);
+                      n02_kaillera_recording_enabled, true);
     recording_lobby_owned.store(true, std::memory_order_release);
 }
 
@@ -1297,8 +1378,16 @@ void recordingClose() {
     close_recording();
 }
 
+std::string recordingLastPath() {
+    return recording_last_path;
+}
+
 void recordingSetSaveData(const std::string& saveData) {
     recording_save_data = saveData;
+}
+
+void recordingSetGameOptions(const std::string& gameOptions) {
+    recording_game_options = gameOptions;
 }
 
 void setRecordingStreamSink(std::function<void(const void*, int)> sink) {
@@ -1432,6 +1521,11 @@ int playbackNumPlayers() {
 std::string playbackSaveData() {
     std::lock_guard<std::recursive_mutex> lock(playbackMutex);
     return PlayBackBuffer.streaming ? std::string() : playback_save_data;
+}
+
+std::string playbackGameOptions() {
+    std::lock_guard<std::recursive_mutex> lock(playbackMutex);
+    return PlayBackBuffer.streaming ? std::string() : playback_game_options;
 }
 
 bool playbackIsStream() {

@@ -9,6 +9,9 @@
  */
 #include <UserInterface/MainWindow.hpp>
 #include <Utilities/Translation.hpp>
+#ifdef NETPLAY
+#include <Utilities/ReplayLink.hpp>
+#endif
 #if defined(_WIN32) && defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
 #endif
@@ -213,7 +216,7 @@ int main(int argc, char **argv)
     }
 #endif
 
-    QCoreApplication::setApplicationName("RMG Kaillera Edition");
+    QCoreApplication::setApplicationName("Dale64");
     QCoreApplication::setApplicationVersion(QString::fromStdString(CoreGetVersion()));
 
     // setup commandline parser
@@ -307,6 +310,20 @@ int main(int argc, char **argv)
     }
 #endif // PORTABLE_INSTALL
 
+    // rmgk:// replay link (the rankings site's "Watch in RMG-K"): a running
+    // RMG-K opens it, otherwise this one does once it has started
+    QString replayLink;
+#ifdef NETPLAY
+    if (!parser.positionalArguments().isEmpty() && ReplayLink::IsLink(parser.positionalArguments().at(0)))
+    {
+        replayLink = parser.positionalArguments().at(0);
+        if (ReplayLink::ForwardToRunningInstance(replayLink))
+        {
+            return 0;
+        }
+    }
+#endif // NETPLAY
+
     if (parser.isSet(exportKrecOption))
     {
 #if defined(_WIN32) && defined(NETPLAY)
@@ -337,6 +354,10 @@ int main(int argc, char **argv)
 
         // specified ROM path to launch
         QStringList args = parser.positionalArguments();
+        if (!replayLink.isEmpty())
+        {
+            args.clear(); // a link, not a ROM
+        }
 
         CoreAddCallbackMessage(CoreDebugMessageType::Info,
                 "Initializing on " + QGuiApplication::platformName().toStdString());
@@ -361,6 +382,13 @@ int main(int argc, char **argv)
 
             // show window
             window.show();
+
+#ifdef NETPLAY
+            if (!replayLink.isEmpty())
+            {
+                window.OpenReplayLink(replayLink);
+            }
+#endif // NETPLAY
 
             exitCode = app.exec();
         }

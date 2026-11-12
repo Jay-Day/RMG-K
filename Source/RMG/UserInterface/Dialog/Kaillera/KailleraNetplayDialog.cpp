@@ -1651,7 +1651,7 @@ KailleraNetplayDialog::~KailleraNetplayDialog()
 void KailleraNetplayDialog::setupUI()
 {
     setObjectName("KailleraLauncherDialog");
-    setWindowTitle("RMG-K Netplay");
+    setWindowTitle("Dale64 Netplay");
     setMinimumSize(520, 480);
     resize(580, 530);
 

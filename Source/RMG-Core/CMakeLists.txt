@@ -42,9 +42,11 @@ set(RMG_CORE_SOURCES
     Netplay.cpp
     Kaillera.cpp
     Plugins.cpp
+    Ranked.cpp
     Version.cpp
     Cheats.cpp
     NetplaySave.cpp
+    GameOptions.cpp
     String.cpp
     Volume.cpp
     VidExt.cpp

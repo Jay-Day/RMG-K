@@ -37,13 +37,21 @@ struct KrecData
     int delayFrames = 0;
     // The save the match started from (its 0x16 record), empty when blank.
     std::string saveData;
+    // The game options it was played with (its 0x17 record, RMG-Core's
+    // serialized section), empty when none.
+    std::string gameOptions;
     std::vector<KrecChatLine> chat;
 };
 
 bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::string* errorMessage);
 
-// Replay metadata (JSON: bookmarks, and for ranked replays the module and
-// its write journal) appended to a finished .krec:
+// A .krec's game options section (see KrecData::gameOptions) without reading
+// past the records ahead of its inputs. False when the file isn't a krec;
+// section is empty when the match had no game options.
+bool ReadKrecGameOptions(const std::filesystem::path& path, std::string& section);
+
+// Replay metadata (JSON: bookmarks, and for ranked replays the set and its
+// games) appended to a finished .krec:
 //
 //   0x14 "" int32 localPlayer   drop record of the recording's own player,
 //                               which ends playback in every krec player

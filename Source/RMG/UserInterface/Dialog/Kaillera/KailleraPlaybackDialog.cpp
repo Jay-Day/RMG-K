@@ -19,11 +19,14 @@
 #ifdef NETPLAY
 
 #include <RMG-Core/Archive.hpp>
+#include <RMG-Core/Callback.hpp>
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Emulation.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/Ranked.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/SpeedFactor.hpp>
 
 #include "n02_client.h"
@@ -1054,6 +1057,7 @@ void KailleraPlaybackDialog::populatePlaybackList()
 
         // Column 3: Duration — count 0x12 records
         int frames = 0;
+        QStringList gameOptionLabels;
         {
             char* scan = filebuf + headerSize;
             char* scanEnd = filebuf + len;
@@ -1085,13 +1089,20 @@ void KailleraPlaybackDialog::populatePlaybackList()
                     while (scan < scanEnd && *scan != 0) scan++;
                     if (scan < scanEnd) scan++;
                 }
-                else if (type == n02::KREC_SAVE_DATA_RECORD)
+                else if (type == n02::KREC_SAVE_DATA_RECORD || type == n02::KREC_GAME_OPTIONS_RECORD)
                 {
-                    // The match's starting save, right after the header.
+                    // The match's starting save and game options, right after the header.
                     if (scan + 4 > scanEnd) break;
                     unsigned int slen = *(unsigned int*)scan;
                     scan += 4;
                     if ((size_t)(scanEnd - scan) < slen) break;
+                    CoreNetplayGameOptions gameOptions;
+                    if (type == n02::KREC_GAME_OPTIONS_RECORD &&
+                        CoreDeserializeNetplayGameOptions(std::string(scan, slen), gameOptions))
+                    {
+                        for (const CoreNetplayGameOption& option : gameOptions.Options)
+                            gameOptionLabels << QString::fromStdString(option.Label);
+                    }
                     scan += slen;
                 }
                 else
@@ -1122,7 +1133,15 @@ void KailleraPlaybackDialog::populatePlaybackList()
         m_playbackTable->insertRow(row);
         m_playbackTable->setItem(row, 0, new QTableWidgetItem(dateStr));
         m_playbackTable->setItem(row, 1, new QTableWidgetItem(playersStr));
-        m_playbackTable->setItem(row, 2, new QTableWidgetItem(QString::fromUtf8(gameName)));
+        // A match played with game options names them: "Smash Remix 2.0.1 (Vanilla only)".
+        QString gameStr = QString::fromUtf8(gameName);
+        if (!gameOptionLabels.isEmpty())
+            gameStr = QStringLiteral("%1 (%2)").arg(gameStr, gameOptionLabels.join(QStringLiteral(", ")));
+        auto* gameItem = new QTableWidgetItem(gameStr);
+        // The column is narrow: the options often only fit in the tooltip.
+        if (!gameOptionLabels.isEmpty())
+            gameItem->setToolTip(gameStr);
+        m_playbackTable->setItem(row, 2, gameItem);
         auto* durationItem = new QTableWidgetItem(durationStr);
         durationItem->setData(Qt::UserRole, frames);
         m_playbackTable->setItem(row, 3, durationItem);
@@ -1372,7 +1391,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
     messageBox.setWindowTitle("Export MP4");
     messageBox.setText("MP4 export requires FFmpeg.");
     messageBox.setInformativeText(
-        "RMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
+        "Dale64 can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
 
     QPushButton* downloadButton = messageBox.addButton("Download FFmpeg", QMessageBox::AcceptRole);
     QPushButton* chooseButton = messageBox.addButton("Choose ffmpeg.exe", QMessageBox::ActionRole);
@@ -1712,6 +1731,48 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
     m_exportProgressDialog->show();
 }
 
+void KailleraPlaybackDialog::playRecording(const QString& path, int record)
+{
+    if (isPlaying(path))
+    {
+        seekTo(record); // already watching it: just jump
+        return;
+    }
+    populatePlaybackList();
+    const QString fileName = QFileInfo(path).fileName();
+    for (int row = 0; m_playbackTable != nullptr && row < m_playbackTable->rowCount(); row++)
+    {
+        QTableWidgetItem* item = m_playbackTable->item(row, 5);
+        if (item != nullptr && item->text() == fileName)
+        {
+            m_playbackTable->selectRow(row);
+            m_playbackTable->scrollToItem(item);
+            break;
+        }
+    }
+    if (n02::isPlaybackActive() || m_playbackWasActive || m_restartSeekTarget >= 0)
+    {
+        QMessageBox::information(this, tr("Replays"), tr("Stop the current playback to watch %1.").arg(fileName));
+        return;
+    }
+    m_seekTarget = -1;
+    m_seekPause = false;
+    startPlayback(path);
+    if (m_playbackWasActive && record > 0)
+    {
+        m_seekFrom = 0;
+        m_seekTarget = std::min(record, std::max(0, m_playbackTotal - 1));
+    }
+}
+
+bool KailleraPlaybackDialog::isPlaying(const QString& path) const
+{
+    // a jump back restarting the recording still counts
+    return (n02::isPlaybackActive() || m_playbackWasActive || m_restartSeekTarget >= 0) &&
+        !m_activeRecordingPath.isEmpty() &&
+        QFileInfo(m_activeRecordingPath).canonicalFilePath() == QFileInfo(path).canonicalFilePath();
+}
+
 void KailleraPlaybackDialog::onPlaybackPlay()
 {
     if (!m_playbackTable) return;
@@ -1727,6 +1788,8 @@ void KailleraPlaybackDialog::onPlaybackPlay()
 
 void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
 {
+    stageRankedReplay(krecPath);
+
     QByteArray pathBytes = krecPath.toUtf8();
 
     // Ensure playback mode is active
@@ -1744,6 +1807,7 @@ void KailleraPlaybackDialog::startPlayback(const QString& krecPath)
     }
     else
     {
+        CoreRankedClearStagedSession();
         QMessageBox::warning(this, tr("Replays"), tr("Failed to load recording: %1").arg(QFileInfo(krecPath).fileName()));
     }
 }
@@ -1937,6 +2001,58 @@ bool KailleraPlaybackDialog::loadReplayMetadata(const QString& krecPath, QJsonOb
     return metadata.value("schema").toInt() == 1;
 }
 
+void KailleraPlaybackDialog::stageRankedReplay(const QString& krecPath)
+{
+    CoreRankedClearStagedSession();
+
+    QJsonObject metadata;
+    if (!loadReplayMetadata(krecPath, metadata) || !metadata.value("module").isObject())
+    {
+        return; // not a ranked set
+    }
+
+    // The recording's game options make the game play as it did, so the
+    // replay needs nothing else. The ranked module, when the version that
+    // recorded it is installed, only follows the set (read-only) to show
+    // its progress on screen.
+    const QJsonObject module = metadata.value("module").toObject();
+    CoreRankedSessionSettings settings;
+    settings.ModuleId      = module.value("id").toString().toStdString();
+    settings.ModuleVersion = module.value("version").toString().toStdString();
+    settings.RulesetId     = metadata.value("ruleset").toObject().value("id").toString().toStdString();
+    settings.BestOf        = metadata.value("bestOf").toInt(3);
+    for (const QJsonValue& port : metadata.value("ports").toArray())
+    {
+        settings.Ports.push_back(port.toInt());
+    }
+    for (const QJsonValue& team : metadata.value("teams").toArray())
+    {
+        settings.Teams.push_back(team.toInt());
+    }
+    settings.Replay = true;
+    settings.ExpectedRulesetHash = metadata.value("ruleset").toObject().value("hash").toString().toStdString();
+    for (const QJsonValue& value : metadata.value("games").toArray())
+    {
+        const QJsonObject game = value.toObject();
+        const int index = game.value("game").toInt() - 1;
+        if (index < 0 || index > 99)
+        {
+            continue;
+        }
+        if (static_cast<size_t>(index) >= settings.ExpectedWinners.size())
+        {
+            settings.ExpectedWinners.resize(static_cast<size_t>(index) + 1, 0);
+        }
+        settings.ExpectedWinners[static_cast<size_t>(index)] = game.value("winnerPort").toInt();
+    }
+    // A set the module can't follow just plays without its progress.
+    if (!CoreRankedStageSession(settings))
+    {
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning,
+            ("Ranked replay without set progress: " + CoreGetError()).c_str());
+    }
+}
+
 bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::function<void(QJsonArray&)>& edit)
 {
     const std::filesystem::path path(krecPath.toStdU32String());
@@ -1944,14 +2060,14 @@ bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::f
     std::string json;
     if (KailleraExport::ReadKrecMetadata(path, json))
     {
-        // keep everything else in it (a ranked replay's module and journal)
+        // keep everything else in it (a ranked replay's set and games)
         QJsonParseError parseError;
         const QJsonDocument document = QJsonDocument::fromJson(QByteArray::fromStdString(json), &parseError);
         if (parseError.error != QJsonParseError::NoError || !document.isObject() ||
             document.object().value("schema").toInt() != 1)
         {
             QMessageBox::warning(this, tr("Bookmarks"),
-                tr("This recording's extra data comes from a newer version of RMG-K, so its bookmarks can't be changed here."));
+                tr("This recording's extra data comes from a newer version of Dale64, so its bookmarks can't be changed here."));
             return false;
         }
         metadata = document.object();

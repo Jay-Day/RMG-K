@@ -2,25 +2,23 @@
 
 #include "NetplaySaveDialogs.hpp"
 
+#include "LobbyTheme.hpp"
+#include "LobbyWidgets.hpp"
+
 #include <RMG-Core/Error.hpp>
 
-#include <QApplication>
-#include <QCheckBox>
 #include <QDateTime>
-#include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLocale>
 #include <QMessageBox>
-#include <QPalette>
-#include <QPushButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -32,19 +30,67 @@ namespace
 constexpr int kMaxListedSaves = 200;
 constexpr const char* kKindNames[CoreSaveDataKindCount] = { "EEPROM", "SRAM", "FlashRAM" };
 
-bool isDark()
-{
-    return QApplication::palette().window().color().value() < 128;
-}
-
 QString okHex()
 {
-    return isDark() ? QStringLiteral("#66BB6A") : QStringLiteral("#2E7D32");
+    return LobbyTheme::tokens().ok.name();
 }
 
 QString warnHex()
 {
-    return isDark() ? QStringLiteral("#FFCA28") : QStringLiteral("#B5790A");
+    return LobbyTheme::tokens().warn.name();
+}
+
+QLabel* fieldLabel(const QString& text, QWidget* parent)
+{
+    auto* label = new QLabel(text.toUpper(), parent);
+    QFont font = LobbyTheme::uiFont(10, QFont::DemiBold);
+    font.setLetterSpacing(QFont::AbsoluteSpacing, 0.9);
+    label->setFont(font);
+    label->setProperty("role", "muted");
+    return label;
+}
+
+QFrame* rule(QWidget* parent)
+{
+    auto* line = new QFrame(parent);
+    line->setObjectName("FieldRule");
+    return line;
+}
+
+// The dialog's band: the game's tile, a pixel-font title and the game's name.
+QWidget* makeHeader(CartridgeTile* tile, const QString& title, const QString& gameName, QWidget* parent)
+{
+    auto* header = new LobbyBand(parent);
+    auto* lay = new QHBoxLayout(header);
+    lay->setContentsMargins(18, 12, 18, 12);
+    lay->setSpacing(12);
+    tile->setParent(header);
+    lay->addWidget(tile);
+    auto* words = new QVBoxLayout;
+    words->setSpacing(1);
+    auto* titleLabel = new QLabel(title.toUpper(), header);
+    titleLabel->setFont(LobbyTheme::pixelFont(15, 0.5));
+    words->addWidget(titleLabel);
+    auto* gameLabel = new QLabel(gameName.isEmpty() ? QStringLiteral("—") : gameName, header);
+    gameLabel->setFont(LobbyTheme::uiFont(11));
+    gameLabel->setProperty("role", "muted");
+    words->addWidget(gameLabel);
+    lay->addLayout(words, 1);
+    return header;
+}
+
+QHBoxLayout* makeFooter(LobbyButton* cancel, LobbyButton* confirm)
+{
+    auto* footer = new QHBoxLayout;
+    footer->setContentsMargins(18, 11, 18, 15);
+    footer->setSpacing(10);
+    footer->addStretch(1);
+    cancel->setButtonSize(LobbyButton::Size::Large);
+    confirm->setButtonSize(LobbyButton::Size::Large);
+    confirm->setDefault(true);
+    footer->addWidget(cancel);
+    footer->addWidget(confirm);
+    return footer;
 }
 
 QString sizeText(size_t bytes)
@@ -121,51 +167,72 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
     : QDialog(parent), m_romMd5(romMd5), m_gameName(gameName)
 {
     setWindowTitle(tr("Starting Save Data"));
+    setWindowIcon(QIcon(":Resource/RMG.png"));
     setMinimumWidth(520);
 
-    auto* layout = new QVBoxLayout(this);
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+    m_tile = new CartridgeTile(CartridgeTile::Size::Small, this);
+    m_tile->setGame(gameName);
+    root->addWidget(makeHeader(m_tile, tr("Starting Save Data"), gameName, this));
+    root->addWidget(rule(this));
+
+    auto* layout = new QVBoxLayout;
+    layout->setContentsMargins(18, 14, 18, 14);
+    layout->setSpacing(10);
     auto* intro = new QLabel(tr("Everyone in the match starts from this save. During the match the game saves "
                                 "to memory only, so nobody's own save files are read or changed."), this);
+    intro->setFont(LobbyTheme::uiFont(11));
+    intro->setProperty("role", "muted");
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
+    auto* listHead = new QHBoxLayout;
+    listHead->setSpacing(8);
+    listHead->addWidget(fieldLabel(tr("Saves"), this), 1, Qt::AlignBottom);
+    auto* browseButton = new LobbyButton(tr("Browse for a Save File..."), LobbyButton::Kind::Secondary, this);
+    browseButton->setObjectName("StartingSaveBrowse");
+    browseButton->setButtonSize(LobbyButton::Size::Small);
+    browseButton->setIconName(QStringLiteral("search-line"));
+    listHead->addWidget(browseButton);
+    layout->addLayout(listHead);
+
     m_list = new QListWidget(this);
     m_list->setObjectName("StartingSaveList");
+    m_list->setFont(LobbyTheme::uiFont(12));
     m_list->setMinimumHeight(220);
     m_list->setUniformItemSizes(false);
     m_list->setTextElideMode(Qt::ElideRight);
     m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     layout->addWidget(m_list, 1);
 
-    auto* browseRow = new QHBoxLayout;
-    auto* browseButton = new QPushButton(tr("Browse for a Save File..."), this);
-    browseButton->setObjectName("StartingSaveBrowse");
-    browseRow->addWidget(browseButton);
-    browseRow->addStretch(1);
-    layout->addLayout(browseRow);
-
     m_details = new QLabel(this);
     m_details->setObjectName("StartingSaveDetails");
+    m_details->setFont(LobbyTheme::uiFont(12));
     m_details->setTextFormat(Qt::RichText);
     m_details->setWordWrap(true);
-    m_details->setMinimumHeight(48);
+    m_details->setMinimumHeight(2 * QFontMetrics(m_details->font()).lineSpacing());
     layout->addWidget(m_details);
 
-    m_continueCheck = new QCheckBox(tr("Continue from where each match left off"), this);
+    m_continueCheck = new ToggleSwitch(tr("Continue from where each match left off"), this);
     m_continueCheck->setObjectName("StartingSaveContinue");
+    m_continueCheck->setSubText(tr("Off: every match starts from the save picked here"));
     m_continueCheck->setToolTip(tr("When a match changes the save, the next match starts from the changed save.\n"
                                    "Turn this off to start every match from the save picked here."));
     m_continueCheck->setChecked(!current || current->ContinueAfterMatch);
     layout->addWidget(m_continueCheck);
+    root->addLayout(layout, 1);
+    root->addWidget(rule(this));
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
-    m_useButton = buttons->addButton(tr("Use This Save"), QDialogButtonBox::AcceptRole);
+    auto* cancelButton = new LobbyButton(tr("Cancel"), LobbyButton::Kind::Ghost, this);
+    m_useButton = new LobbyButton(tr("Use This Save"), LobbyButton::Kind::Primary, this);
     m_useButton->setObjectName("StartingSaveUse");
-    m_useButton->setDefault(true);
-    layout->addWidget(buttons);
+    m_useButton->setIconName(QStringLiteral("check-line"));
+    root->addLayout(makeFooter(cancelButton, m_useButton));
 
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(m_useButton, &QPushButton::clicked, this, &QDialog::accept);
+    connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(browseButton, &QPushButton::clicked, this, &StartingSaveDialog::browse);
     connect(m_list, &QListWidget::currentRowChanged, this, &StartingSaveDialog::showDetails);
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this]() {
@@ -283,7 +350,7 @@ void StartingSaveDialog::browse(void)
     if (!CoreReadNetplaySaveFile(file.toStdU32String(), entry.Data, entry.Info))
     {
         QMessageBox::warning(this, tr("Choose Save Data"),
-            tr("RMG-K couldn't read %1 as save data.").arg(QFileInfo(file).fileName()));
+            tr("Dale64 couldn't read %1 as save data.").arg(QFileInfo(file).fileName()));
         return;
     }
 
@@ -351,6 +418,11 @@ void StartingSaveDialog::showDetails(void)
     m_useButton->setEnabled(!entry.OtherRom);
 }
 
+void StartingSaveDialog::setCoverPath(const QString& coverPath)
+{
+    m_tile->setGame(m_gameName, coverPath);
+}
+
 NetplaySaveChoice StartingSaveDialog::choice(void) const
 {
     NetplaySaveChoice choice;
@@ -372,40 +444,67 @@ NetplaySaveChoice StartingSaveDialog::choice(void) const
 
 SaveNetplaySaveDialog::SaveNetplaySaveDialog(const QString& gameName, const QString& currentFile,
                                              bool keepUpdated, QWidget* parent)
-    : QDialog(parent)
+    : QDialog(parent), m_gameName(gameName)
 {
     setWindowTitle(tr("Save Game Save"));
+    setWindowIcon(QIcon(":Resource/RMG.png"));
     setMinimumWidth(480);
 
-    auto* layout = new QVBoxLayout(this);
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+    m_tile = new CartridgeTile(CartridgeTile::Size::Small, this);
+    m_tile->setGame(gameName);
+    root->addWidget(makeHeader(m_tile, tr("Save Game Save"), gameName, this));
+    root->addWidget(rule(this));
+
+    auto* layout = new QVBoxLayout;
+    layout->setContentsMargins(18, 14, 18, 14);
+    layout->setSpacing(13);
     auto* intro = new QLabel(tr("Saves the game's save data as everyone has it now. Only your copy is written."), this);
+    intro->setFont(LobbyTheme::uiFont(11));
+    intro->setProperty("role", "muted");
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
-    auto* nameLabel = new QLabel(tr("Name:"), this);
+    auto* nameBox = new QVBoxLayout;
+    nameBox->setSpacing(6);
+    nameBox->addWidget(fieldLabel(tr("Name"), this));
     m_name = new QLineEdit(this);
     m_name->setObjectName("SaveNetplayName");
-    auto* folderLabel = new QLabel(tr("Folder:"), this);
+    m_name->setMinimumHeight(38);
+    nameBox->addWidget(m_name);
+    layout->addLayout(nameBox);
+
+    auto* folderBox = new QVBoxLayout;
+    folderBox->setSpacing(6);
+    folderBox->addWidget(fieldLabel(tr("Folder"), this));
+    auto* folderRow = new QHBoxLayout;
+    folderRow->setSpacing(8);
     m_folder = new QLineEdit(this);
     m_folder->setObjectName("SaveNetplayFolder");
-    auto* browseButton = new QPushButton(tr("Browse..."), this);
+    m_folder->setMinimumHeight(38);
+    folderRow->addWidget(m_folder, 1);
+    auto* browseButton = new LobbyButton(tr("Browse..."), LobbyButton::Kind::Secondary, this);
+    browseButton->setButtonSize(LobbyButton::Size::Medium);
+    folderRow->addWidget(browseButton);
+    folderBox->addLayout(folderRow);
+    layout->addLayout(folderBox);
 
-    auto* grid = new QGridLayout;
-    grid->addWidget(nameLabel, 0, 0);
-    grid->addWidget(m_name, 0, 1, 1, 2);
-    grid->addWidget(folderLabel, 1, 0);
-    grid->addWidget(m_folder, 1, 1);
-    grid->addWidget(browseButton, 1, 2);
-    layout->addLayout(grid);
-
-    m_keepCheck = new QCheckBox(tr("Keep this file updated while you play"), this);
+    m_keepCheck = new ToggleSwitch(tr("Keep this file updated while you play"), this);
     m_keepCheck->setObjectName("SaveNetplayKeep");
+    m_keepCheck->setSubText(tr("Rewritten each time the game saves"));
     m_keepCheck->setChecked(keepUpdated);
     m_keepCheck->setToolTip(tr("Rewrites the file each time the game saves, once every player's game agrees on it."));
     layout->addWidget(m_keepCheck);
+    root->addLayout(layout);
+    root->addWidget(rule(this));
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
-    layout->addWidget(buttons);
+    auto* cancelButton = new LobbyButton(tr("Cancel"), LobbyButton::Kind::Ghost, this);
+    auto* saveButton = new LobbyButton(tr("Save"), LobbyButton::Kind::Primary, this);
+    saveButton->setObjectName("SaveNetplaySave");
+    saveButton->setIconName(QStringLiteral("check-line"));
+    root->addLayout(makeFooter(cancelButton, saveButton));
 
     if (!currentFile.isEmpty())
     {
@@ -421,13 +520,18 @@ SaveNetplaySaveDialog::SaveNetplaySaveDialog(const QString& gameName, const QStr
     }
     m_name->selectAll();
 
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(saveButton, &QPushButton::clicked, this, &SaveNetplaySaveDialog::accept);
+    connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(browseButton, &QPushButton::clicked, this, [this]() {
         const QString folder = QFileDialog::getExistingDirectory(this, tr("Choose a Folder"), m_folder->text());
         if (!folder.isEmpty())
             m_folder->setText(QDir::toNativeSeparators(folder));
     });
+}
+
+void SaveNetplaySaveDialog::setCoverPath(const QString& coverPath)
+{
+    m_tile->setGame(m_gameName, coverPath);
 }
 
 QString SaveNetplaySaveDialog::filePath(void) const

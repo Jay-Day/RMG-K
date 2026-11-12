@@ -51,6 +51,10 @@ int recordingFrameCount();
 // No-op without an active capture. nick/msg are length-bounded.
 void recordingQueueChat(const char* nick, const char* msg);
 
+// Sets a player's name for the next capture, cut at a character boundary to fit
+// the replay header. index is 0-based.
+void recordingSetPlayerName(int index, const char* utf8Name);
+
 // Queue a port change for the active replay capture: `name` took controller
 // `slot` (1-based), or left it when `joined` is false. Safe from any thread;
 // written before the next input frame, to the stream and the local file, as
@@ -75,6 +79,10 @@ void recordingOpen(const char* appName, const char* gameName, int localPlayer, i
 // Flush and end replay capture, closing the local file if one was opened.
 void recordingClose();
 
+// Path of the most recently saved .krec (still valid after it closes), or
+// empty when the last capture saved no local file.
+std::string recordingLastPath();
+
 // The save data the next lobby capture's match starts from (RMG-Core's
 // serialized form), or empty for a blank save. recordingOpen() writes it
 // right after the header as a 0x16 record, in the local file only: a live
@@ -83,6 +91,15 @@ void recordingClose();
 // from a blank save and drifting.
 constexpr unsigned char KREC_SAVE_DATA_RECORD = 0x16;
 void recordingSetSaveData(const std::string& saveData);
+
+// The game options the next lobby capture's match is played with (RMG-Core's
+// serialized "RMGKGOP1" section), or empty for none. recordingOpen() writes
+// them as a 0x17 record (u32 length + section) after the header and any 0x16
+// record, in the local file only: a live replay viewer gets them from the
+// match's manifest. Readers before game options stop at that record, which
+// beats replaying the match on the unpatched game.
+constexpr unsigned char KREC_GAME_OPTIONS_RECORD = 0x17;
+void recordingSetGameOptions(const std::string& gameOptions);
 
 // Register a sink for replay bytes (header + every flushed record), independent
 // of local file saving. Pass nullptr to clear. Set/clear only while emulation
@@ -221,6 +238,10 @@ int playbackNumPlayers();
 // The save data a loaded .krec's match started from (its 0x16 record), empty
 // when it started blank. Valid from playbackLoad() until playback ends.
 std::string playbackSaveData();
+
+// The game options a loaded .krec's match was played with (its 0x17
+// record), empty when it had none. Valid from playbackLoad() until playback ends.
+std::string playbackGameOptions();
 
 // True while the playback is a live stream rather than a file.
 bool playbackIsStream();

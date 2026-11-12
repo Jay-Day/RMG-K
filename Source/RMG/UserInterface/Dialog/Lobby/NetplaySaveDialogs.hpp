@@ -11,16 +11,17 @@
 #include <optional>
 #include <vector>
 
-class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
-class QPushButton;
 
 namespace UserInterface
 {
 namespace Dialog
 {
+class CartridgeTile;
+class LobbyButton;
+class ToggleSwitch;
 
 // The save a room's next match starts from, as the host picked it.
 struct NetplaySaveChoice
@@ -54,6 +55,7 @@ class StartingSaveDialog : public QDialog
                        const std::optional<NetplaySaveChoice>& current,
                        const std::optional<CoreNetplaySaveData>& lastMatch, QWidget* parent = nullptr);
 
+    void setCoverPath(const QString& coverPath);
     NetplaySaveChoice choice(void) const;
 
   private:
@@ -76,10 +78,11 @@ class StartingSaveDialog : public QDialog
     QString m_romMd5;
     QString m_gameName;
     std::vector<Entry> m_entries;
+    CartridgeTile* m_tile = nullptr;
     QListWidget* m_list = nullptr;
     QLabel* m_details = nullptr;
-    QCheckBox* m_continueCheck = nullptr;
-    QPushButton* m_useButton = nullptr;
+    ToggleSwitch* m_continueCheck = nullptr;
+    LobbyButton* m_useButton = nullptr;
 };
 
 // Save As for the match's save: a name and folder, and whether to keep the
@@ -92,6 +95,7 @@ class SaveNetplaySaveDialog : public QDialog
     SaveNetplaySaveDialog(const QString& gameName, const QString& currentFile, bool keepUpdated,
                           QWidget* parent = nullptr);
 
+    void setCoverPath(const QString& coverPath);
     QString filePath(void) const;
     bool keepUpdated(void) const;
 
@@ -99,9 +103,11 @@ class SaveNetplaySaveDialog : public QDialog
     void accept(void) override;
 
   private:
+    QString m_gameName;
+    CartridgeTile* m_tile = nullptr;
     QLineEdit* m_name = nullptr;
     QLineEdit* m_folder = nullptr;
-    QCheckBox* m_keepCheck = nullptr;
+    ToggleSwitch* m_keepCheck = nullptr;
 };
 
 } // namespace Dialog
