@@ -1391,7 +1391,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
 #ifdef _WIN32
         "FFmpeg (ffmpeg.exe);;Executables (*.exe)");
 #else
-        "All Files (*.*)");
+        "All Files (*)");
 #endif
 
     if (path.isEmpty())
