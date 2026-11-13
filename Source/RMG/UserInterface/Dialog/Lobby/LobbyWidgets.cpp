@@ -210,8 +210,8 @@ void LobbyButton::setDashed(bool dashed)
 QFont LobbyButton::labelFont() const
 {
     if (m_pixelLabel)
-        return LobbyTheme::pixelFont(m_size == Size::Small ? 11 : 13, 0.5);
-    return LobbyTheme::uiFont(m_size == Size::Small ? 11 : 12, QFont::Bold);
+        return LobbyTheme::pixelFont(m_size <= Size::Small ? 11 : 13, 0.5);
+    return LobbyTheme::uiFont(m_size <= Size::Small ? 11 : 12, QFont::Bold);
 }
 
 QString LobbyButton::labelText() const
@@ -223,20 +223,21 @@ int LobbyButton::lipHeight() const
 {
     if (!isEnabled() || m_kind == Kind::Ghost || m_kind == Kind::Danger)
         return 0;
-    return m_size == Size::Small ? 2 : 3;
+    return m_size <= Size::Small ? 2 : 3;
 }
 
 QSize LobbyButton::sizeHint() const
 {
-    const int height = m_size == Size::Small ? 28 : m_size == Size::Medium ? 34 : 44;
-    const int padding = m_size == Size::Small ? 8 : m_size == Size::Medium ? 12 : 16;
-    const int iconSide = m_size == Size::Small ? 14 : 16;
+    const bool small = m_size <= Size::Small;
+    const int height = m_size == Size::Compact ? 24 : small ? 28 : m_size == Size::Medium ? 34 : 44;
+    const int padding = m_size == Size::Compact ? 6 : small ? 8 : m_size == Size::Medium ? 12 : 16;
+    const int iconSide = small ? 14 : 16;
 
     int width = QFontMetrics(labelFont()).horizontalAdvance(labelText());
     if (!m_subText.isEmpty())
         width = std::max(width, QFontMetrics(LobbyTheme::uiFont(10, QFont::DemiBold)).horizontalAdvance(m_subText));
     if (!m_iconName.isEmpty())
-        width += iconSide + (text().isEmpty() ? 0 : (m_size == Size::Small ? 5 : 8));
+        width += iconSide + (text().isEmpty() ? 0 : (small ? 5 : 8));
     return QSize(width + padding * 2 + 2, height);
 }
 
@@ -254,7 +255,7 @@ void LobbyButton::paintEvent(QPaintEvent*)
     const bool hover = enabled && underMouse();
     const bool down = isDown() || isChecked();
     const int lip = lipHeight();
-    const qreal radius = m_size == Size::Small ? 7.0 : m_size == Size::Medium ? 8.0 : 10.0;
+    const qreal radius = m_size == Size::Compact ? 4.0 : m_size == Size::Small ? 7.0 : m_size == Size::Medium ? 8.0 : 10.0;
 
     const QRectF outer = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     QRectF face = outer;
@@ -339,11 +340,12 @@ void LobbyButton::paintEvent(QPaintEvent*)
     }
 
     // Content is centred on the face, so it travels with a press.
-    const int iconSide = m_size == Size::Small ? 14 : 16;
-    const int gap = text().isEmpty() ? 0 : (m_size == Size::Small ? 5 : 8);
+    const bool small = m_size <= Size::Small;
+    const int iconSide = small ? 14 : 16;
+    const int gap = text().isEmpty() ? 0 : (small ? 5 : 8);
     const QFont font = labelFont();
     const QFont subFont = LobbyTheme::uiFont(10, QFont::DemiBold);
-    const int padding = m_size == Size::Small ? 6 : 10;
+    const int padding = small ? 6 : 10;
     const int iconWidth = m_iconName.isEmpty() ? 0 : iconSide + gap;
     int textWidth = QFontMetrics(font).horizontalAdvance(labelText());
     if (!m_subText.isEmpty())
@@ -1140,7 +1142,7 @@ void GameBadge::paintEvent(QPaintEvent*)
 
 // ── FrameStepper ─────────────────────────────────────────────────────
 
-FrameStepper::FrameStepper(int minimum, int maximum, const QString& iconName, QWidget* parent)
+FrameStepper::FrameStepper(int minimum, int maximum, QWidget* parent)
     : QWidget(parent), m_minimum(minimum), m_maximum(maximum), m_value(minimum)
 {
     auto* layout = new QHBoxLayout(this);
@@ -1168,6 +1170,7 @@ FrameStepper::FrameStepper(int minimum, int maximum, const QString& iconName, QW
     m_chip->setFocusPolicy(Qt::NoFocus);
     m_chip->setAutoDefault(false);
     m_chip->setFont(LobbyTheme::uiFont(10, QFont::Bold));
+    m_chip->hide();
 
     layout->addWidget(m_minus);
     layout->addWidget(m_valueLabel);
@@ -1176,16 +1179,12 @@ FrameStepper::FrameStepper(int minimum, int maximum, const QString& iconName, QW
     layout->addWidget(m_chip);
     layout->addStretch(1);
 
-    m_iconName = iconName;
-
     connect(m_minus, &QToolButton::clicked, this, [this]() { step(-1); });
     connect(m_plus, &QToolButton::clicked, this, [this]() { step(1); });
     connect(m_chip, &QPushButton::clicked, this, [this]() {
-        // The chip always offers the automatic value, and Auto can also be
-        // switched off to pin what it resolved to.
-        if (m_automatic && !m_chipAccented)
+        if (m_automatic)
             return;
-        m_automatic = !m_automatic;
+        m_automatic = true;
         refresh();
         emit edited();
     });
@@ -1219,12 +1218,7 @@ void FrameStepper::setChipLabels(const QString& automaticLabel, const QString& m
 {
     m_automaticLabel = automaticLabel;
     m_manualLabel = manualLabel;
-    refresh();
-}
-
-void FrameStepper::setChipAccented(bool accented)
-{
-    m_chipAccented = accented;
+    m_chip->show();
     refresh();
 }
 
@@ -1244,18 +1238,15 @@ void FrameStepper::refresh()
                                   "<span style='font-size:12px; color:%3;'>F</span>")
                               .arg(ink.name()).arg(m_value).arg(unit.name()));
     m_chip->setText((m_automatic ? m_automaticLabel : m_manualLabel).toUpper());
-    const bool lit = m_automatic && m_chipAccented && isEnabled();
-    if (!m_iconName.isEmpty())
-        m_chip->setIcon(QIcon(LobbyTheme::icon(m_iconName, lit ? t.accentInk : t.muted, 11, devicePixelRatioF())));
     m_chip->setStyleSheet(QString(
         "QPushButton#StepperChip { min-height: 20px; max-height: 20px; padding: 0 7px; border-radius: 5px;"
-        " background-color: %1; color: %2; border: 1px solid %3; }")
-        .arg(LobbyTheme::css(lit ? t.accentTint : QColor(Qt::transparent)),
-             LobbyTheme::css(lit ? t.accentInk : (isEnabled() ? t.muted : t.faint)),
-             LobbyTheme::css(lit ? LobbyTheme::mix(t.accent, QColor(Qt::transparent), 0.4) : t.line2)));
+        " background-color: transparent; color: %1; border: 1px solid %2; }")
+        .arg(LobbyTheme::css(isEnabled() ? t.muted : t.faint), LobbyTheme::css(t.line2)));
 }
 
 // ── ToggleSwitch ─────────────────────────────────────────────────────
+
+static constexpr int kToggleTrackHeight = 18;
 
 ToggleSwitch::ToggleSwitch(const QString& title, QWidget* parent)
     : QCheckBox(title, parent)
@@ -1279,7 +1270,8 @@ QSize ToggleSwitch::sizeHint() const
     const QFontMetrics title(LobbyTheme::uiFont(12));
     const QFontMetrics sub(LobbyTheme::uiFont(11));
     const int width = std::max(title.horizontalAdvance(text()), sub.horizontalAdvance(m_subText));
-    return QSize(32 + 9 + width + 1, title.height() + (m_subText.isEmpty() ? 0 : sub.height()));
+    const int textHeight = title.height() + (m_subText.isEmpty() ? 0 : sub.height());
+    return QSize(32 + 9 + width + 1, std::max(kToggleTrackHeight, textHeight));
 }
 
 QSize ToggleSwitch::minimumSizeHint() const
@@ -1300,12 +1292,12 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
 
     const bool on = isChecked();
     const qreal opacity = isEnabled() ? 1.0 : 0.45;
-    const QRectF track(0, (height() - 18) / 2.0, 32, 18);
+    const QRectF track(0, (height() - kToggleTrackHeight) / 2.0, 32, kToggleTrackHeight);
     painter.save();
     painter.setOpacity(opacity);
     painter.setPen(Qt::NoPen);
     painter.setBrush(on ? t.ok : t.line2);
-    painter.drawRoundedRect(track, 9, 9);
+    painter.drawRoundedRect(track, kToggleTrackHeight / 2.0, kToggleTrackHeight / 2.0);
     painter.setBrush(on ? QColor(Qt::white) : t.panel);
     painter.drawEllipse(QPointF(track.left() + (on ? 23 : 9), track.center().y()), 6, 6);
     painter.restore();

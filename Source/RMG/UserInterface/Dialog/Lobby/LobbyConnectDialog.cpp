@@ -207,7 +207,8 @@ void LobbyConnectDialog::setUsername(const QString& username)
 void LobbyConnectDialog::setRenameMode()
 {
     setWindowTitle(tr("Change Username"));
-    m_heading->setText(tr("Pick a new name. You'll reconnect under it."));
+    m_heading->hide();
+    adjustSize();
     m_connectButton->setText(tr("Change"));
 }
 

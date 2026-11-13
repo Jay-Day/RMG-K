@@ -222,9 +222,8 @@ ChallengeDialog::ChallengeDialog(const ChallengeDialogPlayer& self, const Challe
     noteBox->addWidget(m_note);
     body->addLayout(noteBox);
 
-    m_liveReplay = new ToggleSwitch(tr("Live replay for spectators"), this);
+    m_liveReplay = new ToggleSwitch(tr("Allow Spectators"), this);
     m_liveReplay->setObjectName("LiveReplaySwitch");
-    m_liveReplay->setSubText(tr("Shows in Live now for anyone to watch, with spectator chat"));
     m_liveReplay->setChecked(QSettings("RMG-K", "n02").value("RollbackLobby/LiveReplayEnabled", true).toBool());
     body->addWidget(m_liveReplay);
     root->addLayout(body);

@@ -3365,24 +3365,16 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>問題が発生しました（%1）</translation>
         </message>
         <message>
-            <source>Late join</source>
-            <translation>途中参加</translation>
-        </message>
-        <message>
-            <source>Late join is on in this room. Players who join mid-game don't get a replay of it.</source>
-            <translation>このルームは途中参加がオンです。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
-        </message>
-        <message>
-            <source>Late join is on. Players can join while a game is running; they won't get a replay of it.</source>
-            <translation>途中参加をオンにしました。ゲーム中でもプレイヤーが参加できますが、途中参加したプレイヤーにはそのゲームのリプレイは保存されません。</translation>
+            <source>Allow joins after start</source>
+            <translation>開始後の参加を許可</translation>
         </message>
         <message>
             <source>Late join is off.</source>
             <translation>途中参加をオフにしました。</translation>
         </message>
         <message>
-            <source>The host turned on late join. Players who join mid-game don't get a replay of it.</source>
-            <translation>ホストが途中参加をオンにしました。ゲームの途中で参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
+            <source>The host turned on late join.</source>
+            <translation>ホストが途中参加をオンにしました。</translation>
         </message>
         <message>
             <source>The host turned off late join.</source>
@@ -3405,42 +3397,16 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>対戦中は途中参加の設定を変更できません。</translation>
         </message>
         <message>
-            <source>Let players join while a game is running. You add them with Add to Game.
-Everyone here when the game starts can still save a replay; whoever joins mid-game can't.</source>
-            <translation>ゲーム中でもプレイヤーが参加できるようにします。参加したプレイヤーは「ゲームに追加」で追加します。
-ゲーム開始時にいるプレイヤーは引き続きリプレイを保存できますが、途中参加したプレイヤーは保存できません。</translation>
+            <source>Let players join while a game is running. You add them with Add to Game.</source>
+            <translation>ゲーム中でもプレイヤーが参加できるようにします。参加したプレイヤーは「ゲームに追加」で追加します。</translation>
         </message>
         <message>
             <source>Late join is on.</source>
             <translation>途中参加がオンです。</translation>
         </message>
         <message>
-            <source>You joined mid-game, so you won't get a replay of this game.</source>
-            <translation>ゲームの途中で参加したため、このゲームのリプレイは保存されません。</translation>
-        </message>
-        <message>
-            <source>Players who join mid-game won't get a replay of it.</source>
-            <translation>途中参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
-        </message>
-        <message>
-            <source>Turn on late join?</source>
-            <translation>途中参加をオンにしますか？</translation>
-        </message>
-        <message>
-            <source>Players who join while a game is running won't get a replay of it.</source>
-            <translation>ゲーム中に参加したプレイヤーには、そのゲームのリプレイは保存されません。</translation>
-        </message>
-        <message>
-            <source>Players can then join mid-game, and you add them with Add to Game. Everyone in the room when a game starts can still save a replay (.krec) of it, and Live Replay isn't affected. A replay can't start part way through a game, so whoever joins later doesn't get one.</source>
-            <translation>ゲームの途中でもプレイヤーが参加でき、あなたが「ゲームに追加」で加えます。ゲーム開始時にルームにいるプレイヤーは引き続きリプレイ（.krec）を保存でき、ライブリプレイにも影響はありません。リプレイはゲームの途中からは始められないため、あとから参加したプレイヤーには保存されません。</translation>
-        </message>
-        <message>
-            <source>Turn On Late Join</source>
-            <translation>途中参加をオンにする</translation>
-        </message>
-        <message>
-            <source>Need at least 2 players to start, or turn on Late join to start alone.</source>
-            <translation>開始するには2人以上のプレイヤーが必要です。1人で開始するには途中参加をオンにしてください。</translation>
+            <source>Need at least 2 players to start. To start alone, turn on Allow joins after start.</source>
+            <translation>開始するには2人以上のプレイヤーが必要です。1人で開始するには「開始後の参加を許可」をオンにしてください。</translation>
         </message>
         <message>
             <source>Late join is on in this room. Only the host saves a local replay, so Save replay is off for you.</source>
@@ -3467,8 +3433,8 @@ Everyone here when the game starts can still save a replay; whoever joins mid-ga
             <translation>オフ（途中参加できません）</translation>
         </message>
         <message>
-            <source>Save data</source>
-            <translation>セーブデータ</translation>
+            <source>Sync save data</source>
+            <translation>セーブデータを同期</translation>
         </message>
         <message>
             <source>Change...</source>
@@ -3645,16 +3611,16 @@ The game saves to memory only during the match: nobody's own save files are touc
             <translation>%1に保存しました。</translation>
         </message>
         <message>
-            <source>This room uses save data, which %1 can't play with yet. They need a newer Dale64, or turn Save data off.</source>
-            <translation>このルームはセーブデータを使いますが、%1はまだ対応していません。新しいDale64に更新してもらうか、セーブデータをオフにしてください。</translation>
+            <source>This room uses save data, which %1 can't play with yet. They need a newer Dale64, or turn off Sync save data.</source>
+            <translation>このルームはセーブデータを使いますが、%1はまだ対応していません。新しいDale64に更新してもらうか、「セーブデータを同期」をオフにしてください。</translation>
         </message>
         <message>
             <source>%1 can't play with save data</source>
             <translation>%1はセーブデータに対応していません</translation>
         </message>
         <message>
-            <source>They need a newer Dale64, or turn Save data off.</source>
-            <translation>新しいDale64に更新してもらうか、セーブデータをオフにしてください。</translation>
+            <source>They need a newer Dale64, or turn off Sync save data.</source>
+            <translation>新しいDale64に更新してもらうか、「セーブデータを同期」をオフにしてください。</translation>
         </message>
         <message>
             <source>Matches start from your save</source>
@@ -3782,10 +3748,6 @@ Turn this off to start every match from the save picked here.</source>
             <translation>セーブ</translation>
         </message>
         <message>
-            <source>Off: every match starts from the save picked here</source>
-            <translation>オフ（毎回ここで選んだセーブから開始）</translation>
-        </message>
-        <message>
             <source>Cancel</source>
             <translation>キャンセル</translation>
         </message>
@@ -3867,8 +3829,12 @@ Turn this off to start every match from the save picked here.</source>
             <translation>ゲームを検索</translation>
         </message>
         <message>
-            <source>All your games</source>
-            <translation>すべてのゲーム</translation>
+            <source>No matching games</source>
+            <translation>一致するゲームがありません</translation>
+        </message>
+        <message>
+            <source>Game</source>
+            <translation>ゲーム</translation>
         </message>
         <message>
             <source>Quick Match</source>
@@ -3885,10 +3851,6 @@ Turn this off to start every match from the save picked here.</source>
         <message>
             <source>Create Room</source>
             <translation>ルームを作成</translation>
-        </message>
-        <message>
-            <source>Applies now</source>
-            <translation>すぐ反映</translation>
         </message>
         <message>
             <source>Your input delay</source>
@@ -3919,8 +3881,8 @@ Turn this off to start every match from the save picked here.</source>
             <translation>このPCに .krec を保存します</translation>
         </message>
         <message>
-            <source>Live replay for spectators</source>
-            <translation>観戦者向けライブリプレイ</translation>
+            <source>Allow Spectators</source>
+            <translation>観戦を許可</translation>
         </message>
         <message>
             <source>Anyone who joins can be added</source>
@@ -3963,20 +3925,12 @@ Turn this off to start every match from the save picked here.</source>
             <translation> · %2席中%1席</translation>
         </message>
         <message>
-            <source> · you keep your seat while you browse · leave the room to watch a match</source>
-            <translation> · 閲覧中も席は確保されます · 観戦するにはルームを退出してください</translation>
-        </message>
-        <message>
             <source>Return to room</source>
             <translation>ルームに戻る</translation>
         </message>
         <message>
             <source>Searching…</source>
             <translation>検索中…</translation>
-        </message>
-        <message>
-            <source> · keep browsing, you'll be moved in automatically</source>
-            <translation> · 閲覧を続けられます。見つかると自動で移動します</translation>
         </message>
         <message>
             <source>elapsed</source>
@@ -3989,10 +3943,6 @@ Turn this off to start every match from the save picked here.</source>
         <message>
             <source>Cancel</source>
             <translation>キャンセル</translation>
-        </message>
-        <message>
-            <source> · the match plays in the game window · pick another card to switch</source>
-            <translation> · 対戦はゲーム画面で再生されます · 他のカードを選ぶと切り替えます</translation>
         </message>
         <message>
             <source>live</source>
@@ -4133,18 +4083,6 @@ A local replay is saved only if Save replay is on.</source>
             <translation>全プレイヤー間のPingが測定されると開始できます。</translation>
         </message>
         <message>
-            <source>You can start now and warm up</source>
-            <translation>今すぐ開始してウォームアップできます</translation>
-        </message>
-        <message>
-            <source>Anyone who joins the room can be added to the running game.</source>
-            <translation>ルームに参加した人を進行中のゲームに追加できます。</translation>
-        </message>
-        <message>
-            <source>Everyone's connected</source>
-            <translation>全員接続しました</translation>
-        </message>
-        <message>
             <source>Start when you're ready.</source>
             <translation>準備ができたら開始してください。</translation>
         </message>
@@ -4221,7 +4159,7 @@ A local replay is saved only if Save replay is on.</source>
             <translation>追加</translation>
         </message>
         <message>
-            <source>Add a player on this PC</source>
+            <source>Add local player</source>
             <translation>このPCにプレイヤーを追加</translation>
         </message>
         <message>
@@ -4401,12 +4339,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>理由を付けて…</translation>
         </message>
         <message>
-            <source>Do not disturb</source>
-            <translation>応答不可</translation>
-        </message>
-        <message>
-            <source>No challenges or sounds</source>
-            <translation>対戦の申し込みと通知音をオフ</translation>
+            <source>Notifications</source>
+            <translation>通知</translation>
         </message>
         <message>
             <source>Ignored players…</source>
@@ -4629,10 +4563,6 @@ A local replay is saved only if Save replay is on.</source>
             <translation>%1の応答を待っています</translation>
         </message>
         <message>
-            <source> · %1 · keep browsing, you'll be moved in if they accept</source>
-            <translation> · %1 · 相手が受けると自動で移動します</translation>
-        </message>
-        <message>
             <source>seconds</source>
             <translation>秒</translation>
         </message>
@@ -4776,16 +4706,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>パスワード</translation>
         </message>
         <message>
-            <source>Live replay for spectators</source>
-            <translation>観戦者向けライブリプレイ</translation>
-        </message>
-        <message>
-            <source>Shows in Live now for anyone to watch, with spectator chat</source>
-            <translation>進行中の対戦に表示され、誰でも観戦チャット付きで観戦できます</translation>
-        </message>
-        <message>
-            <source>You can start alone and add people as they join.</source>
-            <translation>1人で開始して、参加した人を後から追加できます。</translation>
+            <source>Allow Spectators</source>
+            <translation>観戦を許可</translation>
         </message>
         <message>
             <source>Cancel</source>
@@ -5038,16 +4960,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>このゲームの対戦はありません</translation>
         </message>
         <message>
-            <source>Nothing live right now</source>
+            <source>No Running Games</source>
             <translation>進行中の対戦はありません</translation>
-        </message>
-        <message>
-            <source>New matches appear here as they start. Rooms with Live replay on can be watched by anyone.</source>
-            <translation>新しい対戦は開始されるとここに表示されます。ライブリプレイがオンのルームは誰でも観戦できます。</translation>
-        </message>
-        <message>
-            <source>That's everything live right now</source>
-            <translation>進行中の対戦は以上です</translation>
         </message>
     </context>
     <context>
@@ -5160,12 +5074,12 @@ A local replay is saved only if Save replay is on.</source>
             <translation>検索や絞り込みを解除すると全ルームが表示されます。</translation>
         </message>
         <message>
-            <source>That's all for now</source>
-            <translation>現在は以上です</translation>
+            <source>No open lobbies</source>
+            <translation>募集中のルームはありません</translation>
         </message>
         <message>
-            <source>Create a room, or Quick Match finds you a player.</source>
-            <translation>ルームを作成するか、クイックマッチで相手を探しましょう。</translation>
+            <source>Create a room, or press Quick Match</source>
+            <translation>ルームを作成するか、クイックマッチを押してください</translation>
         </message>
     </context>
     <context>
@@ -5291,12 +5205,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>メッセージ（任意）</translation>
         </message>
         <message>
-            <source>Live replay for spectators</source>
-            <translation>観戦者向けライブリプレイ</translation>
-        </message>
-        <message>
-            <source>Shows in Live now for anyone to watch, with spectator chat</source>
-            <translation>進行中の対戦に表示され、誰でも観戦できます（観戦者チャット付き）</translation>
+            <source>Allow Spectators</source>
+            <translation>観戦を許可</translation>
         </message>
         <message>
             <source>They have 30 seconds to answer.</source>
@@ -5818,10 +5728,6 @@ A local replay is saved only if Save replay is on.</source>
             <translation>ラグ統計</translation>
         </message>
         <message>
-            <source>Each player's Dale64 measures its own frames and shares them once a second.</source>
-            <translation>各プレイヤーのDale64が自分のフレームを計測し、1秒ごとに共有します。</translation>
-        </message>
-        <message>
             <source>Last %1 s</source>
             <translation>直近%1秒</translation>
         </message>
@@ -6057,10 +5963,6 @@ A local replay is saved only if Save replay is on.</source>
         <source>Change Username</source>
         <translation>ユーザー名を変更</translation>
     </message>
-    <message>
-        <source>Pick a new name. You&apos;ll reconnect under it.</source>
-        <translation>新しい名前を入力してください。その名前で再接続します。</translation>
-    </message>
 </context>
 <context>
     <name>UserInterface::Dialog::RollbackLobbyDialog</name>
@@ -6093,16 +5995,8 @@ A local replay is saved only if Save replay is on.</source>
         <translation>対戦の申し込みを受け付けていません</translation>
     </message>
     <message>
-        <source>Off: nobody can send you one</source>
-        <translation>オフ: 誰もあなたに申し込めません</translation>
-    </message>
-    <message>
         <source>Off: ones sent to you go unanswered</source>
         <translation>オフ: 届いた申し込みには応答しません</translation>
-    </message>
-    <message>
-        <source>Players already here stay if you change these.</source>
-        <translation>変更しても、すでにいるプレイヤーはそのまま残ります。</translation>
     </message>
     <message>
         <source>Players on Wi-Fi</source>
@@ -6133,7 +6027,7 @@ A local replay is saved only if Save replay is on.</source>
         <translation>各リストの並べ替え</translation>
     </message>
     <message>
-        <source>Take challenges</source>
+        <source>Allow challenges</source>
         <translation>対戦の申し込みを受け付ける</translation>
     </message>
     <message>
@@ -6341,16 +6235,16 @@ A local replay is saved only if Save replay is on.</source>
         <translation>ライト</translation>
     </message>
     <message>
-        <source>Live and open rooms</source>
-        <translation>進行中の対戦とルーム一覧</translation>
+        <source>Layout</source>
+        <translation>レイアウト</translation>
     </message>
     <message>
         <source>Side by side</source>
         <translation>横に並べる</translation>
     </message>
     <message>
-        <source>Live above the rooms</source>
-        <translation>進行中の対戦を上に</translation>
+        <source>Vertical</source>
+        <translation>縦に並べる</translation>
     </message>
 </context>
         <context>

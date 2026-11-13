@@ -485,6 +485,7 @@ QString styleSheet()
         QTextEdit { background: transparent; border: none; color: @ink2;
             selection-background-color: @accent; selection-color: #ffffff; }
 
+        QFrame#SelfPlayerRow { background: @tint; border: 1px solid @line; border-radius: 7px; }
         QTreeWidget#PlayersTree { background: transparent; border: none; outline: 0; }
         QTreeWidget#PlayersTree::item, QTreeWidget#PlayersTree::branch,
         QTreeWidget#PlayersTree::item:selected, QTreeWidget#PlayersTree::item:hover {
@@ -539,14 +540,15 @@ QString styleSheet()
 
         QFrame#RomPicker { background-color: @well; border: 1px solid @line2; border-radius: 9px; }
         QFrame#RomPicker:focus { border-color: @accent; }
-        QComboBox#BrowseRomCombo { background: transparent; border: none; padding: 0; color: @ink; }
-        QComboBox#BrowseRomCombo QLineEdit {
-            background: transparent; border: none; padding: 0; color: @ink;
-            selection-background-color: @accent; selection-color: #ffffff;
+        QComboBox#BrowseRomCombo { border-radius: 9px; padding: 0; }
+        QComboBox#BrowseRomCombo:hover:enabled { background-color: @panel; border-color: @accent; }
+        QComboBox#BrowseRomCombo::drop-down { width: 28px; }
+        QFrame#BrowseGamePopup QListView {
+            background: transparent; border: none; outline: 0;
         }
-        QComboBox#BrowseRomCombo:disabled, QComboBox#BrowseRomCombo QLineEdit:disabled { color: @faint; }
-        QComboBox#BrowseRomCombo::drop-down { width: 0; border: none; }
-        QComboBox#BrowseRomCombo::down-arrow { image: none; width: 0; height: 0; }
+        QFrame#BrowseGamePopup QListView::item { padding: 6px 9px; border-radius: 6px; color: @ink2; }
+        QFrame#BrowseGamePopup QListView::item:hover { background-color: @raise; color: @ink; }
+        QFrame#BrowseGamePopup QListView::item:selected { background-color: @accentTint; color: @ink; }
 
         QComboBox QAbstractItemView, QListView#qt_completer_popup, QCompleter QAbstractItemView {
             background-color: @panel2; color: @ink; border: 1px solid @line2; outline: 0;
