@@ -1218,6 +1218,14 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
     ticketLay->addWidget(first.box);
     ticketLay->addWidget(second.box);
 
+    m_ticketLeave = new LobbyButton(tr("Leave Room"), LobbyButton::Kind::Danger, ticket);
+    m_ticketLeave->setObjectName("PlayBarLeaveRoom");
+    m_ticketLeave->setButtonSize(LobbyButton::Size::Large);
+    m_ticketLeave->setIconName(QStringLiteral("logout-box-r-line"));
+    m_ticketLeave->hide();
+    connect(m_ticketLeave, &QPushButton::clicked, this, &RollbackLobbyDialog::onLeaveRoomClicked);
+    ticketLay->addWidget(m_ticketLeave);
+
     m_ticketAction = new LobbyButton(QString(), LobbyButton::Kind::Secondary, ticket);
     m_ticketAction->setObjectName("PlayBarAction");
     m_ticketAction->setButtonSize(LobbyButton::Size::Large);
@@ -1339,10 +1347,18 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
 
     auto* delayCol = new QVBoxLayout;
     delayCol->setSpacing(6);
-    delayCol->addWidget(makeFieldLabel(tr("Your input delay"), net));
-    m_delayStepper = new FrameStepper(0, 9, QStringLiteral("magic-line"), net);
+    auto* delayHeader = new QHBoxLayout;
+    delayHeader->setSpacing(10);
+    delayHeader->addWidget(makeFieldLabel(tr("Your input delay"), net));
+    m_delayAutoCheck = new ToggleSwitch(tr("Auto"), net);
+    m_delayAutoCheck->setObjectName("DelayAutoSwitch");
+    m_delayAutoCheck->setFixedWidth(m_delayAutoCheck->sizeHint().width());
+    m_delayAutoCheck->setChecked(m_delayAuto);
+    delayHeader->addWidget(m_delayAutoCheck);
+    delayHeader->addStretch(1);
+    delayCol->addLayout(delayHeader);
+    m_delayStepper = new FrameStepper(0, 9, net);
     m_delayStepper->setObjectName("DelayStepper");
-    m_delayStepper->setChipLabels(tr("Auto"), tr("Auto"));
     delayCol->addWidget(m_delayStepper);
     delayCol->addStretch(1);
     netLay->addLayout(delayCol, 4);
@@ -1447,10 +1463,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     panelLay->setContentsMargins(14, 12, 14, 14);
     panelLay->setSpacing(6);
     panelLay->addWidget(makeFieldLabel(tr("Rollback prediction"), m_roomSettingsPanel));
-    m_predictionStepper = new FrameStepper(1, 9, QString(), m_roomSettingsPanel);
+    m_predictionStepper = new FrameStepper(1, 9, m_roomSettingsPanel);
     m_predictionStepper->setObjectName("PredictionStepper");
     m_predictionStepper->setChipLabels(tr("Default"), tr("Custom"));
-    m_predictionStepper->setChipAccented(false);
     m_predictionStepper->setValue(kDefaultPredictionWindow);
     panelLay->addWidget(m_predictionStepper);
     auto* predictionFoot = new QHBoxLayout;
@@ -1609,9 +1624,13 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     updateRecordingControls();
 
     // Delay is local to each player and is published for the seat display.
-    connect(m_delayStepper, &FrameStepper::edited, this, [this]() {
+    const auto delayEdited = [this]() {
         if (m_currentRoomId == 0) return;
         m_delayAuto = m_delayStepper->isAutomatic();
+        {
+            const QSignalBlocker blocker(m_delayAutoCheck);
+            m_delayAutoCheck->setChecked(m_delayAuto);
+        }
         if (CoreSettingsGetBoolValue(SettingsID::Rollback_RememberInputDelay))
         {
             QSettings settings("RMG-K", "n02");
@@ -1619,6 +1638,11 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         }
         applyLocalFrameDelay(true);
         refreshSettingHints();
+    };
+    connect(m_delayStepper, &FrameStepper::edited, this, delayEdited);
+    connect(m_delayAutoCheck, &QCheckBox::toggled, this, [this, delayEdited](bool automatic) {
+        m_delayStepper->setAutomatic(automatic);
+        delayEdited();
     });
 
     // Prediction is authoritative room state. The server repeats the host check
@@ -2991,6 +3015,7 @@ void RollbackLobbyDialog::refreshPlayBar()
         m_playBar->setBorderColor(LobbyTheme::mix(color, t.line, 0.45));
     };
 
+    m_ticketLeave->setVisible(m_currentRoomId != 0);
     if (m_currentRoomId != 0)
     {
         QString name = tr("Your room");
@@ -4007,6 +4032,8 @@ void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatL
     if (m_delayStepper && m_predictionStepper)
     {
         m_delayStepper->setAutomatic(m_delayAuto);
+        const QSignalBlocker blocker(m_delayAutoCheck);
+        m_delayAutoCheck->setChecked(m_delayAuto);
         m_delayStepper->setValue(m_currentRoomDelay);
         m_predictionStepper->setAutomatic(true);
         m_predictionStepper->setValue(kDefaultPredictionWindow);
@@ -6012,6 +6039,7 @@ void RollbackLobbyDialog::updateRollbackSettingControls()
     const bool delayEditable = waiting || liveMatch;
     const bool predictionOpen = waiting || (liveMatch && m_serverAcceptsInGameSettings);
     m_delayStepper->setEnabled(delayEditable);
+    m_delayAutoCheck->setEnabled(delayEditable);
     m_predictionStepper->setEnabled(predictionOpen && iAmHost);
 
     m_delayStepper->setProperty("baseTip", delayEditable
@@ -6065,7 +6093,9 @@ void RollbackLobbyDialog::refreshSettingHints()
             : tr("Auto reads your ping once someone joins. Only affects you.");
     }
     // Where the delay came from goes under the explanation, in its tooltip.
-    m_delayStepper->setToolTip(m_delayStepper->property("baseTip").toString() + QStringLiteral("\n\n") + delayHint);
+    const QString delayTip = m_delayStepper->property("baseTip").toString() + QStringLiteral("\n\n") + delayHint;
+    m_delayStepper->setToolTip(delayTip);
+    m_delayAutoCheck->setToolTip(delayTip);
 
     const bool iAmHost = m_currentRoomId != 0 && m_currentRoomHostId == selfId;
     m_predictionLock->setVisible(!iAmHost);

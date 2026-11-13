@@ -452,23 +452,21 @@ private:
     QString m_coverPath;
 };
 
-// A stepper for a frame count, with a chip that hands the value back to Auto
-// or Default. edited() fires only on the user's own changes.
+// A stepper for a frame count, with an optional reset chip.
+// edited() fires only on the user's own changes.
 class FrameStepper : public QWidget
 {
     Q_OBJECT
 
 public:
-    FrameStepper(int minimum, int maximum, const QString& iconName, QWidget* parent = nullptr);
+    FrameStepper(int minimum, int maximum, QWidget* parent = nullptr);
 
     void setValue(int value);
     int value() const { return m_value; }
     void setAutomatic(bool automatic);
     bool isAutomatic() const { return m_automatic; }
-    // Text for the chip when the value is automatic, and when it's manual.
+    // Show the reset chip with labels for the default and custom states.
     void setChipLabels(const QString& automaticLabel, const QString& manualLabel);
-    // Whether the chip lights up while automatic. Default doesn't need to shout.
-    void setChipAccented(bool accented);
 
 signals:
     void edited();
@@ -483,9 +481,7 @@ private:
     int m_minimum;
     int m_maximum;
     int m_value;
-    QString m_iconName;
     bool m_automatic = true;
-    bool m_chipAccented = true;
     QString m_automaticLabel;
     QString m_manualLabel;
     IconButton* m_minus;

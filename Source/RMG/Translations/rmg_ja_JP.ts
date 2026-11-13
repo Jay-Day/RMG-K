@@ -4339,12 +4339,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>理由を付けて…</translation>
         </message>
         <message>
-            <source>Do not disturb</source>
-            <translation>応答不可</translation>
-        </message>
-        <message>
-            <source>No challenges or sounds</source>
-            <translation>対戦の申し込みと通知音をオフ</translation>
+            <source>Notifications</source>
+            <translation>通知</translation>
         </message>
         <message>
             <source>Ignored players…</source>
@@ -6031,7 +6027,7 @@ A local replay is saved only if Save replay is on.</source>
         <translation>各リストの並べ替え</translation>
     </message>
     <message>
-        <source>Take challenges</source>
+        <source>Allow challenges</source>
         <translation>対戦の申し込みを受け付ける</translation>
     </message>
     <message>

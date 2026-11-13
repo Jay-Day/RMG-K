@@ -1142,7 +1142,7 @@ void GameBadge::paintEvent(QPaintEvent*)
 
 // ── FrameStepper ─────────────────────────────────────────────────────
 
-FrameStepper::FrameStepper(int minimum, int maximum, const QString& iconName, QWidget* parent)
+FrameStepper::FrameStepper(int minimum, int maximum, QWidget* parent)
     : QWidget(parent), m_minimum(minimum), m_maximum(maximum), m_value(minimum)
 {
     auto* layout = new QHBoxLayout(this);
@@ -1170,6 +1170,7 @@ FrameStepper::FrameStepper(int minimum, int maximum, const QString& iconName, QW
     m_chip->setFocusPolicy(Qt::NoFocus);
     m_chip->setAutoDefault(false);
     m_chip->setFont(LobbyTheme::uiFont(10, QFont::Bold));
+    m_chip->hide();
 
     layout->addWidget(m_minus);
     layout->addWidget(m_valueLabel);
@@ -1178,16 +1179,12 @@ FrameStepper::FrameStepper(int minimum, int maximum, const QString& iconName, QW
     layout->addWidget(m_chip);
     layout->addStretch(1);
 
-    m_iconName = iconName;
-
     connect(m_minus, &QToolButton::clicked, this, [this]() { step(-1); });
     connect(m_plus, &QToolButton::clicked, this, [this]() { step(1); });
     connect(m_chip, &QPushButton::clicked, this, [this]() {
-        // The chip always offers the automatic value, and Auto can also be
-        // switched off to pin what it resolved to.
-        if (m_automatic && !m_chipAccented)
+        if (m_automatic)
             return;
-        m_automatic = !m_automatic;
+        m_automatic = true;
         refresh();
         emit edited();
     });
@@ -1221,12 +1218,7 @@ void FrameStepper::setChipLabels(const QString& automaticLabel, const QString& m
 {
     m_automaticLabel = automaticLabel;
     m_manualLabel = manualLabel;
-    refresh();
-}
-
-void FrameStepper::setChipAccented(bool accented)
-{
-    m_chipAccented = accented;
+    m_chip->show();
     refresh();
 }
 
@@ -1246,15 +1238,10 @@ void FrameStepper::refresh()
                                   "<span style='font-size:12px; color:%3;'>F</span>")
                               .arg(ink.name()).arg(m_value).arg(unit.name()));
     m_chip->setText((m_automatic ? m_automaticLabel : m_manualLabel).toUpper());
-    const bool lit = m_automatic && m_chipAccented && isEnabled();
-    if (!m_iconName.isEmpty())
-        m_chip->setIcon(QIcon(LobbyTheme::icon(m_iconName, lit ? t.accentInk : t.muted, 11, devicePixelRatioF())));
     m_chip->setStyleSheet(QString(
         "QPushButton#StepperChip { min-height: 20px; max-height: 20px; padding: 0 7px; border-radius: 5px;"
-        " background-color: %1; color: %2; border: 1px solid %3; }")
-        .arg(LobbyTheme::css(lit ? t.accentTint : QColor(Qt::transparent)),
-             LobbyTheme::css(lit ? t.accentInk : (isEnabled() ? t.muted : t.faint)),
-             LobbyTheme::css(lit ? LobbyTheme::mix(t.accent, QColor(Qt::transparent), 0.4) : t.line2)));
+        " background-color: transparent; color: %1; border: 1px solid %2; }")
+        .arg(LobbyTheme::css(isEnabled() ? t.muted : t.faint), LobbyTheme::css(t.line2)));
 }
 
 // ── ToggleSwitch ─────────────────────────────────────────────────────

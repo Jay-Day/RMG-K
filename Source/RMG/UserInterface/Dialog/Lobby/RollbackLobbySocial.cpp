@@ -440,12 +440,11 @@ void RollbackLobbyDialog::showUserMenu()
 
     if (m_client->socialSupported())
     {
-        // Public: others see it and can't send one. Do not disturb below is
-        // private: challenges just go unanswered.
+        // The lobby advertises whether you take challenges. Notification preferences are local.
         auto* challengesRow = new QWidget(&menu);
         auto* challengesLay = new QHBoxLayout(challengesRow);
         challengesLay->setContentsMargins(11, 4, 11, 4);
-        auto* challenges = new ToggleSwitch(tr("Take challenges"), challengesRow);
+        auto* challenges = new ToggleSwitch(tr("Allow challenges"), challengesRow);
         challenges->setObjectName("TakeChallenges");
         challenges->setChecked(!m_client->challengesOff());
         connect(challenges, &QCheckBox::toggled, this, [this](bool on) {
@@ -466,13 +465,12 @@ void RollbackLobbyDialog::showUserMenu()
         auto* row = new QWidget(&menu);
         auto* rowLay = new QHBoxLayout(row);
         rowLay->setContentsMargins(11, 4, 11, 4);
-        auto* toggle = new ToggleSwitch(tr("Do not disturb"), row);
-        toggle->setObjectName("DoNotDisturb");
-        toggle->setSubText(tr("No challenges or sounds"));
-        toggle->setChecked(m_doNotDisturb);
+        auto* toggle = new ToggleSwitch(tr("Notifications"), row);
+        toggle->setObjectName("LobbyNotifications");
+        toggle->setChecked(!m_doNotDisturb);
         connect(toggle, &QCheckBox::toggled, this, [this](bool on) {
-            m_doNotDisturb = on;
-            QSettings("RMG-K", "n02").setValue(kDoNotDisturbSetting, on);
+            m_doNotDisturb = !on;
+            QSettings("RMG-K", "n02").setValue(kDoNotDisturbSetting, m_doNotDisturb);
         });
         rowLay->addWidget(toggle);
         menu.addLiveWidget(row);

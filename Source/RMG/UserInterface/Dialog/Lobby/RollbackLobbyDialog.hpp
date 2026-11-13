@@ -705,6 +705,7 @@ private:
     QLabel*         m_ticketValues[2] = {};
     QLabel*         m_ticketCaptions[2] = {};
     LobbyButton*    m_ticketAction = nullptr;
+    LobbyButton*    m_ticketLeave  = nullptr;
 
     // The room window's title bar
     GameBadge*   m_roomBadge     = nullptr;   // the room's game
@@ -718,6 +719,7 @@ private:
     // Delay is locally editable for every player; prediction is room-wide and
     // host-editable. Both stay editable during this client's own match.
     FrameStepper* m_delayStepper      = nullptr;
+    ToggleSwitch* m_delayAutoCheck    = nullptr;
     FrameStepper* m_predictionStepper = nullptr;
     QLabel*       m_predictionHint    = nullptr;
     IconLabel*    m_predictionLock    = nullptr;
