@@ -24,6 +24,7 @@
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Emulation.hpp>
 #include <RMG-Core/Error.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/SpeedFactor.hpp>
 
 #include "n02_client.h"
@@ -1054,6 +1055,7 @@ void KailleraPlaybackDialog::populatePlaybackList()
 
         // Column 3: Duration — count 0x12 records
         int frames = 0;
+        QStringList gameOptionLabels;
         {
             char* scan = filebuf + headerSize;
             char* scanEnd = filebuf + len;
@@ -1085,13 +1087,20 @@ void KailleraPlaybackDialog::populatePlaybackList()
                     while (scan < scanEnd && *scan != 0) scan++;
                     if (scan < scanEnd) scan++;
                 }
-                else if (type == n02::KREC_SAVE_DATA_RECORD)
+                else if (type == n02::KREC_SAVE_DATA_RECORD || type == n02::KREC_GAME_OPTIONS_RECORD)
                 {
-                    // The match's starting save, right after the header.
+                    // The match's starting save and game options, right after the header.
                     if (scan + 4 > scanEnd) break;
                     unsigned int slen = *(unsigned int*)scan;
                     scan += 4;
                     if ((size_t)(scanEnd - scan) < slen) break;
+                    CoreNetplayGameOptions gameOptions;
+                    if (type == n02::KREC_GAME_OPTIONS_RECORD &&
+                        CoreDeserializeNetplayGameOptions(std::string(scan, slen), gameOptions))
+                    {
+                        for (const CoreNetplayGameOption& option : gameOptions.Options)
+                            gameOptionLabels << QString::fromStdString(option.Label);
+                    }
                     scan += slen;
                 }
                 else
@@ -1122,7 +1131,15 @@ void KailleraPlaybackDialog::populatePlaybackList()
         m_playbackTable->insertRow(row);
         m_playbackTable->setItem(row, 0, new QTableWidgetItem(dateStr));
         m_playbackTable->setItem(row, 1, new QTableWidgetItem(playersStr));
-        m_playbackTable->setItem(row, 2, new QTableWidgetItem(QString::fromUtf8(gameName)));
+        // A match played with game options names them: "Smash Remix 2.0.1 (Vanilla only)".
+        QString gameStr = QString::fromUtf8(gameName);
+        if (!gameOptionLabels.isEmpty())
+            gameStr = QStringLiteral("%1 (%2)").arg(gameStr, gameOptionLabels.join(QStringLiteral(", ")));
+        auto* gameItem = new QTableWidgetItem(gameStr);
+        // The column is narrow: the options often only fit in the tooltip.
+        if (!gameOptionLabels.isEmpty())
+            gameItem->setToolTip(gameStr);
+        m_playbackTable->setItem(row, 2, gameItem);
         auto* durationItem = new QTableWidgetItem(durationStr);
         durationItem->setData(Qt::UserRole, frames);
         m_playbackTable->setItem(row, 3, durationItem);
@@ -1372,7 +1389,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
     messageBox.setWindowTitle("Export MP4");
     messageBox.setText("MP4 export requires FFmpeg.");
     messageBox.setInformativeText(
-        "RMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
+        "Dale64 can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
 
     QPushButton* downloadButton = messageBox.addButton("Download FFmpeg", QMessageBox::AcceptRole);
     QPushButton* chooseButton = messageBox.addButton("Choose ffmpeg.exe", QMessageBox::ActionRole);
@@ -1951,7 +1968,7 @@ bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::f
             document.object().value("schema").toInt() != 1)
         {
             QMessageBox::warning(this, tr("Bookmarks"),
-                tr("This recording's extra data comes from a newer version of RMG-K, so its bookmarks can't be changed here."));
+                tr("This recording's extra data comes from a newer version of Dale64, so its bookmarks can't be changed here."));
             return false;
         }
         metadata = document.object();

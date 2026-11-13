@@ -26,6 +26,7 @@
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/LobbyIce.hpp>
 #include <RMG-Core/NetplaySave.hpp>
+#include <RMG-Core/GameOptions.hpp>
 #include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
 
@@ -325,18 +326,23 @@ namespace
     }
 
     // Manifest sections, in this order after the header.
-    constexpr uint32_t PREMATCH_SECTION_CHEATS    = 1u << 0;
-    constexpr uint32_t PREMATCH_SECTION_SAVE_DATA = 1u << 1;
+    constexpr uint32_t PREMATCH_SECTION_CHEATS       = 1u << 0;
+    constexpr uint32_t PREMATCH_SECTION_SAVE_DATA    = 1u << 1;
+    constexpr uint32_t PREMATCH_SECTION_GAME_OPTIONS = 1u << 2;
 
     // saveData is the host's starting save, or null to start blank. It rides
     // compressed in its own section, which clients before save data refuse;
-    // the lobby keeps them out of matches that use it.
+    // the lobby keeps them out of matches that use it. gameOptions, when there
+    // are any, ride the same way (uncompressed: they're small), and a match
+    // without them gets no section, so its manifest stays as it always was.
     bool buildPrematchManifest(const QString& romFile, const CoreNetplaySaveData* saveData,
+                               const CoreNetplayGameOptions& gameOptions,
                                std::string& manifest, uint64_t& manifestHash, size_t& cheatCount)
     {
         std::vector<CoreCheat> cheats;
         std::string cheatManifest;
         std::string saveSection;
+        std::string gameOptionsSection;
 
         if (!CoreGetEnabledNetplayCheats(romFile.toStdU32String(), cheats) || !CoreSerializeNetplayCheats(cheats, cheatManifest))
             return false;
@@ -348,18 +354,27 @@ namespace
             const QByteArray packed = qCompress(QByteArray::fromStdString(raw), 9);
             saveSection.assign(packed.constData(), size_t(packed.size()));
         }
+        const bool hasGameOptions = !gameOptions.IsEmpty();
+        if (hasGameOptions && !CoreSerializeNetplayGameOptions(gameOptions, gameOptionsSection))
+            return false;
 
         manifest.clear();
         manifest.append("RMGKPMAN", 8);
         appendPrematchU32(manifest, 1);
         appendPrematchU32(manifest, PREMATCH_SECTION_CHEATS |
-            (saveData != nullptr ? PREMATCH_SECTION_SAVE_DATA : 0u));
+            (saveData != nullptr ? PREMATCH_SECTION_SAVE_DATA : 0u) |
+            (hasGameOptions ? PREMATCH_SECTION_GAME_OPTIONS : 0u));
         appendPrematchU32(manifest, static_cast<uint32_t>(cheatManifest.size()));
         manifest.append(cheatManifest);
         if (saveData != nullptr)
         {
             appendPrematchU32(manifest, static_cast<uint32_t>(saveSection.size()));
             manifest.append(saveSection);
+        }
+        if (hasGameOptions)
+        {
+            appendPrematchU32(manifest, static_cast<uint32_t>(gameOptionsSection.size()));
+            manifest.append(gameOptionsSection);
         }
         manifestHash = prematchHashBytes(manifest);
         cheatCount = cheats.size();
@@ -380,7 +395,8 @@ namespace
         if (manifest.size() < 8 || std::memcmp(manifest.data(), "RMGKPMAN", 8) != 0 ||
             !readPrematchU32(manifest, offset, version) ||
             !readPrematchU32(manifest, offset, sectionMask) ||
-            version != 1 || (sectionMask & ~(PREMATCH_SECTION_CHEATS | PREMATCH_SECTION_SAVE_DATA)) != 0 ||
+            version != 1 ||
+            (sectionMask & ~(PREMATCH_SECTION_CHEATS | PREMATCH_SECTION_SAVE_DATA | PREMATCH_SECTION_GAME_OPTIONS)) != 0 ||
             !readPrematchU32(manifest, offset, cheatManifestLen) ||
             offset + cheatManifestLen > manifest.size())
         {
@@ -405,6 +421,18 @@ namespace
             if (raw.isEmpty() || !CoreDeserializeNetplaySaveData(raw.toStdString(), saveData))
                 return false;
         }
+        // Likewise game options: none without the section.
+        CoreNetplayGameOptions gameOptions;
+        if ((sectionMask & PREMATCH_SECTION_GAME_OPTIONS) != 0)
+        {
+            uint32_t gameOptionsLen = 0;
+            if (!readPrematchU32(manifest, offset, gameOptionsLen) || gameOptionsLen > manifest.size() - offset)
+                return false;
+            const std::string section(manifest.data() + offset, gameOptionsLen);
+            offset += gameOptionsLen;
+            if (!CoreDeserializeNetplayGameOptions(section, gameOptions) || gameOptions.IsEmpty())
+                return false;
+        }
         if (offset != manifest.size())
             return false;
 
@@ -412,6 +440,7 @@ namespace
         if (!CoreSetNetplayCheats(cheats))
             return false;
         CoreSetNetplaySaveData(saveData);
+        CoreSetNetplayGameOptions(gameOptions);
         return true;
     }
 
@@ -600,6 +629,15 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     m_selfUserId       = 0;
     m_users.clear();
     m_rooms.clear();
+    // The server drops local players with the connection.
+    m_localPlayers.clear();
+    m_pendingLocalControllers.clear();
+    m_localPlayersSupported = false;
+    m_socialSupported = false;
+    m_spectatorChatSupported = false;
+    m_challengeSettingsSupported = false;
+    m_pmSettingsSupported = false;
+    emit localPlayersChanged();
 
     qInfo() << "Rollback lobby local IPv4 detection"
             << "localIp" << (m_pendingLocalIp.isEmpty() ? QString("<none>") : m_pendingLocalIp);
@@ -825,6 +863,7 @@ void LobbyClient::onWsConnected()
     // The WebSocket is connected by the time this slot runs, so its local
     // address reflects the route the OS actually chose for lobby traffic.
     const QString transport = detectTransportMedium(m_ws->localAddress());
+    m_connection = transport;
     if (!transport.isEmpty())
         data["connection"] = transport;
     // Ask the server to withhold our country from presence and flag us
@@ -846,7 +885,15 @@ void LobbyClient::onWsConnected()
     data["romHashes"] = romArr;
     data["iceSupported"] = true;
     data["lateJoin"] = true;
+    data["localPlayers"] = true;
+    data["social"] = true;
+    data["spectatorChat"] = true;
     data["saveData"] = true;
+    data["gameOptions"] = true;
+    if (m_challengesOff)
+        data["noChallenges"] = true;
+    if (m_privateMessagesOff)
+        data["noPrivateMessages"] = true;
     if (!m_pendingLocalIp.isEmpty())
         data["localIp"] = m_pendingLocalIp;
 
@@ -881,6 +928,7 @@ void LobbyClient::onWsDisconnected()
     m_heartbeatTimer->stop();
     m_udpKeepaliveTimer->stop();
     m_isModerator = false; // role is per-connection; must re-auth after reconnect
+    m_moderatorUsers.clear();
     // User ids restart when the server does — drop measurements so a recycled
     // id can't inherit another player's ping history.
     m_measuredPing.clear();
@@ -936,6 +984,11 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "ROOM_LEFT")            handleRoomLeft(data);
     else if (type == "CHAT_MSG")             handleChatMsg(data);
     else if (type == "CHAT_HISTORY_REPLY")   handleChatHistoryReply(data);
+    else if (type == "CHAT_FAIL")            handleChatFail(data);
+    else if (type == "CHALLENGE_SENT")       handleChallengeSent(data);
+    else if (type == "CHALLENGE_INCOMING")   handleChallengeIncoming(data);
+    else if (type == "CHALLENGE_RESULT")     handleChallengeResult(data);
+    else if (type == "CHALLENGE_GAMES_REPLY") handleChallengeGamesReply(data);
     else if (type == "PING_PROBE_REPLY")     handlePingProbeReply(data);
     else if (type == "PING_PROBE_INCOMING")  handlePingProbeIncoming(data);
     else if (type == "ICE_SIGNAL")           handleIceSignal(data);
@@ -945,6 +998,9 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "MATCH_ADMIT_SIGNAL")   handleMatchAdmitSignal(data);
     else if (type == "MATCH_ADMIT_FAIL")     handleMatchAdmitFail(data);
     else if (type == "QUICK_MATCH_STATUS")   handleQuickMatchStatus(data);
+    else if (type == "LOCAL_PLAYER_ADDED")   handleLocalPlayerAdded(data);
+    else if (type == "LOCAL_PLAYER_REMOVED") handleLocalPlayerRemoved(data);
+    else if (type == "LOCAL_PLAYER_FAIL")    handleLocalPlayerFail(data);
     else if (type == "SPECTATE_BEGIN")       handleSpectateBegin(data);
     else if (type == "SPECTATE_DATA")        handleSpectateData(data);
     else if (type == "SPECTATE_KEYFRAME")    handleSpectateKeyframe(data);
@@ -955,6 +1011,10 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "ADMIN_AUTH_FAIL")      handleAdminAuthFail(data);
     else if (type == "MOD_NOTICE")           handleModNotice(data);
     else if (type == "MOD_LIST")             handleModList(data);
+    else if (type == "ADMIN_LOGGED_OUT")     handleAdminLoggedOut();
+    else if (type == "MOD_RESULT")           handleModResult(data);
+    else if (type == "MOD_TARGET_INFO")      handleModTargetInfo(data);
+    else if (type == "MOD_PEERS")            handleModPeers(data);
     else qDebug() << "lobby: unknown message type" << type;
 }
 
@@ -963,8 +1023,18 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
 void LobbyClient::handleHelloOk(const QJsonObject& data)
 {
     m_selfUserId  = static_cast<quint64>(data.value("userId").toDouble());
+    // The lobby keeps one spelling of a name, which may not be the one typed.
+    const QString keptUsername = data.value("username").toString();
+    if (!keptUsername.isEmpty())
+        m_pendingUsername = keptUsername;
     m_observedIp  = data.value("observedIp").toString();
     m_region      = data.value("region").toString();
+    m_localPlayersSupported = data.value("localPlayers").toBool();
+    m_socialSupported = data.value("social").toBool();
+    m_spectatorChatSupported = data.value("spectatorChat").toBool();
+    m_challengeSettingsSupported = data.value("challengeSettings").toBool();
+    m_pmSettingsSupported = data.value("pmSettings").toBool();
+    emit localPlayersChanged();
 
     std::string stunHost = "stun.l.google.com";
     quint16 stunPort = 19302;
@@ -1110,6 +1180,10 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.matchId      = static_cast<quint64>(o.value("matchId").toDouble());
         r.viewerCount  = qMax(0, o.value("viewerCount").toInt());
         r.lateJoin     = o.value("lateJoin").toBool();
+        r.privateRoom  = o.value("private").toBool();
+        r.maxPing      = qMax(0, o.value("maxPing").toInt());
+        r.wiredOnly    = o.value("wiredOnly").toBool();
+        r.gameOptions  = parseGameOptions(o.value("gameOptions"));
         for (const auto& n : o.value("playerNames").toArray())
             r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
@@ -1151,9 +1225,98 @@ void LobbyClient::handleRoomJoinFail(const QJsonObject& data)
     emit roomJoinFailed(data.value("reason").toString());
 }
 
+quint64 LobbyClient::seatPeerId(const QJsonObject& seat)
+{
+    const quint64 peerId = static_cast<quint64>(seat.value("peerId").toDouble());
+    return peerId != 0 ? peerId : static_cast<quint64>(seat.value("userId").toDouble());
+}
+
+QList<LobbyClient::LobbyMatchPeer> LobbyClient::connectionPeers(const QList<LobbyMatchPeer>& peers)
+{
+    QList<LobbyMatchPeer> connections;
+    for (const LobbyMatchPeer& peer : peers)
+    {
+        if (peer.userId == peer.peerId)
+            connections.append(peer);
+    }
+    return connections;
+}
+
+bool LobbyClient::isLocalPlayer(quint64 userId) const
+{
+    return std::any_of(m_localPlayers.cbegin(), m_localPlayers.cend(),
+                       [userId](const LocalPlayer& player) { return player.userId == userId; });
+}
+
+int LobbyClient::localPlayerController(quint64 userId) const
+{
+    for (const LocalPlayer& player : m_localPlayers)
+    {
+        if (player.userId == userId)
+            return player.controller;
+    }
+    return 0;
+}
+
+void LobbyClient::addLocalPlayer(const QString& name, int controller)
+{
+    m_pendingLocalControllers.insert(name, controller);
+    QJsonObject d;
+    d["name"] = name;
+    sendEnvelope("LOCAL_PLAYER_ADD", d);
+}
+
+void LobbyClient::removeLocalPlayer(quint64 userId)
+{
+    QJsonObject d;
+    d["userId"] = QJsonValue(qint64(userId));
+    sendEnvelope("LOCAL_PLAYER_REMOVE", d);
+}
+
+void LobbyClient::setLocalPlayerController(quint64 userId, int controller)
+{
+    for (LocalPlayer& player : m_localPlayers)
+    {
+        if (player.userId == userId)
+            player.controller = controller;
+    }
+    emit localPlayersChanged();
+}
+
+void LobbyClient::handleLocalPlayerAdded(const QJsonObject& data)
+{
+    LocalPlayer player;
+    player.userId = static_cast<quint64>(data.value("userId").toDouble());
+    player.name = data.value("name").toString();
+    player.controller = m_pendingLocalControllers.take(player.name);
+    m_localPlayers.append(player);
+    emit localPlayersChanged();
+}
+
+void LobbyClient::handleLocalPlayerRemoved(const QJsonObject& data)
+{
+    const quint64 userId = static_cast<quint64>(data.value("userId").toDouble());
+    m_localPlayers.removeIf([userId](const LocalPlayer& player) { return player.userId == userId; });
+    emit localPlayersChanged();
+}
+
+void LobbyClient::handleLocalPlayerFail(const QJsonObject& data)
+{
+    const QString name = data.value("name").toString();
+    m_pendingLocalControllers.remove(name);
+    emit localPlayerFailed(name, data.value("reason").toString());
+}
+
 void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
 {
     const quint64 roomId = static_cast<quint64>(roomState.value("id").toDouble());
+
+    m_seatPeers.clear();
+    for (const QJsonValue& value : roomState.value("players").toArray())
+    {
+        const QJsonObject player = value.toObject();
+        m_seatPeers.insert(static_cast<quint64>(player.value("userId").toDouble()), seatPeerId(player));
+    }
 
     // Room state is control-plane data. Once GekkoNet owns the established
     // mesh, no server-side room transition may replace or remove the agents
@@ -1170,7 +1333,7 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
         for (const QJsonValue& value : roomState.value("players").toArray())
         {
             const QJsonObject player = value.toObject();
-            const quint64 userId = static_cast<quint64>(player.value("userId").toDouble());
+            const quint64 userId = seatPeerId(player);
             if (userId == 0 || userId == m_selfUserId)
                 continue;
             seated.insert(userId);
@@ -1200,7 +1363,7 @@ void LobbyClient::reconcileIcePeers(const QJsonObject& roomState)
     for (const QJsonValue& value : roomState.value("players").toArray())
     {
         const QJsonObject player = value.toObject();
-        const quint64 userId = static_cast<quint64>(player.value("userId").toDouble());
+        const quint64 userId = seatPeerId(player);
         if (userId == 0 || userId == m_selfUserId)
             continue;
         if (!player.value("iceSupported").toBool())
@@ -1277,6 +1440,7 @@ void LobbyClient::resetIceMesh()
     m_currentIceHostUserId = 0;
     m_roomPeerPings.clear();
     m_pendingProbes.clear();
+    m_seatPeers.clear();
 }
 
 void LobbyClient::resetIceTransport()
@@ -1641,6 +1805,9 @@ void LobbyClient::handleChatMsg(const QJsonObject& data)
     m.message        = data.value("message").toString();
     m.serverTimeMs   = static_cast<qint64>(data.value("serverTime").toDouble());
     m.fromAdmin      = data.value("admin").toBool();
+    m.fromPlayer     = data.value("fromPlayer").toBool();
+    m.toUserId       = static_cast<quint64>(data.value("toUserId").toDouble());
+    m.toUsername     = data.value("toUsername").toString();
     emit chatMessageReceived(m);
 }
 
@@ -2013,6 +2180,9 @@ static LobbyClient::LobbyMatchPeer parseMatchPeer(const QJsonObject& o)
     p.localIp    = o.value("localIp").toString();
     p.slot       = o.value("slot").toInt();
     p.iceSupported = o.value("iceSupported").toBool();
+    p.peerId     = static_cast<quint64>(o.value("peerId").toDouble());
+    if (p.peerId == 0)
+        p.peerId = p.userId;
     return p;
 }
 
@@ -2035,6 +2205,12 @@ void LobbyClient::handleMatchAdmitBegin(const QJsonObject& data)
     QList<LobbyMatchPeer> peers;
     for (const auto& v : data.value("peers").toArray())
         peers.append(parseMatchPeer(v.toObject()));
+    const LobbyMatchPeer joiner = parseMatchPeer(data.value("joiner").toObject());
+    QList<LobbyMatchPeer> joiners;
+    for (const auto& v : data.value("joiners").toArray())
+        joiners.append(parseMatchPeer(v.toObject()));
+    if (joiners.isEmpty())
+        joiners.append(joiner);
     m_admitBlobId = 0;
     m_admitBlobParts.clear();
     emit matchAdmitBegin(static_cast<quint64>(data.value("matchId").toDouble()),
@@ -2042,7 +2218,7 @@ void LobbyClient::handleMatchAdmitBegin(const QJsonObject& data)
                          data.value("epoch").toInt(),
                          qBound(0, data.value("seats").toInt(), 4),
                          static_cast<quint64>(data.value("hostId").toDouble()),
-                         parseMatchPeer(data.value("joiner").toObject()), peers);
+                         joiner, joiners, peers);
 }
 
 void LobbyClient::handleMatchAdmitSignal(const QJsonObject& data)
@@ -2182,6 +2358,9 @@ void LobbyClient::handleMatchPeerLeft(const QJsonObject& data)
 void LobbyClient::handleQuickMatchStatus(const QJsonObject& data)
 {
     emit quickMatchStatus(data.value("searching").toBool(), data.value("queueSize").toInt());
+    const QString reason = data.value("reason").toString();
+    if (!reason.isEmpty())
+        emit quickMatchRefused(reason);
 }
 
 void LobbyClient::handleSpectateBegin(const QJsonObject& data)
@@ -2581,7 +2760,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         uint64_t manifestHash = 0;
         size_t cheatCount = 0;
         if (!buildPrematchManifest(romFile, m_prematchSaveData ? &*m_prematchSaveData : nullptr,
-                                   manifest, manifestHash, cheatCount))
+                                   m_prematchGameOptions, manifest, manifestHash, cheatCount))
         {
             error = QString::fromStdString(CoreGetError().empty()
                 ? std::string("Pre-match sync failed: could not build manifest") : CoreGetError());
@@ -2822,7 +3001,7 @@ bool LobbyClient::syncPrematchManifest(const QList<LobbyMatchPeer>& peers, int l
         std::string manifest;
         uint64_t manifestHash = 0;
         size_t cheatCount = 0;
-        if (!buildPrematchManifest(romFile, nullptr, manifest, manifestHash, cheatCount))
+        if (!buildPrematchManifest(romFile, nullptr, {}, manifest, manifestHash, cheatCount))
         {
             error = QString::fromStdString(CoreGetError().empty() ? std::string("Pre-match sync failed: could not build manifest") : CoreGetError());
             return false;
@@ -3223,7 +3402,8 @@ void LobbyClient::onUdpReadyRead()
 
 int LobbyClient::measuredPingMs(quint64 userId) const
 {
-    const auto it = m_measuredPing.constFind(userId);
+    // A seat's ping is its connection's.
+    const auto it = m_measuredPing.constFind(m_seatPeers.value(userId, userId));
     return it == m_measuredPing.constEnd() ? -1 : it.value();
 }
 
@@ -3273,7 +3453,7 @@ bool LobbyClient::allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QStri
 {
     for (const LobbyMatchPeer& peer : peers)
     {
-        if (peer.userId == m_selfUserId)
+        if (peer.peerId == m_selfUserId)
             continue;
         if (!peer.iceSupported)
         {
@@ -3282,7 +3462,7 @@ bool LobbyClient::allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QStri
                              .arg(peer.username.isEmpty() ? QString::number(peer.userId) : peer.username);
             return false;
         }
-        if (!LobbyIce::peer_connected(peer.userId))
+        if (!LobbyIce::peer_connected(peer.peerId))
         {
             if (error)
                 *error = QCoreApplication::translate("LobbyClient","Waiting for a direct ICE connection to %1.")
@@ -3312,6 +3492,137 @@ void LobbyClient::requestChatHistory(const QString& channel)
     sendEnvelope("CHAT_HISTORY", d);
 }
 
+void LobbyClient::sendPrivateMessage(quint64 toUserId, quint64 asUserId, const QString& message)
+{
+    QJsonObject d;
+    d["channel"] = QStringLiteral("pm");
+    d["message"] = message;
+    d["toUserId"] = static_cast<double>(toUserId);
+    if (asUserId != 0 && asUserId != m_selfUserId)
+        d["asUserId"] = static_cast<double>(asUserId);
+    sendEnvelope("CHAT_SEND", d);
+}
+
+void LobbyClient::handleChatFail(const QJsonObject& data)
+{
+    emit privateMessageFailed(static_cast<quint64>(data.value("toUserId").toDouble()),
+                              data.value("reason").toString());
+}
+
+// -------- Challenges --------
+
+void LobbyClient::sendChallenge(quint64 toUserId, const QString& romName, const QString& romMd5,
+                                const QString& note, bool liveReplay)
+{
+    QJsonObject rom;
+    rom["name"] = romName;
+    rom["md5"]  = romMd5;
+    QJsonObject d;
+    d["toUserId"] = static_cast<double>(toUserId);
+    d["rom"] = rom;
+    if (!note.isEmpty())
+        d["note"] = note;
+    if (liveReplay)
+        d["liveReplay"] = true;
+    sendEnvelope("CHALLENGE_SEND", d);
+}
+
+void LobbyClient::cancelChallenge(quint64 challengeId)
+{
+    QJsonObject d;
+    d["challengeId"] = static_cast<double>(challengeId);
+    sendEnvelope("CHALLENGE_CANCEL", d);
+}
+
+void LobbyClient::respondToChallenge(quint64 challengeId, bool accept)
+{
+    QJsonObject d;
+    d["challengeId"] = static_cast<double>(challengeId);
+    d["accept"] = accept;
+    sendEnvelope("CHALLENGE_RESPOND", d);
+}
+
+void LobbyClient::requestSharedGames(quint64 toUserId)
+{
+    QJsonObject d;
+    d["toUserId"] = static_cast<double>(toUserId);
+    sendEnvelope("CHALLENGE_GAMES", d);
+}
+
+void LobbyClient::setChallengesOff(bool off)
+{
+    if (m_challengesOff == off)
+        return;
+    m_challengesOff = off;
+    if (m_state != ConnectionState::Connected || !m_challengeSettingsSupported)
+        return;
+    QJsonObject d;
+    d["off"] = off;
+    sendEnvelope("CHALLENGE_SETTINGS", d);
+}
+
+void LobbyClient::setPrivateMessagesOff(bool off)
+{
+    if (m_privateMessagesOff == off)
+        return;
+    m_privateMessagesOff = off;
+    if (m_state != ConnectionState::Connected || !m_pmSettingsSupported)
+        return;
+    QJsonObject d;
+    d["off"] = off;
+    sendEnvelope("PM_SETTINGS", d);
+}
+
+void LobbyClient::handleChallengeSent(const QJsonObject& data)
+{
+    const QJsonObject rom = data.value("rom").toObject();
+    Challenge c;
+    c.id = static_cast<quint64>(data.value("challengeId").toDouble());
+    c.fromUserId = m_selfUserId;
+    c.toUserId = static_cast<quint64>(data.value("toUserId").toDouble());
+    c.toUsername = data.value("toUsername").toString();
+    c.romName = rom.value("name").toString();
+    c.romMd5 = rom.value("md5").toString();
+    c.expiresAtMs = QDateTime::currentMSecsSinceEpoch() + static_cast<qint64>(data.value("expiresInMs").toDouble());
+    c.invite = data.value("invite").toBool();
+    emit challengeSent(c);
+}
+
+void LobbyClient::handleChallengeIncoming(const QJsonObject& data)
+{
+    const QJsonObject rom = data.value("rom").toObject();
+    Challenge c;
+    c.id = static_cast<quint64>(data.value("challengeId").toDouble());
+    c.fromUserId = static_cast<quint64>(data.value("fromUserId").toDouble());
+    c.fromUsername = data.value("fromUsername").toString();
+    c.toUserId = static_cast<quint64>(data.value("toUserId").toDouble());
+    c.toUsername = data.value("toUsername").toString();
+    c.romName = rom.value("name").toString();
+    c.romMd5 = rom.value("md5").toString();
+    c.note = data.value("note").toString();
+    c.expiresAtMs = QDateTime::currentMSecsSinceEpoch() + static_cast<qint64>(data.value("expiresInMs").toDouble());
+    c.invite = data.value("invite").toBool();
+    c.roomName = data.value("roomName").toString();
+    c.roomPlayers = data.value("roomPlayers").toInt();
+    c.roomMaxPlayers = data.value("roomMaxPlayers").toInt();
+    emit challengeIncoming(c);
+}
+
+void LobbyClient::handleChallengeResult(const QJsonObject& data)
+{
+    emit challengeEnded(static_cast<quint64>(data.value("challengeId").toDouble()),
+                        static_cast<quint64>(data.value("toUserId").toDouble()),
+                        data.value("result").toString());
+}
+
+void LobbyClient::handleChallengeGamesReply(const QJsonObject& data)
+{
+    QStringList md5s;
+    for (const QJsonValue& value : data.value("md5s").toArray())
+        md5s << value.toString();
+    emit sharedGamesReceived(static_cast<quint64>(data.value("toUserId").toDouble()), md5s);
+}
+
 // --- Moderation ---
 
 void LobbyClient::sendAdminAuth(const QString& password)
@@ -3330,6 +3641,40 @@ void LobbyClient::sendModAction(const QString& action, const QString& target,
     if (!duration.isEmpty()) d["duration"] = duration;
     if (!reason.isEmpty())   d["reason"]   = reason;
     sendEnvelope("MOD_ACTION", d);
+}
+
+void LobbyClient::sendAdminLogout()
+{
+    sendEnvelope("ADMIN_LOGOUT");
+}
+
+void LobbyClient::handleAdminLoggedOut()
+{
+    m_isModerator = false;
+    m_moderatorUsers.clear();
+    emit adminLoggedOut();
+}
+
+void LobbyClient::handleModResult(const QJsonObject& data)
+{
+    emit modResult(data.value("action").toString(), data.value("target").toString(),
+                   data.value("ip").toString(), static_cast<qint64>(data.value("until").toDouble()));
+}
+
+void LobbyClient::handleModTargetInfo(const QJsonObject& data)
+{
+    QStringList others;
+    for (const QJsonValue& value : data.value("others").toArray())
+        others << value.toString();
+    emit modTargetInfo(data.value("target").toString(), others, data.value("moderator").toBool());
+}
+
+void LobbyClient::handleModPeers(const QJsonObject& data)
+{
+    m_moderatorUsers.clear();
+    for (const QJsonValue& value : data.value("userIds").toArray())
+        m_moderatorUsers.insert(static_cast<quint64>(value.toDouble()));
+    emit moderatorsChanged();
 }
 
 void LobbyClient::handleAdminAuthOk(const QJsonObject& data)
@@ -3358,7 +3703,7 @@ void LobbyClient::handleModList(const QJsonObject& data)
 
 void LobbyClient::createRoom(const QString& name, const QString& romName, const QString& romMd5,
                               const QString& romRegion, int maxPlayers, int delay, int prediction,
-                              int pacing, const QString& password)
+                              int pacing, const QString& password, int maxPing, bool wiredOnly)
 {
     QJsonObject rom;
     rom["name"]   = romName;
@@ -3374,16 +3719,22 @@ void LobbyClient::createRoom(const QString& name, const QString& romName, const 
     d["pacing"]     = pacing;
     if (!password.isEmpty())
         d["password"] = password;
+    if (maxPing > 0)
+        d["maxPing"] = maxPing;
+    if (wiredOnly)
+        d["wiredOnly"] = true;
 
     sendEnvelope("ROOM_CREATE", d);
 }
 
-void LobbyClient::joinRoom(quint64 roomId, const QString& password)
+void LobbyClient::joinRoom(quint64 roomId, const QString& password, int pingMs)
 {
     QJsonObject d;
     d["roomId"] = QJsonValue(qint64(roomId));
     if (!password.isEmpty())
         d["password"] = password;
+    if (pingMs > 0)
+        d["pingMs"] = pingMs;
     sendEnvelope("ROOM_JOIN", d);
 }
 
@@ -3411,6 +3762,21 @@ void LobbyClient::updateRoomLateJoin(bool enabled)
     sendEnvelope("ROOM_UPDATE_LATE_JOIN", d);
 }
 
+void LobbyClient::updateRoomJoinLimits(int maxPing, bool wiredOnly)
+{
+    QJsonObject d;
+    d["maxPing"] = maxPing;
+    d["wiredOnly"] = wiredOnly;
+    sendEnvelope("ROOM_UPDATE_JOIN_LIMITS", d);
+}
+
+void LobbyClient::updateRoomMaxPlayers(int maxPlayers)
+{
+    QJsonObject d;
+    d["maxPlayers"] = maxPlayers;
+    sendEnvelope("ROOM_UPDATE_MAX_PLAYERS", d);
+}
+
 void LobbyClient::updateRoomSaveData(bool enabled, const QString& label, const QStringList& kinds,
                                      int bytes, const QString& hash)
 {
@@ -3424,6 +3790,34 @@ void LobbyClient::updateRoomSaveData(bool enabled, const QString& label, const Q
         d["hash"] = hash;
     }
     sendEnvelope("ROOM_UPDATE_SAVE_DATA", d);
+}
+
+void LobbyClient::updateRoomGameOptions(const QList<LobbyGameOption>& options)
+{
+    QJsonArray list;
+    for (const LobbyGameOption& option : options)
+    {
+        QJsonObject o;
+        o["id"] = option.id;
+        o["label"] = option.label;
+        list.append(o);
+    }
+    QJsonObject d;
+    d["options"] = list;
+    sendEnvelope("ROOM_UPDATE_GAME_OPTIONS", d);
+}
+
+QList<LobbyClient::LobbyGameOption> LobbyClient::parseGameOptions(const QJsonValue& value)
+{
+    QList<LobbyGameOption> options;
+    for (const auto& v : value.toArray())
+    {
+        const QJsonObject o = v.toObject();
+        LobbyGameOption option{ o.value("id").toString(), o.value("label").toString() };
+        if (!option.id.isEmpty())
+            options.append(option);
+    }
+    return options;
 }
 
 void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)
@@ -3462,6 +3856,8 @@ void LobbyClient::swapSeats(int slotA, int slotB)
 
 void LobbyClient::requestPingProbe(quint64 targetUserId)
 {
+    // A seat is measured through its connection.
+    targetUserId = m_seatPeers.value(targetUserId, targetUserId);
     if (targetUserId == 0 || targetUserId == m_selfUserId ||
         !LobbyIce::peer_connected(targetUserId))
         return;
@@ -3620,6 +4016,9 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.currentRoomId   = static_cast<quint64>(obj.value("currentRoomId").toDouble());
     u.currentRoomName = obj.value("currentRoomName").toString();
     u.searchingRom    = obj.value("searchingRom").toString();
+    u.social = obj.value("social").toBool();
+    u.noChallenges = obj.value("noChallenges").toBool();
+    u.noPrivateMessages = obj.value("noPrivateMessages").toBool();
     return u;
 }
 

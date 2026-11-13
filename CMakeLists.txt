@@ -196,6 +196,11 @@ if (INSTALL_CHEATS)
         DESTINATION ${DATA_INSTALL_PATH}/Cheats
     )
 endif(INSTALL_CHEATS)
+# Netplay game options packs, with the README and patch sources beside them.
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/Data/GameOptions/
+    DESTINATION ${DATA_INSTALL_PATH}/GameOptions
+    FILES_MATCHING PATTERN "*.json" PATTERN "*.md" PATTERN "*.asm"
+)
 install(FILES ${MUPEN64PLUS_PLUGIN_RSP_CXD4}
     DESTINATION ${PLUGIN_INSTALL_PATH}/RSP
     PERMISSIONS ${LIB_PERMISSIONS}

@@ -1,0 +1,203 @@
+{
+  "format": 1,
+  "id": "smash-remix-2.0.1",
+  "game": "Smash Remix 2.0.1",
+  "romMd5": [
+    "2B2D6B295106C54216B7FC7A2F14346E"
+  ],
+  "options": [
+    {
+      "id": "vanilla-only",
+      "label": "Vanilla only",
+      "description": "Only the original 12 characters can be picked, on the original character select screen.",
+      "translations": {
+        "ja": {
+          "label": "初代12キャラのみ",
+          "description": "初代スマブラのキャラクター選択画面で、12キャラクターだけを選べます。"
+        }
+      },
+      "patches": [
+        {
+          "offset": "0x02D1EE10",
+          "expect": "3C0880513508FDF4010440219108000011000014",
+          "bytes": "2C48000C1500001700000000100000153402001C",
+          "note": "get_character_id_ (RAM 0x8051EE10): the d-pad variant step becomes a filter. Ids 0x00-0x0B pass, anything else becomes NONE, so Remix portraits, bonus fighters and variants can't be hovered or picked on any CSS"
+        },
+        {
+          "offset": "0x02D1ED68",
+          "expect": "10000042",
+          "bytes": "10000029",
+          "note": "get_character_id_ (RAM 0x8051ED68): send the 12-Character Battle result through the same filter"
+        },
+        {
+          "offset": "0x02D1F24C",
+          "expect": "8E100004",
+          "bytes": "34100003",
+          "note": "CharacterSelect.get_random_char_id_ (RAM 0x8051F24C): always use Remix's VANILLA random mode (random \"?\", L-button random, new CPU panels, Tag Team random)"
+        },
+        {
+          "offset": "0x02CFBDAC",
+          "expect": "8D080004",
+          "bytes": "34080003",
+          "note": "TwelveCharBattle.get_random_char_id_ (RAM 0x804FBDAC): always use the VANILLA random mode in 12-Character Battle"
+        },
+        {
+          "offset": "0x02CF9EC0",
+          "expect": "01455021",
+          "bytes": "00005025",
+          "note": "TwelveCharBattle.update_character_set_ (RAM 0x804F9EC0): 12-Character Battle stays on the Default (vanilla) character set; Japanese/Polygon/Remix/Custom can't be chosen"
+        },
+        {
+          "offset": "0x02C9C9A0",
+          "expect": "0D0E2A1C1C0F291C1A102C1C1C11243345122B1C0C1327231C14311C1C15281C1C16301C1C17322D1C182E2F1C19251C",
+          "bytes": "1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C1C",
+          "note": "Character.variants.table rows 0x00-0x0B (RAM 0x8049C9A0): the vanilla fighters get no d-pad variants, so the panels don't show variant icons"
+        },
+        {
+          "offset": "0x02D1EE24",
+          "expect": "000000003C0980493529C9A000025080012A48212508FFFF01284821912900002408001C1128000A000000003408000C55090007000910213C088052350863A4",
+          "bytes": "2D0A000C1540000C250AFFE52D4A000215400009000000003408001CA0680023A060002638AA0001154000030000000034050002A06500220804EB3100000000",
+          "note": "Safety net code in the unreachable rest of the old variant step (RAM 0x8051EE24): when the VS CSS opens, a restored non-vanilla character becomes NONE (costume 0), and a CPU panel holding one is closed"
+        },
+        {
+          "offset": "0x02CF8A90",
+          "expect": "0804EB31",
+          "bytes": "08147B89",
+          "note": "TwelveCharBattle.setup_ports_and_characters_ (RAM 0x804F8A90): return to the VS CSS through that safety net"
+        },
+        {
+          "offset": "0x001302C4",
+          "expect": "2401000410810026",
+          "bytes": "03E0000800001025",
+          "note": "mnPlayersVSCheckFighterLocked (VS overlay RAM 0x80132044): never locked, so the original screen never hides Luigi/Ness/Falcon/Jigglypuff (Remix unlocks them anyway) and mnPlayersVSMakePortraitShadow's space is free for the code below"
+        },
+        {
+          "offset": "0x00139634",
+          "expect": "00000000",
+          "bytes": "00000013",
+          "note": "dMNPlayersVSFileIDs[5] (RAM 0x8013B3B4): load file 0x13 (original portraits, still in the ROM unchanged) again; Remix had replaced it with 0"
+        },
+        {
+          "offset": "0x001307A0",
+          "expect": "03E00008",
+          "bytes": "0804C86E",
+          "note": "mnPlayersVSMakePortrait (RAM 0x80132520): Remix's jr ra becomes a jump to a 12cb check, so the original portraits are drawn (not in 12-Character Battle)"
+        },
+        {
+          "offset": "0x0013004C",
+          "expect": "3C03805234630DB08C6300003C05805234A50DE43C08804F35087F588D08000011000003000000003C05804F",
+          "bytes": "3C08804F8D087F583C0380142463B3F011000017246500303C0380528C630DB03C05804F0804C78F34A58128",
+          "note": "mnPlayersVSGetNextPortraitX (RAM 0x80131DC8): original slide-in tables (0x8013B3F0/0x8013B420) unless 12cb, where Remix's tables are used as before"
+        },
+        {
+          "offset": "0x001303E8",
+          "expect": "3C0A8052354A10408D4A000001445021914200003C08804F35087F588D08000011000007024028253C09801335299494553F00018FA500400813E3BD0000000003E000080000000003E00008",
+          "bytes": "3C08804F8D087F58150000092C89000C1120000500001025000448803C028014004910218C42B50403E0000800000000024028253C09801425299494553F00018FA500400813E3BD00000000",
+          "note": "mnPlayersVSGetPortrait (RAM 0x80132168): fighter -> original portrait (table 0x8013B504) unless 12cb, where TwelveCharBattle.get_portrait_id_ is used as before"
+        },
+        {
+          "offset": "0x00135AEC",
+          "expect": "08147B42",
+          "bytes": "0804C877",
+          "note": "mnPlayersVSGetPuckFighterKind hook (RAM 0x8013786C): run the original hit test (12 original fighters only) unless 12cb, where CharacterSelect.get_character_id_ is used as before"
+        },
+        {
+          "offset": "0x00136A28",
+          "expect": "08147CFE",
+          "bytes": "0804C87F",
+          "note": "mnPlayersVSCenterPuckInPortrait hook (RAM 0x801387A8): original token placement unless 12cb (Remix's place_token_from_id_)"
+        },
+        {
+          "offset": "0x02D23254",
+          "expect": "0C147CFE",
+          "bytes": "0C04C87F",
+          "note": "CharacterSelect.select_random_char_ (RAM 0x80523254): L-button random places the token through the same dispatcher"
+        },
+        {
+          "offset": "0x00134744",
+          "expect": "000020250000282524060012",
+          "bytes": "0C04C8890000282500002025",
+          "note": "mnPlayersVSMakePortraitFlash (RAM 0x801364C4): white flash on the original display link (30) unless 12cb (Remix's 0x12)"
+        },
+        {
+          "offset": "0x00134774",
+          "expect": "004020252406001B",
+          "bytes": "0C04C89000402025",
+          "note": "mnPlayersVSMakePortraitFlash (RAM 0x801364F4): white flash on the original display layer (37) unless 12cb (Remix's 0x1B)"
+        },
+        {
+          "offset": "0x001347A4",
+          "expect": "8FA4003C3C0A8052",
+          "bytes": "0804C89700000000",
+          "note": "mnPlayersVSMakePortraitFlash (RAM 0x80136524): original white square at the original place unless 12cb (Remix's code, still in place)"
+        },
+        {
+          "offset": "0x0013772C",
+          "expect": "3418000A0058001B",
+          "bytes": "0804C8C600000000",
+          "note": "mnPlayersVSPuckAdjustPortraitEdge (RAM 0x801394AC): placed tokens drift inside the original portrait (x) unless 12cb"
+        },
+        {
+          "offset": "0x001377C0",
+          "expect": "0C147BD0",
+          "bytes": "0C04C8E0",
+          "note": "mnPlayersVSPuckAdjustPortraitEdge (RAM 0x80139540): ... (y) unless 12cb"
+        },
+        {
+          "offset": "0x001377EC",
+          "expect": "0C147C0E3C0141C0",
+          "bytes": "0C04C8E83C014234",
+          "note": "mnPlayersVSPuckAdjustPortraitEdge (RAM 0x8013956C): ... original portrait width 45 unless 12cb"
+        },
+        {
+          "offset": "0x0013782C",
+          "expect": "0C147C133C0141C0",
+          "bytes": "0C04C8F03C01422C",
+          "note": "mnPlayersVSPuckAdjustPortraitEdge (RAM 0x801395AC): ... original portrait height 43 unless 12cb"
+        },
+        {
+          "offset": "0x0013794C",
+          "expect": "3C014120",
+          "bytes": "0C04C8F8",
+          "note": "mnPlayersVSPuckAdjustPlaced (RAM 0x801396CC): original spacing 15 between tokens on the same fighter unless 12cb (Remix's 10)"
+        },
+        {
+          "offset": "0x00137428",
+          "expect": "0C147BE88FA50088",
+          "bytes": "8FA500883C0A8014",
+          "note": "VS overlay RAM 0x801391A8: original instructions (Remix shrank new tokens to 0.8125; its 12cb path already ran these)"
+        },
+        {
+          "offset": "0x001369E4",
+          "expect": "0C147BF6C7A80038",
+          "bytes": "C7A80038944C0024",
+          "note": "VS overlay RAM 0x80138764: original instructions (token shrink on HMN/CPU switch)"
+        },
+        {
+          "offset": "0x00136C80",
+          "expect": "0C147C003C014140",
+          "bytes": "3C01413044813000",
+          "note": "VS overlay RAM 0x80138A00: original held-token x offset 11"
+        },
+        {
+          "offset": "0x00136C90",
+          "expect": "0C147C073C01C120",
+          "bytes": "3C01C16046062200",
+          "note": "VS overlay RAM 0x80138A10: original held-token y offset -14"
+        },
+        {
+          "offset": "0x02D20B10",
+          "expect": "35084AD091080000340900105109000826D61EE4340900115109000526D6255C340900125109000226D61D9026D62150",
+          "bytes": "91084AD039090010112400A126D61EE411200007340900115109000526D60678340900125109000226D6FEAC26D6026C",
+          "note": "CharacterSelect.draw_portraits_ (RAM 0x80520B10): draw nothing on the VS screen outside 12cb (no Remix grid, bookends or \"?\"); 1P/Training/Bonus/12cb unchanged"
+        },
+        {
+          "offset": "0x00130438",
+          "expect": "3C038004246365B08C62000027BDFFE8AFBF0014244E0008AC6E00003C0FE700AC4F0000AC4000048C6200003C19E30037390A0124580008AC780000AC400004AC5900008C6200003C0C3030358C30FF244A0008AC6A00003C0BFA00AC4B0000AC4C00048C6200003C0F11FC3C0EFC71244D0008AC6D000035CEFEE335EFF279AC4F0004AC4E00008C6200003C0A00503C19E20024580008AC7800003739001C354A41C8AC4A00040C0333DDAC5900008FBF001427BD001803E000080000000027BDFF903C0F8014AFB1002025EFB53400808825AFBF0024AFB0001C25E8003027AE00388DF9000025EF000C25CE000CADD9FFF48DF8FFF8ADD8FFF88DF9FFFC15E8FFF8ADD9FFFC0000202500002825240600120C00265A3C0780003C05800D24A5CF002409FFFF00408025AFA90010AFA50030004020252406001B0C00277D3C0780003C05801324A51EE4AFA5002C02002025240600010C002062240700013C0A80148D4AC4B43C0B0000256B24D0020020250C0333F7014B28212A2100061420000300402025100000022623FFFA022018250003608001836023000C608001836023000C608001836021258D0019448D20002A210006468021A014200003E4460058100000022403000100001825000340800103402300084080010340230008408001034023250F0024448F400002202825468042A00C04C7D5E48A005CAE1100840000202500002825240600120C00265A3C0780003C058013240EFFFF00408025AFAE001024A521B8004020252406001B0C00277D3C078000020020258FA5002C",
+          "bytes": "3C01804F8C217F58142000040000000027BDFF900804C94A3C0F801403E00008000000003C01804F8C217F5814200003440350000804DE1D4405300008147B42000000003C01804F8C217F5814200005AFA600180C04C85A00A020250804E1EC0000000008147CFE000000003C01804F8C217F58102000022406001E2406001203E00008000000003C01804F8C217F5810200002240600252406001B03E00008000000003C01804F8C217F5810200004000000008FA4003C0804D94B3C0A80523C0A80148D4AC4B43C0B0000256B06F08FA4003C0C0333F7014B28212A0100061420000302001825100000012603FFFA0003608001836023000C608001836023000C608001836021258D001A448D20002A01000600001825468021A014200003E446005810000001240300010003708001C37023000E708001C37023000E708001C3702325CF0025448F400000000000468042A0E44A005C0804D96F000000003C08804F8D087F581500000C000000000004C0800304C0230018C0800304C0230018C0800304C0212719001944992000284100060804E534000000003418000A0058001B0000C01034190018033800190000C8120C147BB8273900290040C8210804E534000000003C0A804F8D4A7F58154000030000000003E00008252A002408147BD0000000003C08804F8D087F58110000030000000008147C0E3C0141C003E00008448150003C08804F8D087F58110000030000000008147C133C0141C003E00008448120003C01804F8C217F58102000023C0141703C01412003E0000800000000",
+          "note": "The 12cb-or-original dispatchers (VS overlay RAM 0x801321B8, in mnPlayersVSMakePortraitShadow's space, unreachable after the CheckFighterLocked edit)"
+        }
+      ]
+    }
+  ]
+}

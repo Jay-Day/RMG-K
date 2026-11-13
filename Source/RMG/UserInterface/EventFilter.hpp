@@ -11,6 +11,8 @@
 #define EVENTFILTER_HPP
 
 #include <QFocusEvent>
+#include <QInputMethodEvent>
+#include <QInputMethodQueryEvent>
 #include <QKeyEvent>
 #include <QList>
 #include <QObject>
@@ -33,6 +35,33 @@ class EventFilter : public QObject
     void on_EventFilter_KeyReleased(QKeyEvent *);
 
     void on_EventFilter_FileDropped(QDropEvent *);
+};
+
+// Takes one window's input method events while enabled, which should only be while
+// text is being typed: at any other time an input method would swallow keys meant
+// for the game. Key events bubble up to the window, but these only go to the focused
+// object, which can be any child of it, so this filters the whole application.
+class InputMethodFilter : public QObject
+{
+    Q_OBJECT
+
+  public:
+    InputMethodFilter(QWidget *window);
+
+    void SetEnabled(bool enabled);
+
+  protected:
+    bool eventFilter(QObject *, QEvent *);
+
+  private:
+    bool isInWindow(QObject *object) const;
+
+    QWidget *window = nullptr;
+    bool enabled    = false;
+
+  signals:
+    void on_InputMethodFilter_Query(QInputMethodQueryEvent *);
+    void on_InputMethodFilter_Event(QInputMethodEvent *);
 };
 } // namespace UserInterface
 

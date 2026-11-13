@@ -322,7 +322,8 @@ typedef enum {
   M64CMD_ROLLBACK_SET_TIMESYNC_SCALE,
   M64CMD_FRAME_OUTPUT_SET,
   M64CMD_ROLLBACK_SET_SAVE_DATA,
-  M64CMD_ROLLBACK_GET_SAVE_DATA
+  M64CMD_ROLLBACK_GET_SAVE_DATA,
+  M64CMD_ROM_PATCH
 } m64p_command;
 
 typedef enum {
@@ -362,6 +363,20 @@ typedef struct {
    * reads with the same value on one timeline have the same contents. */
   unsigned int   generation;
 } m64p_save_data;
+
+/* Netplay game options. M64CMD_ROM_PATCH, between M64CMD_ROM_OPEN and
+ * M64CMD_EXECUTE, writes the ParamInt patches at ParamPtr into the open
+ * cartridge ROM image. Offsets count bytes in .z64 (big-endian) order. All
+ * of them are checked before any is written: each must lie inside the ROM
+ * (else M64ERR_INPUT_INVALID) and, when expect is set, find those bytes
+ * there (else M64ERR_INCOMPATIBLE). M64CMD_ROM_OPEN copies the image afresh,
+ * so patches last until the ROM is closed. */
+typedef struct {
+  unsigned int         offset;
+  unsigned int         size;
+  const unsigned char* data;
+  const unsigned char* expect; /* NULL skips the check */
+} m64p_rom_patch;
 
 typedef struct {
   uint32_t address;

@@ -473,6 +473,32 @@ bool EmulatorProxy::setSaveData(const std::vector<std::vector<uint8_t>>& kinds)
     return coreDoCommand(M64CMD_ROLLBACK_SET_SAVE_DATA, 0, &save) == M64ERR_SUCCESS;
 }
 
+bool EmulatorProxy::patchRom(const std::vector<std::pair<uint32_t, std::vector<uint8_t>>>& patches)
+{
+    if (patches.empty())
+    {
+        return true;
+    }
+    if (coreDoCommand == nullptr || !m_RomOpen)
+    {
+        return false;
+    }
+
+    std::vector<m64p_rom_patch> list;
+    list.reserve(patches.size());
+    for (const auto& patch : patches)
+    {
+        list.push_back({ patch.first, static_cast<unsigned int>(patch.second.size()), patch.second.data(), nullptr });
+    }
+    const m64p_error result = coreDoCommand(M64CMD_ROM_PATCH, static_cast<int>(list.size()), list.data());
+    if (result != M64ERR_SUCCESS)
+    {
+        writeLog(M64MSG_ERROR, "M64CMD_ROM_PATCH failed with error %d", result);
+        return false;
+    }
+    return true;
+}
+
 m64p_error EmulatorProxy::execute()
 {
     return coreDoCommand(M64CMD_EXECUTE, 0, nullptr);

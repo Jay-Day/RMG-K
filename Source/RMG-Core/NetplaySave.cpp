@@ -485,7 +485,7 @@ CORE_EXPORT bool CoreReadNetplaySaveFile(const std::filesystem::path& file, Core
         !read_u32(contents, offset, version) || version != kFileVersion ||
         !read_u32(contents, offset, metaLength) || offset + metaLength > contents.size())
     {
-        CoreSetError("CoreReadNetplaySaveFile: " + file.filename().string() + " isn't an RMG-K netplay save");
+        CoreSetError("CoreReadNetplaySaveFile: " + file.filename().string() + " isn't a Dale64 netplay save");
         return false;
     }
 

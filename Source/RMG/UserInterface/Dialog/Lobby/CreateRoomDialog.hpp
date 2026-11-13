@@ -10,11 +10,12 @@
 #ifdef NETPLAY
 
 #include <QDialog>
+#include <QList>
 #include <QString>
 
+class QButtonGroup;
+class QComboBox;
 class QLineEdit;
-class QSpinBox;
-class QCheckBox;
 class QPushButton;
 class QLabel;
 
@@ -22,6 +23,10 @@ namespace UserInterface
 {
 namespace Dialog
 {
+
+class CartridgeTile;
+class LobbyButton;
+class ToggleSwitch;
 
 // Modal form for creating a lobby room. Returns the chosen settings to the
 // caller via accessors; caller is responsible for sending the protocol message.
@@ -46,6 +51,21 @@ public:
     int     delay()      const { return m_delay; }
     int     prediction() const { return m_prediction; }
     QString password()   const { return m_password; }
+    // Who may join: the highest ping to the host (0 for any), and wired only.
+    int     maxPing()    const { return m_maxPing; }
+    bool    wiredOnly()  const { return m_wiredOnly; }
+
+    // The ping limits a room can have, 0 meaning none; shared with the room's
+    // own settings so both offer the same choices.
+    static QList<int> pingLimits() { return { 0, 50, 100, 150 }; }
+    static QString pingLimitText(int maxPingMs);
+    // A combo box of pingLimits(), each with its signal bars.
+    static void fillPingLimitCombo(QComboBox* combo);
+
+    // The selected game's cover art, for the dialog's header tile.
+    void setCoverPath(const QString& coverPath);
+    // Rule out rooms too small for everyone on this PC.
+    void setMinimumPlayers(int players);
 
     // Called by the lobby when the server replies ROOM_CREATE_FAIL.
     // Re-enables the form so the user can edit and retry.
@@ -74,12 +94,18 @@ private:
 
     // UI — local delay and prediction live in the room view.
     QLineEdit*   m_nameEdit       = nullptr;
+    CartridgeTile* m_tile         = nullptr;
     QLabel*      m_gameLabel      = nullptr;   // read-only game from the lobby picker
-    QSpinBox*    m_maxPlayersSpin = nullptr;
-    QCheckBox*   m_passwordCheck  = nullptr;
+    QButtonGroup* m_playersGroup  = nullptr;   // 2, 3 or 4 seats, by button id
+    QPushButton* m_anyoneButton   = nullptr;
+    QPushButton* m_passwordButton = nullptr;
     QLineEdit*   m_passwordEdit   = nullptr;
-    QPushButton* m_createButton   = nullptr;
-    QPushButton* m_cancelButton   = nullptr;
+    QComboBox*   m_maxPingCombo   = nullptr;
+    QPushButton* m_anyConnectionButton = nullptr;
+    QPushButton* m_wiredOnlyButton = nullptr;
+    ToggleSwitch* m_liveReplaySwitch = nullptr;
+    LobbyButton* m_createButton   = nullptr;
+    LobbyButton* m_cancelButton   = nullptr;
     QLabel*      m_statusLabel    = nullptr;
 
     // Accessor backing
@@ -88,9 +114,12 @@ private:
     QString m_romMd5;
     QString m_romRegion;
     int     m_maxPlayers = 2;
+    int     m_minimumPlayers = 2;
     int     m_delay      = 2;
     int     m_prediction = 7;
     QString m_password;
+    int     m_maxPing    = 0;
+    bool    m_wiredOnly  = false;
 };
 
 } // namespace Dialog
