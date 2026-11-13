@@ -332,6 +332,7 @@ namespace
     constexpr int kSocialRole         = Qt::UserRole + 9; // can be challenged and messaged
     constexpr int kRegionRole         = Qt::UserRole + 10; // the lobby's region bucket
     constexpr int kNoChallengesRole   = Qt::UserRole + 11; // their PC turned challenges off
+    constexpr int kNoMessagesRole     = Qt::UserRole + 12; // we can't write to them right now
 
     QString countryTooltip(const QString& country)
     {
@@ -419,7 +420,7 @@ namespace
                                         LobbyTheme::icon(icon, hot ? QColor(Qt::white) : enabled ? t.ink2 : t.faint, 13, dpr));
                 };
                 paintButton(challengeRect(r), QStringLiteral("sword-fill"), !index.data(kNoChallengesRole).toBool());
-                paintButton(messageRect(r), QStringLiteral("mail-line"), true);
+                paintButton(messageRect(r), QStringLiteral("mail-line"), !index.data(kNoMessagesRole).toBool());
                 right = challengeRect(r).left() - 5;
             }
             else if (!connection.isEmpty())
@@ -488,10 +489,10 @@ namespace
                     if (type == QEvent::MouseButtonRelease && mouse->button() == Qt::LeftButton)
                     {
                         const quint64 userId = index.data(Qt::UserRole).toULongLong();
-                        // Shown, but greyed out: they turned challenges off.
+                        // Shown, but greyed out: they turned challenges or messages off.
                         if (onChallengeButton && onChallenge && !index.data(kNoChallengesRole).toBool())
                             onChallenge(userId);
-                        else if (onMessageButton && onMessage)
+                        else if (onMessageButton && onMessage && !index.data(kNoMessagesRole).toBool())
                             onMessage(userId);
                     }
                     return true;
@@ -1387,7 +1388,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     switches->addWidget(m_recordCheck, 0, 0);
 
     // Broadcast replay bytes to the server without requiring a local file.
-    m_broadcastCheck = new ToggleSwitch(tr("Allow Spectators"), net);
+    m_broadcastCheck = new ToggleSwitch(tr("Allow spectators"), net);
     m_broadcastCheck->setObjectName("LiveReplaySwitch");
     m_broadcastCheck->setChecked(liveReplayPreference());
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
@@ -1982,12 +1983,15 @@ void RollbackLobbyDialog::refreshChatInput()
         m_composeAs->setVisible(asOther);
         if (asOther)
             m_composeAs->setTag(StatusTag::Kind::Neutral, tr("As %1").arg(m_pmPanel->openLocalName()));
+        const auto remote = open ? m_client->users().constFind(m_pmPanel->openRemoteId()) : m_client->users().constEnd();
+        const bool notTaking = remote != m_client->users().constEnd() && !canMessage(*remote);
         m_chatInput->setPlaceholderText(!open ? tr("Type /w and a name to start a conversation")
             : m_pmPanel->openLocalGone() ? tr("%1 left this PC").arg(m_pmPanel->openLocalName())
             : m_pmPanel->openRemoteGone() ? tr("%1 left the lobby").arg(m_pmPanel->openRemoteName())
+            : notTaking ? tr("%1 isn't taking private messages").arg(m_pmPanel->openRemoteName())
             : asOther ? tr("Reply…")
                       : tr("Message %1…").arg(m_pmPanel->openRemoteName()));
-        m_chatInput->setEnabled(connected && !m_pmPanel->openRemoteGone());
+        m_chatInput->setEnabled(connected && !m_pmPanel->openRemoteGone() && !notTaking);
         return;
     }
     m_composeAs->setVisible(false);
@@ -2042,7 +2046,13 @@ void RollbackLobbyDialog::setChatUnread(int tab, int count)
     }
     badge->adjustSize();
     if (badge->size() != previousSize)
+    {
+        // Re-seat it so the tab is laid out for its new width. setTabButton hides
+        // the tab's previous button after showing the new one, so handing it the
+        // badge it already holds would hide the badge: clear the slot first.
+        m_chatTabs->setTabButton(tab, QTabBar::RightSide, nullptr);
         m_chatTabs->setTabButton(tab, QTabBar::RightSide, badge);
+    }
 }
 
 void RollbackLobbyDialog::setRoomChatVisible(bool visible)
@@ -3546,6 +3556,7 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     item->setData(0, kRegionRole, u.region);
     item->setData(0, kSocialRole, !isSelf && u.social && m_client->socialSupported());
     item->setData(0, kNoChallengesRole, u.noChallenges);
+    item->setData(0, kNoMessagesRole, !isSelf && !canMessage(u));
 
     // Built as lines so an absent field just doesn't contribute, rather than
     // leaving a stray separator. The region is deliberately not among them: it's
@@ -3568,6 +3579,8 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
         tipLines << QString(tr("Build: %1")).arg(u.clientVersion);
     if (!isSelf && u.noChallenges)
         tipLines << tr("Not taking challenges");
+    if (!isSelf && u.noPrivateMessages)
+        tipLines << tr("Not taking private messages");
     if (!isSelf)
     {
         // The bars give the tier; the tooltip gives the number. An estimate is
@@ -6497,6 +6510,11 @@ bool RollbackLobbyDialog::handleSlashCommand(const QString& channel, const QStri
         if (reply && !m_client->isOnThisPc(m_lastPmLocal))
         {
             sysline(tr("Whoever they wrote to has left this PC."));
+            return true;
+        }
+        if (!canMessage(*user))
+        {
+            sysline(tr("%1 isn't taking private messages.").arg(user->username.toHtmlEscaped()));
             return true;
         }
         if (reply)

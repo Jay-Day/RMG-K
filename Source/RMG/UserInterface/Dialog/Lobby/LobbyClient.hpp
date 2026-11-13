@@ -75,6 +75,9 @@ public:
         QString searchingRom;    // ROM the user is queued for while state == searching
         bool social = false;     // can receive private messages and challenges
         bool noChallenges = false; // their PC turned challenges off
+        // Their PC turned private messages off: only replies to its own and
+        // moderators get through.
+        bool noPrivateMessages = false;
     };
 
     // A game option the host turned on (ROOM_UPDATE_GAME_OPTIONS): the pack's
@@ -239,6 +242,12 @@ public:
     bool challengesOff() const { return m_challengesOff; }
     // The server refuses challenges for us, and tells everyone, when they're off.
     bool challengeSettingsSupported() const { return m_challengeSettingsSupported; }
+    // This PC takes no private messages, except replies to its own. Kept across
+    // reconnects and sent in HELLO.
+    void setPrivateMessagesOff(bool off);
+    bool privateMessagesOff() const { return m_privateMessagesOff; }
+    // The server refuses private messages for us, and tells everyone, when they're off.
+    bool pmSettingsSupported() const { return m_pmSettingsSupported; }
 
     // Rooms
     void createRoom(const QString& name, const QString& romName, const QString& romMd5,
@@ -631,6 +640,8 @@ private:
     bool m_spectatorChatSupported = false;
     bool m_challengeSettingsSupported = false;
     bool m_challengesOff = false;
+    bool m_pmSettingsSupported = false;
+    bool m_privateMessagesOff = false;
     QString m_connection; // what HELLO reported: "lan", "wifi" or empty
     bool m_localPlayersSupported = false;
     QList<LocalPlayer> m_localPlayers;

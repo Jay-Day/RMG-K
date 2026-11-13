@@ -373,6 +373,9 @@ private:
     void onPrivateMessageFailed(quint64 toUserId, const QString& reason);
     void refreshPrivateMessageStatus(quint64 userId);
     void sendCurrentPrivateMessage(const QString& text);
+    // Whether this PC can write to them now: they take private messages, they
+    // wrote to us lately (so we can answer), or we moderate.
+    bool canMessage(const LobbyClient::LobbyUser& user) const;
 
     // Mentions
     // A message as chat HTML: escaped, with @names as links. mentionsMe says
@@ -649,6 +652,9 @@ private:
     PrivateMessagesPanel* m_pmPanel = nullptr;
     quint64      m_lastPmLocal   = 0; // who /r answers: this PC's side...
     quint64      m_lastPmRemote  = 0; // ...and theirs
+    // When each player last wrote to this PC. The lobby lets us answer for a
+    // while even if their PC has private messages off.
+    QHash<quint64, qint64> m_pmReceivedMs;
 
     QStringList  m_ignored;
     bool         m_doNotDisturb = false;

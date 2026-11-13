@@ -1783,7 +1783,7 @@ void RoomsColumn::rebuild()
     }
     else if (visible.isEmpty())
     {
-        m_noteTitle->setText(tr("No open lobbies").toUpper());
+        m_noteTitle->setText(tr("No open rooms").toUpper());
         m_noteBody->setText(tr("Create a room, or press Quick Match"));
     }
     m_noteBody->setVisible(!m_noteBody->text().isEmpty());

@@ -13,6 +13,7 @@
 
 class QLabel;
 class QTimer;
+class QVariantAnimation;
 
 namespace UserInterface
 {
@@ -490,7 +491,9 @@ private:
     QPushButton* m_chip;
 };
 
-// A checkbox drawn as a switch, with a title and a line of explanation.
+// A checkbox drawn as a switch, with a title and a line of explanation. The
+// knob slides when the switch changes on screen; a hidden one just takes its
+// new place.
 class ToggleSwitch : public QCheckBox
 {
     Q_OBJECT
@@ -506,9 +509,18 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     bool hitButton(const QPoint& pos) const override;
+    // setChecked (even with signals blocked) ends in checkStateSet; a click or
+    // Space ends in nextCheckState, which Qt runs with checkStateSet held back.
+    void checkStateSet() override;
+    void nextCheckState() override;
 
 private:
+    void slideKnob();
+
     QString m_subText;
+    // Where the knob is drawn: 0 off, 1 on, in between while it slides.
+    qreal m_knob = 0.0;
+    QVariantAnimation* m_slide = nullptr;
 };
 
 // The room's state as an LED and a word in a soft pill.

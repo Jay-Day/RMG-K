@@ -59,6 +59,7 @@ namespace
     const char* const kIgnoredSetting = "Lobby/IgnoredPlayers";
     const char* const kDoNotDisturbSetting = "Lobby/DoNotDisturb";
     const char* const kNoChallengesSetting = "Lobby/NoChallenges";
+    const char* const kNoPrivateMessagesSetting = "Lobby/NoPrivateMessages";
     const char* const kSpectatorOverlaySetting = "Lobby/SpectatorChatOverGame";
 
     // The most of one spectator's comment that goes over the game.
@@ -70,6 +71,9 @@ namespace
     // How long past its deadline to wait for the lobby to end a challenge.
     constexpr int kChallengeGraceMs = 3'000;
     constexpr int kMaxMentionRows = 5;
+    // How long someone who wrote to us can be answered even with their private
+    // messages off. The lobby keeps the same window.
+    constexpr qint64 kPmReplyWindowMs = 10 * 60'000;
     constexpr int kMaxCardWidth = 756;
 
     // The top of a player's menu: who this is and what they're up to.
@@ -165,6 +169,7 @@ void RollbackLobbyDialog::connectSocialSignals()
     m_ignored = settings.value(kIgnoredSetting).toStringList();
     m_doNotDisturb = settings.value(kDoNotDisturbSetting, false).toBool();
     m_client->setChallengesOff(settings.value(kNoChallengesSetting, false).toBool());
+    m_client->setPrivateMessagesOff(settings.value(kNoPrivateMessagesSetting, false).toBool());
     m_spectatorOverlayToggle->setChecked(settings.value(kSpectatorOverlaySetting, false).toBool());
     connect(m_spectatorOverlayToggle, &QCheckBox::toggled, this, [](bool checked) {
         QSettings("RMG-K", "n02").setValue(kSpectatorOverlaySetting, checked);
@@ -186,6 +191,7 @@ void RollbackLobbyDialog::resetSocialState()
     m_pmPanel->clear();
     m_lastPmLocal = 0;
     m_lastPmRemote = 0;
+    m_pmReceivedMs.clear();
     m_lastAlertMs.clear();
     for (QList<int>& pending : m_pendingMentions)
         pending.clear();
@@ -341,14 +347,14 @@ void RollbackLobbyDialog::showPlayerMenu(quint64 userId, const QPoint& globalPos
     }
     if (social)
     {
-        if (user.social)
+        if (!user.social)
+            menu.addDisabledItem(QStringLiteral("mail-line"), tr("Send a message"), tr("Needs an update"));
+        else if (!canMessage(user))
+            menu.addDisabledItem(QStringLiteral("mail-line"), tr("Send a message"), tr("Not taking messages"));
+        else
         {
             connect(menu.addItem(QStringLiteral("mail-line"), tr("Send a message")), &QAction::triggered, this,
                     [this, userId]() { openPrivateMessage(userId); });
-        }
-        else
-        {
-            menu.addDisabledItem(QStringLiteral("mail-line"), tr("Send a message"), tr("Needs an update"));
         }
     }
     connect(menu.addItem(QStringLiteral("at-line"), tr("Mention in chat")), &QAction::triggered, this,
@@ -461,6 +467,24 @@ void RollbackLobbyDialog::showUserMenu()
         });
         challengesLay->addWidget(challenges);
         menu.addLiveWidget(challengesRow);
+
+        // Only where the lobby can hold back messages for us.
+        if (m_client->pmSettingsSupported())
+        {
+            auto* messagesRow = new QWidget(&menu);
+            auto* messagesLay = new QHBoxLayout(messagesRow);
+            messagesLay->setContentsMargins(11, 4, 11, 4);
+            auto* messages = new ToggleSwitch(tr("Allow private messages"), messagesRow);
+            messages->setObjectName("AllowPrivateMessages");
+            messages->setToolTip(tr("Off: only players you've written to in the last 10 minutes, and moderators, can message you."));
+            messages->setChecked(!m_client->privateMessagesOff());
+            connect(messages, &QCheckBox::toggled, this, [this](bool on) {
+                m_client->setPrivateMessagesOff(!on);
+                QSettings("RMG-K", "n02").setValue(kNoPrivateMessagesSetting, !on);
+            });
+            messagesLay->addWidget(messages);
+            menu.addLiveWidget(messagesRow);
+        }
 
         auto* row = new QWidget(&menu);
         auto* rowLay = new QHBoxLayout(row);
@@ -939,6 +963,15 @@ void RollbackLobbyDialog::openPrivateMessage(quint64 userId)
     m_chatInput->setFocus();
 }
 
+bool RollbackLobbyDialog::canMessage(const LobbyClient::LobbyUser& user) const
+{
+    if (!user.noPrivateMessages || m_client->isModerator())
+        return true;
+    const auto wrote = m_pmReceivedMs.constFind(user.id);
+    return wrote != m_pmReceivedMs.constEnd() &&
+           QDateTime::currentMSecsSinceEpoch() - *wrote < kPmReplyWindowMs;
+}
+
 void RollbackLobbyDialog::sendCurrentPrivateMessage(const QString& text)
 {
     if (m_pmPanel->threadOpen())
@@ -965,6 +998,12 @@ void RollbackLobbyDialog::onPrivateMessage(const LobbyClient::ChatMessage& msg)
 
     m_lastPmLocal = local;
     m_lastPmRemote = remote;
+    // They can be answered for a while even if they take no messages.
+    m_pmReceivedMs.insert(remote, QDateTime::currentMSecsSinceEpoch());
+    const auto sender = m_client->users().constFind(remote);
+    if (QTreeWidgetItem* row = m_userItems.value(remote); row && sender != m_client->users().constEnd())
+        refreshPlayerRow(row, *sender);
+    refreshChatInput();
     const bool looking = isActiveWindow() && m_chatTabs->currentIndex() == kChatTabMail &&
                          m_pmPanel->openLocalId() == local && m_pmPanel->openRemoteId() == remote;
     if (!looking)
@@ -983,6 +1022,8 @@ void RollbackLobbyDialog::onPrivateMessageFailed(quint64 toUserId, const QString
         why = tr("They've left the lobby, so that message went nowhere.");
     else if (reason == QLatin1String("needs_update"))
         why = tr("Their version of Dale64 can't receive private messages.");
+    else if (reason == QLatin1String("pms_off"))
+        why = tr("They aren't taking private messages, so that one wasn't delivered.");
     view->addLine(QString("<i style='color:%1;'>%2</i>").arg(LobbyTheme::tokens().muted.name(), why.toHtmlEscaped()));
 }
 
@@ -1000,6 +1041,9 @@ void RollbackLobbyDialog::refreshPrivateMessageStatus(quint64 userId)
         status += tr(" · ~%1 ms").arg(estimate);
     m_pmPanel->setRemoteStatus(userId, found->state, status, found->anonymous ? QString() : found->country,
                                found->social && found->state != QLatin1String("playing"));
+    // Whether they take messages may have changed under the open conversation.
+    if (m_pmPanel->threadOpen() && m_pmPanel->openRemoteId() == userId)
+        refreshChatInput();
 }
 
 // ──────────────────────────────────────────────────────────────────────

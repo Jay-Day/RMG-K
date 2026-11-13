@@ -235,7 +235,7 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     limits->addLayout(wifiBox, 1);
     body->addLayout(limits);
 
-    m_liveReplaySwitch = new ToggleSwitch(tr("Allow Spectators"), this);
+    m_liveReplaySwitch = new ToggleSwitch(tr("Allow spectators"), this);
     m_liveReplaySwitch->setObjectName("LiveReplaySwitch");
     body->addWidget(m_liveReplaySwitch);
 

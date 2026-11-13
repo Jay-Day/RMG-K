@@ -12,11 +12,24 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QRadialGradient>
+#include <QSignalBlocker>
 #include <QTimer>
+#include <QVariantAnimation>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
+
+#ifdef _WIN32
+// Lean: the full header's rpcndr.h defines `small`, a name used below.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using namespace UserInterface::Dialog;
 using LobbyTheme::Role;
@@ -1248,12 +1261,70 @@ void FrameStepper::refresh()
 
 static constexpr int kToggleTrackHeight = 18;
 
+namespace
+{
+    // Windows' "Animation effects" setting (Accessibility > Visual effects).
+    bool systemAnimationsOn()
+    {
+#ifdef _WIN32
+        BOOL on = TRUE;
+        if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &on, 0))
+            return on != FALSE;
+#endif
+        return true;
+    }
+
+    constexpr int kToggleSlideMs = 150;
+}
+
 ToggleSwitch::ToggleSwitch(const QString& title, QWidget* parent)
     : QCheckBox(title, parent)
 {
     setCursor(Qt::PointingHandCursor);
     setAttribute(Qt::WA_Hover);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+
+    m_slide = new QVariantAnimation(this);
+    m_slide->setEasingCurve(QEasingCurve::OutCubic);
+    connect(m_slide, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
+        m_knob = value.toReal();
+        update();
+    });
+}
+
+void ToggleSwitch::checkStateSet()
+{
+    QCheckBox::checkStateSet();
+    slideKnob();
+}
+
+void ToggleSwitch::nextCheckState()
+{
+    QCheckBox::nextCheckState();
+    slideKnob();
+}
+
+void ToggleSwitch::slideKnob()
+{
+    const qreal target = isChecked() ? 1.0 : 0.0;
+    const bool sliding = m_slide->state() == QAbstractAnimation::Running;
+    if (sliding && m_slide->endValue().toReal() == target)
+        return;
+    m_slide->stop();
+    if (!isVisible() || !systemAnimationsOn() || m_knob == target)
+    {
+        m_knob = target;
+        update();
+        return;
+    }
+    // Setting the values emits valueChanged for the old run's elapsed time,
+    // which would move the knob before the new run starts.
+    const QSignalBlocker quiet(m_slide);
+    // Turned back mid-slide: the way home is shorter, so it takes less time.
+    m_slide->setDuration(std::max(1, qRound(kToggleSlideMs * std::abs(target - m_knob))));
+    m_slide->setStartValue(m_knob);
+    m_slide->setEndValue(target);
+    m_slide->start();
 }
 
 void ToggleSwitch::setSubText(const QString& text)
@@ -1290,16 +1361,19 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
     painter.setRenderHint(QPainter::Antialiasing);
     const Tokens& t = LobbyTheme::tokens();
 
-    const bool on = isChecked();
+    // A state change that skipped checkStateSet (setCheckState) shows at once.
+    if (m_slide->state() != QAbstractAnimation::Running)
+        m_knob = isChecked() ? 1.0 : 0.0;
+    const qreal on = m_knob;
     const qreal opacity = isEnabled() ? 1.0 : 0.45;
     const QRectF track(0, (height() - kToggleTrackHeight) / 2.0, 32, kToggleTrackHeight);
     painter.save();
     painter.setOpacity(opacity);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(on ? t.ok : t.line2);
+    painter.setBrush(LobbyTheme::mix(t.ok, t.line2, on));
     painter.drawRoundedRect(track, kToggleTrackHeight / 2.0, kToggleTrackHeight / 2.0);
-    painter.setBrush(on ? QColor(Qt::white) : t.panel);
-    painter.drawEllipse(QPointF(track.left() + (on ? 23 : 9), track.center().y()), 6, 6);
+    painter.setBrush(LobbyTheme::mix(QColor(Qt::white), t.panel, on));
+    painter.drawEllipse(QPointF(track.left() + 9 + 14 * on, track.center().y()), 6, 6);
     painter.restore();
 
     const int x = 41;

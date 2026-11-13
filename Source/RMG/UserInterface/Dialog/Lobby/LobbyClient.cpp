@@ -636,6 +636,7 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     m_socialSupported = false;
     m_spectatorChatSupported = false;
     m_challengeSettingsSupported = false;
+    m_pmSettingsSupported = false;
     emit localPlayersChanged();
 
     qInfo() << "Rollback lobby local IPv4 detection"
@@ -891,6 +892,8 @@ void LobbyClient::onWsConnected()
     data["gameOptions"] = true;
     if (m_challengesOff)
         data["noChallenges"] = true;
+    if (m_privateMessagesOff)
+        data["noPrivateMessages"] = true;
     if (!m_pendingLocalIp.isEmpty())
         data["localIp"] = m_pendingLocalIp;
 
@@ -1030,6 +1033,7 @@ void LobbyClient::handleHelloOk(const QJsonObject& data)
     m_socialSupported = data.value("social").toBool();
     m_spectatorChatSupported = data.value("spectatorChat").toBool();
     m_challengeSettingsSupported = data.value("challengeSettings").toBool();
+    m_pmSettingsSupported = data.value("pmSettings").toBool();
     emit localPlayersChanged();
 
     std::string stunHost = "stun.l.google.com";
@@ -3557,6 +3561,18 @@ void LobbyClient::setChallengesOff(bool off)
     sendEnvelope("CHALLENGE_SETTINGS", d);
 }
 
+void LobbyClient::setPrivateMessagesOff(bool off)
+{
+    if (m_privateMessagesOff == off)
+        return;
+    m_privateMessagesOff = off;
+    if (m_state != ConnectionState::Connected || !m_pmSettingsSupported)
+        return;
+    QJsonObject d;
+    d["off"] = off;
+    sendEnvelope("PM_SETTINGS", d);
+}
+
 void LobbyClient::handleChallengeSent(const QJsonObject& data)
 {
     const QJsonObject rom = data.value("rom").toObject();
@@ -4002,6 +4018,7 @@ LobbyClient::LobbyUser LobbyClient::parsePresenceUser(const QJsonObject& obj)
     u.searchingRom    = obj.value("searchingRom").toString();
     u.social = obj.value("social").toBool();
     u.noChallenges = obj.value("noChallenges").toBool();
+    u.noPrivateMessages = obj.value("noPrivateMessages").toBool();
     return u;
 }
 

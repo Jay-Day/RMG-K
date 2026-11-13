@@ -3881,7 +3881,7 @@ Turn this off to start every match from the save picked here.</source>
             <translation>このPCに .krec を保存します</translation>
         </message>
         <message>
-            <source>Allow Spectators</source>
+            <source>Allow spectators</source>
             <translation>観戦を許可</translation>
         </message>
         <message>
@@ -4706,7 +4706,7 @@ A local replay is saved only if Save replay is on.</source>
             <translation>パスワード</translation>
         </message>
         <message>
-            <source>Allow Spectators</source>
+            <source>Allow spectators</source>
             <translation>観戦を許可</translation>
         </message>
         <message>
@@ -5074,7 +5074,7 @@ A local replay is saved only if Save replay is on.</source>
             <translation>検索や絞り込みを解除すると全ルームが表示されます。</translation>
         </message>
         <message>
-            <source>No open lobbies</source>
+            <source>No open rooms</source>
             <translation>募集中のルームはありません</translation>
         </message>
         <message>
@@ -5205,7 +5205,7 @@ A local replay is saved only if Save replay is on.</source>
             <translation>メッセージ（任意）</translation>
         </message>
         <message>
-            <source>Allow Spectators</source>
+            <source>Allow spectators</source>
             <translation>観戦を許可</translation>
         </message>
         <message>
@@ -6029,6 +6029,34 @@ A local replay is saved only if Save replay is on.</source>
     <message>
         <source>Allow challenges</source>
         <translation>対戦の申し込みを受け付ける</translation>
+    </message>
+    <message>
+        <source>Allow private messages</source>
+        <translation>プライベートメッセージを受け付ける</translation>
+    </message>
+    <message>
+        <source>Off: only players you&apos;ve written to in the last 10 minutes, and moderators, can message you.</source>
+        <translation>オフにすると、メッセージを送れるのは直近10分以内にあなたがメッセージを送ったプレイヤーとモデレーターだけになります。</translation>
+    </message>
+    <message>
+        <source>Not taking messages</source>
+        <translation>メッセージを受け付けていません</translation>
+    </message>
+    <message>
+        <source>Not taking private messages</source>
+        <translation>プライベートメッセージを受け付けていません</translation>
+    </message>
+    <message>
+        <source>They aren&apos;t taking private messages, so that one wasn&apos;t delivered.</source>
+        <translation>相手はプライベートメッセージを受け付けていないため、届きませんでした。</translation>
+    </message>
+    <message>
+        <source>%1 isn&apos;t taking private messages</source>
+        <translation>%1はプライベートメッセージを受け付けていません</translation>
+    </message>
+    <message>
+        <source>%1 isn&apos;t taking private messages.</source>
+        <translation>%1はプライベートメッセージを受け付けていません。</translation>
     </message>
     <message>
         <source>That room is wired only, and you&apos;re on Wi-Fi.</source>
