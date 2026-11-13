@@ -8,6 +8,14 @@
 #ifdef _WIN32
 #include <io.h>
 #include <windows.h>
+#else
+#include <cstdlib>
+#include <fcntl.h>
+#include <poll.h>
+#include <locale.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #endif
 
 namespace KailleraExport
@@ -15,6 +23,12 @@ namespace KailleraExport
 
 namespace
 {
+
+#ifndef _WIN32
+static const int READ_PIPE = 0;
+static const int WRITE_PIPE = 1;
+#endif
+
 
 struct EncoderCandidate
 {
@@ -123,9 +137,124 @@ static bool runCommandWithCapturedOutput(const std::string& command,
 
     return localExitCode == 0;
 }
+#endif
+
+#ifndef _WIN32
+bool execWithArgs(const std::vector<std::string> args)
+{
+    std::vector<const char*> commandArgs;
+    commandArgs.reserve(args.size() + 1);
+
+    for (int i = 0; i < args.size(); i++)
+    {
+        commandArgs.push_back(args[i].c_str());
+    }
+
+    commandArgs.push_back(nullptr);
+
+    //The first element in the array must always be the program name, and the last argument must be null
+    return execvp(commandArgs[0], const_cast<char* const*>(commandArgs.data())) != -1;
+}
+
+static bool runCommandWithCapturedOutputPosix(const std::vector<std::string> arguments,
+                                         int timeoutMs,
+                                         bool requireOutput,
+                                         int* exitCode)
+{
+    int rwPipe[2];
+
+    if (pipe(rwPipe) == -1)
+    {
+        return false;
+    }
+
+    pid_t childPid = fork();
+
+    if (childPid == -1)
+    {
+        return false;
+    }
+
+    if (childPid == 0)
+    {
+        //Replace stdout and stderr in the child with the pipes
+        dup2(rwPipe[WRITE_PIPE], STDOUT_FILENO);
+        dup2(rwPipe[WRITE_PIPE], STDERR_FILENO);
+        close(rwPipe[READ_PIPE]);
+        close(rwPipe[WRITE_PIPE]);
+
+        if (execWithArgs(arguments) == false)
+        {
+            _exit(127);
+        }
+    }
+    //Parent process
+    else {
+        //Close unused write pipe
+        close(rwPipe[WRITE_PIPE]);
+
+        int fd = syscall(SYS_pidfd_open, childPid, 0);
+        struct pollfd pfd = {fd, POLL_IN, 0};
+
+        //Wait for the child process to exit in the given time
+        int pollVal = poll(&pfd, 1, timeoutMs);
+
+        //Timeout
+        if (pollVal == 0)
+        {
+            //Kill process
+            kill(childPid, SIGTERM);
+            return false;
+        }
+        //Error
+        else if (pollVal == -1)
+        {
+            return false;
+        }
+
+        //Wait for the child process to exit
+        int childExitCode;
+        waitpid(childPid, &childExitCode, 0);
+
+        if (WIFEXITED(childExitCode))
+        {
+            int exitStatus = WEXITSTATUS(childExitCode);
+
+            if (exitCode != nullptr)
+            {
+                *exitCode = exitStatus;
+            }
+        }
+
+        bool gotOutput = false;
+
+        //Read from the pipe
+        char output[256];
+        const int readBytes = read(rwPipe[READ_PIPE], &output, sizeof(output));
+
+        if (readBytes > 0)
+        {
+            gotOutput = true;
+        }
+
+        //Close no longer needed pipe
+        close(rwPipe[READ_PIPE]);
+
+        if (requireOutput && !gotOutput)
+        {
+            return false;
+        }
+
+        return childExitCode == 0;
+    }
+
+    return true;
+}
+#endif
 
 static bool probeVideoEncoder(const std::string& ffmpegPath, const char* codec)
 {
+#ifdef _WIN32
     // AMD AMF requires at least 128x96 to initialize; 64x64 silently fails on
     // AMD systems even when the driver is fine. 320x240 clears all known
     // hardware-encoder minimums (NVENC, QSV, AMF). yuv420p is forced because
@@ -141,6 +270,15 @@ static bool probeVideoEncoder(const std::string& ffmpegPath, const char* codec)
              codec);
 
     return runCommandWithCapturedOutput(command, 10000, false, nullptr);
+#else
+    std::vector<std::string> args =
+    {
+      ffmpegPath, "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x240:r=30:d=0.1", "-frames:v", "1",
+      "-pix_fmt", "yuv420p", "-c:v", codec, "-f", "null", "-"
+    };
+
+    return runCommandWithCapturedOutputPosix(args, 10000, false, nullptr);
+#endif
 }
 
 static std::string chooseVideoEncoder(const std::string& ffmpegPath, bool* hardwareAccelerated)
@@ -164,6 +302,42 @@ static std::string chooseVideoEncoder(const std::string& ffmpegPath, bool* hardw
     return {};
 }
 
+#ifndef _WIN32
+static std::vector<std::string> buildVideoEncoderFlagsPosix(const std::string& videoEncoder, int crf)
+{
+    const std::string crfStr = std::to_string(crf);
+
+    if (videoEncoder == "h264_nvenc")
+    {
+        std::vector<std::string> args =
+        {
+            "-c:v", "h264_nvenc", "-preset", "fast", "-rc", "vbr", "-cq", crfStr, "-pix_fmt", "yuv420p"
+        };
+        return args;
+    }
+
+    if (videoEncoder == "h264_amf")
+    {
+        std::vector<std::string> args =
+        {
+            "-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", crfStr,
+            "qp_p", crfStr, "-pix_fmt", "yuv420p"
+        };
+        return args;
+    }
+
+    if (videoEncoder == "h264_qsv")
+    {
+        std::vector<std::string> args = { "-c:v", "h264_qsv", "-global_quality", crfStr, "-look_ahead", "0" };
+        return args;
+    }
+
+    std::vector<std::string> args = { "-c:v", "libx264", "-preset", "ultrafast", "-crf", crfStr, "-pix_fmt", "yuv420p" };
+    return args;
+}
+#endif
+
+#ifdef _WIN32
 static std::string buildVideoEncoderFlags(const std::string& videoEncoder, int crf)
 {
     char buffer[256];
@@ -213,6 +387,12 @@ bool CheckFfmpegExecutable(const std::string& ffmpegPath, std::string* errorMess
 
     DWORD exitCode = 1;
     if (!runCommandWithCapturedOutput(command, 5000, true, &exitCode) || exitCode != 0)
+#else
+    std::vector<std::string> args = { ffmpegPath, "-version" };
+
+    int exitCode = 1;
+    if (!runCommandWithCapturedOutputPosix(args, 5000, true, &exitCode) || exitCode != 0)
+#endif
     {
         return fail(errorMessage, "FFmpeg was not found");
     }
@@ -223,15 +403,11 @@ bool CheckFfmpegExecutable(const std::string& ffmpegPath, std::string* errorMess
     }
 
     return true;
-#else
-    (void)ffmpegPath;
-    return fail(errorMessage, "Replay export is only supported on Windows");
-#endif
 }
 
+#ifdef _WIN32
 static bool runFfmpegCommand(const std::string& command, std::string* errorMessage)
 {
-#ifdef _WIN32
     STARTUPINFOA startupInfo = {};
     startupInfo.cb = sizeof(startupInfo);
     startupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -269,11 +445,43 @@ static bool runFfmpegCommand(const std::string& command, std::string* errorMessa
     }
 
     return true;
-#else
-    (void)command;
-    return fail(errorMessage, "Replay export is only supported on Windows");
-#endif
 }
+#endif
+
+#ifndef _WIN32
+static bool runFfmpegCommandPosix(const std::vector<std::string> arguments, std::string* errorMessage)
+{
+    pid_t childPid = fork();
+
+    if (childPid == -1)
+    {
+        return fail(errorMessage, "Failed to create fork for FFmpeg process");
+    }
+
+    if (childPid == 0)
+    {
+        if (execWithArgs(arguments) == false)
+        {
+            _exit(127);
+        }
+    }
+    else
+    {
+        int exitCode;
+        if (waitpid(childPid, &exitCode, 0) == -1)
+        {
+            return fail(errorMessage, "Error waiting for FFmpeg process");
+        }
+
+        if (exitCode != 0)
+        {
+            return fail(errorMessage, "FFmpeg exited with an error");
+        }
+    }
+
+    return true;
+}
+#endif
 
 bool MuxVideoAndAudio(const std::string& ffmpegPath,
                       const std::string& videoPath,
@@ -292,6 +500,7 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
         ? audioDuration / videoDuration
         : 1.0;
 
+#ifdef _WIN32
     char command[4096];
     snprintf(command,
              sizeof(command),
@@ -305,9 +514,39 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
              outputPath.c_str());
 
     return runFfmpegCommand(command, errorMessage);
+#else
+    char timeStampBuffer[64];
+    char audioFreqBuffer[64];
+
+    //std::format is not used for compatibility with older systems
+    //Otherwise, std::locale and std::format would be simpler options
+    auto currentLocale = setlocale(LC_ALL, NULL);
+
+    //Use default C locale for formatting numbers
+    setlocale(LC_NUMERIC, "C");
+
+    //Print to buffers
+    std::snprintf(timeStampBuffer, sizeof(timeStampBuffer), "%g", timestampScale);
+    std::snprintf(audioFreqBuffer, sizeof(audioFreqBuffer), "%d", audioFrequency);
+
+    //Set locale back
+    setlocale(LC_ALL, currentLocale);
+
+    std::string timestampStr(timeStampBuffer);
+    std::string audioFreqStr(audioFreqBuffer);
+
+    std::vector<std::string> arguments =
+    {
+        ffmpegPath, "-v", "error", "-y", "-itsscale", timestampStr, "-i", videoPath, "-f", "s16le",
+        "-ar", audioFreqStr, "-ac", "2", "-i", audioPath, "-c:v", "copy", "-c:a", "aac", "-strict",
+        "-2", "-b:a", "192k", "-shortest", outputPath
+    };
+
+    return runFfmpegCommandPosix(arguments, errorMessage);
+#endif
 }
 
-bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMessage)
+bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* errorMessage)
 {
     m_FrameWidth = config.width;
     m_FrameHeight = config.height;
@@ -315,7 +554,6 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
     m_SelectedVideoEncoder.clear();
     m_HardwareAccelerated = false;
 
-#ifdef _WIN32
     m_SelectedVideoEncoder = config.videoEncoder.empty()
         ? chooseVideoEncoder(config.ffmpegPath, &m_HardwareAccelerated)
         : config.videoEncoder;
@@ -328,6 +566,7 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
         m_HardwareAccelerated = (config.videoEncoder != "libx264");
     }
 
+#ifdef _WIN32
     const std::string encoderFlags = buildVideoEncoderFlags(m_SelectedVideoEncoder, config.crf);
     fprintf(stderr,
             "Using FFmpeg video encoder: %s%s\n",
@@ -411,12 +650,96 @@ bool FfmpegEncoder::open(const FfmpegEncoderConfig& config, std::string* errorMe
     }
 
     setvbuf(m_Pipe, nullptr, _IOFBF, 1 << 20);
+#else
+    char videoSizeBuffer[16];
+    char fpsBuffer[16];
+
+    std::vector<std::string> encoderFlags = buildVideoEncoderFlagsPosix(m_SelectedVideoEncoder, config.crf);
+    fprintf(stderr,
+            "Using FFmpeg video encoder: %s%s\n",
+            m_SelectedVideoEncoder.c_str(),
+            m_HardwareAccelerated ? " (hardware)" : " (CPU)");
+
+    auto currentLocale = setlocale(LC_ALL, NULL);
+
+    //Use default C locale for formatting numbers
+    setlocale(LC_NUMERIC, "C");
+
+    //Print to buffers
+    std::snprintf(videoSizeBuffer, sizeof(videoSizeBuffer), "%dx%d", config.width, config.height);
+    std::snprintf(fpsBuffer, sizeof(fpsBuffer), "%g", config.fps);
+
+    //Set locale back
+    setlocale(LC_ALL, currentLocale);
+
+    std::string videoSizeStr(videoSizeBuffer);
+    std::string fpsStr(fpsBuffer);
+
+    std::vector<std::string> command =
+        {
+          config.ffmpegPath, "-v", "error", "-y", "-f", "rawvideo", "-pixel_format", "rgb24",
+          "-video_size", videoSizeStr, "-framerate", fpsStr, "-i", "pipe:0"
+        };
+
+    for (int i = 0; i < encoderFlags.size(); i++)
+    {
+        command.push_back(encoderFlags[i]);
+    }
+    command.push_back(config.outputPath);
+
+    int rwPipe[2];
+
+    if (pipe(rwPipe) == -1)
+    {
+        return fail(errorMessage, "Failed to create FFmpeg stdin pipe");
+    }
+
+    //As defined in /proc/sys/fs/pipe-max-size
+    const int maxPipeSize = 16 << 16;
+
+    //Set the write pipe's capacity to the max unprivileged size - the pipe will continue with the default value if it fails
+    fcntl(rwPipe[WRITE_PIPE], F_SETPIPE_SZ, maxPipeSize);
+
+    pid_t childPid = fork();
+
+    if (childPid == -1)
+    {
+        close(rwPipe[READ_PIPE]);
+        close(rwPipe[WRITE_PIPE]);
+        return fail(errorMessage, "Failed to create fork for FFmpeg encoder");
+    }
+
+    //Child
+    if (childPid == 0)
+    {
+        dup2(rwPipe[READ_PIPE], STDIN_FILENO);
+        close(rwPipe[READ_PIPE]);
+        close(rwPipe[WRITE_PIPE]);
+
+        if (execWithArgs(command) == false)
+        {
+            _exit(127);
+        }
+    }
+    //Parent
+    else
+    {
+        //Close unused read pipe
+        close(rwPipe[READ_PIPE]);
+
+        m_Pipe = fdopen(rwPipe[WRITE_PIPE], "w");
+
+        if (m_Pipe == nullptr)
+        {
+            close(rwPipe[WRITE_PIPE]);
+            return fail(errorMessage, "Failed to wrap FFmpeg pipe");
+        }
+
+        setvbuf(m_Pipe, nullptr, _IOFBF, 1 << 20);
+    }
+#endif
 
     return true;
-#else
-    (void)config;
-    return fail(errorMessage, "Replay export is only supported on Windows");
-#endif
 }
 
 bool FfmpegEncoder::writeFrame(const uint8_t* rgbData, int width, int height, std::string* errorMessage)
@@ -435,7 +758,7 @@ bool FfmpegEncoder::writeFrame(const uint8_t* rgbData, int width, int height, st
     return true;
 }
 
-void FfmpegEncoder::close()
+void FfmpegEncoder::closeEncoder()
 {
     if (m_Pipe != nullptr)
     {

@@ -24,6 +24,10 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#define GET_PROC(handle, name) GetProcAddress((HMODULE)(handle), name)
+#else
+#include <dlfcn.h>
+#define GET_PROC(handle, name) dlsym(handle, name)
 #endif
 
 namespace KailleraExport
@@ -115,6 +119,7 @@ static std::filesystem::path resolveFfmpegPath(const QCommandLineParser& parser)
         return std::filesystem::path(parser.value(kExportFfmpegOption).toStdString());
     }
 
+#ifdef _WIN32
     const QString applicationDirectory = QCoreApplication::applicationDirPath();
     const QString localFfmpeg = QDir(applicationDirectory).filePath("ffmpeg.exe");
     if (QFileInfo::exists(localFfmpeg))
@@ -128,6 +133,7 @@ static std::filesystem::path resolveFfmpegPath(const QCommandLineParser& parser)
     {
         return std::filesystem::path(savedFfmpeg.toStdString());
     }
+#endif
 
     const QString foundExecutable = QStandardPaths::findExecutable("ffmpeg");
     if (!foundExecutable.isEmpty())
@@ -135,11 +141,13 @@ static std::filesystem::path resolveFfmpegPath(const QCommandLineParser& parser)
         return std::filesystem::path(foundExecutable.toStdString());
     }
 
+#ifdef _WIN32
     const QString foundExecutableExe = QStandardPaths::findExecutable("ffmpeg.exe");
     if (!foundExecutableExe.isEmpty())
     {
         return std::filesystem::path(foundExecutableExe.toStdString());
     }
+#endif
 
     return {};
 }
@@ -194,7 +202,11 @@ static bool parseOptions(const QCommandLineParser& parser,
     {
         if (errorMessage != nullptr)
         {
+#ifdef _WIN32
             *errorMessage = "FFmpeg was not found. Install FFmpeg or place ffmpeg.exe next to RMG-K.exe.";
+#else
+            *errorMessage = "ffmpeg was not found. Install ffmpeg in your distribution packages.";
+#endif
         }
         return false;
     }
@@ -270,16 +282,25 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
 
     prepareConfigDirectory(std::filesystem::path(temporaryConfigDirectory.path().toStdString()));
 
-    const std::filesystem::path corePath = CoreGetCoreDirectory() / "mupen64plus.dll";
-    const std::filesystem::path inputPluginPath = getPluginPath("Input", "RMG-Input.dll");
-    const std::filesystem::path rspPluginPath = getPluginPath("RSP", "mupen64plus-rsp-hle.dll");
-    const std::filesystem::path gfxPluginPath = getPluginPath("GFX", "mupen64plus-video-GLideN64.dll");
-    const std::filesystem::path audioPluginPath = getPluginPath("Audio", "RMG-Audio-Capture.dll");
+#ifdef _WIN32
+    const std::string coreLibFileName = "mupen64plus";
+    const std::string fileExt = ".dll";
+#else
+    const std::string coreLibFileName = "libmupen64plus";
+    const std::string fileExt = ".so";
+#endif
+
+    const std::filesystem::path corePath = CoreGetCoreDirectory() / (coreLibFileName + fileExt);
+    const std::filesystem::path inputPluginPath = getPluginPath("Input", ("RMG-Input" + fileExt).c_str());
+    const std::filesystem::path rspPluginPath = getPluginPath("RSP", ("mupen64plus-rsp-hle" + fileExt).c_str());
+    const std::filesystem::path gfxPluginPath = getPluginPath("GFX", ("mupen64plus-video-GLideN64" + fileExt).c_str());
+    const std::filesystem::path audioPluginPath = getPluginPath("Audio", ("RMG-Audio-Capture" + fileExt).c_str());
+
     const std::filesystem::path dataDirectory = CoreGetSharedDataDirectory();
 
     if (!requireExistingFile(options.krecPath, "recording", errorMessage) ||
         !requireExistingFile(options.romPath, "ROM", errorMessage) ||
-        !requireExistingFile(corePath, "core DLL", errorMessage) ||
+        !requireExistingFile(corePath, "core DLL/lib", errorMessage) ||
         !requireExistingFile(inputPluginPath, "input plugin", errorMessage) ||
         !requireExistingFile(rspPluginPath, "RSP plugin", errorMessage) ||
         !requireExistingFile(gfxPluginPath, "graphics plugin", errorMessage) ||
@@ -319,11 +340,9 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     m64p_dynlib_handle audioHandle = emulator.getAudioPluginHandle();
     if (audioHandle != nullptr)
     {
-#ifdef _WIN32
-        setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_set_output"));
-        getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_frequency"));
-        getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(GetProcAddress((HMODULE)audioHandle, "audio_capture_get_bytes_written"));
-#endif
+        setOutputFn = reinterpret_cast<AudioCaptureSetOutputFn>(GET_PROC(audioHandle, "audio_capture_set_output"));
+        getFrequencyFn = reinterpret_cast<AudioCaptureGetFrequencyFn>(GET_PROC(audioHandle, "audio_capture_get_frequency"));
+        getBytesWrittenFn = reinterpret_cast<AudioCaptureGetBytesWrittenFn>(GET_PROC(audioHandle, "audio_capture_get_bytes_written"));
     }
 
     if (!emulator.openRom(options.romPath.string()))
@@ -413,7 +432,7 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     const m64p_error executeResult = emulator.execute();
     FlushFrameCapture();
     ShutdownChatOverlay();
-    encoder.close();
+    encoder.closeEncoder();
 
     std::string frameCaptureError;
     if (GetFrameCaptureError(&frameCaptureError))
@@ -529,11 +548,6 @@ bool IsReplayExportRequested(const QCommandLineParser& parser)
 
 int RunReplayExportFromCommandLine(const QCommandLineParser& parser)
 {
-#ifndef _WIN32
-    (void)parser;
-    printExportError("Replay export is only supported on Windows");
-    return 1;
-#else
     ReplayExportOptions options;
     std::string errorMessage;
     if (!parseOptions(parser, options, &errorMessage))
@@ -550,7 +564,6 @@ int RunReplayExportFromCommandLine(const QCommandLineParser& parser)
 
     fprintf(stderr, "Replay export finished: %s\n", options.outputPath.string().c_str());
     return 0;
-#endif
 }
 
 } // namespace KailleraExport

@@ -11,10 +11,8 @@
 #include "KailleraTableStyle.hpp"
 #include "PlaybackTimeline.hpp"
 #include "UserInterface/MainWindow.hpp"
-#include "Utilities/KailleraExport/KrecParser.hpp"
-#ifdef _WIN32
 #include "Utilities/KailleraExport/FfmpegEncoder.hpp"
-#endif
+#include "Utilities/KailleraExport/KrecParser.hpp"
 
 #ifdef NETPLAY
 
@@ -382,25 +380,19 @@ static QString findPathFfmpeg()
         return executable;
     }
 
+#ifdef _WIN32
     executable = QStandardPaths::findExecutable("ffmpeg.exe");
     if (!executable.isEmpty())
     {
         return executable;
     }
+#endif
 
     return {};
 }
 
 static bool validateFfmpegPath(const QString& path, QString* errorMessage = nullptr)
 {
-#ifndef _WIN32
-    (void)path;
-    if (errorMessage != nullptr)
-    {
-        *errorMessage = "MP4 export is only supported on Windows.";
-    }
-    return false;
-#else
     std::string error;
     if (KailleraExport::CheckFfmpegExecutable(path.toStdString(), &error))
     {
@@ -412,7 +404,6 @@ static bool validateFfmpegPath(const QString& path, QString* errorMessage = null
         *errorMessage = QString::fromStdString(error);
     }
     return false;
-#endif
 }
 
 static QString formatExportDuration(double totalSeconds)
@@ -614,9 +605,7 @@ void KailleraPlaybackDialog::setupUI()
     m_btnPBRefresh = new QPushButton(tr("Refresh"), this);
     m_btnExport = new QPushButton(tr("Export MP4"), this);
     m_btnOpenFolder = new QPushButton(tr("Open Folder"), this);
-#ifndef _WIN32
-    m_btnExport->hide();
-#endif
+
     m_btnBack->setToolTip(tr("Jump back 10 seconds"));
     m_btnForward->setToolTip(tr("Jump forward 10 seconds"));
     m_btnStepForward->setToolTip(tr("Pause, then advance one frame"));
@@ -651,9 +640,7 @@ void KailleraPlaybackDialog::setupUI()
     connect(m_btnStop, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackStop);
     connect(m_btnPBDelete, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackDelete);
     connect(m_btnPBRefresh, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackRefresh);
-#ifdef _WIN32
     connect(m_btnExport, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackExport);
-#endif
     connect(m_btnOpenFolder, &QPushButton::clicked, this, &KailleraPlaybackDialog::onPlaybackOpenFolder);
 
     if (modern)
@@ -667,9 +654,7 @@ void KailleraPlaybackDialog::setupUI()
         configurePlaybackButton(m_btnStop, "KailleraSecondaryButton");
         configurePlaybackButton(m_btnPBDelete, "KailleraSecondaryButton");
         configurePlaybackButton(m_btnPBRefresh, "KailleraHeaderIconButton");
-#ifdef _WIN32
         configurePlaybackButton(m_btnExport, "KailleraPrimaryButton");
-#endif
         configurePlaybackButton(m_btnOpenFolder, "KailleraSecondaryButton");
     }
 
@@ -718,9 +703,7 @@ void KailleraPlaybackDialog::setupUI()
         bottomLayout->setSpacing(8);
     }
     bottomLayout->addWidget(m_btnPBDelete);
-#ifdef _WIN32
     bottomLayout->addWidget(m_btnExport);
-#endif
     bottomLayout->addStretch();
     bottomLayout->addWidget(m_btnPBRefresh);
     bottomLayout->addWidget(m_btnOpenFolder);
@@ -1177,9 +1160,6 @@ QString KailleraPlaybackDialog::getSelectedRecordingGameName(QString* recordingP
         return {};
     }
 
-#ifndef _WIN32
-    return {};
-#else
     KailleraExport::KrecData krecData;
     std::string errorMessage;
     if (!KailleraExport::ParseKrecFile(std::filesystem::path(selectedPath.toStdString()), krecData, &errorMessage))
@@ -1193,7 +1173,6 @@ QString KailleraPlaybackDialog::getSelectedRecordingGameName(QString* recordingP
     }
 
     return QString::fromStdString(krecData.header.gameName);
-#endif
 }
 
 bool KailleraPlaybackDialog::promptForExportSettings(const QString& defaultOutputPath,
@@ -1341,6 +1320,7 @@ QString KailleraPlaybackDialog::resolveExportFfmpegPath()
         return savedPath;
     }
 
+#ifdef _WIN32
     const QString applicationFfmpeg =
         QDir(QCoreApplication::applicationDirPath()).filePath("ffmpeg.exe");
     if (isExecutableFile(applicationFfmpeg) && validateFfmpegPath(applicationFfmpeg))
@@ -1355,6 +1335,7 @@ QString KailleraPlaybackDialog::resolveExportFfmpegPath()
         CoreSettingsSave();
         return managedFfmpeg;
     }
+#endif
 
     const QString pathFfmpeg = findPathFfmpeg();
     if (isExecutableFile(pathFfmpeg) && validateFfmpegPath(pathFfmpeg))
@@ -1371,19 +1352,32 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
     messageBox.setIcon(QMessageBox::Question);
     messageBox.setWindowTitle("Export MP4");
     messageBox.setText("MP4 export requires FFmpeg.");
+
+#ifdef _WIN32
     messageBox.setInformativeText(
         "RMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
+#else
+    messageBox.setInformativeText("Choose an existing ffmpeg executable on your system.");
+#endif
 
+#ifdef _WIN32
     QPushButton* downloadButton = messageBox.addButton("Download FFmpeg", QMessageBox::AcceptRole);
     QPushButton* chooseButton = messageBox.addButton("Choose ffmpeg.exe", QMessageBox::ActionRole);
     messageBox.addButton(QMessageBox::Cancel);
     messageBox.setDefaultButton(downloadButton);
+#else
+    QPushButton* chooseButton = messageBox.addButton("Choose ffmpeg executable", QMessageBox::ActionRole);
+    messageBox.addButton(QMessageBox::Cancel);
+    messageBox.setDefaultButton(chooseButton);
+#endif
     messageBox.exec();
 
+#ifdef _WIN32
     if (messageBox.clickedButton() == downloadButton)
     {
         return downloadManagedFfmpeg();
     }
+#endif
 
     if (messageBox.clickedButton() != chooseButton)
     {
@@ -1394,7 +1388,12 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
         this,
         "Choose FFmpeg",
         QString(),
+#ifdef _WIN32
         "FFmpeg (ffmpeg.exe);;Executables (*.exe)");
+#else
+        "All Files (*)");
+#endif
+
     if (path.isEmpty())
     {
         return {};
@@ -1625,7 +1624,25 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
 
     m_exportProcess = new QProcess(this);
     m_exportProcess->setProcessChannelMode(QProcess::MergedChannels);
-    m_exportProcess->setProgram(QCoreApplication::applicationFilePath());
+
+    QString program = QCoreApplication::applicationFilePath();
+
+    /* Hack for AppImages - this runs the RMG-K binary directly, which doesn't have the environment
+     * that would be set by AppRun and thus fails to load libRMG-Core
+     *
+     * This is also true for upstream RMG, but they don't invoke a separate process like this
+     * so it's a problem only in this case
+     *
+     * Thus if it's the AppImage, run AppRun instead of the RMG-K binary
+     * The "APPIMAGE" envvar is set for app images
+     */
+    if (getenv("APPIMAGE"))
+    {
+        program = QCoreApplication::applicationFilePath().remove("shared/bin/RMG-K") + "AppRun";
+    }
+
+    m_exportProcess->setProgram(program);
+
     QStringList exportArguments = {
         "--export-krec", recordingPath,
         "--export-rom", romPath,

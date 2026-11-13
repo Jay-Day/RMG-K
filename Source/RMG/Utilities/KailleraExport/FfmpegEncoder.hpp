@@ -32,9 +32,9 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
 class FfmpegEncoder
 {
 public:
-    bool open(const FfmpegEncoderConfig& config, std::string* errorMessage);
+    bool openEncoder(const FfmpegEncoderConfig& config, std::string* errorMessage);
     bool writeFrame(const uint8_t* rgbData, int width, int height, std::string* errorMessage);
-    void close();
+    void closeEncoder();
     bool isHardwareAccelerated() const;
     const std::string& selectedVideoEncoder() const;
 
