@@ -1367,6 +1367,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
     messageBox.setDefaultButton(downloadButton);
 #else
     QPushButton* chooseButton = messageBox.addButton("Choose ffmpeg executable", QMessageBox::ActionRole);
+    messageBox.addButton(QMessageBox::Cancel);
     messageBox.setDefaultButton(chooseButton);
 #endif
     messageBox.exec();

@@ -185,7 +185,7 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<std::string> arg
 
         if (execWithArgs(arguments) == false)
         {
-            return false;
+            _exit(127);
         }
     }
     //Parent process
@@ -462,7 +462,7 @@ static bool runFfmpegCommandPosix(const std::vector<std::string> arguments, std:
     {
         if (execWithArgs(arguments) == false)
         {
-            return fail(errorMessage, "Error executing FFmpeg process");
+            _exit(127);
         }
     }
     else
@@ -718,7 +718,7 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
 
         if (execWithArgs(command) == false)
         {
-            return fail(errorMessage, "Failed to launch FFmpeg encoder");
+            _exit(127);
         }
     }
     //Parent
