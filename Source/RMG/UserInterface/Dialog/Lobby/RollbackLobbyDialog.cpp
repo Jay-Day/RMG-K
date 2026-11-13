@@ -66,7 +66,7 @@
 #include <QStyle>
 #include <QPalette>
 #include <QStyledItemDelegate>
-#include <QStyleOptionFrame>
+#include <QStyleOptionComboBox>
 #include <QPainter>
 #include <QPainterPath>
 #include <QVBoxLayout>
@@ -83,7 +83,9 @@
 #include <QLinearGradient>
 #include <QFrame>
 #include <QComboBox>
-#include <QCompleter>
+#include <QListView>
+#include <QScreen>
+#include <QSortFilterProxyModel>
 #include <QCheckBox>
 #include <QActionGroup>
 #include <QButtonGroup>
@@ -238,13 +240,6 @@ namespace
         return StatusColors{ t.ok.name(), t.warn.name(), t.bad.name(), t.muted.name() };
     }
 
-    // Amber for warning text. The light theme's wait color is too pale to read
-    // as a sentence, so it uses the deeper goldenrod of the P3 accent.
-    QString warnTextHex()
-    {
-        return isDarkTheme() ? QString(statusColors().wait) : QStringLiteral("#b5790a");
-    }
-
     QString humanState(LobbyClient::ConnectionState s)
     {
         switch (s)
@@ -393,13 +388,7 @@ namespace
 
             const bool isSelf = index.data(kSelfRole).toBool();
             const QRectF box = QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5);
-            if (isSelf)
-            {
-                painter->setPen(QPen(t.line, 1.0));
-                painter->setBrush(t.tint);
-                painter->drawRoundedRect(box, 6, 6);
-            }
-            else if (option.state & (QStyle::State_Selected | QStyle::State_MouseOver))
+            if (!isSelf && (option.state & (QStyle::State_Selected | QStyle::State_MouseOver)))
             {
                 painter->setPen(Qt::NoPen);
                 painter->setBrush(option.state & QStyle::State_Selected ? t.raise : t.tint);
@@ -447,7 +436,8 @@ namespace
 
             const qreal ratio = option.widget ? option.widget->devicePixelRatioF() : 1.0;
             const QPixmap flag = LobbyTheme::flag(index.data(kCountryRole).toString(), ratio);
-            const int flagRoom = flag.isNull() ? 0 : 15 + 7;
+            const QSize flagSize = flag.deviceIndependentSize().toSize();
+            const int flagRoom = flag.isNull() ? 0 : flagSize.width() + 5;
 
             const int nameLeft = r.left() + 21;
             QFont nameFont = LobbyTheme::uiFont(12, isSelf ? QFont::DemiBold : QFont::Normal);
@@ -471,7 +461,7 @@ namespace
                 x += youWidth;
             }
             if (!flag.isNull())
-                painter->drawPixmap(QPointF(x + 7, centerY - 5), flag);
+                painter->drawPixmap(QPointF(x + 5, centerY - flagSize.height() / 2.0), flag);
 
             painter->restore();
         }
@@ -525,6 +515,177 @@ namespace
         {
             return (option.state & QStyle::State_MouseOver) && index.data(kSocialRole).toBool();
         }
+    };
+
+    constexpr int kBrowseGameSearchRole = Qt::UserRole + 1;
+
+    QString browseGameSearchText(QString text)
+    {
+        text.removeIf([](QChar ch) { return ch.isSpace(); });
+        return text;
+    }
+
+    class BrowseGameCombo : public QComboBox
+    {
+    public:
+        BrowseGameCombo(const QString& searchPlaceholder, const QString& emptyText, QWidget* parent)
+            : QComboBox(parent)
+        {
+            setCursor(Qt::PointingHandCursor);
+            m_popup = new LobbyCard(this);
+            m_popup->setWindowFlags(Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
+            m_popup->setObjectName("BrowseGamePopup");
+            m_popup->setAttribute(Qt::WA_TranslucentBackground);
+            m_popup->setFont(LobbyTheme::uiFont(12));
+            auto* layout = new QVBoxLayout(m_popup);
+            layout->setContentsMargins(7, 7, 7, 7);
+            layout->setSpacing(6);
+
+            m_search = new QLineEdit(m_popup);
+            m_search->setPlaceholderText(searchPlaceholder);
+            m_search->setAccessibleName(searchPlaceholder);
+            m_search->setClearButtonEnabled(true);
+            m_search->setMinimumHeight(32);
+            m_search->installEventFilter(this);
+            layout->addWidget(m_search);
+
+            m_filter = new QSortFilterProxyModel(m_popup);
+            m_filter->setSourceModel(model());
+            m_filter->setFilterRole(kBrowseGameSearchRole);
+            m_filter->setFilterCaseSensitivity(Qt::CaseInsensitive);
+            m_results = new QListView(m_popup);
+            m_results->setModel(m_filter);
+            m_results->setFont(LobbyTheme::uiFont(13, QFont::DemiBold));
+            m_results->setFocusPolicy(Qt::NoFocus);
+            m_results->setMouseTracking(true);
+            m_results->viewport()->setCursor(Qt::PointingHandCursor);
+            m_results->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            m_results->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            m_results->setUniformItemSizes(true);
+            m_empty = new QLabel(emptyText, m_popup);
+            m_empty->setAlignment(Qt::AlignCenter);
+            m_empty->setProperty("role", "muted");
+            m_pages = new QStackedWidget(m_popup);
+            m_pages->addWidget(m_results);
+            m_pages->addWidget(m_empty);
+            layout->addWidget(m_pages, 1);
+
+            connect(m_results, &QListView::clicked, this, &BrowseGameCombo::choose);
+            connect(m_search, &QLineEdit::textChanged, this, [this](const QString& text) {
+                m_filter->setFilterFixedString(browseGameSearchText(text));
+                selectResult();
+            });
+            m_popup->installEventFilter(this);
+        }
+
+        void showPopup() override
+        {
+            if (!isEnabled() || count() == 0 || m_popup->isVisible())
+                return;
+
+            m_search->clear();
+            selectResult();
+
+            const QRect available = screen()->availableGeometry();
+            const QPoint anchor = mapToGlobal(QPoint(0, 0));
+            const int popupWidth = std::min(width(), available.width());
+            const QLayout* layout = m_popup->layout();
+            const QMargins margins = layout->contentsMargins();
+            const int rowHeight = std::max(m_results->sizeHintForRow(0), m_results->fontMetrics().height());
+            const int desiredHeight = margins.top() + margins.bottom() + layout->spacing()
+                + m_search->sizeHint().expandedTo(m_search->minimumSize()).height()
+                + rowHeight * std::clamp(count(), 2, 10);
+            const int popupHeight = std::min(desiredHeight, available.height());
+            constexpr int gap = 4;
+            const int below = anchor.y() + height() + gap;
+            const int y = below + popupHeight <= available.bottom() + 1
+                ? below : anchor.y() - popupHeight - gap;
+            m_popup->setGeometry(std::clamp(anchor.x(), available.left(), available.right() + 1 - popupWidth),
+                                 std::clamp(y, available.top(), available.bottom() + 1 - popupHeight),
+                                 popupWidth, popupHeight);
+            m_popup->show();
+            m_results->scrollTo(m_results->currentIndex());
+            m_search->setFocus(Qt::PopupFocusReason);
+        }
+
+        void hidePopup() override
+        {
+            if (m_popup->isVisible())
+                m_popup->hide();
+            else
+                QComboBox::hidePopup();
+        }
+
+    protected:
+        void paintEvent(QPaintEvent*) override
+        {
+            QStyleOptionComboBox option;
+            initStyleOption(&option);
+            // The art, title and room counts are laid out inside the selector.
+            option.currentText.clear();
+            QPainter painter(this);
+            style()->drawComplexControl(QStyle::CC_ComboBox, &option, &painter, this);
+        }
+
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            if (watched == m_popup && event->type() == QEvent::Hide)
+                QComboBox::hidePopup();
+
+            if (watched == m_search && event->type() == QEvent::KeyPress)
+            {
+                const int key = static_cast<QKeyEvent*>(event)->key();
+                if (key == Qt::Key_Escape)
+                    hidePopup();
+                else if (key == Qt::Key_Return || key == Qt::Key_Enter)
+                    choose(m_results->currentIndex());
+                else if (key == Qt::Key_Up || key == Qt::Key_Down)
+                {
+                    const int current = m_results->currentIndex().row();
+                    const int last = m_filter->rowCount() - 1;
+                    if (last >= 0)
+                    {
+                        const int row = std::clamp(current + (key == Qt::Key_Up ? -1 : 1), 0, last);
+                        const QModelIndex next = m_filter->index(row, 0);
+                        m_results->setCurrentIndex(next);
+                        m_results->scrollTo(next);
+                    }
+                }
+                else
+                    return QComboBox::eventFilter(watched, event);
+                return true;
+            }
+            return QComboBox::eventFilter(watched, event);
+        }
+
+    private:
+        void selectResult()
+        {
+            m_pages->setCurrentWidget(m_filter->rowCount() > 0 ? static_cast<QWidget*>(m_results) : m_empty);
+            const QModelIndex selected = m_search->text().trimmed().isEmpty()
+                ? m_filter->mapFromSource(model()->index(currentIndex(), 0)) : QModelIndex();
+            const QModelIndex result = selected.isValid() ? selected : m_filter->index(0, 0);
+            m_results->setCurrentIndex(result);
+            if (result.isValid())
+                m_results->scrollTo(result);
+        }
+
+        void choose(const QModelIndex& result)
+        {
+            const QModelIndex source = m_filter->mapToSource(result);
+            if (!source.isValid())
+                return;
+            const int row = source.row();
+            hidePopup();
+            setCurrentIndex(row);
+        }
+
+        QFrame* m_popup;
+        QLineEdit* m_search;
+        QSortFilterProxyModel* m_filter;
+        QListView* m_results;
+        QLabel* m_empty;
+        QStackedWidget* m_pages;
     };
 
     void transparentForMouse(QWidget* widget)
@@ -950,39 +1111,28 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
     idleLay->setContentsMargins(0, 0, 0, 0);
     idleLay->setSpacing(8);
 
-    auto* picker = new QFrame(idle);
-    picker->setObjectName("RomPicker");
+    auto* picker = new BrowseGameCombo(tr("Search your games"), tr("No matching games"), idle);
+    m_browseRomCombo = picker;
+    picker->setObjectName("BrowseRomCombo");
+    picker->setAccessibleName(tr("Game"));
+    picker->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    picker->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     picker->setFixedHeight(44);
     auto* pickerLay = new QHBoxLayout(picker);
-    pickerLay->setContentsMargins(7, 0, 6, 0);
+    pickerLay->setContentsMargins(7, 0, 28, 0);
     pickerLay->setSpacing(10);
     m_pickerTile = new CartridgeTile(CartridgeTile::Size::Small, picker);
+    transparentForMouse(m_pickerTile);
     pickerLay->addWidget(m_pickerTile);
 
     auto* pickerText = new QVBoxLayout;
-    pickerText->setContentsMargins(0, 3, 0, 3);
-    pickerText->setSpacing(0);
-    m_browseRomCombo = new QComboBox(picker);
-    m_browseRomCombo->setObjectName("BrowseRomCombo");
-    // A long ROM name must not pin a wide minimum on the whole stage.
-    m_browseRomCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    m_browseRomCombo->setMinimumContentsLength(8);
-    m_browseRomCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    m_browseRomCombo->setFont(LobbyTheme::uiFont(13, QFont::Bold));
-    m_browseRomCombo->setFixedHeight(18);
-    // Searchable: type to filter (substring, case-insensitive) or scroll the
-    // full list. NoInsert keeps typed text from being added as a bogus entry.
-    m_browseRomCombo->setEditable(true);
-    m_browseRomCombo->setInsertPolicy(QComboBox::NoInsert);
-    m_browseRomCombo->lineEdit()->setFont(LobbyTheme::uiFont(13, QFont::Bold));
-    m_browseRomCombo->view()->setFont(LobbyTheme::uiFont(12));
-    m_browseRomCombo->view()->setMinimumWidth(420);
-    if (auto* comp = m_browseRomCombo->completer())
-    {
-        comp->setCompletionMode(QCompleter::PopupCompletion);
-        comp->setFilterMode(Qt::MatchContains);
-        comp->setCaseSensitivity(Qt::CaseInsensitive);
-    }
+    pickerText->setAlignment(Qt::AlignVCenter);
+    pickerText->setSpacing(1);
+    m_pickerName = new ElidedLabel(Role::Ink, picker);
+    m_pickerName->setFont(LobbyTheme::uiFont(13, QFont::Bold));
+    m_pickerName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    transparentForMouse(m_pickerName);
+    pickerText->addWidget(m_pickerName);
     // Remember the last game picked here — Create Room and Quick Match both key
     // off this combo, so persisting on selection (not just on Create) means the
     // choice survives across sessions however the user proceeds. populateBrowseRoms
@@ -996,31 +1146,16 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
                 s.beginGroup("Lobby/CreateRoom");
                 s.setValue("Rom", name);
                 s.endGroup();
+                refreshSameGameFilter();
             });
-    connect(m_browseRomCombo, &QComboBox::currentTextChanged,
-            this, [this](const QString&) { refreshSameGameFilter(); });
-    pickerText->addWidget(m_browseRomCombo);
     m_pickerInfo = new QLabel(picker);
     m_pickerInfo->setFont(LobbyTheme::uiFont(11));
     m_pickerInfo->setTextFormat(Qt::RichText);
     m_pickerInfo->setProperty("role", "muted");
     m_pickerInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    transparentForMouse(m_pickerInfo);
     pickerText->addWidget(m_pickerInfo);
     pickerLay->addLayout(pickerText, 1);
-
-    auto* pickerSearch = new IconButton(QStringLiteral("search-line"), 24, picker);
-    pickerSearch->setToolTip(tr("Search your games"));
-    pickerSearch->setAccessibleName(tr("Search your games"));
-    connect(pickerSearch, &QToolButton::clicked, this, [this]() {
-        m_browseRomCombo->lineEdit()->setFocus();
-        m_browseRomCombo->lineEdit()->selectAll();
-    });
-    pickerLay->addWidget(pickerSearch);
-    auto* pickerOpen = new IconButton(QStringLiteral("arrow-down-s-line"), 24, picker);
-    pickerOpen->setToolTip(tr("All your games"));
-    pickerOpen->setAccessibleName(tr("All your games"));
-    connect(pickerOpen, &QToolButton::clicked, this, [this]() { m_browseRomCombo->showPopup(); });
-    pickerLay->addWidget(pickerOpen);
     idleLay->addWidget(picker, 1);
 
     m_quickMatchBtn = new LobbyButton(tr("Quick Match"), LobbyButton::Kind::Primary, idle);
@@ -1136,11 +1271,9 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     connect(m_roomsColumn, &RoomsColumn::playerMenuRequested, this, &RollbackLobbyDialog::showPlayerMenuForName);
     m_browseSplitter->addWidget(m_roomsColumn);
 
-    // Live and the open rooms share the stage evenly, and keep doing so as the
-    // window changes size.
+    // Both panes grow with the window while keeping their relative sizes.
     m_browseSplitter->setStretchFactor(0, 1);
     m_browseSplitter->setStretchFactor(1, 1);
-    m_browseSplitter->setSizes({ 1, 1 });
     restoreBrowseSplit();
     lay->addWidget(m_browseSplitter, 1);
 
@@ -1169,7 +1302,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_roomBadge = new GameBadge(26, m_roomWindow);
     m_roomWindow->titleLeft()->addWidget(m_roomBadge);
     m_roomTitle = new ElidedLabel(Role::Ink, m_roomWindow);
-    m_roomTitle->setFont(LobbyTheme::uiFont(15, QFont::Bold));
+    m_roomTitle->setFont(LobbyTheme::uiFont(17, QFont::Bold));
     m_roomTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     m_roomWindow->titleLeft()->addWidget(m_roomTitle, 1);
 
@@ -1204,22 +1337,9 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     netLay->setContentsMargins(14, 12, 14, 12);
     netLay->setSpacing(16);
 
-    const auto makeLiveTag = [this](QWidget* parent) {
-        auto* tag = new StatusTag(StatusTag::Kind::Green, parent);
-        tag->setTag(StatusTag::Kind::Green, tr("Applies now"));
-        tag->setVisible(false);
-        return tag;
-    };
-
     auto* delayCol = new QVBoxLayout;
     delayCol->setSpacing(6);
-    auto* delayHead = new QHBoxLayout;
-    delayHead->setSpacing(6);
-    delayHead->addWidget(makeFieldLabel(tr("Your input delay"), net));
-    m_delayLiveTag = makeLiveTag(net);
-    delayHead->addWidget(m_delayLiveTag);
-    delayHead->addStretch(1);
-    delayCol->addLayout(delayHead);
+    delayCol->addWidget(makeFieldLabel(tr("Your input delay"), net));
     m_delayStepper = new FrameStepper(0, 9, QStringLiteral("magic-line"), net);
     m_delayStepper->setObjectName("DelayStepper");
     m_delayStepper->setChipLabels(tr("Auto"), tr("Auto"));
@@ -1251,7 +1371,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     switches->addWidget(m_recordCheck, 0, 0);
 
     // Broadcast replay bytes to the server without requiring a local file.
-    m_broadcastCheck = new ToggleSwitch(tr("Live replay for spectators"), net);
+    m_broadcastCheck = new ToggleSwitch(tr("Allow Spectators"), net);
     m_broadcastCheck->setObjectName("LiveReplaySwitch");
     m_broadcastCheck->setChecked(liveReplayPreference());
     connect(m_broadcastCheck, &QCheckBox::toggled, this, [this](bool checked) {
@@ -1264,30 +1384,23 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
             m_client->updateRoomLiveReplay(checked);
         }
     });
-    switches->addWidget(m_broadcastCheck, 0, 1);
+    switches->addWidget(m_broadcastCheck, 1, 0);
 
     // Off in every new room. The server repeats the host and waiting checks.
-    m_lateJoinCheck = new ToggleSwitch(tr("Late join"), net);
+    m_lateJoinCheck = new ToggleSwitch(tr("Allow joins after start"), net);
     m_lateJoinCheck->setObjectName("LateJoinSwitch");
     m_lateJoinCheck->setVisible(false);
     connect(m_lateJoinCheck, &QCheckBox::toggled, this, [this](bool checked) {
         if (m_suppressSettingsSignal) return;
         if (m_currentRoomId == 0 || !m_client || m_currentRoomHostId != m_client->selfUserId())
             return;
-        if (checked && !confirmLateJoin())
-        {
-            m_suppressSettingsSignal = true;
-            m_lateJoinCheck->setChecked(false);
-            m_suppressSettingsSignal = false;
-            return;
-        }
         m_client->updateRoomLateJoin(checked);
     });
-    switches->addWidget(m_lateJoinCheck, 1, 0);
+    switches->addWidget(m_lateJoinCheck, 0, 1);
 
     // Off in every new room: the match starts from a blank save. The server
     // repeats the host and waiting checks.
-    m_saveDataCheck = new ToggleSwitch(tr("Save data"), net);
+    m_saveDataCheck = new ToggleSwitch(tr("Sync save data"), net);
     m_saveDataCheck->setObjectName("SaveDataSwitch");
     m_saveDataCheck->setVisible(false);
     connect(m_saveDataCheck, &QCheckBox::toggled, this, [this](bool checked) {
@@ -1333,13 +1446,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     auto* panelLay = new QVBoxLayout(m_roomSettingsPanel);
     panelLay->setContentsMargins(14, 12, 14, 14);
     panelLay->setSpacing(6);
-    auto* predictionHead = new QHBoxLayout;
-    predictionHead->setSpacing(6);
-    predictionHead->addWidget(makeFieldLabel(tr("Rollback prediction"), m_roomSettingsPanel));
-    m_predictionLiveTag = makeLiveTag(m_roomSettingsPanel);
-    predictionHead->addWidget(m_predictionLiveTag);
-    predictionHead->addStretch(1);
-    panelLay->addLayout(predictionHead);
+    panelLay->addWidget(makeFieldLabel(tr("Rollback prediction"), m_roomSettingsPanel));
     m_predictionStepper = new FrameStepper(1, 9, QString(), m_roomSettingsPanel);
     m_predictionStepper->setObjectName("PredictionStepper");
     m_predictionStepper->setChipLabels(tr("Default"), tr("Custom"));
@@ -1445,13 +1552,6 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     };
     connect(m_joinPingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, publishJoinLimits);
     connect(m_wiredOnlyCheck, &QCheckBox::toggled, this, publishJoinLimits);
-
-    m_lateJoinNote = new QLabel(page);
-    m_lateJoinNote->setFont(LobbyTheme::uiFont(12));
-    m_lateJoinNote->setTextFormat(Qt::RichText);
-    m_lateJoinNote->setWordWrap(true);
-    m_lateJoinNote->setVisible(false);
-    lay->addWidget(m_lateJoinNote);
 
     // Which save the match starts from; during and after a match, how the
     // game's save stands and the buttons to keep a copy.
@@ -1899,13 +1999,14 @@ void RollbackLobbyDialog::setChatUnread(int tab, int count)
     }
 
     auto* badge = qobject_cast<QLabel*>(m_chatTabs->tabButton(tab, QTabBar::RightSide));
+    const QSize previousSize = badge ? badge->size() : QSize();
     if (badge == nullptr)
     {
         badge = new QLabel(m_chatTabs);
         badge->setObjectName("ChatBadge");
         badge->setFont(LobbyTheme::uiFont(9, QFont::Bold));
         badge->setAlignment(Qt::AlignCenter);
-        m_chatTabs->setTabButton(tab, QTabBar::RightSide, badge);
+        badge->setAttribute(Qt::WA_TransparentForMouseEvents);
     }
     badge->setText(m_chatMentioned[tab] ? QStringLiteral("@")
                    : count > 99 ? QStringLiteral("99+") : QString::number(count));
@@ -1916,6 +2017,8 @@ void RollbackLobbyDialog::setChatUnread(int tab, int count)
         badge->style()->polish(badge);
     }
     badge->adjustSize();
+    if (badge->size() != previousSize)
+        m_chatTabs->setTabButton(tab, QTabBar::RightSide, badge);
 }
 
 void RollbackLobbyDialog::setRoomChatVisible(bool visible)
@@ -2032,10 +2135,24 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     });
 
     // Your own row stays in view above the list, with this PC's other players.
+    m_selfRowBox = new QFrame(card);
+    m_selfRowBox->setObjectName("SelfPlayerRow");
+    auto* selfLayout = new QHBoxLayout(m_selfRowBox);
+    // The 1 px frame and 2 px margins put the button's 4 px corners
+    // 3 px inside the row's 7 px corners.
+    selfLayout->setContentsMargins(1, 2, 2, 2);
+    selfLayout->setSpacing(0);
     m_selfRow = makePlayersList();
     m_selfRow->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_selfRow->setFixedHeight(24);
-    m_selfRow->setVisible(false);
+    selfLayout->addWidget(m_selfRow, 1);
+    m_rosterAdd = new LobbyButton(tr("Add local player"), LobbyButton::Kind::Ghost, m_selfRowBox);
+    m_rosterAdd->setObjectName("AddLocalPlayerBtn");
+    m_rosterAdd->setButtonSize(LobbyButton::Size::Compact);
+    m_rosterAdd->setIconName(QStringLiteral("user-add-line"));
+    selfLayout->addWidget(m_rosterAdd);
+    connect(m_rosterAdd, &QPushButton::clicked, this, &RollbackLobbyDialog::openRosterEditor);
+    m_selfRowBox->hide();
 
     // One heading per state, in the order people look for them. Each hides
     // itself while empty.
@@ -2066,7 +2183,7 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
     auto* treeWrap = new QVBoxLayout;
     treeWrap->setContentsMargins(5, 0, 5, 5);
     treeWrap->setSpacing(0);
-    treeWrap->addWidget(m_selfRow);
+    treeWrap->addWidget(m_selfRowBox);
     treeWrap->addWidget(m_rosterBox);
     treeWrap->addWidget(m_playersTree, 1);
     cardLay->addLayout(treeWrap, 1);
@@ -2081,26 +2198,6 @@ void RollbackLobbyDialog::applyStylesheet()
     m_appliedDarkTheme = isDarkTheme();
     setStyleSheet(LobbyTheme::styleSheet());
     refreshChatTabIcons();
-    alignPickerInfo();
-}
-
-// The picker's title is its combo box's line edit, and a line edit inside a
-// combo box takes its text inset from the platform style, not the stylesheet
-// (Windows 11 starts it 4 px in), plus the line edit's own 2 px. The stats
-// line under it starts there too.
-void RollbackLobbyDialog::alignPickerInfo()
-{
-    QLineEdit* edit = m_browseRomCombo ? m_browseRomCombo->lineEdit() : nullptr;
-    if (!edit || !m_pickerInfo)
-        return;
-    constexpr int kLineEditTextMargin = 2;
-    QStyleOptionFrame frame;
-    frame.initFrom(edit);
-    frame.rect = edit->rect();
-    frame.lineWidth = 0; // a combo box's line edit has no frame
-    const int textX = edit->style()->subElementRect(QStyle::SE_LineEditContents, &frame, edit).x() +
-                      edit->textMargins().left() + kLineEditTextMargin;
-    m_pickerInfo->setContentsMargins(std::max(0, textX), 0, 0, 0);
 }
 
 void RollbackLobbyDialog::changeEvent(QEvent* event)
@@ -2168,7 +2265,10 @@ void RollbackLobbyDialog::restoreBrowseSplit()
         m_browseSplitter->setOrientation(orientation);
         m_browseSplitter->setHandleWidth(handleWidth);
         m_browseSplitter->setChildrenCollapsible(false);
-        m_browseSplitter->setSizes({ 1, 1 });
+        if (orientation == Qt::Horizontal)
+            m_browseSplitter->setSizes({ 340, 500 });
+        else
+            m_browseSplitter->setSizes({ 1, 1 });
     }
 }
 
@@ -2199,6 +2299,7 @@ void RollbackLobbyDialog::populateBrowseRoms()
 {
     if (!m_browseRomCombo) return;
 
+    m_browseRomCombo->hidePopup();
     m_browseRomCombo->blockSignals(true);
     m_browseRomCombo->clear();
 
@@ -2233,6 +2334,10 @@ void RollbackLobbyDialog::populateBrowseRoms()
         romData["md5"]  = QString::fromStdString(m_roms.value(file).MD5);
         romData["file"] = file;
         m_browseRomCombo->addItem(display, romData);
+        // Index the title and filename as separate strings within the filter role.
+        m_browseRomCombo->setItemData(m_browseRomCombo->count() - 1,
+            browseGameSearchText(display) + u'\n' + browseGameSearchText(QFileInfo(file).fileName()),
+            kBrowseGameSearchRole);
     }
 
     // Restore the last-used selection (shared with Create Room via QSettings).
@@ -2255,21 +2360,20 @@ QVariantMap RollbackLobbyDialog::selectedBrowseRom() const
     if (!m_browseRomCombo || !m_browseRomCombo->isEnabled())
         return {};
 
-    // An editable combo can retain the previous currentData while its line edit
-    // contains different text. Only accept data for the text actually shown.
-    const QString currentText = m_browseRomCombo->currentText();
-    int idx = m_browseRomCombo->currentIndex();
-    if (idx < 0 || m_browseRomCombo->itemText(idx) != currentText)
-        idx = m_browseRomCombo->findText(currentText, Qt::MatchFixedString);
-    return idx >= 0 ? m_browseRomCombo->itemData(idx).toMap() : QVariantMap{};
+    return m_browseRomCombo->currentData().toMap();
 }
 
 void RollbackLobbyDialog::refreshSameGameFilter()
 {
     const QVariantMap rom = selectedBrowseRom();
-    if (m_pickerTile)
-        m_pickerTile->setGame(rom.isEmpty() ? m_browseRomCombo->currentText() : rom.value("name").toString(),
-                              coverPathForMd5(rom.value("md5").toString()));
+    if (m_browseRomCombo)
+    {
+        const QString name = m_browseRomCombo->currentText();
+        m_pickerName->setText(name);
+        m_pickerName->setRole(rom.isEmpty() ? Role::Muted : Role::Ink);
+        m_browseRomCombo->setToolTip(name);
+        m_pickerTile->setGame(name, coverPathForMd5(rom.value("md5").toString()));
+    }
     if (!m_liveGallery || !m_roomsColumn)
         return;
     m_liveGallery->setThisGameAvailable(!rom.isEmpty());
@@ -2899,8 +3003,7 @@ void RollbackLobbyDialog::refreshPlayBar()
             if (room->maxPlayers > 0)
                 seats = tr(" · %1 of %2 seats").arg(room->players).arg(room->maxPlayers);
         }
-        setTicket(tr("You're in a room"), t.ok, name,
-                  seats + tr(" · you keep your seat while you browse · leave the room to watch a match"));
+        setTicket(tr("You're in a room"), t.ok, name, seats);
         setValues(QString(), QString(), QString(), QString());
         m_ticketSpinner->setVisible(false);
         m_ticketBadge->setVisible(true);
@@ -2912,7 +3015,8 @@ void RollbackLobbyDialog::refreshPlayBar()
     else if (m_outgoingChallenge.id != 0)
     {
         setTicket(tr("Challenge sent"), t.accentInk, tr("Waiting for %1").arg(m_outgoingChallenge.toUsername),
-                  tr(" · %1 · keep browsing, you'll be moved in if they accept").arg(m_outgoingChallenge.romName));
+                  m_outgoingChallenge.romName.isEmpty() ? QString()
+                      : QStringLiteral(" · ") + m_outgoingChallenge.romName);
         const qint64 left = m_outgoingChallenge.expiresAtMs - QDateTime::currentMSecsSinceEpoch();
         setValues(QString::number(std::max<qint64>(0, (left + 999) / 1000)), tr("seconds"), QString(), QString());
         m_ticketBadge->setIconAndColors(QString(), t.accentInk, t.accentTint);
@@ -2937,8 +3041,7 @@ void RollbackLobbyDialog::refreshPlayBar()
     }
     else if (m_quickMatchActive)
     {
-        setTicket(tr("Searching…"), t.warn, m_searchingGame,
-                  tr(" · keep browsing, you'll be moved in automatically"));
+        setTicket(tr("Searching…"), t.warn, m_searchingGame, QString());
         setValues(formatMatchDuration(m_searchStartedMs), tr("elapsed"),
                   QString::number(std::max(1, m_searchQueueSize)), tr("in queue"));
         m_ticketBadge->setIconAndColors(QString(), t.warn, t.warnTint);
@@ -2966,8 +3069,7 @@ void RollbackLobbyDialog::refreshPlayBar()
             break;
         }
         setTicket(tr("Watching"), t.stateWatch, lead,
-                  (game.isEmpty() ? QString() : QStringLiteral(" · ") + game)
-                      + tr(" · the match plays in the game window · pick another card to switch"));
+                  game.isEmpty() ? QString() : QStringLiteral(" · ") + game);
         setValues(formatMatchDuration(startedAt), tr("live"), QString::number(viewers), tr("watching"));
         m_ticketSpinner->setVisible(false);
         m_ticketBadge->setVisible(true);
@@ -3134,8 +3236,8 @@ void RollbackLobbyDialog::clearPlayerRows()
 {
     qDeleteAll(m_userItems);
     m_userItems.clear();
-    if (m_selfRow)
-        m_selfRow->setVisible(false);
+    if (m_selfRowBox)
+        m_selfRowBox->hide();
     refreshPlayerGroups();
 }
 
@@ -3177,7 +3279,7 @@ void RollbackLobbyDialog::placePlayerRow(QTreeWidgetItem* item, const LobbyClien
         else if (const int index = m_playersTree->indexOfTopLevelItem(item); index >= 0)
             m_playersTree->takeTopLevelItem(index);
         m_selfRow->addTopLevelItem(item);
-        m_selfRow->setVisible(true);
+        m_selfRowBox->show();
         return;
     }
 
@@ -4128,9 +4230,7 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_roomLateJoin = roomState.value("lateJoin").toBool(false);
     m_canStartAlone = roomState.value("canStartAlone").toBool(false);
 
-    // Late join is the host's choice per room. Everyone hears when it changes,
-    // and a player entering a room with it on hears it too: whoever joins once
-    // a game is running doesn't get a replay of it.
+    // Tell the room when the host changes late join, and notify new guests if it's on.
     m_roomHasLateJoinOption = roomState.contains("lateJoinEnabled");
     {
         const bool lateJoinEnabled = roomState.value("lateJoinEnabled").toBool(false);
@@ -4138,17 +4238,17 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         {
             if (lateJoinEnabled && !iAmHost)
                 appendChatSystemLine(CHANNEL_ROOM,
-                    tr("Late join is on in this room. Players who join mid-game don't get a replay of it."));
+                    tr("Late join is on."));
         }
         else if (lateJoinEnabled != m_roomLateJoinEnabled)
         {
             if (iAmHost)
                 appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
-                    ? tr("Late join is on. Players can join while a game is running; they won't get a replay of it.")
+                    ? tr("Late join is on.")
                     : tr("Late join is off."));
             else
                 appendChatSystemLine(CHANNEL_ROOM, lateJoinEnabled
-                    ? tr("The host turned on late join. Players who join mid-game don't get a replay of it.")
+                    ? tr("The host turned on late join.")
                     : tr("The host turned off late join."));
         }
         m_lateJoinEnabledSeen = true;
@@ -4314,7 +4414,9 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     if (m_leaveBtn) m_leaveBtn->setEnabled(true);
 
     // ── Title bar ──
-    const QString title = name.isEmpty() ? romName : name;
+    const QString title = name.isEmpty() ? romName
+        : romName.isEmpty() || name == romName ? name
+        : QStringLiteral("%1 — %2").arg(name, romName);
     m_roomTitle->setText(title);
     m_roomBadge->setGame(romName, coverPathForMd5(romMd5));
 
@@ -4330,15 +4432,16 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     }
     {
         QStringList parts;
-        if (!romName.isEmpty())
-            parts << romName;
         if (!romRegion.isEmpty())
             parts << romRegion;
         if (roomState.value("private").toBool())
             parts << tr("Private");
-        parts << (state == "in_game" ? tr("in game")
-                                     : tr("%1 of %2 seats").arg(players.size()).arg(maxPlayers));
-        parts << (iAmHost ? tr("hosted by you") : tr("host %1").arg(m_currentRoomHostName));
+        if (!iAmHost)
+        {
+            parts << (state == "in_game" ? tr("in game")
+                                         : tr("%1 of %2 seats").arg(players.size()).arg(maxPlayers));
+            parts << tr("host %1").arg(m_currentRoomHostName);
+        }
         m_roomSubText = parts.join(QStringLiteral(" · "));
         refreshRoomTitleTip();
         refreshPlayerSpectatorChat();
@@ -4617,7 +4720,7 @@ void RollbackLobbyDialog::updateRecordingControls()
                            "A local replay is saved only if Save replay is on."));
     }
 
-    if (!m_lateJoinCheck || !m_lateJoinNote)
+    if (!m_lateJoinCheck)
         return;
     m_lateJoinCheck->setEnabled(iAmHost && editable);
     if (!iAmHost)
@@ -4634,16 +4737,7 @@ void RollbackLobbyDialog::updateRecordingControls()
     else
     {
         m_lateJoinCheck->setToolTip(
-            tr("Let players join while a game is running. You add them with Add to Game.\n"
-               "Everyone here when the game starts can still save a replay; whoever joins mid-game can't."));
-    }
-    m_lateJoinNote->setVisible(m_roomLateJoinEnabled);
-    if (m_roomLateJoinEnabled)
-    {
-        m_lateJoinNote->setText(QString("<span style='color:%1; font-weight:600;'>⚠ %2</span> %3")
-            .arg(warnTextHex(), tr("Late join is on."),
-                 joiningMidGame ? tr("You joined mid-game, so you won't get a replay of this game.")
-                                : tr("Players who join mid-game won't get a replay of it.")));
+            tr("Let players join while a game is running. You add them with Add to Game."));
     }
 }
 
@@ -4670,10 +4764,10 @@ void RollbackLobbyDialog::updateJoinLimitControls()
     m_suppressSettingsSignal = wasSuppressed;
     m_joinPingCombo->setEnabled(iAmHost);
     m_wiredOnlyCheck->setEnabled(iAmHost);
-    m_joinLimitsHint->setText(iAmHost
-        ? tr("Players already here stay if you change these.")
-        : m_currentRoomHostName.isEmpty() ? tr("Set by the host")
-                                          : tr("Set by the host (%1)").arg(m_currentRoomHostName));
+    m_joinLimitsHint->setVisible(!iAmHost);
+    if (!iAmHost)
+        m_joinLimitsHint->setText(m_currentRoomHostName.isEmpty()
+            ? tr("Set by the host") : tr("Set by the host (%1)").arg(m_currentRoomHostName));
     if (m_roomSettingsButton)
     {
         // A tinted gear says something under it isn't the default.
@@ -4707,24 +4801,6 @@ void RollbackLobbyDialog::updateRoomSizeControls()
         m_roomSizeHint->setText(tr("Not fewer than the %1 players seated.").arg(m_roomSeatedCount));
     else
         m_roomSizeHint->setText(tr("Anyone in a seat you take away moves to a free one."));
-}
-
-bool RollbackLobbyDialog::confirmLateJoin()
-{
-    QMessageBox box(QMessageBox::Warning, tr("Turn on late join?"),
-        tr("Players who join while a game is running won't get a replay of it."),
-        QMessageBox::Cancel, this);
-    box.setInformativeText(
-        tr("Players can then join mid-game, and you add them with Add to Game. "
-           "Everyone in the room when a game starts can still save a replay (.krec) of it, "
-           "and Live Replay isn't affected. A replay can't start part way through a game, "
-           "so whoever joins later doesn't get one."));
-    QPushButton* turnOn = box.addButton(tr("Turn On Late Join"), QMessageBox::AcceptRole);
-    box.setDefaultButton(QMessageBox::Cancel);
-    box.exec();
-    // The room may have moved on while the box was open.
-    return box.clickedButton() == turnOn && m_currentRoomId != 0 && m_client &&
-        m_currentRoomHostId == m_client->selfUserId() && m_currentRoomState == "waiting";
 }
 
 // ── Save data ─────────────────────────────────────────────────────────
@@ -5225,13 +5301,13 @@ void RollbackLobbyDialog::refreshStartButton()
         !iAmHost         ? tr("Only the host can start the game.")
         : !waiting       ? tr("Already in a match.")
         : !needSaveData.isEmpty() ? tr("This room uses save data, which %1 can't play with yet. "
-                                       "They need a newer Dale64, or turn Save data off.")
+                                       "They need a newer Dale64, or turn off Sync save data.")
                                        .arg(needSaveData.join(QStringLiteral(", ")))
         : !needGameOptions.isEmpty() ? tr("This room uses %1, which %2 can't play with yet. "
                                           "They need a newer Dale64, or turn %1 off.")
                                           .arg(gameOptionNames, needGameOptions.join(QStringLiteral(", ")))
         : !enoughPlayers ? (seated == 1 && m_roomHasLateJoinOption && !m_roomLateJoinEnabled
-                              ? tr("Need at least 2 players to start, or turn on Late join to start alone.")
+                              ? tr("Need at least 2 players to start. To start alone, turn on Allow joins after start.")
                               : tr("Need at least 2 players to start."))
         : !pingsReady    ? tr("Measuring every player-to-player path…")
         : alone          ? tr("Start playing now. You can add anyone who joins the room to the game.")
@@ -5294,7 +5370,7 @@ void RollbackLobbyDialog::refreshStartButton()
         {
             showWhy(QStringLiteral("error-warning-line"), t.warn, t.warnTint,
                     tr("%1 can't play with save data").arg(needSaveData.join(QStringLiteral(", "))),
-                    tr("They need a newer Dale64, or turn Save data off."));
+                    tr("They need a newer Dale64, or turn off Sync save data."));
         }
         else if (!needGameOptions.isEmpty())
         {
@@ -5322,15 +5398,12 @@ void RollbackLobbyDialog::refreshStartButton()
                     slowest.isEmpty() ? tr("Measuring connections") : tr("Waiting for %1's connection").arg(slowest),
                     tr("Start unlocks when every player-to-player path has a ping."));
         }
-        else if (alone)
-        {
-            showWhy(QStringLiteral("check-line"), t.ok, t.okTint, tr("You can start now and warm up"),
-                    tr("Anyone who joins the room can be added to the running game."));
-        }
         else
         {
-            showWhy(QStringLiteral("check-line"), t.ok, t.okTint, tr("Everyone's connected"),
-                    tr("Start when you're ready."));
+            m_whySpinner->hide();
+            m_whyBadge->hide();
+            m_whyTitle->setText(QString());
+            m_whyTitle->setToolTip(QString());
         }
     }
     else
@@ -5940,8 +6013,6 @@ void RollbackLobbyDialog::updateRollbackSettingControls()
     const bool predictionOpen = waiting || (liveMatch && m_serverAcceptsInGameSettings);
     m_delayStepper->setEnabled(delayEditable);
     m_predictionStepper->setEnabled(predictionOpen && iAmHost);
-    m_delayLiveTag->setVisible(liveMatch);
-    m_predictionLiveTag->setVisible(liveMatch && m_serverAcceptsInGameSettings && iAmHost);
 
     m_delayStepper->setProperty("baseTip", delayEditable
         ? m_delayStepper->property("originalTip").toString()
@@ -5998,10 +6069,8 @@ void RollbackLobbyDialog::refreshSettingHints()
 
     const bool iAmHost = m_currentRoomId != 0 && m_currentRoomHostId == selfId;
     m_predictionLock->setVisible(!iAmHost);
-    if (iAmHost)
-        m_predictionHint->setText(liveMatch ? tr("Changes reach every player mid-match.")
-                                            : tr("Room-wide. You're the host, so you set it."));
-    else
+    m_predictionHint->setVisible(!iAmHost);
+    if (!iAmHost)
         m_predictionHint->setText(m_currentRoomHostName.isEmpty()
             ? tr("Set by the host")
             : tr("Set by the host (%1)").arg(m_currentRoomHostName));
@@ -6720,13 +6789,6 @@ void RollbackLobbyDialog::buildLocalRoster()
     m_rosterError->setVisible(false);
     lay->addWidget(m_rosterError);
 
-    m_rosterAdd = new LobbyButton(tr("Add a player on this PC"), LobbyButton::Kind::Ghost, m_rosterBox);
-    m_rosterAdd->setObjectName("AddLocalPlayerBtn");
-    m_rosterAdd->setButtonSize(LobbyButton::Size::Small);
-    m_rosterAdd->setIconName(QStringLiteral("user-add-line"));
-    lay->addWidget(m_rosterAdd);
-
-    connect(m_rosterAdd, &QPushButton::clicked, this, &RollbackLobbyDialog::openRosterEditor);
     m_rosterName->installEventFilter(this);
     connect(confirm, &QToolButton::clicked, this, &RollbackLobbyDialog::submitRosterEditor);
     connect(cancel, &QToolButton::clicked, this, &RollbackLobbyDialog::closeRosterEditor);

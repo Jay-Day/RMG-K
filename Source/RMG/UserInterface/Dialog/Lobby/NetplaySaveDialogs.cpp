@@ -217,7 +217,6 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
 
     m_continueCheck = new ToggleSwitch(tr("Continue from where each match left off"), this);
     m_continueCheck->setObjectName("StartingSaveContinue");
-    m_continueCheck->setSubText(tr("Off: every match starts from the save picked here"));
     m_continueCheck->setToolTip(tr("When a match changes the save, the next match starts from the changed save.\n"
                                    "Turn this off to start every match from the save picked here."));
     m_continueCheck->setChecked(!current || current->ContinueAfterMatch);

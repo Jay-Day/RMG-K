@@ -119,16 +119,9 @@ LagStatsDialog::LagStatsDialog(ReportSource source, QWidget* parent)
     bandLay->setContentsMargins(18, 12, 18, 12);
     bandLay->setSpacing(12);
     bandLay->addWidget(new IconLabel(QStringLiteral("pulse-line"), Role::Accent, 22, band));
-    auto* words = new QVBoxLayout;
-    words->setSpacing(1);
     auto* title = new QLabel(tr("Lag Stats").toUpper(), band);
     title->setFont(LobbyTheme::pixelFont(15, 0.5));
-    words->addWidget(title);
-    auto* detail = new QLabel(tr("Each player's Dale64 measures its own frames and shares them once a second."), band);
-    detail->setFont(LobbyTheme::uiFont(11));
-    detail->setProperty("role", "muted");
-    words->addWidget(detail);
-    bandLay->addLayout(words, 1);
+    bandLay->addWidget(title, 1);
     const auto makeChip = [band](const QString& text, const QString& name) {
         auto* chip = new QPushButton(text, band);
         chip->setObjectName(name);

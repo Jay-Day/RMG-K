@@ -286,7 +286,6 @@ private:
     QWidget* buildChatColumn();
     QWidget* buildPlayersColumn();
     void     applyStylesheet();
-    void     alignPickerInfo();
     // After the lobby's colours change: restyles and repaints what holds them.
     void     refreshTheme();
     void     setLobbyTheme(LobbyTheme::ThemeChoice choice);
@@ -525,8 +524,6 @@ private:
     // since pings arrive asynchronously after seats populate.
     void refreshStartButton();
     void updateRecordingControls();
-    // Host turning late join on: warns that other players won't record locally.
-    bool confirmLateJoin();
 
     // Join limits (host-only room option): the highest ping to the host a
     // joiner may have, and whether a PC on Wi-Fi may join. Hidden on servers
@@ -596,6 +593,7 @@ private:
     // This client's own row, fixed above the scrolling list, then the other
     // players on this PC. Each plays on their own controller; see
     // LobbyClient::LocalPlayer.
+    QFrame* m_selfRowBox = nullptr;
     QTreeWidget* m_selfRow = nullptr;
     void buildLocalRoster();
     void refreshLocalRoster();
@@ -697,6 +695,7 @@ private:
     LobbyCard*      m_playBar      = nullptr;
     QStackedWidget* m_playBarStack = nullptr; // game picker / ticket
     CartridgeTile*  m_pickerTile   = nullptr;
+    ElidedLabel*    m_pickerName   = nullptr;
     QLabel*         m_pickerInfo   = nullptr;
     IconBadge*      m_ticketBadge  = nullptr;
     Spinner*        m_ticketSpinner = nullptr;
@@ -709,7 +708,7 @@ private:
 
     // The room window's title bar
     GameBadge*   m_roomBadge     = nullptr;   // the room's game
-    ElidedLabel* m_roomTitle     = nullptr;   // the room's name; game, seats and host in its tooltip
+    ElidedLabel* m_roomTitle     = nullptr;   // room and game names, with room details in the tooltip
     StatePill*   m_roomStatePill = nullptr;   // "Waiting" / "In Game"
     IconButton*  m_roomSettingsButton = nullptr;
     DropPanel*   m_roomSettingsPanel  = nullptr; // prediction and join limits
@@ -722,8 +721,6 @@ private:
     FrameStepper* m_predictionStepper = nullptr;
     QLabel*       m_predictionHint    = nullptr;
     IconLabel*    m_predictionLock    = nullptr;
-    StatusTag*    m_delayLiveTag      = nullptr;
-    StatusTag*    m_predictionLiveTag = nullptr;
     bool       m_suppressSettingsSignal = false;  // guard against ROOM_STATE → setChecked echo
 
     // Per-player local toggle: when checked, this client writes a .krec of the
@@ -738,7 +735,6 @@ private:
     // who join it mid-game don't record it (see updateRecordingControls).
     // Hidden on servers without the option.
     ToggleSwitch* m_lateJoinCheck = nullptr;
-    QLabel*       m_lateJoinNote  = nullptr;   // the recording warning, while on
 
     QWidget*      m_joinLimitsBox   = nullptr;
     QComboBox*    m_joinPingCombo   = nullptr;
@@ -795,7 +791,7 @@ private:
     // match or leaving the room. Live means it can still be posted to.
     quint64    m_playerChatMatchId = 0;
     bool       m_playerChatLive = false;
-    QString    m_roomSubText; // the room's subtitle, without its audience
+    QString    m_roomSubText; // room details for the title tooltip, before the viewer count
     // Session boundary guard. The persistent lobby socket can still deliver krec
     // chunks from a PREVIOUS watch of the same match after we re-subscribe (same
     // matchId, so they'd otherwise pass the filter and corrupt the new replay).

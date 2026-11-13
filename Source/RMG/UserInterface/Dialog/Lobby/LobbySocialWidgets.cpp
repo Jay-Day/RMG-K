@@ -17,6 +17,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QStackedWidget>
+#include <QStyleOptionTab>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTimer>
@@ -291,6 +292,12 @@ void LobbyMenu::paintEvent(QPaintEvent*)
 
 // ── ChatTabBar ───────────────────────────────────────────────────────
 
+ChatTabBar::ChatTabBar(QWidget* parent)
+    : QTabBar(parent)
+{
+    connect(this, &QTabBar::currentChanged, this, &ChatTabBar::positionBadges);
+}
+
 void ChatTabBar::showTab(int index, bool visible)
 {
     if (isTabVisible(index) != visible)
@@ -306,6 +313,30 @@ QSize ChatTabBar::tabSizeHint(int index) const
         size.setWidth(38 + (badge ? badge->width() + 2 : 0));
     }
     return size;
+}
+
+void ChatTabBar::tabLayoutChange()
+{
+    QTabBar::tabLayoutChange();
+    positionBadges();
+}
+
+void ChatTabBar::positionBadges()
+{
+    constexpr int gap = 5;
+    for (int index = 0; index < count(); ++index)
+    {
+        QWidget* badge = tabButton(index, QTabBar::RightSide);
+        if (!badge || !isTabVisible(index) || tabText(index).isEmpty())
+            continue;
+
+        QStyleOptionTab option;
+        initStyleOption(&option, index);
+        const QRect button = style()->subElementRect(QStyle::SE_TabBarTabRightButton, &option, this);
+        const QRect text = style()->subElementRect(QStyle::SE_TabBarTabText, &option, this);
+        if (text.isValid())
+            badge->move(std::min(button.left(), text.right() + 1 + gap), button.top());
+    }
 }
 
 // ── PlayerTile ───────────────────────────────────────────────────────

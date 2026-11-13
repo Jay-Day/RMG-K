@@ -55,7 +55,7 @@ class LobbyButton : public QPushButton
 
 public:
     enum class Kind { Primary, Secondary, Ghost, Danger };
-    enum class Size { Small, Medium, Large }; // 28, 34 and 44 px tall
+    enum class Size { Compact, Small, Medium, Large }; // 24, 28, 34 and 44 px tall
 
     explicit LobbyButton(const QString& text, Kind kind = Kind::Secondary, QWidget* parent = nullptr);
 

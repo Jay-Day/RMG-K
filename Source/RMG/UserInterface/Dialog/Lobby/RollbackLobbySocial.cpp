@@ -447,8 +447,6 @@ void RollbackLobbyDialog::showUserMenu()
         challengesLay->setContentsMargins(11, 4, 11, 4);
         auto* challenges = new ToggleSwitch(tr("Take challenges"), challengesRow);
         challenges->setObjectName("TakeChallenges");
-        challenges->setSubText(m_client->challengeSettingsSupported() ? tr("Off: nobody can send you one")
-                                                                     : tr("Off: ones sent to you go unanswered"));
         challenges->setChecked(!m_client->challengesOff());
         connect(challenges, &QCheckBox::toggled, this, [this](bool on) {
             m_client->setChallengesOff(!on);
@@ -498,7 +496,7 @@ void RollbackLobbyDialog::showUserMenu()
     addTheme(QStringLiteral("moon-line"), tr("Dark"), LobbyTheme::ThemeChoice::Dark);
     addTheme(QStringLiteral("sun-line"), tr("Light"), LobbyTheme::ThemeChoice::Light);
 
-    menu.addHeading(QStringLiteral("layout-column-line"), tr("Live and open rooms"), false);
+    menu.addHeading(QStringLiteral("layout-column-line"), tr("Layout"), false);
     auto* layouts = new QActionGroup(&menu);
     const auto pickLayout = [this](bool stacked) {
         setBrowseStacked(stacked);
@@ -509,7 +507,7 @@ void RollbackLobbyDialog::showUserMenu()
     const bool stacked = m_browseSplitter && m_browseSplitter->orientation() == Qt::Vertical;
     QAction* side = menu.addCheckItem(QStringLiteral("layout-column-line"), tr("Side by side"), !stacked, layouts);
     connect(side, &QAction::toggled, this, [pickLayout](bool on) { if (on) pickLayout(false); });
-    QAction* above = menu.addCheckItem(QStringLiteral("layout-row-line"), tr("Live above the rooms"), stacked, layouts);
+    QAction* above = menu.addCheckItem(QStringLiteral("layout-row-line"), tr("Vertical"), stacked, layouts);
     connect(above, &QAction::toggled, this, [pickLayout](bool on) { if (on) pickLayout(true); });
 
     if (m_client->isModerator())

@@ -210,8 +210,8 @@ void LobbyButton::setDashed(bool dashed)
 QFont LobbyButton::labelFont() const
 {
     if (m_pixelLabel)
-        return LobbyTheme::pixelFont(m_size == Size::Small ? 11 : 13, 0.5);
-    return LobbyTheme::uiFont(m_size == Size::Small ? 11 : 12, QFont::Bold);
+        return LobbyTheme::pixelFont(m_size <= Size::Small ? 11 : 13, 0.5);
+    return LobbyTheme::uiFont(m_size <= Size::Small ? 11 : 12, QFont::Bold);
 }
 
 QString LobbyButton::labelText() const
@@ -223,20 +223,21 @@ int LobbyButton::lipHeight() const
 {
     if (!isEnabled() || m_kind == Kind::Ghost || m_kind == Kind::Danger)
         return 0;
-    return m_size == Size::Small ? 2 : 3;
+    return m_size <= Size::Small ? 2 : 3;
 }
 
 QSize LobbyButton::sizeHint() const
 {
-    const int height = m_size == Size::Small ? 28 : m_size == Size::Medium ? 34 : 44;
-    const int padding = m_size == Size::Small ? 8 : m_size == Size::Medium ? 12 : 16;
-    const int iconSide = m_size == Size::Small ? 14 : 16;
+    const bool small = m_size <= Size::Small;
+    const int height = m_size == Size::Compact ? 24 : small ? 28 : m_size == Size::Medium ? 34 : 44;
+    const int padding = m_size == Size::Compact ? 6 : small ? 8 : m_size == Size::Medium ? 12 : 16;
+    const int iconSide = small ? 14 : 16;
 
     int width = QFontMetrics(labelFont()).horizontalAdvance(labelText());
     if (!m_subText.isEmpty())
         width = std::max(width, QFontMetrics(LobbyTheme::uiFont(10, QFont::DemiBold)).horizontalAdvance(m_subText));
     if (!m_iconName.isEmpty())
-        width += iconSide + (text().isEmpty() ? 0 : (m_size == Size::Small ? 5 : 8));
+        width += iconSide + (text().isEmpty() ? 0 : (small ? 5 : 8));
     return QSize(width + padding * 2 + 2, height);
 }
 
@@ -254,7 +255,7 @@ void LobbyButton::paintEvent(QPaintEvent*)
     const bool hover = enabled && underMouse();
     const bool down = isDown() || isChecked();
     const int lip = lipHeight();
-    const qreal radius = m_size == Size::Small ? 7.0 : m_size == Size::Medium ? 8.0 : 10.0;
+    const qreal radius = m_size == Size::Compact ? 4.0 : m_size == Size::Small ? 7.0 : m_size == Size::Medium ? 8.0 : 10.0;
 
     const QRectF outer = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     QRectF face = outer;
@@ -339,11 +340,12 @@ void LobbyButton::paintEvent(QPaintEvent*)
     }
 
     // Content is centred on the face, so it travels with a press.
-    const int iconSide = m_size == Size::Small ? 14 : 16;
-    const int gap = text().isEmpty() ? 0 : (m_size == Size::Small ? 5 : 8);
+    const bool small = m_size <= Size::Small;
+    const int iconSide = small ? 14 : 16;
+    const int gap = text().isEmpty() ? 0 : (small ? 5 : 8);
     const QFont font = labelFont();
     const QFont subFont = LobbyTheme::uiFont(10, QFont::DemiBold);
-    const int padding = m_size == Size::Small ? 6 : 10;
+    const int padding = small ? 6 : 10;
     const int iconWidth = m_iconName.isEmpty() ? 0 : iconSide + gap;
     int textWidth = QFontMetrics(font).horizontalAdvance(labelText());
     if (!m_subText.isEmpty())
@@ -1257,6 +1259,8 @@ void FrameStepper::refresh()
 
 // ── ToggleSwitch ─────────────────────────────────────────────────────
 
+static constexpr int kToggleTrackHeight = 18;
+
 ToggleSwitch::ToggleSwitch(const QString& title, QWidget* parent)
     : QCheckBox(title, parent)
 {
@@ -1279,7 +1283,8 @@ QSize ToggleSwitch::sizeHint() const
     const QFontMetrics title(LobbyTheme::uiFont(12));
     const QFontMetrics sub(LobbyTheme::uiFont(11));
     const int width = std::max(title.horizontalAdvance(text()), sub.horizontalAdvance(m_subText));
-    return QSize(32 + 9 + width + 1, title.height() + (m_subText.isEmpty() ? 0 : sub.height()));
+    const int textHeight = title.height() + (m_subText.isEmpty() ? 0 : sub.height());
+    return QSize(32 + 9 + width + 1, std::max(kToggleTrackHeight, textHeight));
 }
 
 QSize ToggleSwitch::minimumSizeHint() const
@@ -1300,12 +1305,12 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
 
     const bool on = isChecked();
     const qreal opacity = isEnabled() ? 1.0 : 0.45;
-    const QRectF track(0, (height() - 18) / 2.0, 32, 18);
+    const QRectF track(0, (height() - kToggleTrackHeight) / 2.0, 32, kToggleTrackHeight);
     painter.save();
     painter.setOpacity(opacity);
     painter.setPen(Qt::NoPen);
     painter.setBrush(on ? t.ok : t.line2);
-    painter.drawRoundedRect(track, 9, 9);
+    painter.drawRoundedRect(track, kToggleTrackHeight / 2.0, kToggleTrackHeight / 2.0);
     painter.setBrush(on ? QColor(Qt::white) : t.panel);
     painter.drawEllipse(QPointF(track.left() + (on ? 23 : 9), track.center().y()), 6, 6);
     painter.restore();

@@ -125,7 +125,6 @@ private:
     void rebuild();
     void setExpandedRoom(quint64 roomId);
     // Shows the note under a list short enough to leave room for it.
-    void updateNote();
     QList<LiveMatchView> visibleMatches() const;
     void connectMatch(LiveMatchBase* match);
 

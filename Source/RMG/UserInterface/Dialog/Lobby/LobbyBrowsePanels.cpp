@@ -1132,7 +1132,7 @@ void LiveGallery::rebuild()
     for (auto* row : m_rows)
         row->setExpanded(row->roomId() == m_expandedRoomId);
 
-    // The note says why the list is short, or empty.
+    // Explain an empty list, including when the game filter hides other matches.
     if (m_offline)
     {
         m_noteTitle->setText(tr("Not connected").toUpper());
@@ -1141,15 +1141,10 @@ void LiveGallery::rebuild()
     else if (visible.isEmpty())
     {
         m_noteTitle->setText((m_thisGameOnly && !m_matches.isEmpty()
-            ? tr("Nothing live for this game") : tr("Nothing live right now")).toUpper());
-        m_noteBody->setText(tr("New matches appear here as they start. Rooms with Live replay on can be watched by anyone."));
+            ? tr("Nothing live for this game") : tr("No Running Games")).toUpper());
     }
-    else
-    {
-        m_noteTitle->setText(tr("That's everything live right now").toUpper());
-        m_noteBody->setText(tr("New matches appear here as they start. Rooms with Live replay on can be watched by anyone."));
-    }
-    updateNote();
+    m_noteBody->setVisible(m_offline);
+    m_note->setVisible(m_offline || visible.isEmpty());
 }
 
 void LiveGallery::setExpandedRoom(quint64 roomId)
@@ -1157,16 +1152,6 @@ void LiveGallery::setExpandedRoom(quint64 roomId)
     m_expandedRoomId = roomId;
     for (auto* row : m_rows)
         row->setExpanded(row->roomId() == roomId);
-    updateNote();
-}
-
-void LiveGallery::updateNote()
-{
-    // A short list explains itself; a full one doesn't need to.
-    int used = m_featuredRoomId != 0 ? m_featuredHolder->sizeHint().height() : 0;
-    for (auto* row : m_rows)
-        used += row->sizeHint().height();
-    m_note->setVisible(m_order.isEmpty() || m_scroll->viewport()->height() - used >= 100);
 }
 
 void LiveGallery::fitHeader()
@@ -1197,8 +1182,6 @@ bool LiveGallery::eventFilter(QObject* watched, QEvent* event)
     {
         if (wideEnoughToFeature() != m_builtWide)
             rebuild();
-        else
-            updateNote();
     }
     else if (watched == m_list && event->type() == QEvent::Leave)
     {
@@ -1798,14 +1781,13 @@ void RoomsColumn::rebuild()
         m_noteTitle->setText(tr("No rooms match").toUpper());
         m_noteBody->setText(tr("Clear the search or filter to see every room."));
     }
-    else
+    else if (visible.isEmpty())
     {
-        m_noteTitle->setText(tr("That's all for now").toUpper());
-        m_noteBody->setText(tr("Create a room, or Quick Match finds you a player."));
+        m_noteTitle->setText(tr("No open lobbies").toUpper());
+        m_noteBody->setText(tr("Create a room, or press Quick Match"));
     }
     m_noteBody->setVisible(!m_noteBody->text().isEmpty());
-    // Only a list that doesn't already fill the column has room to explain itself.
-    m_note->setVisible(m_offline || visible.size() <= 4);
+    m_note->setVisible(m_offline || visible.isEmpty());
 }
 
 } // namespace Dialog

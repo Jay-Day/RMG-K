@@ -73,7 +73,7 @@ class ChatTabBar : public QTabBar
     Q_OBJECT
 
 public:
-    using QTabBar::QTabBar;
+    explicit ChatTabBar(QWidget* parent = nullptr);
 
     // Use this, not setTabVisible: that, given a tab's current visibility,
     // also drops a relayout an earlier call still owes, so a hidden tab could
@@ -82,6 +82,10 @@ public:
 
 protected:
     QSize tabSizeHint(int index) const override;
+    void tabLayoutChange() override;
+
+private:
+    void positionBadges();
 };
 
 // A player's initial on a tile in one of the port colours, picked from the name so

@@ -20,6 +20,7 @@
 #include <QSettings>
 #include <QFileInfo>
 #include <QIcon>
+#include <QPainter>
 
 #include <algorithm>
 
@@ -215,7 +216,15 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     m_anyConnectionButton->setIcon(QIcon(LobbyTheme::icon(QStringLiteral("wifi-line"), LobbyTheme::tokens().ink2, 14, devicePixelRatioF())));
     m_wiredOnlyButton = makeSegment(tr("Wired only"));
     m_wiredOnlyButton->setObjectName("WiredOnlySeg");
-    m_wiredOnlyButton->setIcon(QIcon(LobbyTheme::icon(QStringLiteral("router-line"), LobbyTheme::tokens().ink2, 14, devicePixelRatioF())));
+    const qreal ratio = devicePixelRatioF();
+    QPixmap wiredIcon(QSize(14, 14) * ratio);
+    wiredIcon.setDevicePixelRatio(ratio);
+    wiredIcon.fill(Qt::transparent);
+    {
+        QPainter painter(&wiredIcon);
+        ConnectionGlyph::paintSymbol(painter, QRectF(0, 0, 14, 14), QStringLiteral("lan"), LobbyTheme::tokens().ink2);
+    }
+    m_wiredOnlyButton->setIcon(QIcon(wiredIcon));
     m_wiredOnlyButton->setToolTip(tr("Players on Wi-Fi can't join."));
     auto* wifiGroup = new QButtonGroup(this);
     wifiGroup->addButton(m_anyConnectionButton);
@@ -226,16 +235,9 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     limits->addLayout(wifiBox, 1);
     body->addLayout(limits);
 
-    m_liveReplaySwitch = new ToggleSwitch(tr("Live replay for spectators"), this);
+    m_liveReplaySwitch = new ToggleSwitch(tr("Allow Spectators"), this);
     m_liveReplaySwitch->setObjectName("LiveReplaySwitch");
-    m_liveReplaySwitch->setSubText(tr("Shows in Live now for anyone to watch, with spectator chat"));
     body->addWidget(m_liveReplaySwitch);
-
-    auto* hint = new QLabel(tr("You can start alone and add people as they join."), this);
-    hint->setFont(LobbyTheme::uiFont(11));
-    hint->setProperty("role", "muted");
-    hint->setWordWrap(true);
-    body->addWidget(hint);
 
     m_statusLabel = new QLabel(this);
     m_statusLabel->setFont(LobbyTheme::uiFont(11));
@@ -308,7 +310,6 @@ void CreateRoomDialog::onPasswordToggled(bool enabled)
     m_passwordEdit->setVisible(enabled);
     if (!enabled)
         m_passwordEdit->clear();
-    adjustSize();
     validateInput();
 }
 
@@ -328,7 +329,9 @@ void CreateRoomDialog::validateInput()
         reason = tr("Password cannot be empty when enabled.");
 
     m_statusLabel->setText(reason);
+    m_statusLabel->setVisible(!reason.isEmpty());
     m_createButton->setEnabled(reason.isEmpty());
+    adjustSize();
 }
 
 void CreateRoomDialog::onCreateClicked()
@@ -345,6 +348,8 @@ void CreateRoomDialog::onCreateClicked()
     saveDefaults();
     setFormEnabled(false);
     m_statusLabel->setText(tr("Creating room..."));
+    m_statusLabel->show();
+    adjustSize();
     emit createRequested();
 }
 
@@ -356,6 +361,8 @@ void CreateRoomDialog::showCreateFailure(const QString& reason)
     else if (reason == "invalid_payload") human = tr("Server rejected the room settings.");
     else if (reason == "not_enough_seats") human = tr("It needs a seat for everyone on this PC.");
     m_statusLabel->setText(QString(tr("Couldn't create room: %1")).arg(human));
+    m_statusLabel->show();
+    adjustSize();
 }
 
 void CreateRoomDialog::setFormEnabled(bool enabled)
