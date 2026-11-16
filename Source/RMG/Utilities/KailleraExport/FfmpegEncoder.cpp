@@ -321,7 +321,7 @@ static std::vector<std::string> buildVideoEncoderFlagsPosix(const std::string& v
         std::vector<std::string> args =
         {
             "-c:v", "h264_amf", "-quality", "quality", "-rc", "cqp", "-qp_i", crfStr,
-            "qp_p", crfStr, "-pix_fmt", "yuv420p"
+            "-qp_p", crfStr, "-pix_fmt", "yuv420p"
         };
         return args;
     }
@@ -700,9 +700,9 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
     //Set the write pipe's capacity to the max unprivileged size - the pipe will continue with the default value if it fails
     fcntl(rwPipe[WRITE_PIPE], F_SETPIPE_SZ, maxPipeSize);
 
-    pid_t childPid = fork();
+    m_ProcessPid = fork();
 
-    if (childPid == -1)
+    if (m_ProcessPid == -1)
     {
         close(rwPipe[READ_PIPE]);
         close(rwPipe[WRITE_PIPE]);
@@ -710,7 +710,7 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
     }
 
     //Child
-    if (childPid == 0)
+    if (m_ProcessPid == 0)
     {
         dup2(rwPipe[READ_PIPE], STDIN_FILENO);
         close(rwPipe[READ_PIPE]);
@@ -772,6 +772,13 @@ void FfmpegEncoder::closeEncoder()
         WaitForSingleObject(reinterpret_cast<HANDLE>(m_ProcessHandle), INFINITE);
         CloseHandle(reinterpret_cast<HANDLE>(m_ProcessHandle));
         m_ProcessHandle = nullptr;
+    }
+#else
+    if (m_ProcessPid > 0)
+    {
+        int childExitCode;
+        waitpid(m_ProcessPid, &childExitCode, 0);
+        m_ProcessPid = -1;
     }
 #endif
 }

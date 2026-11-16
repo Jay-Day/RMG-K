@@ -369,7 +369,7 @@ static QString managedFfmpegExecutablePath()
 static bool isExecutableFile(const QString& path)
 {
     const QFileInfo fileInfo(path);
-    return fileInfo.exists() && fileInfo.isFile();
+    return fileInfo.exists() && fileInfo.isFile() && fileInfo.isExecutable();
 }
 
 static QString findPathFfmpeg()
