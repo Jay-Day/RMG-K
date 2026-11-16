@@ -194,7 +194,7 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<std::string> arg
         close(rwPipe[WRITE_PIPE]);
 
         int fd = syscall(SYS_pidfd_open, childPid, 0);
-        struct pollfd pfd = {fd, POLL_IN, 0};
+        struct pollfd pfd = {fd, POLLIN, 0};
 
         //Wait for the child process to exit in the given time
         int pollVal = poll(&pfd, 1, timeoutMs);
@@ -204,17 +204,22 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<std::string> arg
         {
             //Kill process
             kill(childPid, SIGTERM);
+
+            close(pfd);
             return false;
         }
         //Error
         else if (pollVal == -1)
         {
+            close(pfd);
             return false;
         }
 
         //Wait for the child process to exit
         int childExitCode;
         waitpid(childPid, &childExitCode, 0);
+
+        close(pfd);
 
         if (WIFEXITED(childExitCode))
         {
