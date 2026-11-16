@@ -1639,7 +1639,7 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
     if (getenv("APPIMAGE"))
     {
         //APPDIR is the root directory inside the app image
-        program = getenv("APPDIR") + "/AppRun";
+        program = QString(getenv("APPDIR")) + "/AppRun";
     }
 
     m_exportProcess->setProgram(program);

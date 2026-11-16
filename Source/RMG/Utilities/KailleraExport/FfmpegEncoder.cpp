@@ -519,18 +519,16 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
     char audioFreqBuffer[64];
 
     //std::format is not used for compatibility with older systems
-    //Otherwise, std::locale and std::format would be simpler options
-    auto currentLocale = setlocale(LC_ALL, NULL);
-
+    //Otherwise, std::format with a given locale would be a simpler options
     //Use default C locale for formatting numbers
-    setlocale(LC_NUMERIC, "C");
+    auto CLocale = setlocale(LC_NUMERIC, "C");
 
     //Print to buffers
     std::snprintf(timeStampBuffer, sizeof(timeStampBuffer), "%g", timestampScale);
     std::snprintf(audioFreqBuffer, sizeof(audioFreqBuffer), "%d", audioFrequency);
 
-    //Set locale back
-    setlocale(LC_ALL, currentLocale);
+    //Set locale back to user's environment
+    auto returnLocale = setlocale(LC_NUMERIC, "");
 
     std::string timestampStr(timeStampBuffer);
     std::string audioFreqStr(audioFreqBuffer);
@@ -660,17 +658,15 @@ bool FfmpegEncoder::openEncoder(const FfmpegEncoderConfig& config, std::string* 
             m_SelectedVideoEncoder.c_str(),
             m_HardwareAccelerated ? " (hardware)" : " (CPU)");
 
-    auto currentLocale = setlocale(LC_ALL, NULL);
-
     //Use default C locale for formatting numbers
-    setlocale(LC_NUMERIC, "C");
+    auto CLocale = setlocale(LC_NUMERIC, "C");
 
     //Print to buffers
     std::snprintf(videoSizeBuffer, sizeof(videoSizeBuffer), "%dx%d", config.width, config.height);
     std::snprintf(fpsBuffer, sizeof(fpsBuffer), "%g", config.fps);
 
-    //Set locale back
-    setlocale(LC_ALL, currentLocale);
+    //Set locale back to user's environment
+    auto returnLocale = setlocale(LC_NUMERIC, "");
 
     std::string videoSizeStr(videoSizeBuffer);
     std::string fpsStr(fpsBuffer);
