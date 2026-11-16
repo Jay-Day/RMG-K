@@ -26,6 +26,7 @@
 #include <windows.h>
 #define GET_PROC(handle, name) GetProcAddress((HMODULE)(handle), name)
 #else
+#include <signal.h>
 #include <dlfcn.h>
 #define GET_PROC(handle, name) dlsym(handle, name)
 #endif
@@ -548,6 +549,11 @@ bool IsReplayExportRequested(const QCommandLineParser& parser)
 
 int RunReplayExportFromCommandLine(const QCommandLineParser& parser)
 {
+#ifndef _WIN32
+    //Ignore SIGPIPE in export mode to handle errors if the export process fails
+    signal(SIGPIPE, SIG_IGN);
+#endif
+
     ReplayExportOptions options;
     std::string errorMessage;
     if (!parseOptions(parser, options, &errorMessage))

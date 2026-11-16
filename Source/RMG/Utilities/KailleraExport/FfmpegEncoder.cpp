@@ -205,14 +205,14 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<std::string> arg
             //Kill process
             kill(childPid, SIGTERM);
 
-            close(pfd);
+            close(fd);
             close(rwPipe[READ_PIPE]);
             return false;
         }
         //Error
         else if (pollVal == -1)
         {
-            close(pfd);
+            close(fd);
             close(rwPipe[READ_PIPE]);
             return false;
         }
@@ -221,7 +221,7 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<std::string> arg
         int childExitCode;
         waitpid(childPid, &childExitCode, 0);
 
-        close(pfd);
+        close(fd);
 
         if (WIFEXITED(childExitCode))
         {
