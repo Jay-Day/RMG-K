@@ -206,12 +206,14 @@ static bool runCommandWithCapturedOutputPosix(const std::vector<std::string> arg
             kill(childPid, SIGTERM);
 
             close(pfd);
+            close(rwPipe[READ_PIPE]);
             return false;
         }
         //Error
         else if (pollVal == -1)
         {
             close(pfd);
+            close(rwPipe[READ_PIPE]);
             return false;
         }
 
