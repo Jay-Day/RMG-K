@@ -1627,18 +1627,19 @@ void KailleraPlaybackDialog::startExportProcess(const QString& recordingPath,
 
     QString program = QCoreApplication::applicationFilePath();
 
-    /* Hack for AppImages - this runs the RMG-K binary directly, which doesn't have the environment
+    /* Hack for AppImages - this normally runs the RMG-K binary directly, which doesn't have the environment
      * that would be set by AppRun and thus fails to load libRMG-Core
      *
      * This is also true for upstream RMG, but they don't invoke a separate process like this
      * so it's a problem only in this case
      *
-     * Thus if it's the AppImage, run AppRun instead of the RMG-K binary
-     * The "APPIMAGE" envvar is set for app images
+     * Thus if it's the AppImage, run AppRun inside the AppImage instead of the RMG-K binary
+     * The "APPIMAGE" and "APPDIR" envvars are set for app images
      */
     if (getenv("APPIMAGE"))
     {
-        program = QCoreApplication::applicationFilePath().remove("shared/bin/RMG-K") + "AppRun";
+        //APPDIR is the root directory inside the app image
+        program = getenv("APPDIR") + "/AppRun";
     }
 
     m_exportProcess->setProgram(program);
