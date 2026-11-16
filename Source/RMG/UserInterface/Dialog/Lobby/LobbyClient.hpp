@@ -343,6 +343,10 @@ public:
     bool broadcastKeyframeUploadBusy() const;
     // How often to upload a keyframe, from the lobby's last MATCH_BEGIN.
     qint64 broadcastKeyframeIntervalMs() const { return m_broadcastKeyframeIntervalMs; }
+    // Whether the lobby's last MATCH_BEGIN asked for keyframes on demand: none
+    // on a timer, one each time broadcastKeyframeRequested fires. Sent back in
+    // BROADCAST_BEGIN, so the lobby only asks broadcasters that said they can.
+    bool broadcastKeyframeOnDemand() const { return m_broadcastKeyframeOnDemand; }
     void sendBroadcastEnd(quint64 matchId);
 
     // Spectate (pull a broadcast match's krec stream back down).
@@ -495,6 +499,9 @@ signals:
     void spectateFailed(quint64 matchId, const QString& reason);
     // Authoritative audience size, sent to the broadcaster and active spectators.
     void broadcastViewerCount(quint64 matchId, int viewerCount);
+    // Broadcaster with on-demand keyframes: a viewer is waiting to join and the
+    // lobby's cached keyframe is too old, so capture and upload a new one.
+    void broadcastKeyframeRequested(quint64 matchId);
 
     // Moderation (server → client).
     void adminAuthResult(bool ok, const QString& nameOrReason); // ok => moderator granted, name; else reason
@@ -594,6 +601,7 @@ private:
     void handleSpectateEnd(const QJsonObject& data);
     void handleSpectateFail(const QJsonObject& data);
     void handleBroadcastViewerCount(const QJsonObject& data);
+    void handleBroadcastKeyframeRequest(const QJsonObject& data);
     void handleAdminAuthOk(const QJsonObject& data);
     void handleAdminAuthFail(const QJsonObject& data);
     void handleModNotice(const QJsonObject& data);
@@ -698,6 +706,7 @@ private:
     bool    m_isModerator = false; // set once ADMIN_AUTH_OK is received
     QSet<quint64> m_moderatorUsers; // from MOD_PEERS, while moderating
     qint64  m_broadcastKeyframeIntervalMs = 30'000;
+    bool    m_broadcastKeyframeOnDemand = false;
     quint64 m_currentIceRoomId = 0;
     quint64 m_currentIceHostUserId = 0;
     QSet<quint64> m_icePeerIds;

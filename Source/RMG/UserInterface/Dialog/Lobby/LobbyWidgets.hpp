@@ -166,6 +166,9 @@ public:
     explicit LobbyCard(QWidget* parent = nullptr, bool scanlines = false);
 
     void setBorderColor(const QColor& color);
+    // A translucent wash over the panel, so a state's color fills the card
+    // and not just its edge. An invalid color removes it.
+    void setFillTint(const QColor& color);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -173,6 +176,7 @@ protected:
 private:
     bool m_scanlines;
     QColor m_borderColor;
+    QColor m_fillTint;
 };
 
 // The top bar's background.
@@ -218,12 +222,19 @@ class LedDot : public QWidget
 public:
     explicit LedDot(QWidget* parent = nullptr);
     void setColor(const QColor& color);
+    // A slow on-air breathe. It only ticks while the dot is on screen, so a
+    // pulsing LED in a hidden or minimized window costs nothing.
+    void setPulsing(bool pulsing);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
     QColor m_color;
+    QTimer* m_pulse = nullptr;
+    int m_pulseStep = 0;
 };
 
 class Spinner : public QWidget

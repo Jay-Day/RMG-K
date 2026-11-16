@@ -1007,6 +1007,7 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "SPECTATE_END")         handleSpectateEnd(data);
     else if (type == "SPECTATE_FAIL")        handleSpectateFail(data);
     else if (type == "BROADCAST_VIEWER_COUNT") handleBroadcastViewerCount(data);
+    else if (type == "BROADCAST_KEYFRAME_REQUEST") handleBroadcastKeyframeRequest(data);
     else if (type == "ADMIN_AUTH_OK")        handleAdminAuthOk(data);
     else if (type == "ADMIN_AUTH_FAIL")      handleAdminAuthFail(data);
     else if (type == "MOD_NOTICE")           handleModNotice(data);
@@ -2197,6 +2198,10 @@ void LobbyClient::handleMatchBegin(const QJsonObject& data)
     // lobbies don't send it; keep 30 s for them. Same bounds as the lobby.
     const int keyframeSec = data.value("keyframeIntervalSec").toInt(0);
     m_broadcastKeyframeIntervalMs = keyframeSec > 0 ? qint64(std::clamp(keyframeSec, 10, 600)) * 1000 : 30'000;
+    // On demand, the lobby asks for a keyframe when a viewer joins and its
+    // cached one is older than the interval, saving the upload while nobody
+    // joins. Older lobbies don't send it; keep uploading on the interval.
+    m_broadcastKeyframeOnDemand = data.value("keyframeOnDemand").toBool(false);
     emit matchBegin(matchId, peers);
 }
 
@@ -2460,6 +2465,13 @@ void LobbyClient::handleBroadcastViewerCount(const QJsonObject& data)
             it->viewerCount = viewerCount;
     }
     emit broadcastViewerCount(matchId, viewerCount);
+}
+
+void LobbyClient::handleBroadcastKeyframeRequest(const QJsonObject& data)
+{
+    const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
+    if (matchId != 0)
+        emit broadcastKeyframeRequested(matchId);
 }
 
 // -------- Heartbeat --------
@@ -3914,6 +3926,10 @@ bool LobbyClient::sendBroadcastBegin(quint64 matchId)
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
     d["manifest"] = QString::fromLatin1(m_prematchManifest.toBase64());
+    // Say we'll upload keyframes when asked. Without it the lobby expects them
+    // on the interval and never asks, as for an older client.
+    if (m_broadcastKeyframeOnDemand)
+        d["keyframeOnDemand"] = true;
     sendEnvelope("BROADCAST_BEGIN", d);
     return true;
 }

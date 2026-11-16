@@ -838,6 +838,12 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::spectateEnded,        this, &RollbackLobbyDialog::onSpectateEnded);
     connect(m_client, &LobbyClient::spectateFailed,       this, &RollbackLobbyDialog::onSpectateFailed);
     connect(m_client, &LobbyClient::broadcastViewerCount, this, &RollbackLobbyDialog::onBroadcastViewerCount);
+    // On-demand keyframes: a viewer is waiting for one. The next drain tick
+    // (at most 80 ms away) starts the capture once no upload is busy.
+    connect(m_client, &LobbyClient::broadcastKeyframeRequested, this, [this](quint64 matchId) {
+        if (m_broadcasting && m_keyframeOnDemand && matchId == m_broadcastMatchId)
+            m_keyframeWanted = true;
+    });
     connectSocialSignals();
 
     // Drains staged krec bytes to the WebSocket while broadcasting. ~80 ms keeps
@@ -1324,6 +1330,53 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     m_roomSettingsButton->setToolTip(tr("Room settings: rollback prediction, and who can join"));
     m_roomSettingsButton->setAccessibleName(tr("Room settings"));
     m_roomWindow->titleRight()->addWidget(m_roomSettingsButton);
+
+    // ── Match banner: the match is on, said up top where it can't be missed,
+    // with the way back to the game window. Hidden unless the room is in game
+    // (refreshMatchBanner). Compact, so the seats keep most of the height. ──
+    m_matchBanner = new LobbyCard(page);
+    m_matchBanner->setObjectName("MatchBanner");
+    m_matchBanner->setFixedHeight(58);
+    auto* bannerLay = new QHBoxLayout(m_matchBanner);
+    bannerLay->setContentsMargins(14, 9, 10, 9);
+    bannerLay->setSpacing(12);
+    m_matchLed = new LedDot(m_matchBanner);
+    m_matchLed->setObjectName("MatchBannerLed");
+    m_matchLed->setPulsing(true);
+    bannerLay->addWidget(m_matchLed, 0, Qt::AlignVCenter);
+    auto* bannerWords = new QVBoxLayout;
+    bannerWords->setSpacing(2);
+    bannerWords->setAlignment(Qt::AlignVCenter);
+    auto* bannerHead = new QHBoxLayout;
+    bannerHead->setSpacing(10);
+    m_matchTitle = new ElidedLabel(Role::Live, m_matchBanner);
+    m_matchTitle->setObjectName("MatchBannerTitle");
+    m_matchTitle->setFont(LobbyTheme::pixelFont(14, 0.4));
+    bannerHead->addWidget(m_matchTitle);
+    m_matchClock = new ElidedLabel(Role::Ink, m_matchBanner);
+    m_matchClock->setObjectName("MatchBannerClock");
+    m_matchClock->setFont(LobbyTheme::pixelFont(14, 0.4));
+    m_matchClock->setToolTip(tr("How long your game has been running"));
+    m_matchClock->setVisible(false);
+    bannerHead->addWidget(m_matchClock);
+    bannerHead->addStretch(1);
+    bannerWords->addLayout(bannerHead);
+    m_matchSub = new ElidedLabel(Role::Muted, m_matchBanner);
+    m_matchSub->setObjectName("MatchBannerSubtitle");
+    m_matchSub->setFont(LobbyTheme::uiFont(11));
+    m_matchSub->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    bannerWords->addWidget(m_matchSub);
+    bannerLay->addLayout(bannerWords, 1);
+    m_backToGameBtn = new LobbyButton(tr("Back to Game"), LobbyButton::Kind::Primary, m_matchBanner);
+    m_backToGameBtn->setObjectName("BackToGameBtn");
+    m_backToGameBtn->setButtonSize(LobbyButton::Size::Medium);
+    m_backToGameBtn->setPixelLabel(true);
+    m_backToGameBtn->setIconName(QStringLiteral("gamepad-line"));
+    m_backToGameBtn->setToolTip(tr("Bring the game window to the front."));
+    connect(m_backToGameBtn, &QPushButton::clicked, this, &RollbackLobbyDialog::gameWindowRequested);
+    bannerLay->addWidget(m_backToGameBtn, 0, Qt::AlignVCenter);
+    m_matchBanner->setVisible(false);
+    lay->addWidget(m_matchBanner);
 
     // ── Seats: a port card each, sharing the width ──
     auto* seatsBox = new QWidget(page);
@@ -2256,6 +2309,9 @@ void RollbackLobbyDialog::refreshTheme()
     }
     updateRollbackSettingControls();
     updateStatusIndicator(m_client->state());
+    // The action bar's status badge and the match banner are colored as
+    // they're set.
+    refreshStartButton();
     // The role line under the name is coloured as it's set.
     updateUserChip();
     onRoomListChanged();
@@ -3746,6 +3802,7 @@ void RollbackLobbyDialog::updateMatchDurations()
     if (m_liveGallery)
         m_liveGallery->updateDurations();
     refreshRoomBadge();
+    refreshMatchBanner();
     refreshPlayBar();
 }
 
@@ -3860,6 +3917,7 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     if (m_startBtn) m_startBtn->setEnabled(false);
     if (m_dropBtn) m_dropBtn->setEnabled(false);
     if (m_leaveBtn) m_leaveBtn->setEnabled(true);
+    refreshMatchBanner();
 
     switchToRoomsView();
     refreshPlayBar();
@@ -5451,6 +5509,51 @@ void RollbackLobbyDialog::refreshStartButton()
         showWhy(QStringLiteral("time-line"), t.muted, t.tint, tr("Waiting for the match to start"),
                 tr("It launches by itself when it does."));
     }
+
+    refreshMatchBanner();
+}
+
+void RollbackLobbyDialog::refreshMatchBanner()
+{
+    if (!m_matchBanner)
+        return;
+
+    const bool inGame = m_currentRoomId != 0 && m_currentRoomState == QLatin1String("in_game");
+    m_matchBanner->setVisible(inGame);
+    if (!inGame)
+        return;
+
+    // Passed in as colors, so a theme change needs this to run again
+    // (refreshTheme does, through refreshStartButton).
+    const Tokens& t = LobbyTheme::tokens();
+    m_matchBanner->setBorderColor(LobbyTheme::mix(t.live, t.line, 0.7));
+    m_matchBanner->setFillTint(t.liveTint);
+    m_matchLed->setColor(t.live);
+
+    const bool playing = m_emulationActive || m_awaitingEmulationStart;
+    m_backToGameBtn->setVisible(playing);
+    if (playing)
+    {
+        m_matchTitle->setText(tr("Match live").toUpper());
+        m_matchSub->setText(m_emulationActive ? tr("Your game is running in the game window.")
+                                              : tr("Your game is starting in the game window."));
+    }
+    else
+    {
+        // Outside the match there's no game on this PC to time. The words are
+        // the action bar's own, so the two never tell different stories.
+        const bool selfWaiting = m_client && m_outOfMatchUsers.contains(m_client->selfUserId());
+        m_matchTitle->setText(tr("Match in progress").toUpper());
+        m_matchSub->setText(selfWaiting && m_roomLateJoin
+            ? tr("The host can add you to the game. It starts on its own when they do.")
+            : tr("It's playing without you. You'll be back here when it ends."));
+    }
+    m_matchSub->setToolTip(m_matchSub->text());
+
+    const bool clock = m_emulationActive && m_matchClockStartMs > 0;
+    m_matchClock->setVisible(clock);
+    if (clock)
+        m_matchClock->setText(formatMatchDuration(m_matchClockStartMs));
 }
 
 void RollbackLobbyDialog::onDropGameClicked()
@@ -5483,6 +5586,7 @@ void RollbackLobbyDialog::notifyEmulationStarted()
     if (!m_awaitingEmulationStart) return;
     m_awaitingEmulationStart = false;
     m_emulationActive = true;
+    m_matchClockStartMs = QDateTime::currentMSecsSinceEpoch();
     updateRollbackSettingControls();
     refreshStartButton();
 
@@ -6203,6 +6307,8 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
 
     refreshLocalRoster();
     switchToRoomsView();
+    // Not left up for the next room to open with.
+    refreshMatchBanner();
     if (m_startBtn) m_startBtn->setEnabled(false);
     if (m_dropBtn)  m_dropBtn->setEnabled(false);
     if (m_leaveBtn) m_leaveBtn->setEnabled(true);
@@ -7075,6 +7181,10 @@ void RollbackLobbyDialog::startBroadcast(quint64 matchId)
     m_broadcasting = true;
     m_broadcastMatchId = matchId;
     m_lastKeyframeRequestMs = 0; // request the first keyframe on the next drain tick
+    // What sendBroadcastBegin just told the lobby, kept for this broadcast.
+    // On demand, the first keyframe waits for the lobby to ask.
+    m_keyframeOnDemand = m_client->broadcastKeyframeOnDemand();
+    m_keyframeWanted = false;
     {
         QMutexLocker lock(&m_broadcastMutex);
         m_broadcastBuf.clear();
@@ -7092,6 +7202,7 @@ void RollbackLobbyDialog::stopBroadcast()
 {
     if (!m_broadcasting) return;
     m_broadcasting = false;
+    m_keyframeWanted = false; // nobody can join a stream that's ending
     // Stop new bytes, flush the tail, then tell the server.
     n02::setRecordingStreamSink(nullptr);
     if (m_broadcastDrainTimer)
@@ -7140,7 +7251,20 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
     const qint64 keyframeIntervalMs = m_client->broadcastKeyframeIntervalMs();
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     const bool keyframeUploadBusy = m_client->broadcastKeyframeUploadBusy();
-    if (!keyframeUploadBusy &&
+    if (m_keyframeOnDemand)
+    {
+        // The lobby asks only when a viewer joins and its cached keyframe has
+        // aged past the interval, so nothing is uploaded while nobody joins.
+        // An ask that arrives mid-upload waits for it to finish, as the timer
+        // does: a capture taken now would only wait in rmgk_gekko until then
+        // and reach the lobby older.
+        if (m_keyframeWanted && !keyframeUploadBusy)
+        {
+            rmgk_gekko::request_keyframe();
+            m_keyframeWanted = false;
+        }
+    }
+    else if (!keyframeUploadBusy &&
         (m_lastKeyframeRequestMs == 0 || nowMs - m_lastKeyframeRequestMs >= keyframeIntervalMs))
     {
         rmgk_gekko::request_keyframe();

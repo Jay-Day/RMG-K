@@ -144,6 +144,10 @@ signals:
     // Fired when the user clicks "Close Game" mid-match or when a peer drops.
     void closeMatchRequested();
 
+    // Back to Game in the room: MainWindow brings the running game's window
+    // to the front.
+    void gameWindowRequested();
+
     // Non-modal in-game warning: lobby-backed services (including chat) are
     // offline, but the established peer-to-peer match transport is intact.
     void matchServerConnectionLost(QString message);
@@ -526,6 +530,9 @@ private:
     // both onRoomStateChanged (seats change) and onPingMeasured (ping lands),
     // since pings arrive asynchronously after seats populate.
     void refreshStartButton();
+    // Shows the match banner while the room is in game, and only then. Runs
+    // from refreshStartButton, and every second for the clock.
+    void refreshMatchBanner();
     void updateRecordingControls();
 
     // Join limits (host-only room option): the highest ping to the host a
@@ -790,6 +797,11 @@ private:
     // Wall-clock of the last savestate-keyframe request (0 = request one now). The
     // drain tick requests a keyframe at the lobby's interval and polls for the result.
     qint64     m_lastKeyframeRequestMs = 0;
+    // Keyframes on demand, fixed at startBroadcast to match what BROADCAST_BEGIN
+    // told the lobby: no timer, the lobby asks with BROADCAST_KEYFRAME_REQUEST.
+    // m_keyframeWanted holds an ask until the drain tick finds no upload busy.
+    bool       m_keyframeOnDemand = false;
+    bool       m_keyframeWanted   = false;
 
     // Non-zero while this client is spectating a broadcast match (the match id
     // we asked the server to stream). Cleared when the spectate session ends.
@@ -842,6 +854,19 @@ private:
     IconBadge*   m_whyBadge      = nullptr;
     ElidedLabel* m_whyTitle      = nullptr;
     LobbyButton* m_lagStatsBtn   = nullptr;
+
+    // The banner over the seats while the room's match runs, so the start
+    // can't be missed: what's on, how long this client's game has been
+    // running, and the way back to it.
+    LobbyCard*   m_matchBanner   = nullptr;
+    LedDot*      m_matchLed      = nullptr;
+    ElidedLabel* m_matchTitle    = nullptr;
+    ElidedLabel* m_matchClock    = nullptr;
+    ElidedLabel* m_matchSub      = nullptr;
+    LobbyButton* m_backToGameBtn = nullptr;
+    // When this client's game started (notifyEmulationStarted). The clock
+    // only shows while m_emulationActive, so an old value is never read.
+    qint64       m_matchClockStartMs = 0;
 
     // Trades lag numbers with the other players during a match, for /lagstat
     // and the Lag Stats window.

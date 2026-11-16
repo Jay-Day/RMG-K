@@ -534,6 +534,12 @@ void LobbyCard::setBorderColor(const QColor& color)
     update();
 }
 
+void LobbyCard::setFillTint(const QColor& color)
+{
+    m_fillTint = color;
+    update();
+}
+
 void LobbyCard::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
@@ -546,6 +552,8 @@ void LobbyCard::paintEvent(QPaintEvent*)
     fill.setColorAt(0, t.panel);
     fill.setColorAt(1, t.panelB);
     painter.fillPath(path, fill);
+    if (m_fillTint.isValid())
+        painter.fillPath(path, m_fillTint);
 
     if (m_scanlines)
     {
@@ -617,17 +625,82 @@ void LedDot::setColor(const QColor& color)
     update();
 }
 
+namespace
+{
+    // One breath of a pulsing LedDot: 20 steps of 80 ms. Like the Spinner, a
+    // slow timer instead of a frame-rate animation, since it can sit in the
+    // lobby for a whole match while the game runs in the other window.
+    constexpr int kLedPulseSteps = 20;
+    constexpr int kLedPulseStepMs = 80;
+} // namespace
+
+void LedDot::setPulsing(bool pulsing)
+{
+    if (pulsing == (m_pulse != nullptr))
+        return;
+    if (!pulsing)
+    {
+        delete m_pulse;
+        m_pulse = nullptr;
+        m_pulseStep = 0;
+        update();
+        return;
+    }
+    m_pulse = new QTimer(this);
+    m_pulse->setInterval(kLedPulseStepMs);
+    connect(m_pulse, &QTimer::timeout, this, [this]() {
+        m_pulseStep = (m_pulseStep + 1) % kLedPulseSteps;
+        update();
+    });
+    if (isVisible() && !window()->isMinimized())
+        m_pulse->start();
+}
+
+void LedDot::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (m_pulse)
+        m_pulse->start();
+}
+
+// Also sent, spontaneously, when the window is minimized.
+void LedDot::hideEvent(QHideEvent* event)
+{
+    QWidget::hideEvent(event);
+    if (m_pulse)
+        m_pulse->stop();
+}
+
 void LedDot::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
     const QPointF center(width() / 2.0, height() / 2.0);
-    QColor halo = m_color.isValid() ? m_color : LobbyTheme::tokens().muted;
-    halo.setAlphaF(0.2);
+    const QColor color = m_color.isValid() ? m_color : LobbyTheme::tokens().muted;
+    if (!m_pulse)
+    {
+        QColor halo = color;
+        halo.setAlphaF(0.2);
+        painter.setBrush(halo);
+        painter.drawEllipse(center, 7.0, 7.0);
+        painter.setBrush(color);
+        painter.drawEllipse(center, 4.0, 4.0);
+        return;
+    }
+
+    // glow runs 1 (lit) down to 0 and back over one breath: the halo swells
+    // as the dot brightens, and both ease off between beats.
+    constexpr qreal kTau = 6.283185307179586;
+    const qreal glow = 0.5 + 0.5 * std::cos(kTau * m_pulseStep / kLedPulseSteps);
+    QColor halo = color;
+    halo.setAlphaF(0.08 + 0.22 * glow);
     painter.setBrush(halo);
-    painter.drawEllipse(center, 7.0, 7.0);
-    painter.setBrush(m_color.isValid() ? m_color : LobbyTheme::tokens().muted);
+    const qreal haloRadius = 5.0 + 2.0 * glow;
+    painter.drawEllipse(center, haloRadius, haloRadius);
+    QColor core = color;
+    core.setAlphaF(color.alphaF() * (0.55 + 0.45 * glow));
+    painter.setBrush(core);
     painter.drawEllipse(center, 4.0, 4.0);
 }
 

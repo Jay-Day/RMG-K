@@ -6547,5 +6547,29 @@ A local replay is saved only if Save replay is on.</source>
             <source>They need a newer Dale64, or turn %1 off.</source>
             <translation>新しいDale64に更新してもらうか、「%1」をオフにしてください。</translation>
         </message>
+        <message>
+            <source>How long your game has been running</source>
+            <translation>ゲームを始めてからの経過時間</translation>
+        </message>
+        <message>
+            <source>Back to Game</source>
+            <translation>ゲームに戻る</translation>
+        </message>
+        <message>
+            <source>Bring the game window to the front.</source>
+            <translation>ゲームウィンドウを前面に表示します。</translation>
+        </message>
+        <message>
+            <source>Match live</source>
+            <translation>対戦中</translation>
+        </message>
+        <message>
+            <source>Your game is running in the game window.</source>
+            <translation>ゲームウィンドウでプレイ中です。</translation>
+        </message>
+        <message>
+            <source>Your game is starting in the game window.</source>
+            <translation>ゲームウィンドウでゲームを起動しています。</translation>
+        </message>
     </context>
 </TS>

@@ -4991,6 +4991,19 @@ void MainWindow::ensureRollbackLobbyDialog()
                 if (this->emulationThread && this->emulationThread->isRunning())
                     CoreStopEmulation();
             });
+    // "Back to Game" in the room. Only the minimized flag is cleared, so a
+    // maximized or fullscreen game comes back the way it was left; showNormal()
+    // would drop fullscreen. Activating the window is what clicking on it does,
+    // and the game's key handling already works from there.
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::gameWindowRequested,
+            this, [this]() {
+                if (!this->emulationThread || !this->emulationThread->isRunning())
+                    return;
+                if (this->isMinimized())
+                    this->setWindowState(this->windowState() & ~Qt::WindowMinimized);
+                this->raise();
+                this->activateWindow();
+            });
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::matchServerConnectionLost,
             this, [this](const QString& message) {
                 if (this->emulationThread && this->emulationThread->isRunning())
