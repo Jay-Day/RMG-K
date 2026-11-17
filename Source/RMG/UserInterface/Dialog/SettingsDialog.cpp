@@ -214,6 +214,14 @@ enum class SettingsDialogTab
 SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 {
     this->setupUi(this);
+    connect(this->inputPluginsComboBox, &QComboBox::activated, this, [this](int)
+    {
+        this->manualInputChoice = true;
+    });
+
+    this->languageComboBox->setItemData(0, "system");
+    this->languageComboBox->setItemData(1, "en");
+    this->languageComboBox->setItemData(2, "ja_JP");
 
     connect(this->showLegacyThemesCheckBox, &QCheckBox::toggled, this, [this](bool checked)
     {
@@ -230,19 +238,57 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     QWidget* rollbackTab = new QWidget(this->tabWidget);
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
-    QGroupBox* rollbackLoggingGroupBox = new QGroupBox("Logging", rollbackTab);
+    QGroupBox* rollbackLoggingGroupBox = new QGroupBox(tr("Logging"), rollbackTab);
     QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
-    this->rollbackEnableLocalTestingCheckBox = new QCheckBox("Use rollback engine for local play", rollbackTab);
-    this->rollbackVerboseStatsCheckBox = new QCheckBox("Enable verbose rollback stats logging", rollbackLoggingGroupBox);
-    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox("Enable verbose PIF input logging", rollbackLoggingGroupBox);
-    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox("Enable verbose Glide input logging", rollbackLoggingGroupBox);
+    this->rollbackEnableLocalTestingCheckBox = new QCheckBox(tr("Use rollback engine for local play"), rollbackTab);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox(tr("Enable verbose rollback stats logging"), rollbackLoggingGroupBox);
+    this->rollbackStallDiagnosticsCheckBox = new QCheckBox(tr("Log netplay stalls only (lightweight freeze diagnostics)"), rollbackLoggingGroupBox);
+    this->rollbackStallDiagnosticsCheckBox->setToolTip(
+        tr("Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
+            "network stats so you can see which player's input stopped arriving. Writes nothing\n"
+            "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
+            "frame. Safe to leave on; one player logging is enough to identify the culprit."));
+    this->rollbackPacingTraceCheckBox = new QCheckBox(tr("Enable pacing trace logging"), rollbackLoggingGroupBox);
+    this->rollbackEmulationDiagnosticsCheckBox = new QCheckBox(tr("Enable emulation freeze diagnostics (EEPROM and rollback)"), rollbackLoggingGroupBox);
+    this->rollbackEmulationDiagnosticsCheckBox->setToolTip(
+        tr("Records EEPROM reads/writes, rollback saves/restores, frame progress, and CPU/video state\n"
+            "to an emulation log in the Logs folder. Enable on every player before starting a session.\n"
+            "Use only for a short reproduction: detailed logging can affect performance."));
+    this->rollbackPacingTraceCheckBox->setToolTip(
+        tr("Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
+            "Enable this only while diagnosing frame pacing; it is disabled by default."));
+    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox(tr("Enable verbose PIF input logging"), rollbackLoggingGroupBox);
+    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox(tr("Enable verbose Glide input logging"), rollbackLoggingGroupBox);
+    this->rollbackPingDiagnosticsCheckBox = new QCheckBox(tr("Enable lobby ping diagnostics logging"), rollbackLoggingGroupBox);
+    this->rollbackPingDiagnosticsCheckBox->setToolTip(
+        tr("Write a detailed lobby_ping_*.log file (in the Logs folder) tracing ICE/STUN\n"
+            "candidate gathering, signaling, connectivity checks, and peer pings. Candidate\n"
+            "addresses are included, but ICE credentials are redacted. Only useful when\n"
+            "debugging connection problems. Applies the next time you connect to the lobby."));
+    this->rollbackHideLocationCheckBox = new QCheckBox(tr("Hide my location from other players"), rollbackTab);
+    this->rollbackHideLocationCheckBox->setToolTip(
+        tr("Your row in the netplay lobby shows no country flag, and no country in its\n"
+        "hover tooltip, for everyone on the server. Region-based ping estimates still\n"
+        "work. Players you actually play with still exchange connection addresses —\n"
+        "this hides the flag, not your traffic. Applies the next time you connect."));
+    this->rollbackRememberInputDelayCheckBox = new QCheckBox(tr("Remember my last input delay"), rollbackTab);
+    this->rollbackRememberInputDelayCheckBox->setToolTip(
+        tr("Reuse your last frame delay choice when hosting or joining a rollback lobby room,\n"
+        "including Quick Match. Choosing Auto remembers Auto instead of its calculated value.\n"
+        "When disabled, each new room starts on Auto. Applies the next time you enter a room."));
     rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
+    rollbackLayout->addWidget(this->rollbackHideLocationCheckBox);
+    rollbackLayout->addWidget(this->rollbackRememberInputDelayCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackEmulationDiagnosticsCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackPacingTraceCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerbosePifInputLoggingCheckBox);
     rollbackLoggingLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
+    rollbackLoggingLayout->addWidget(this->rollbackPingDiagnosticsCheckBox);
     rollbackLayout->addWidget(rollbackLoggingGroupBox);
     rollbackLayout->addStretch();
-    this->tabWidget->addTab(rollbackTab, "Rollback");
+    this->tabWidget->addTab(rollbackTab, tr("Rollback"));
 
     this->setIconsForEmulationInfoText();
 
@@ -358,7 +404,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
     if (!this->exclusiveMonitorComboBox->property("populated").toBool())
     {
         this->exclusiveMonitorComboBox->clear();
-        this->exclusiveMonitorComboBox->addItem("Primary Monitor", "");
+        this->exclusiveMonitorComboBox->addItem(tr("Primary Monitor"), "");
         DISPLAY_DEVICEW displayDevice = {};
         displayDevice.cb = sizeof(displayDevice);
         for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &displayDevice, 0); i++)
@@ -376,7 +422,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
             int displayIdx = devName.lastIndexOf("DISPLAY");
             if (displayIdx >= 0)
             {
-                displayNum = "Display " + devName.mid(displayIdx + 7);
+                displayNum = tr("Display %1").arg(devName.mid(displayIdx + 7));
             }
             QString label;
             if (EnumDisplayDevicesW(displayDevice.DeviceName, 0, &monitor, 0))
@@ -437,7 +483,7 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
 
     // populate resolutions
     this->exclusiveResolutionComboBox->clear();
-    this->exclusiveResolutionComboBox->addItem("Desktop Default", "");
+    this->exclusiveResolutionComboBox->addItem(tr("Desktop Default"), "");
     for (const auto& res : resolutions)
     {
         QString text = QString("%1x%2").arg(res.width).arg(res.height);
@@ -474,10 +520,10 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
 
     // populate refresh rates
     this->exclusiveRefreshRateComboBox->clear();
-    this->exclusiveRefreshRateComboBox->addItem("Desktop Default", 0);
+    this->exclusiveRefreshRateComboBox->addItem(tr("Desktop Default"), 0);
     for (int rate : refreshRates)
     {
-        QString text = QString("%1 Hz").arg(rate);
+        QString text = tr("%1 Hz").arg(rate);
         this->exclusiveRefreshRateComboBox->addItem(text, rate);
     }
 
@@ -739,7 +785,7 @@ void SettingsDialog::loadGamePluginSettings(void)
     for (QComboBox *comboBox : comboBoxArray)
     {
         comboBox->clear();
-        comboBox->addItem("**Use Core Plugin Settings**");
+        comboBox->addItem(tr("**Use Core Plugin Settings**"));
     }
 
     for (const auto &p : this->pluginList)
@@ -851,6 +897,9 @@ void SettingsDialog::loadInterfaceGeneralSettings(void)
     this->showLegacyThemesCheckBox->blockSignals(blocked);
     populateThemeCombo(this->themeComboBox, themeOptions, showLegacy, currentTheme);
     this->iconThemeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_IconTheme)));
+    const int languageIndex = this->languageComboBox->findData(
+        QString::fromStdString(CoreSettingsGetStringValue(SettingsID::GUI_Language)));
+    this->languageComboBox->setCurrentIndex(languageIndex >= 0 ? languageIndex : 0);
     this->autoStartNetplayOnStartupCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_AutoStartNetplayOnStartup));
 #ifdef UPDATER
     this->checkForUpdatesCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_CheckForUpdates));
@@ -880,7 +929,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveMonitorComboBox->clear();
         // monitor combobox is populated in populateExclusiveFullscreenModes
         // seed with saved value so it gets selected after population
-        this->exclusiveMonitorComboBox->addItem("Primary Monitor", "");
+        this->exclusiveMonitorComboBox->addItem(tr("Primary Monitor"), "");
         if (!savedMonitor.isEmpty())
         {
             this->exclusiveMonitorComboBox->addItem(savedMonitor, savedMonitor);
@@ -889,7 +938,7 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveMonitorComboBox->blockSignals(false);
         this->exclusiveResolutionComboBox->blockSignals(true);
         this->exclusiveResolutionComboBox->clear();
-        this->exclusiveResolutionComboBox->addItem("Desktop Default", "");
+        this->exclusiveResolutionComboBox->addItem(tr("Desktop Default"), "");
         if (!savedRes.isEmpty())
         {
             this->exclusiveResolutionComboBox->addItem(savedRes, savedRes);
@@ -898,10 +947,10 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveResolutionComboBox->blockSignals(false);
         this->exclusiveRefreshRateComboBox->blockSignals(true);
         this->exclusiveRefreshRateComboBox->clear();
-        this->exclusiveRefreshRateComboBox->addItem("Desktop Default", 0);
+        this->exclusiveRefreshRateComboBox->addItem(tr("Desktop Default"), 0);
         if (savedRate > 0)
         {
-            this->exclusiveRefreshRateComboBox->addItem(QString("%1 Hz").arg(savedRate), savedRate);
+            this->exclusiveRefreshRateComboBox->addItem(tr("%1 Hz").arg(savedRate), savedRate);
             this->exclusiveRefreshRateComboBox->setCurrentIndex(1);
         }
         this->exclusiveRefreshRateComboBox->blockSignals(false);
@@ -940,6 +989,7 @@ void SettingsDialog::loadInterfaceOSDSettings(void)
     this->osdScaleDoubleSpinBox->setValue(CoreSettingsGetFloatValue(SettingsID::GUI_OnScreenDisplayScale));
     this->osdMaxMessagesSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_OnScreenDisplayMaxMessages));
     this->osdKailleraPortLabelsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels));
+    this->osdLiveReplayStatusCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayLiveReplayStatus));
 
     std::vector<int> backgroundColor = CoreSettingsGetIntListValue(SettingsID::GUI_OnScreenDisplayBackgroundColor);
     std::vector<int> textColor = CoreSettingsGetIntListValue(SettingsID::GUI_OnScreenDisplayTextColor);
@@ -978,9 +1028,15 @@ void SettingsDialog::loadInterfaceNetplaySettings(void)
 void SettingsDialog::loadRollbackSettings(void)
 {
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
+    this->rollbackStallDiagnosticsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_StallDiagnostics));
+    this->rollbackEmulationDiagnosticsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_EmulationDiagnostics));
+    this->rollbackPacingTraceCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_PacingTrace));
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
+    this->rollbackPingDiagnosticsCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_PingDiagnostics));
+    this->rollbackHideLocationCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_HideLocation));
+    this->rollbackRememberInputDelayCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::Rollback_RememberInputDelay));
 }
 
 void SettingsDialog::loadDefaultCoreSettings(void)
@@ -1113,6 +1169,7 @@ void SettingsDialog::loadDefaultInterfaceGeneralSettings(void)
     this->showLegacyThemesCheckBox->blockSignals(blocked);
     populateThemeCombo(this->themeComboBox, themeOptions, showLegacy, defaultTheme);
     this->iconThemeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::GUI_IconTheme)));
+    this->languageComboBox->setCurrentIndex(0);
     this->autoStartNetplayOnStartupCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutoStartNetplayOnStartup));
 #ifdef UPDATER
     this->checkForUpdatesCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_CheckForUpdates));
@@ -1165,6 +1222,7 @@ void SettingsDialog::loadDefaultInterfaceOSDSettings(void)
     this->osdScaleDoubleSpinBox->setValue(CoreSettingsGetDefaultFloatValue(SettingsID::GUI_OnScreenDisplayScale));
     this->osdMaxMessagesSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayMaxMessages));
     this->osdKailleraPortLabelsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels));
+    this->osdLiveReplayStatusCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayLiveReplayStatus));
 
     const std::vector<int> backgroundColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayBackgroundColor);
     const std::vector<int> textColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayTextColor);
@@ -1194,9 +1252,15 @@ void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
 void SettingsDialog::loadDefaultRollbackSettings(void)
 {
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseStats));
+    this->rollbackStallDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_StallDiagnostics));
+    this->rollbackEmulationDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EmulationDiagnostics));
+    this->rollbackPacingTraceCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_PacingTrace));
     this->rollbackEnableLocalTestingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EnableLocalTesting));
     this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
+    this->rollbackPingDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_PingDiagnostics));
+    this->rollbackHideLocationCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_HideLocation));
+    this->rollbackRememberInputDelayCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_RememberInputDelay));
 }
 
 void SettingsDialog::saveSettings(void)
@@ -1394,6 +1458,7 @@ void SettingsDialog::saveInterfaceGeneralSettings(void)
 {
     CoreSettingsSetValue(SettingsID::GUI_Theme, selectedThemeValue(this->themeComboBox).toStdString());
     CoreSettingsSetValue(SettingsID::GUI_IconTheme, this->iconThemeComboBox->currentText().toStdString());
+    CoreSettingsSetValue(SettingsID::GUI_Language, this->languageComboBox->currentData().toString().toStdString());
     CoreSettingsSetValue(SettingsID::GUI_AutoStartNetplayOnStartup, this->autoStartNetplayOnStartupCheckBox->isChecked());
 #ifdef UPDATER
     CoreSettingsSetValue(SettingsID::GUI_CheckForUpdates, this->checkForUpdatesCheckBox->isChecked());
@@ -1445,6 +1510,7 @@ void SettingsDialog::saveInterfaceOSDSettings(void)
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayScale, static_cast<float>(this->osdScaleDoubleSpinBox->value()));
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayMaxMessages, this->osdMaxMessagesSpinBox->value());
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels, this->osdKailleraPortLabelsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayLiveReplayStatus, this->osdLiveReplayStatusCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_OnScreenDisplayBackgroundColor, std::vector<int>({ this->currentBackgroundColor.red(),
                                                                                             this->currentBackgroundColor.green(),
                                                                                             this->currentBackgroundColor.blue(),
@@ -1468,9 +1534,15 @@ void SettingsDialog::saveInterfaceNetplaySettings(void)
 void SettingsDialog::saveRollbackSettings(void)
 {
     CoreSettingsSetValue(SettingsID::Rollback_VerboseStats, this->rollbackVerboseStatsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_StallDiagnostics, this->rollbackStallDiagnosticsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_EmulationDiagnostics, this->rollbackEmulationDiagnosticsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_PacingTrace, this->rollbackPacingTraceCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_EnableLocalTesting, this->rollbackEnableLocalTestingCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_VerbosePifInputLogging, this->rollbackVerbosePifInputLoggingCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::Rollback_VerboseGlideInputLogging, this->rollbackVerboseGlideInputLoggingCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_PingDiagnostics, this->rollbackPingDiagnosticsCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_HideLocation, this->rollbackHideLocationCheckBox->isChecked());
+    CoreSettingsSetValue(SettingsID::Rollback_RememberInputDelay, this->rollbackRememberInputDelayCheckBox->isChecked());
 }
 
 void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)
@@ -1792,6 +1864,7 @@ void SettingsDialog::updateOSDSettingsEnabledState(void)
     this->osdChatEnabledCheckBox->setEnabled(osdEnabled);
     this->osdChatSettingsGroupBox->setEnabled(osdEnabled && chatEnabled);
     this->osdKailleraPortLabelsCheckBox->setEnabled(osdEnabled);
+    this->osdLiveReplayStatusCheckBox->setEnabled(osdEnabled);
 }
 
 void SettingsDialog::chooseDirectory(QLineEdit *lineEdit, QString caption)
@@ -2173,10 +2246,10 @@ void SettingsDialog::on_coreCpuEmulatorComboBox_currentIndexChanged(int index)
 
 void SettingsDialog::on_changeNTSCPifRomButton_clicked(void)
 {
-    this->chooseFile(this->ntscPifRomLineEdit, tr("Open NTSC PIF ROM"), "PIF ROMs (*.rom)", { "5C124E7948ADA85DA603A522782940D0", "4921D5F2165DEE6E2496F4388C4C81DA" });
+    this->chooseFile(this->ntscPifRomLineEdit, tr("Open NTSC PIF ROM"), tr("PIF ROMs (*.rom)"), { "5C124E7948ADA85DA603A522782940D0", "4921D5F2165DEE6E2496F4388C4C81DA" });
 }
 
 void SettingsDialog::on_changePALPifRomButton_clicked(void)
 {
-    this->chooseFile(this->palPifRomLineEdit, tr("Open PAL PIF ROM"), "PIF ROMs (*.rom)", { "D4232DC935CAD0650AC2664D52281F3A", "2B6EEC586FAA43F3462333B844834554" });
+    this->chooseFile(this->palPifRomLineEdit, tr("Open PAL PIF ROM"), tr("PIF ROMs (*.rom)"), { "D4232DC935CAD0650AC2664D52281F3A", "2B6EEC586FAA43F3462333B844834554" });
 }

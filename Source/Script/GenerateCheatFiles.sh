@@ -62,4 +62,9 @@ do
     done < "$file"
 done
 
+# This Smash Bros. (U) code can hang the game during startup.
+# Keep it excluded when regenerating the bundled cheat database.
+sed -i '/^\$Enable Item Switch Menu  (All Modes)/,/^[[:space:]]*$/d' \
+    "$target_cheat_dir/916B8B5B-780B85A4-45.cht"
+
 rm -rf "$tmp_dir"

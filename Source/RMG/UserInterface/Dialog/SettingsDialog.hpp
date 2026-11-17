@@ -54,6 +54,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     };
 
     bool showGameSettings = false;
+    bool manualInputChoice = false;
 
     QString currentGameFile;
     CoreRomType     currentGameType;
@@ -69,9 +70,15 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     QColor currentBackgroundColor;
     QColor currentTextColor;
     QCheckBox* rollbackVerboseStatsCheckBox = nullptr;
+    QCheckBox* rollbackStallDiagnosticsCheckBox = nullptr;
+    QCheckBox* rollbackEmulationDiagnosticsCheckBox = nullptr;
+    QCheckBox* rollbackPacingTraceCheckBox = nullptr;
     QCheckBox* rollbackEnableLocalTestingCheckBox = nullptr;
     QCheckBox* rollbackVerbosePifInputLoggingCheckBox = nullptr;
     QCheckBox* rollbackVerboseGlideInputLoggingCheckBox = nullptr;
+    QCheckBox* rollbackPingDiagnosticsCheckBox = nullptr;
+    QCheckBox* rollbackHideLocationCheckBox = nullptr;
+    QCheckBox* rollbackRememberInputDelayCheckBox = nullptr;
 
     std::vector<CorePlugin> pluginList;
 
@@ -176,6 +183,10 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
   public:
     SettingsDialog(QWidget *parent, QString file = "");
     ~SettingsDialog(void);
+    bool ShouldRememberInputChoice(void) const
+    {
+        return this->result() == QDialog::Accepted && !this->showGameSettings && this->manualInputChoice;
+    }
 
     void ShowGameTab(void);
     void ShowPluginsTab(void);

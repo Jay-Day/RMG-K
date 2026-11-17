@@ -29,6 +29,10 @@
 #include "device/memory/memory.h"
 #include "device/rdram/rdram.h"
 
+/* SRAM decodes a 64 KB window, but only SRAM_SIZE bytes of storage exist.
+ * Accesses past the end must not reach host memory: a read there copied
+ * whatever followed the storage buffer into RDRAM (different on every
+ * machine, so netplay peers diverged), and a write corrupted the heap. */
 #define SRAM_ADDR_MASK UINT32_C(0x0000ffff)
 
 void format_sram(uint8_t* mem)
@@ -69,7 +73,7 @@ unsigned int sram_dma_write(void* opaque, uint8_t* dram, uint32_t dram_addr, uin
 
     cart_addr &= SRAM_ADDR_MASK;
 
-    for (i = 0; i < length && (dram_addr+i) < sram->rdram->dram_size; ++i) {
+    for (i = 0; i < length && (cart_addr+i) < SRAM_SIZE && (dram_addr+i) < sram->rdram->dram_size; ++i) {
         dram[(dram_addr+i)^S8] = mem[(cart_addr+i)^S8];
     }
 
@@ -82,6 +86,10 @@ void read_sram(void* opaque, uint32_t address, uint32_t* value)
     const uint8_t* mem = sram->istorage->data(sram->storage);
 
     address &= SRAM_ADDR_MASK;
+    if (address > SRAM_SIZE - sizeof(*value)) {
+        *value = 0;
+        return;
+    }
 
     *value = *(uint32_t*)(mem + address);
 }
@@ -92,6 +100,9 @@ void write_sram(void* opaque, uint32_t address, uint32_t value, uint32_t mask)
     uint8_t* mem = sram->istorage->data(sram->storage);
 
     address &= SRAM_ADDR_MASK;
+    if (address > SRAM_SIZE - sizeof(value)) {
+        return;
+    }
 
     masked_write((uint32_t*)(mem + address), value, mask);
 

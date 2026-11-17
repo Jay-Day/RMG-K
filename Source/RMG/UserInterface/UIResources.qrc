@@ -2,6 +2,22 @@
 <qresource>
   <file>Resource/RMG.png</file>
   <file>Resource/CoverFallback.png</file>
+  <file alias="Resource/Controller_NoAnalogStick.svg">../../RMG-Input/UserInterface/Resource/Controller_NoAnalogStick.svg</file>
+  <file alias="Resource/Controller_AnalogStick.svg">../../RMG-Input/UserInterface/Resource/Controller_AnalogStick.svg</file>
+  <file alias="Resource/Controller_Pressed_A.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_A.svg</file>
+  <file alias="Resource/Controller_Pressed_B.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_B.svg</file>
+  <file alias="Resource/Controller_Pressed_DpadUp.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_DpadUp.svg</file>
+  <file alias="Resource/Controller_Pressed_DpadDown.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_DpadDown.svg</file>
+  <file alias="Resource/Controller_Pressed_DpadLeft.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_DpadLeft.svg</file>
+  <file alias="Resource/Controller_Pressed_DpadRight.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_DpadRight.svg</file>
+  <file alias="Resource/Controller_Pressed_CButtonUp.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_CButtonUp.svg</file>
+  <file alias="Resource/Controller_Pressed_CButtonDown.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_CButtonDown.svg</file>
+  <file alias="Resource/Controller_Pressed_CButtonLeft.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_CButtonLeft.svg</file>
+  <file alias="Resource/Controller_Pressed_CButtonRight.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_CButtonRight.svg</file>
+  <file alias="Resource/Controller_Pressed_Start.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_Start.svg</file>
+  <file alias="Resource/Controller_Pressed_LeftShoulder.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_LeftShoulder.svg</file>
+  <file alias="Resource/Controller_Pressed_RightShoulder.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_RightShoulder.svg</file>
+  <file alias="Resource/Controller_Pressed_ZTrigger.svg">../../RMG-Input/UserInterface/Resource/Controller_Pressed_ZTrigger.svg</file>
   <file>Resource/Kaillera.svg</file>
 
   <file alias="icons/black/index.theme">Resource/icons/black/index.theme</file>
@@ -33,6 +49,7 @@
   <file alias="icons/black/svg/information-line.svg">Resource/icons/black/svg/information-line.svg</file>
   <file alias="icons/black/svg/list-check.svg">Resource/icons/black/svg/list-check.svg</file>
   <file alias="icons/black/svg/magic-line.svg">Resource/icons/black/svg/magic-line.svg</file>
+  <file alias="icons/black/svg/movie-2-line.svg">Resource/icons/black/svg/movie-2-line.svg</file>
   <file alias="icons/black/svg/pause-line.svg">Resource/icons/black/svg/pause-line.svg</file>
   <file alias="icons/black/svg/pencil-line.svg">Resource/icons/black/svg/pencil-line.svg</file>
   <file alias="icons/black/svg/play-line.svg">Resource/icons/black/svg/play-line.svg</file>
@@ -82,6 +99,7 @@
   <file alias="icons/white/svg/information-line.svg">Resource/icons/white/svg/information-line.svg</file>
   <file alias="icons/white/svg/list-check.svg">Resource/icons/white/svg/list-check.svg</file>
   <file alias="icons/white/svg/magic-line.svg">Resource/icons/white/svg/magic-line.svg</file>
+  <file alias="icons/white/svg/movie-2-line.svg">Resource/icons/white/svg/movie-2-line.svg</file>
   <file alias="icons/white/svg/pause-line.svg">Resource/icons/white/svg/pause-line.svg</file>
   <file alias="icons/white/svg/pencil-line.svg">Resource/icons/white/svg/pencil-line.svg</file>
   <file alias="icons/white/svg/play-line.svg">Resource/icons/white/svg/play-line.svg</file>

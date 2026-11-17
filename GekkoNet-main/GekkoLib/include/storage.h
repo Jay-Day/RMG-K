@@ -20,12 +20,19 @@ namespace Gekko {
 
 		void Init(u32 num_states, u32 state_size, bool limited);
 
+		// Grow the ring so it can hold a larger prediction window while keeping
+		// every state already saved. Never shrinks. Returns false, leaving the
+		// storage untouched, when the extra states cannot be allocated.
+		bool Grow(u32 num_states);
+
 		StateEntry* GetState(Frame frame);
 
 		StateEntry* GetRunaheadState();
 
 	private:
 		u32 _max_num_states;
+
+		u32 _state_size;
 
 		std::vector<std::unique_ptr<StateEntry>> _states;
 

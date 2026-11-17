@@ -1688,7 +1688,7 @@ void KailleraNetplayDialog::setupUI()
     {
         launcherTabBar->setModernMode(theme == "Modern");
     }
-    m_tabWidget->addTab(createServerTab(), "Server");
+    m_tabWidget->addTab(createServerTab(), "Server (delay)");
     m_tabWidget->addTab(createP2PTab(), "Peer to Peer (rollback)");
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &KailleraNetplayDialog::onTabChanged);
     mainLayout->addWidget(m_tabWidget, 1);
@@ -3342,6 +3342,14 @@ void KailleraNetplayDialog::onStateMachineTimer()
         // State 3 = shutdown, close dialog
         m_stateMachineTimer->stop();
         accept();
+    }
+}
+
+void KailleraNetplayDialog::setActiveTab(int index)
+{
+    if (m_tabWidget != nullptr && index >= 0 && index < m_tabWidget->count())
+    {
+        m_tabWidget->setCurrentIndex(index);
     }
 }
 

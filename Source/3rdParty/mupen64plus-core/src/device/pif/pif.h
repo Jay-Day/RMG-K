@@ -49,6 +49,14 @@ struct pif_channel
     uint8_t* rx_buf;
 };
 
+struct pif_rollback_stats
+{
+    uint64_t sync_count;
+    uint64_t sync_us;
+    uint64_t input_callback_us;
+    uint64_t controller_reads;
+};
+
 void disable_pif_channel(struct pif_channel* channel);
 size_t setup_pif_channel(struct pif_channel* channel, uint8_t* buf);
 
@@ -92,6 +100,9 @@ void update_pif_ram(struct pif* pif);
 void pif_begin_rollback_input_frame(void);
 void pif_set_rollback_input_callback(m64p_rollback_input_callback callback);
 void pif_set_rollback_input_players(int players);
+void pif_rollback_stats_reset(void);
+void pif_rollback_stats_get(struct pif_rollback_stats* stats);
+void pif_rollback_stats_stop(void);
 
 void hw2_int_handler(void* opaque);
 

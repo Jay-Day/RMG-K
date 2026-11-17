@@ -37,10 +37,25 @@ typedef enum _savestates_type
     savestates_type_unknown,
     savestates_type_m64p,
     savestates_type_pj64_zip,
-    savestates_type_pj64_unc
+    savestates_type_pj64_unc,
+    savestates_type_rollback_buffer /* spectate keyframe: load the stashed pending buffer */
 } savestates_type;
 
 savestates_job savestates_get_job(void);
+int savestates_get_rollback_load_counter(void);
+/* Spectate keyframe deferred rollback-buffer load (drained at a safe interrupt boundary).
+ * ROLLBACK_LOAD_DEFER_SENTINEL is passed in m64p_rollback_state.checksum to request it. */
+#define ROLLBACK_LOAD_DEFER_SENTINEL 0x44454645 /* 'DEFE' */
+int  savestates_has_pending_rollback_load(void);
+void savestates_set_pending_rollback_load(unsigned char* buffer, int len);
+int  savestates_run_pending_rollback_load(void);
+/* Spectate keyframe FULL save: same memory-buffer mechanism as a rollback save, but the
+ * buffer is a complete normal-format savestate (TLB LUT included, buffer zeroed) — for a
+ * cold spectator to load via the normal path, not a stripped rollback reload of the same
+ * machine. Requested by passing ROLLBACK_SAVE_FULL_SENTINEL in m64p_rollback_state.checksum
+ * (checksum is an output of the save, so it's free to overload as an input flag). */
+#define ROLLBACK_SAVE_FULL_SENTINEL 0x46554c4c /* 'FULL' */
+int  savestates_save_full_buffer(unsigned char **buffer, int *len, int *checksum, int frame);
 void savestates_set_job(savestates_job j, savestates_type t, const char *fn);
 void savestates_request_rollback_save(void);
 void savestates_init(void);

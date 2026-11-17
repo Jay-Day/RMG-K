@@ -139,7 +139,17 @@ using CoreRollbackInputCallback = int (*)(void* values, int size, int players);
 
 bool CoreRollbackSaveGameState(CoreRollbackState& state, int frame);
 bool CoreRollbackSaveGameStateInto(CoreRollbackState& state, unsigned char* buffer, int capacity, int frame);
+// Like CoreRollbackSaveGameStateInto but produces a FULL normal-format savestate (TLB LUT
+// included, buffer zeroed) instead of the stripped rollback variant. Use for the spectate
+// keyframe so a cold spectator can load a complete state via the normal path. Safe to call
+// at GekkoNet's frame-aligned save point — it's read-only on the device and calls no plugins.
+bool CoreRollbackSaveFullStateInto(CoreRollbackState& state, unsigned char* buffer, int capacity, int frame);
 bool CoreRollbackLoadGameState(const CoreRollbackState& state);
+// Like CoreRollbackLoadGameState but the core performs the load at its next safe interrupt
+// boundary instead of synchronously. Use this when calling from inside the emulation loop
+// (e.g. the PIF/SI callback), where an immediate full-state load would corrupt the
+// in-flight SI/dynarec operation. The state buffer must remain valid until the next frame.
+bool CoreRollbackLoadGameStateDeferred(const CoreRollbackState& state);
 void CoreRollbackFreeGameState(CoreRollbackState& state);
 bool CoreRollbackAdvanceFrame(void);
 bool CoreRollbackSampleInput(void* values, int size, int players);

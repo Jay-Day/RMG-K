@@ -50,6 +50,42 @@ CORE_EXPORT bool CoreRollbackSaveGameStateInto(CoreRollbackState& state, unsigne
     return true;
 }
 
+// Must match ROLLBACK_SAVE_FULL_SENTINEL in mupen64plus-core savestates.h. Passed in the
+// (save-output) checksum field to request a FULL normal-format savestate (TLB LUT included,
+// buffer zeroed) instead of the stripped rollback variant.
+static const int kRollbackSaveFullSentinel = 0x46554c4c; /* 'FULL' */
+
+CORE_EXPORT bool CoreRollbackSaveFullStateInto(CoreRollbackState& state, unsigned char* buffer, int capacity, int frame)
+{
+    std::string error;
+    m64p_error ret;
+    m64p_rollback_state coreState = {};
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    coreState.frame = frame;
+    coreState.buffer = buffer;
+    coreState.len = capacity;
+    coreState.checksum = kRollbackSaveFullSentinel;
+    ret = m64p::Core.DoCommand(M64CMD_ROLLBACK_SAVE_STATE, 0, &coreState);
+    if (ret != M64ERR_SUCCESS)
+    {
+        error = "CoreRollbackSaveFullStateInto DoCommand(M64CMD_ROLLBACK_SAVE_STATE) Failed: ";
+        error += m64p::Core.ErrorMessage(ret);
+        CoreSetError(error);
+        return false;
+    }
+
+    state.buffer = coreState.buffer;
+    state.len = coreState.len;
+    state.checksum = coreState.checksum;
+    state.frame = frame;
+    return true;
+}
+
 CORE_EXPORT bool CoreRollbackLoadGameState(const CoreRollbackState& state)
 {
     std::string error;
@@ -69,6 +105,38 @@ CORE_EXPORT bool CoreRollbackLoadGameState(const CoreRollbackState& state)
     if (ret != M64ERR_SUCCESS)
     {
         error = "CoreRollbackLoadGameState DoCommand(M64CMD_ROLLBACK_LOAD_STATE) Failed: ";
+        error += m64p::Core.ErrorMessage(ret);
+        CoreSetError(error);
+        return false;
+    }
+
+    return true;
+}
+
+// Must match ROLLBACK_LOAD_DEFER_SENTINEL in mupen64plus-core savestates.h. Passed in the
+// (load-unused) checksum field to tell the core to defer the load to its next safe
+// interrupt boundary instead of loading synchronously.
+static const int kRollbackLoadDeferSentinel = 0x44454645; /* 'DEFE' */
+
+CORE_EXPORT bool CoreRollbackLoadGameStateDeferred(const CoreRollbackState& state)
+{
+    std::string error;
+    m64p_error ret;
+    m64p_rollback_state coreState = {};
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    coreState.buffer = state.buffer;
+    coreState.len = state.len;
+    coreState.checksum = kRollbackLoadDeferSentinel;
+    coreState.frame = state.frame;
+    ret = m64p::Core.DoCommand(M64CMD_ROLLBACK_LOAD_STATE, 0, &coreState);
+    if (ret != M64ERR_SUCCESS)
+    {
+        error = "CoreRollbackLoadGameStateDeferred DoCommand(M64CMD_ROLLBACK_LOAD_STATE) Failed: ";
         error += m64p::Core.ErrorMessage(ret);
         CoreSetError(error);
         return false;

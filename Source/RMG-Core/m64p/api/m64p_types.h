@@ -67,12 +67,21 @@ typedef struct {
   int size;
   int players;
 } m64p_rollback_input_sample;
+typedef struct m64p_rollback_run_frame_stats m64p_rollback_run_frame_stats;
 typedef struct {
   void *user_data;
   int (*begin_frame)(void *user_data);
   int (*end_frame)(void *user_data);
+  /* RMG-K: called by the core from the video plugin rendering callback,
+   * immediately before the plugin presents the visible rollback frame. */
+  void (*pace_before_present)(void *user_data);
+  /* RMG-K: reports detailed timings for the visible emulated frame. */
+  void (*visible_frame_complete)(void *user_data,
+    const m64p_rollback_run_frame_stats *stats);
+  /* RMG-K: enable buffered frontend/core pacing CSV traces. */
+  int pacing_trace_enabled;
 } m64p_rollback_execute_callbacks;
-typedef struct {
+struct m64p_rollback_run_frame_stats {
   uint64_t total_us;
   uint64_t r4300_us;
   uint64_t vi_us;
@@ -131,6 +140,10 @@ typedef struct {
   uint64_t ai_fifo_pop_us;
   uint64_t ai_raise_interrupt_count;
   uint64_t ai_raise_interrupt_us;
+  uint64_t pif_sync_count;
+  uint64_t pif_sync_us;
+  uint64_t pif_input_callback_us;
+  uint64_t pif_controller_reads;
   uint32_t emumode;
   uint32_t interrupt_max_type;
   uint32_t cp0_count_before;
@@ -182,7 +195,7 @@ typedef struct {
   int32_t  delay_slot_before;
   int32_t  delay_slot_after;
   int      output_flags;
-} m64p_rollback_run_frame_stats;
+};
 
 typedef enum {
   M64TYPE_INT = 1,
@@ -307,7 +320,9 @@ typedef enum {
   M64CMD_ROLLBACK_GET_RUN_FRAME_STATS,
   M64CMD_ROLLBACK_SET_VERBOSE_STATS,
   M64CMD_ROLLBACK_SET_TIMESYNC_SCALE,
-  M64CMD_FRAME_OUTPUT_SET
+  M64CMD_FRAME_OUTPUT_SET,
+  M64CMD_ROLLBACK_SET_SAVE_DATA,
+  M64CMD_ROLLBACK_GET_SAVE_DATA
 } m64p_command;
 
 typedef enum {
@@ -325,6 +340,28 @@ typedef struct {
   int            checksum;
   int            frame;
 } m64p_rollback_state;
+
+/* Netplay save data. M64CMD_ROLLBACK_SET_SAVE_DATA before M64CMD_EXECUTE
+ * sandboxes the cartridge saves: they start from these bytes, and the game's
+ * writes stay in memory instead of reaching the save files. NULL clears it.
+ * M64CMD_ROLLBACK_GET_SAVE_DATA copies the running game's saves out. */
+typedef enum {
+  M64SAVEDATA_EEPROM = 0,
+  M64SAVEDATA_SRAM,
+  M64SAVEDATA_FLASHRAM,
+  M64SAVEDATA_KINDS
+} m64p_save_data_kind;
+
+typedef struct {
+  /* SET: starting bytes, NULL for a blank (formatted) save.
+   * GET: buffers to copy into, NULL to skip that kind. */
+  unsigned char* data[M64SAVEDATA_KINDS];
+  /* SET: bytes given. GET: in, each buffer's capacity; out, bytes copied. */
+  int            size[M64SAVEDATA_KINDS];
+  /* GET: counts the game's save writes. Rollback loads restore it, so two
+   * reads with the same value on one timeline have the same contents. */
+  unsigned int   generation;
+} m64p_save_data;
 
 typedef struct {
   uint32_t address;

@@ -261,7 +261,7 @@ CORE_EXPORT bool CoreShowKailleraServerDialog(void* parentHwnd)
     return true;
 }
 
-CORE_EXPORT int CoreModifyKailleraPlayValues(void* values, int size)
+CORE_EXPORT int CoreModifyKailleraPlayValues(void* values, int size, int capacity)
 {
     if (!s_Initialized || !s_GameActive)
     {
@@ -269,7 +269,7 @@ CORE_EXPORT int CoreModifyKailleraPlayValues(void* values, int size)
     }
 
     // Call n02 to synchronize input
-    return n02::modifyPlayValues(values, size);
+    return n02::modifyPlayValues(values, size, capacity);
 }
 
 CORE_EXPORT bool CoreKailleraSendChat(std::string text)
@@ -491,10 +491,11 @@ CORE_EXPORT bool CoreShowKailleraServerDialog(void* parentHwnd)
     return false;
 }
 
-CORE_EXPORT int CoreModifyKailleraPlayValues(void* values, int size)
+CORE_EXPORT int CoreModifyKailleraPlayValues(void* values, int size, int capacity)
 {
     (void)values;
     (void)size;
+    (void)capacity;
     return -1;
 }
 

@@ -50,9 +50,10 @@ CORE_EXPORT bool CoreShowKailleraServerDialog(void* parentHwnd);
 // Modify play values (called every frame during netplay)
 // Sends local input data and receives synchronized data from all players
 // values: Pointer to input buffer (will be modified in-place with synced data)
-// size: Size of input buffer in bytes
-// Returns number of bytes received, or -1 on error
-CORE_EXPORT int CoreModifyKailleraPlayValues(void* values, int size);
+// size: Size of the local input in bytes
+// capacity: Size of the values buffer in bytes
+// Returns number of bytes received, or -1 on error (also when they don't fit)
+CORE_EXPORT int CoreModifyKailleraPlayValues(void* values, int size, int capacity);
 
 // Send chat message to other players
 CORE_EXPORT bool CoreKailleraSendChat(std::string text);

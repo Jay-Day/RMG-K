@@ -220,3 +220,14 @@ gzFile osal_gzopen(const char *filename, const char *mode)
     MultiByteToWideChar(CP_UTF8, 0, filename, -1, wstr_filename, PATH_MAX);
     return gzopen_w(wstr_filename, mode);
 }
+
+int osal_file_replace(const char *srcpath, const char *dstpath)
+{
+    wchar_t wstr_src[PATH_MAX];
+    wchar_t wstr_dst[PATH_MAX];
+    MultiByteToWideChar(CP_UTF8, 0, srcpath, -1, wstr_src, PATH_MAX);
+    MultiByteToWideChar(CP_UTF8, 0, dstpath, -1, wstr_dst, PATH_MAX);
+    /* plain rename() fails on Win32 when the destination exists; MoveFileExW with
+     * MOVEFILE_REPLACE_EXISTING overwrites it, and is atomic on the same volume */
+    return MoveFileExW(wstr_src, wstr_dst, MOVEFILE_REPLACE_EXISTING) ? 0 : 1;
+}

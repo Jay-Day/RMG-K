@@ -80,7 +80,7 @@ KailleraSessionManager::~KailleraSessionManager()
 #endif
 }
 
-bool KailleraSessionManager::showServerDialog()
+bool KailleraSessionManager::showServerDialog(int initialTab)
 {
 #ifdef NETPLAY
     // Pass nullptr as parent so the dialog is a truly independent top-level
@@ -93,6 +93,10 @@ bool KailleraSessionManager::showServerDialog()
                      this, &KailleraSessionManager::rollbackSessionPreparing);
     QObject::connect(&dialog, &KailleraNetplayDialog::rollbackSessionRequested,
                      this, &KailleraSessionManager::rollbackSessionRequested);
+    if (initialTab >= 0)
+    {
+        dialog.setActiveTab(initialTab);
+    }
     dialog.show();
 
     QEventLoop loop;
@@ -102,6 +106,7 @@ bool KailleraSessionManager::showServerDialog()
     return (dialog.result() == QDialog::Accepted);
 #else
     // Kaillera is Windows-only
+    (void)initialTab;
     return false;
 #endif
 }

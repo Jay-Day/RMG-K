@@ -41,11 +41,11 @@ typedef SOCKET Socket;
 typedef int SockLen;
 typedef SOCKADDR_STORAGE AddressStorage;
 
-static int write(SOCKET s, const void *buf, size_t count) {
+static int SocketWrite(SOCKET s, const void *buf, size_t count) {
     return send(s, (const char *)buf, (int) count, 0);
 }
 
-static int read(SOCKET s, char *buf, size_t count) {
+static int SocketRead(SOCKET s, char *buf, size_t count) {
     WSABUF wsabuf;
     wsabuf.buf = buf;
     wsabuf.len = (ULONG) count;
@@ -191,6 +191,8 @@ static int WindowsPoll(struct pollfd *fds, unsigned int nfds, int timeout)
 typedef int Socket;
 typedef socklen_t SockLen;
 typedef struct sockaddr_storage AddressStorage;
+#define SocketWrite write
+#define SocketRead read
 #endif
 
 typedef enum NET_SocketType
@@ -1401,7 +1403,7 @@ static bool PumpStreamSocket(NET_StreamSocket *sock)
             return true;  // streams are reliable, so instead of packet loss, we introduce lag.
         }
 
-        const int bw = (int) write(sock->handle, sock->pending_output_buffer, sock->pending_output_len);
+        const int bw = (int) SocketWrite(sock->handle, sock->pending_output_buffer, sock->pending_output_len);
         if (bw < 0) {
             const int err = LastSocketError();
             return WouldBlock(err) ? true : SetSocketErrorBool("Failed to write to socket", err);
@@ -1431,7 +1433,7 @@ bool NET_WriteToStreamSocket(NET_StreamSocket *sock, const void *buf, int buflen
     if (sock->pending_output_len == 0) {  // nothing queued? See if we can just send this without queueing.
         // don't ever try to send directly if simulating packet loss; we'll always queue and mess with it then.
         if (sock->percent_loss == 0) {
-            const int bw = (int) write(sock->handle, buf, buflen);
+            const int bw = (int) SocketWrite(sock->handle, buf, buflen);
             if (bw < 0) {
                 const int err = LastSocketError();
                 if (!WouldBlock(err)) {
@@ -1529,7 +1531,7 @@ int NET_ReadFromStreamSocket(NET_StreamSocket *sock, void *buf, int buflen)
         return 0;  // nothing to do.
     }
 
-    const int br = (int) read(sock->handle, buf, buflen);
+    const int br = (int) SocketRead(sock->handle, buf, buflen);
     if (br == 0) {
         SDL_SetError("End of stream");
         return -1;

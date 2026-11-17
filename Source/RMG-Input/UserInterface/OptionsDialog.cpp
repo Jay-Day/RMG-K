@@ -22,7 +22,7 @@
 using namespace UserInterface;
 
 OptionsDialog::OptionsDialog(QWidget* parent, OptionsDialogSettings settings,
-                             SDL_Joystick* joystick, SDL_Gamepad* gamepad) : QDialog(parent, Qt::WindowSystemMenuHint | Qt::WindowTitleHint)
+                             SDL_Joystick* joystick, SDL_Gamepad* gamepad, bool persistControllerMode) : QDialog(parent, Qt::WindowSystemMenuHint | Qt::WindowTitleHint), persistControllerMode(persistControllerMode)
 {
     this->setupUi(this);
 
@@ -31,12 +31,12 @@ OptionsDialog::OptionsDialog(QWidget* parent, OptionsDialogSettings settings,
     this->controllerPakComboBox->setCurrentIndex(settings.ControllerPak);
     this->gameboyRomLineEdit->setText(QString::fromStdString(settings.GameboyRom));
     this->gameboySaveLineEdit->setText(QString::fromStdString(settings.GameboySave));
-    this->removeDuplicateMappingsCheckbox->setChecked(settings.RemoveDuplicateMappings);
     this->filterEventsForButtonsCheckBox->setChecked(settings.FilterEventsForButtons);
     this->filterEventsForAxisCheckBox->setChecked(settings.FilterEventsForAxis);
 
     // global settings
-    this->sdlControllerModeComboBox->setCurrentIndex(CoreSettingsGetIntValue(SettingsID::Input_ControllerMode));
+    this->sdlControllerModeComboBox->setCurrentIndex(settings.ControllerMode < 0 ?
+        CoreSettingsGetIntValue(SettingsID::Input_ControllerMode) : settings.ControllerMode);
 
     if (!CoreIsEmulationRunning() && !CoreIsEmulationPaused())
     {
@@ -89,12 +89,13 @@ void OptionsDialog::accept()
     this->settings.ControllerPak = this->controllerPakComboBox->currentIndex();
     this->settings.GameboyRom = this->gameboyRomLineEdit->text().toStdString();
     this->settings.GameboySave = this->gameboySaveLineEdit->text().toStdString();
-    this->settings.RemoveDuplicateMappings = this->removeDuplicateMappingsCheckbox->isChecked();
     this->settings.FilterEventsForButtons = this->filterEventsForButtonsCheckBox->isChecked();
     this->settings.FilterEventsForAxis = this->filterEventsForAxisCheckBox->isChecked();
 
     // save global settings now
-    CoreSettingsSetValue(SettingsID::Input_ControllerMode, this->sdlControllerModeComboBox->currentIndex());
+    this->settings.ControllerMode = this->sdlControllerModeComboBox->currentIndex();
+    if (this->persistControllerMode)
+        CoreSettingsSetValue(SettingsID::Input_ControllerMode, this->settings.ControllerMode);
 
     QDialog::accept();
 }

@@ -67,5 +67,12 @@ extern const char * osal_get_user_cachepath(void);
 extern FILE * osal_file_open (const char *filename, const char *mode);
 extern gzFile osal_gzopen(const char *filename, const char *mode);
 
+/* Atomically replace the file at dstpath with the file at srcpath (a move/rename).
+ * If dstpath already exists it is overwritten. Returns zero on success, nonzero on
+ * failure. Used to commit a fully-written temp file over a config file without ever
+ * leaving the destination truncated if the process is interrupted mid-write.
+ */
+extern int osal_file_replace(const char *srcpath, const char *dstpath);
+
 #endif /* OSAL_FILES_H */
 

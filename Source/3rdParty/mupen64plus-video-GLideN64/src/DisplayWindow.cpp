@@ -9,6 +9,7 @@
 #include "DisplayWindow.h"
 #include "PluginAPI.h"
 #include "FrameBuffer.h"
+#include "Combiner.h"
 
 bool DisplayWindow::start()
 {
@@ -44,6 +45,7 @@ void DisplayWindow::restart()
 {
 	_restart();
 	m_bResizeWindow = true;
+	m_bRestart = true;
 }
 
 void DisplayWindow::swapBuffers()
@@ -95,10 +97,12 @@ bool DisplayWindow::changeWindow()
 {
 	if (!m_bToggleFullscreen)
 		return false;
-	m_drawer._destroyData();
+	// Toggling fullscreen keeps the GL context, so the compiled combiners stay valid.
+	// Reloading them from the shader storage would stall emulation for seconds.
+	m_drawer._destroyData(true);
 	_changeWindow();
 	updateScale();
-	m_drawer._initData();
+	m_drawer._initData(true);
 	m_bToggleFullscreen = false;
 	return true;
 }
@@ -132,13 +136,21 @@ bool DisplayWindow::resizeWindow()
 {
 	if (!m_bResizeWindow)
 		return false;
-	m_drawer._destroyData();
-	if (!_resizeWindow())
+	// A resize keeps the GL context, so keep the compiled combiners as in changeWindow().
+	// restart() applies new settings, which may change the combiners, so rebuild them then.
+	m_drawer._destroyData(!m_bRestart);
+	if (!_resizeWindow()) {
+		// _start() may create a new GL context, so the combiners must be rebuilt too.
+		if (!m_bRestart)
+			Combiner_Destroy();
+		m_bRestart = true;
 		if(!_start())
 			return false;
+	}
 	updateScale();
-	m_drawer._initData();
+	m_drawer._initData(!m_bRestart);
 	m_bResizeWindow = false;
+	m_bRestart = false;
 	return true;
 }
 

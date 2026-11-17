@@ -30,7 +30,9 @@ public:
 
     // Show Kaillera's server selection dialog
     // Returns true if user connected to server, false if cancelled
-    bool showServerDialog();
+    // initialTab >= 0 opens the launcher straight to that tab (0=Server delay,
+    // 1=Peer to Peer); -1 uses the persisted last tab.
+    bool showServerDialog(int initialTab = -1);
 
     // Get current game state
     bool isGameActive() const;

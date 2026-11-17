@@ -371,9 +371,10 @@ static m64p_error write_configlist_file(void)
     config_section *curr_section;
     const char *configpath;
     char *filepath;
+    char *temppath;
     FILE *fPtr;
 
-    /* get the full pathname to the config file and try to open it */
+    /* get the full pathname to the config file */
     configpath = ConfigGetUserConfigPath();
     if (configpath == NULL)
         return M64ERR_FILES;
@@ -382,14 +383,27 @@ static m64p_error write_configlist_file(void)
     if (filepath == NULL)
         return M64ERR_NO_MEMORY;
 
-    fPtr = osal_file_open(filepath, "wb");
+    /* Write to a temporary file and atomically move it over the real config file
+     * once it is fully written. Opening the real file directly in "wb" truncates
+     * it to zero bytes up front, so any interruption mid-write (crash, forced exit,
+     * power loss, antivirus/cloud-sync lock) would leave the user with an empty or
+     * half-written config. Committing via a temp file guarantees the existing good
+     * config is never destroyed -- only the throwaway temp file is ever at risk. */
+    temppath = combinepath(configpath, MUPEN64PLUS_CFG_NAME ".tmp");
+    if (temppath == NULL)
+    {
+        free(filepath);
+        return M64ERR_NO_MEMORY;
+    }
+
+    fPtr = osal_file_open(temppath, "wb");
     if (fPtr == NULL)
     {
-        DebugMessage(M64MSG_ERROR, "Couldn't open configuration file '%s' for writing.", filepath);
+        DebugMessage(M64MSG_ERROR, "Couldn't open configuration file '%s' for writing.", temppath);
+        free(temppath);
         free(filepath);
         return M64ERR_FILES;
     }
-    free(filepath);
 
     /* write out header */
     fprintf(fPtr, "# Mupen64Plus Configuration File\n");
@@ -421,7 +435,31 @@ static m64p_error write_configlist_file(void)
         curr_section = curr_section->next;
     }
 
+    /* make sure the full config actually reached disk before we commit it;
+     * if anything went wrong, keep the existing config untouched */
+    if (fflush(fPtr) != 0 || ferror(fPtr) != 0)
+    {
+        DebugMessage(M64MSG_ERROR, "Error while writing configuration file '%s'.", temppath);
+        fclose(fPtr);
+        unlink(temppath);
+        free(temppath);
+        free(filepath);
+        return M64ERR_FILES;
+    }
     fclose(fPtr);
+
+    /* atomically replace the real config file with the fully-written temp file */
+    if (osal_file_replace(temppath, filepath) != 0)
+    {
+        DebugMessage(M64MSG_ERROR, "Couldn't commit configuration file '%s'.", filepath);
+        unlink(temppath);
+        free(temppath);
+        free(filepath);
+        return M64ERR_FILES;
+    }
+
+    free(temppath);
+    free(filepath);
     return M64ERR_SUCCESS;
 }
 

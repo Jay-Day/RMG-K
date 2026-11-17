@@ -8,6 +8,7 @@
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 #include <UserInterface/MainWindow.hpp>
+#include <Utilities/Translation.hpp>
 #if defined(_WIN32) && defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
 #endif
@@ -16,6 +17,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QDir>
+#include <QTranslator>
 
 #include <iostream>
 #include <cstdlib>
@@ -30,7 +32,20 @@
 #endif
 
 #include <RMG-Core/Directories.hpp>
+#include <RMG-Core/Core.hpp>
+#include <RMG-Core/Error.hpp>
+#include <RMG-Core/Settings.hpp>
 #include <RMG-Core/Version.hpp>
+
+#ifdef _WIN32
+// Laptops with two GPUs run apps they don't know on the integrated one: ask
+// the NVIDIA (Optimus) and AMD (PowerXpress) drivers for the discrete GPU.
+extern "C"
+{
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
 
 //
 // Local Functions
@@ -229,7 +244,7 @@ int main(int argc, char **argv)
     QCommandLineOption exportFfmpegOption("export-ffmpeg", "Internal replay export mode: FFmpeg executable", "path");
     QCommandLineOption exportWidthOption("export-width", "Internal replay export mode: render width", "pixels");
     QCommandLineOption exportHeightOption("export-height", "Internal replay export mode: render height", "pixels");
-    QCommandLineOption exportNoKailleraChatOption("export-no-kaillera-chat", "Internal replay export mode: hide Kaillera chat overlay");
+    QCommandLineOption exportChatOption("export-chat", "Internal replay export mode: show the recording's chat");
     QCommandLineOption exportLabelPortsOption("export-label-ports", "Internal replay export mode: label controller ports");
     QCommandLineOption exportVerboseOption("export-verbose", "Internal replay export mode: verbose export logging");
     exportKrecOption.setFlags(QCommandLineOption::HiddenFromHelp);
@@ -238,7 +253,7 @@ int main(int argc, char **argv)
     exportFfmpegOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportWidthOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportHeightOption.setFlags(QCommandLineOption::HiddenFromHelp);
-    exportNoKailleraChatOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    exportChatOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportLabelPortsOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportVerboseOption.setFlags(QCommandLineOption::HiddenFromHelp);
 
@@ -260,7 +275,7 @@ int main(int argc, char **argv)
     parser.addOption(exportFfmpegOption);
     parser.addOption(exportWidthOption);
     parser.addOption(exportHeightOption);
-    parser.addOption(exportNoKailleraChatOption);
+    parser.addOption(exportChatOption);
     parser.addOption(exportLabelPortsOption);
     parser.addOption(exportVerboseOption);
     parser.addPositionalArgument("ROM", "ROM to open");
@@ -302,38 +317,59 @@ int main(int argc, char **argv)
 #endif
     }
 
-    UserInterface::MainWindow window;
-
-    // print debug callbacks to stdout if needed
-    CoreSetPrintDebugCallback(parser.isSet(debugMessagesOption));
-
-    // specified ROM path to launch
-    QStringList args = parser.positionalArguments();
-
-    CoreAddCallbackMessage(CoreDebugMessageType::Info, 
-            "Initializing on " + QGuiApplication::platformName().toStdString());
-
-    // initialize window
-    if (!window.Init(&app, !parser.isSet(noGuiOption), !args.empty()))
+    if (!CoreInit())
     {
+        std::cerr << "CoreInit() Failed: " << CoreGetError() << std::endl;
         return 1;
     }
 
-    if (!args.empty())
-    {
-        bool parsedNumber = false;
-        int saveStateSlot = parser.value(loadStateSlot).toInt(&parsedNumber);
-        if (parser.value(loadStateSlot).isEmpty() || !parsedNumber ||
-            saveStateSlot < 0 || saveStateSlot > 9)
-        {
-            saveStateSlot = -1;
-        }
+    QTranslator qtTranslator;
+    QTranslator applicationTranslator;
+    Translation::Install(app, qtTranslator, applicationTranslator);
 
-        window.OpenROM(args.at(0), parser.value(diskOption), parser.isSet(fullscreenOption), parser.isSet(quitAfterEmulationOption), saveStateSlot);
+    int exitCode = 1;
+    bool windowInitialized = false;
+    {
+        UserInterface::MainWindow window;
+
+        // print debug callbacks to stdout if needed
+        CoreSetPrintDebugCallback(parser.isSet(debugMessagesOption));
+
+        // specified ROM path to launch
+        QStringList args = parser.positionalArguments();
+
+        CoreAddCallbackMessage(CoreDebugMessageType::Info,
+                "Initializing on " + QGuiApplication::platformName().toStdString());
+
+        // initialize window
+        if (window.Init(&app, !parser.isSet(noGuiOption), !args.empty()))
+        {
+            windowInitialized = true;
+
+            if (!args.empty())
+            {
+                bool parsedNumber = false;
+                int saveStateSlot = parser.value(loadStateSlot).toInt(&parsedNumber);
+                if (parser.value(loadStateSlot).isEmpty() || !parsedNumber ||
+                    saveStateSlot < 0 || saveStateSlot > 9)
+                {
+                    saveStateSlot = -1;
+                }
+
+                window.OpenROM(args.at(0), parser.value(diskOption), parser.isSet(fullscreenOption), parser.isSet(quitAfterEmulationOption), saveStateSlot);
+            }
+
+            // show window
+            window.show();
+
+            exitCode = app.exec();
+        }
     }
 
-    // show window
-    window.show();
-
-    return app.exec();
+    if (windowInitialized)
+    {
+        CoreSettingsSave();
+    }
+    CoreShutdown();
+    return exitCode;
 }

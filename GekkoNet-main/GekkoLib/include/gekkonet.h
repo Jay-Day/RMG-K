@@ -177,6 +177,17 @@ typedef struct GekkoNetworkStats {
     float jitter;
 } GekkoNetworkStats;
 
+typedef struct GekkoPeerStats {
+    // newest frame whose input from this actor has arrived (-1 before any).
+    int last_received_frame;
+    // gekko_frames_ahead against this actor alone: positive when this session
+    // runs ahead of it.
+    float frames_ahead;
+    // how long since anything arrived from this actor, as of the last poll.
+    unsigned int silent_ms;
+    bool connected;
+} GekkoPeerStats;
+
 // Public Facing API
 GEKKONET_API bool gekko_create(GekkoSession** session, GekkoSessionType session_type);
 
@@ -189,6 +200,14 @@ GEKKONET_API void gekko_net_adapter_set(GekkoSession* session, GekkoNetAdapter* 
 GEKKONET_API int gekko_add_actor(GekkoSession* session, GekkoPlayerType player_type, GekkoNetAddress* addr);
 
 GEKKONET_API void gekko_set_local_delay(GekkoSession* session, int player, unsigned char delay);
+
+// Change the input prediction window of a running game session. Only the local
+// session is affected; peers may use different windows without desyncing.
+// Raising the window past the largest one used so far grows the rollback state
+// storage. Returns false and keeps the current window when the session can't
+// change it: a window of 0, a lockstep or limited-saving session, a spectator
+// or stress session, or a failed allocation.
+GEKKONET_API bool gekko_set_prediction_window(GekkoSession* session, unsigned char window);
 
 GEKKONET_API void gekko_set_runahead(GekkoSession* session, unsigned char runahead);
 
@@ -203,6 +222,40 @@ GEKKONET_API float gekko_frames_ahead(GekkoSession* session);
 GEKKONET_API void gekko_network_stats(GekkoSession* session, int player, GekkoNetworkStats* stats);
 
 GEKKONET_API void gekko_network_poll(GekkoSession* session);
+
+// Force a remote actor into the Disconnected state immediately, instead of
+// waiting out the NetStats::DISCONNECT_TIMEOUT silence window. `handle` is the
+// value returned by gekko_add_actor for the remote player. Used when an
+// out-of-band channel (e.g. a lobby server) already knows the peer is gone, so
+// the session stops stalling on their input right away. No-op if the handle is
+// not a connected remote.
+GEKKONET_API void gekko_disconnect_player(GekkoSession* session, int handle);
+
+// How long a remote player may stay silent before this session marks them
+// Disconnected (default NetStats::DISCONNECT_TIMEOUT). 0 disables the timeout,
+// so players only leave through gekko_disconnect_player. Each peer applies the
+// timeout on its own, so a hitch near the limit can drop a player on some peers
+// but not others; disable it when an out-of-band channel (e.g. a lobby server)
+// decides drops for every peer. Spectator timeouts are unaffected.
+GEKKONET_API void gekko_set_disconnect_timeout(GekkoSession* session, unsigned int timeout_ms);
+
+// Stop a game session at `frame`: update_session keeps rolling back and
+// re-simulating earlier frames as late inputs arrive, but no longer advances
+// `frame` or any later one. -1 lifts the limit. Lets every peer halt on the
+// same frame, e.g. to hand the match over to a new session.
+GEKKONET_API void gekko_set_advance_limit(GekkoSession* session, int frame);
+
+// The frame a game session advances next (-1 for other sessions).
+GEKKONET_API int gekko_current_frame(GekkoSession* session);
+
+// The newest frame whose input from every player has arrived (-1 before any).
+// After an update_session call has run its events, every frame up to here is
+// final: no late input can roll it back any more.
+GEKKONET_API int gekko_confirmed_frame(GekkoSession* session);
+
+// How a game session stands with one remote actor (see GekkoPeerStats).
+// Returns false when `handle` isn't a remote player of a game session.
+GEKKONET_API bool gekko_peer_stats(GekkoSession* session, int handle, GekkoPeerStats* stats);
 
 #ifndef GEKKONET_NO_ASIO
 

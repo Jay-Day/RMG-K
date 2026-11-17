@@ -36,6 +36,11 @@ void ResetPifReplayFrameSync(void)
     s_SyncedThisFrame = false;
 }
 
+int GetPifReplayFrameIndex(void)
+{
+    return s_InputFrameIndex;
+}
+
 bool IsPifReplayFinished(void)
 {
     return s_ReplayFinished;

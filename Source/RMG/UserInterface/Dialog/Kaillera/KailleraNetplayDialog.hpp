@@ -49,6 +49,10 @@ public:
     explicit KailleraNetplayDialog(QWidget* parent = nullptr);
     ~KailleraNetplayDialog() override;
 
+    // Select a tab by index (0=Server delay, 1=Peer to Peer). Used by the
+    // menu-bar entry points to open the launcher straight to a given mode.
+    void setActiveTab(int index);
+
 signals:
     void rollbackSessionPreparing();
     void rollbackSessionRequested(QString gameName, QString remoteAddress, int localPort, int remotePort, int localPlayer, int frameDelay, int predictionWindow);

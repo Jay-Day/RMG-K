@@ -12,6 +12,7 @@
 
 #include <array>
 #include <string>
+#include <vector>
 
 // attempts to initialize the OSD
 bool OnScreenDisplayInit(void);
@@ -47,8 +48,25 @@ void OnScreenDisplaySetInputPrompt(std::string message);
 // sets live Kaillera port labels rendered by the OSD
 void OnScreenDisplaySetKailleraPortLabels(int playerCount, const std::array<std::string, 4>& playerNames);
 
+// changes the names on the live Kaillera port labels, keeping the port count
+void OnScreenDisplaySetKailleraPortLabelNames(const std::array<std::string, 4>& playerNames);
+
 // clears live Kaillera port labels
 void OnScreenDisplayClearKailleraPortLabels(void);
+
+// Sets a large message box centered on screen, drawn over everything (e.g. the
+// spectate "Stream is buffering..." banner). Pass an empty string to hide it.
+void OnScreenDisplaySetCenterMessage(const std::string& message);
+
+// Sets persistent live-replay audience text in the normal OSD message stack.
+// Pass an empty string to hide it.
+void OnScreenDisplaySetLiveReplayStatus(const std::string& message);
+
+// Shows a lag report panel at the top of the screen for `seconds`: a headline,
+// a line of detail, then a table whose first row is the column header.
+// seconds <= 0 hides it.
+void OnScreenDisplaySetLagReport(const std::string& headline, const std::string& detail,
+                                 const std::vector<std::vector<std::string>>& table, int seconds);
 
 // renders the OSD
 void OnScreenDisplayRender(void);

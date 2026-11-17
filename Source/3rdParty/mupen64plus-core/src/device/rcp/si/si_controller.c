@@ -31,6 +31,7 @@
 #include "device/rcp/mi/mi_controller.h"
 #include "device/rcp/ri/ri_controller.h"
 #include "device/rdram/rdram.h"
+#include "main/savestates.h"
 #include "osal/preproc.h"
 
 static int validate_dma(struct si_controller* si, uint32_t reg)
@@ -87,12 +88,31 @@ static void dma_si_write(struct si_controller* si)
 
 static void dma_si_read(struct si_controller* si)
 {
+    int rollback_loads_before;
+
     if (!validate_dma(si, SI_PIF_ADDR_RD64B_REG))
         return;
 
     si->dma_dir = SI_DMA_READ;
 
+    /* A spectate keyframe is loaded from inside the PIF sync callback, which fires at
+     * the end of update_pif_ram() — i.e. right here, mid-SI-DMA. If that happens, the
+     * machine has been replaced with a savestate captured at a clean VI boundary (no SI
+     * transaction pending), so running the rest of THIS (stale) SI read on top of it —
+     * setting DMA_BUSY and scheduling an SI interrupt — would inject a phantom SI_INT
+     * into the just-restored event queue and desync the replay. Detect the nested load
+     * via the rollback-load counter and abandon the stale completion; the loaded state
+     * is already self-consistent. (Normal rollback loads happen outside dma_si_read, so
+     * they never trip this.) */
+    rollback_loads_before = savestates_get_rollback_load_counter();
+
     update_pif_ram(si->pif);
+
+    if (savestates_get_rollback_load_counter() != rollback_loads_before)
+    {
+        si->dma_dir = SI_NO_DMA;
+        return;
+    }
 
     cp0_update_count(si->mi->r4300);
     si->regs[SI_STATUS_REG] |= SI_STATUS_DMA_BUSY;

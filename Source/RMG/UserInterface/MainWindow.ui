@@ -40,7 +40,7 @@
      <property name="icon">
       <iconset theme="restart-line"/>
      </property>
-     <addaction name="action_Netplay_Start"/>
+     <addaction name="action_System_SoftReset"/>
      <addaction name="action_System_HardReset"/>
     </widget>
     <widget class="QMenu" name="menuCurrent_Save_State">
@@ -153,7 +153,11 @@
     <property name="title">
      <string>Netplay</string>
     </property>
+    <addaction name="action_Rollback_Lobby"/>
+    <addaction name="action_Netplay_P2P"/>
     <addaction name="action_Netplay_BrowseSessions"/>
+    <addaction name="separator"/>
+    <addaction name="action_Toolbar_Playback"/>
    </widget>
    <widget class="QMenu" name="menuRollback">
     <property name="title">
@@ -203,12 +207,12 @@
    <addaction name="action_System_Shutdown"/>
    <addaction name="separator"/>
    <addaction name="action_Netplay_Start"/>
+   <addaction name="action_Toolbar_Playback"/>
    <addaction name="separator"/>
    <addaction name="action_View_Fullscreen"/>
    <addaction name="action_Settings_Settings"/>
    <addaction name="action_Settings_Plugins"/>
    <addaction name="action_Toolbar_Input"/>
-   <addaction name="action_Toolbar_Playback"/>
   </widget>
   <action name="action_System_StartRom">
    <property name="icon">
@@ -240,6 +244,14 @@
    </property>
    <property name="text">
     <string>&amp;Netplay</string>
+   </property>
+  </action>
+  <action name="action_System_SoftReset">
+   <property name="icon">
+    <iconset theme="restart-line"/>
+   </property>
+   <property name="text">
+    <string>&amp;Soft Reset</string>
    </property>
   </action>
   <action name="action_System_HardReset">
@@ -474,10 +486,10 @@
   </action>
   <action name="action_Toolbar_Playback">
    <property name="icon">
-    <iconset theme="play-line"/>
+    <iconset theme="movie-2-line"/>
    </property>
    <property name="text">
-    <string>&amp;Playback</string>
+    <string>&amp;Replays</string>
    </property>
   </action>
   <action name="action_View_Fullscreen">
@@ -649,11 +661,24 @@
    </property>
   </action>
   <action name="action_Netplay_BrowseSessions">
+   <property name="text">
+    <string>Legacy Server</string>
+   </property>
+  </action>
+  <action name="action_Netplay_P2P">
    <property name="icon">
-    <iconset theme="plug-line"/>
+    <iconset theme="links-line"/>
    </property>
    <property name="text">
-    <string>Start Netplay</string>
+    <string>Peer to Peer</string>
+   </property>
+  </action>
+  <action name="action_Rollback_Lobby">
+   <property name="icon">
+    <iconset theme="group-line"/>
+   </property>
+   <property name="text">
+    <string>Rollback Lobby</string>
    </property>
   </action>
   <action name="action_View_Search">

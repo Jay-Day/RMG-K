@@ -27,6 +27,7 @@
 #include "api/callbacks.h"
 #include "api/m64p_types.h"
 #include "backends/api/storage_backend.h"
+#include "main/main.h"
 
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
@@ -57,10 +58,12 @@ void eeprom_read_block(struct eeprom* eeprom,
     if (address < eeprom->istorage->size(eeprom->storage))
     {
         memcpy(data, eeprom->istorage->data(eeprom->storage) + address, EEPROM_BLOCK_SIZE);
+        main_rollback_log_eeprom("eeprom_read", block, data, 0);
     }
     else
     {
         DebugMessage(M64MSG_WARNING, "Invalid access to eeprom address=%04x", address);
+        main_rollback_log_eeprom("eeprom_read_invalid", block, NULL, -1);
     }
 }
 
@@ -71,12 +74,16 @@ void eeprom_write_block(struct eeprom* eeprom,
 
     if (address < eeprom->istorage->size(eeprom->storage))
     {
+        main_rollback_log_eeprom("eeprom_write_before", block,
+            eeprom->istorage->data(eeprom->storage) + address, -1);
         memcpy(eeprom->istorage->data(eeprom->storage) + address, data, EEPROM_BLOCK_SIZE);
         eeprom->istorage->save(eeprom->storage, address, EEPROM_BLOCK_SIZE);
         *status = 0x00;
+        main_rollback_log_eeprom("eeprom_write_after", block, data, *status);
     }
     else
     {
+        main_rollback_log_eeprom("eeprom_write_invalid", block, data, -1);
         DebugMessage(M64MSG_WARNING, "Invalid access to eeprom address=%04x", address);
     }
 }

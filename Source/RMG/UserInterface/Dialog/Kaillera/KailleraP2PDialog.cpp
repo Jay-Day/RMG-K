@@ -39,6 +39,8 @@
 #include <QPainter>
 #include <QPoint>
 #include <QResizeEvent>
+#include <QToolTip>
+#include <QEnterEvent>
 #include <QSettings>
 #include <QSizePolicy>
 #include <QWidgetAction>
@@ -59,11 +61,12 @@ static const char* kGameLayerStandard = "STD";
 static const char* kGameLayerRollback = "RB";
 static const char* kRollbackDelayMessagePrefix = "RMGK:RBDELAY:";
 static const char* kRollbackPredictionMessagePrefix = "RMGK:RBPRED:";
+static const char* kRollbackPacingMessagePrefix = "RMGK:RBPACE:";
 static constexpr int kRollbackDelayModeDefault = 0;
 static constexpr int kRollbackDelayModeLower = 1;
 static constexpr int kRollbackDelayModeHigher = 2;
 static constexpr int kRollbackDelayModeCustom = 3;
-static constexpr int kRollbackMinFrameDelay = 1;
+static constexpr int kRollbackMinFrameDelay = 0;
 static constexpr int kRollbackMaxFrameDelay = 9;
 static constexpr int kDefaultRollbackFrameDelay = 2;
 static constexpr int kDefaultRollbackPredictionWindow = 7;
@@ -806,6 +809,54 @@ static void configureP2PComboPopup(QComboBox* combo, const QString& theme)
     combo->setView(popupView);
 }
 
+// Info badge label that shows its tooltip immediately on hover via
+// QToolTip::showText, instead of relying on Qt's default hover-rest tooltip. The
+// dialog's m_stepTimer fires every 1ms and continuously churns the UI, which
+// keeps resetting the default tooltip's ~700ms rest timer so it never appears —
+// showing the tooltip explicitly on enter sidesteps that entirely.
+class P2PInfoIconLabel : public QLabel
+{
+public:
+    using QLabel::QLabel;
+
+protected:
+    void enterEvent(QEnterEvent* event) override
+    {
+        QToolTip::showText(event->globalPosition().toPoint(), toolTip(), this, rect());
+        QLabel::enterEvent(event);
+    }
+
+    void leaveEvent(QEvent* event) override
+    {
+        QToolTip::hideText();
+        QLabel::leaveEvent(event);
+    }
+};
+
+// Small circular "i" badge placed next to a session-setting control. Hovering it
+// shows a tooltip explaining the setting. Styled directly (not via the dialog
+// stylesheet, which only applies on the "Modern" theme) and given a fixed size so
+// it's a clearly visible, easy-to-hover target on every theme.
+static QLabel* makeP2PInfoIcon(QWidget* parent, const QString& tooltip)
+{
+    auto* icon = new P2PInfoIconLabel(parent);
+    icon->setText(QStringLiteral("i"));
+    icon->setObjectName("KailleraP2PInfoIcon");
+    icon->setAlignment(Qt::AlignCenter);
+    icon->setFixedSize(16, 16);
+    icon->setToolTip(tooltip);
+    icon->setCursor(Qt::WhatsThisCursor);
+    icon->setStyleSheet(
+        "QLabel {"
+        "  color: palette(window-text);"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 8px;"
+        "  font-size: 10px;"
+        "  font-weight: bold;"
+        "}");
+    return icon;
+}
+
 // Check if a string looks like a NAT traversal code rather than an IP address.
 static QString normalizeTraversalCode(const QString& input)
 {
@@ -1348,6 +1399,12 @@ void KailleraP2PDialog::setupUI()
         }
     });
     fdlyLayout->addWidget(m_customFrameDelayCombo);
+    fdlyLayout->addWidget(makeP2PInfoIcon(m_frameDelayRow,
+        "Input delay: frames your inputs are buffered before they take effect.\n\n"
+        "Higher delay smooths online play — the netcode has more slack, so fewer\n"
+        "corrections/rollbacks — at the cost of slightly less responsive controls.\n"
+        "Lower delay feels snappier but reacts worse to a jittery connection.\n\n"
+        "Leave it automatic to track your ping, or pick a fixed amount."));
     fdlyLayout->addStretch();
     hostLayout->addWidget(m_frameDelayRow);
 
@@ -1381,6 +1438,12 @@ void KailleraP2PDialog::setupUI()
         }
     });
     predictionLayout->addWidget(m_predictionWindowCombo);
+    predictionLayout->addWidget(makeP2PInfoIcon(m_hostGroup,
+        "Prediction window: how many frames the netcode guesses the remote player's\n"
+        "input before it has to stall and wait for real input to arrive.\n\n"
+        "Higher tolerates more network jitter without freezing, but a wrong guess\n"
+        "means a larger rollback (a bigger on-screen correction). Default adapts to\n"
+        "the connection."));
     predictionLayout->addStretch();
     hostLayout->addLayout(predictionLayout);
 
@@ -1605,6 +1668,93 @@ bool KailleraP2PDialog::canEditRollbackPredictionSettings() const
     return m_isHost || !m_hasRemoteRollbackPredictionSettings;
 }
 
+bool KailleraP2PDialog::canEditRollbackPacingSettings() const
+{
+    return m_isHost || !m_hasRemoteRollbackPacingSettings;
+}
+
+void KailleraP2PDialog::sendRollbackPacingSettings(bool force)
+{
+    if (!m_isHost || !isRollbackMode() || !p2p_is_connected() ||
+        m_rollbackGameActive || n02::isGameRunning())
+    {
+        return;
+    }
+
+    const int pacingMode = (m_rollbackPacingMode == 1) ? 1 : 0;
+    if (!force && m_hasSentRollbackPacingSettings &&
+        m_lastSentRollbackPacingMode == pacingMode)
+    {
+        return;
+    }
+
+    QByteArray message = QByteArray(kRollbackPacingMessagePrefix) +
+        QByteArray::number(pacingMode);
+    p2p_send_chat(message.data());
+
+    m_hasSentRollbackPacingSettings = true;
+    m_lastSentRollbackPacingMode = pacingMode;
+}
+
+bool KailleraP2PDialog::parseRollbackPacingMessage(const QString& message, int& pacingMode) const
+{
+    QString text = message.trimmed().toUpper();
+    if (!text.startsWith(kRollbackPacingMessagePrefix))
+    {
+        return false;
+    }
+
+    text = text.mid(QString(kRollbackPacingMessagePrefix).size());
+    bool ok = false;
+    const int parsedPacingMode = text.toInt(&ok);
+    pacingMode = (ok && parsedPacingMode == 1) ? 1 : 0;
+    return true;
+}
+
+void KailleraP2PDialog::setRollbackPacingMode(int mode, bool announceToPeer, bool resetReady)
+{
+    mode = (mode == 1) ? 1 : 0;
+    const bool changed = (m_rollbackPacingMode != mode);
+    m_rollbackPacingMode = mode;
+
+    if (canEditRollbackPacingSettings())
+    {
+        // Pacing is applied by reset_gekko_log() reading the engine setting, so
+        // persist it there (and to disk) the moment the host picks it.
+        CoreSettingsSetValue(SettingsID::Rollback_PacingMode, m_rollbackPacingMode);
+        CoreSettingsSave();
+    }
+
+    updateRollbackPacingControls();
+
+    if (changed && resetReady)
+    {
+        resetReadyState();
+    }
+    if (changed && announceToPeer)
+    {
+        sendRollbackPacingSettings(true);
+    }
+}
+
+void KailleraP2PDialog::updateRollbackPacingControls()
+{
+    if (m_pacingModeCombo == nullptr)
+    {
+        return;
+    }
+
+    const bool inGame = (isRollbackMode() && m_rollbackGameActive) || n02::isGameRunning();
+    const bool blocked = m_pacingModeCombo->blockSignals(true);
+    const int index = m_pacingModeCombo->findData((m_rollbackPacingMode == 1) ? 1 : 0);
+    if (index >= 0)
+    {
+        m_pacingModeCombo->setCurrentIndex(index);
+    }
+    m_pacingModeCombo->setEnabled(isRollbackMode() && canEditRollbackPacingSettings() && !inGame);
+    m_pacingModeCombo->blockSignals(blocked);
+}
+
 void KailleraP2PDialog::loadLocalRollbackSettings()
 {
     QSettings settings("RMG-K", "n02");
@@ -1615,6 +1765,10 @@ void KailleraP2PDialog::loadLocalRollbackSettings()
     m_rollbackFrameDelay = m_customRollbackFrameDelay;
     m_rollbackPredictionWindow = normalizeRollbackPredictionWindow(
         settings.value("Rollback_PredictionWindow", 0).toInt());
+    // Pacing rides the engine's own setting (read by reset_gekko_log) rather than
+    // the dialog's n02 QSettings, so it stays the single source of truth.
+    m_rollbackPacingMode =
+        CoreSettingsGetIntValue(SettingsID::Rollback_PacingMode) == 1 ? 1 : 0;
 }
 
 void KailleraP2PDialog::appendChatHtml(const QString& html, bool debug)
@@ -2388,6 +2542,7 @@ void KailleraP2PDialog::setGameLayer(GameLayer layer, bool announceToPeer, bool 
         sendGameLayer();
         sendRollbackDelaySettings(true);
         sendRollbackPredictionSettings(true);
+        sendRollbackPacingSettings(true);
     }
 }
 
@@ -2497,6 +2652,7 @@ void KailleraP2PDialog::applyGameLayerUI()
         m_rollbackLayerButton->setEnabled(m_isHost && !inGame);
     }
     updateRollbackPredictionControls();
+    updateRollbackPacingControls();
     updateNetcodeModeStatus();
     updatePeerConnectionUI();
 }
@@ -3084,6 +3240,22 @@ void KailleraP2PDialog::onChatReceived(QString nick, QString message)
         return;
     }
 
+    int rollbackPacingMode = 0;
+    if (parseRollbackPacingMessage(message, rollbackPacingMode))
+    {
+        if (!m_isHost)
+        {
+            m_rollbackPacingMode = rollbackPacingMode;
+            m_hasRemoteRollbackPacingSettings = true;
+            // Apply the host's pacing for this session so reset_gekko_log() picks
+            // it up. In-memory only (no CoreSettingsSave) so the joiner's own saved
+            // default isn't permanently overwritten by the host's choice.
+            CoreSettingsSetValue(SettingsID::Rollback_PacingMode, m_rollbackPacingMode);
+            updateRollbackPacingControls();
+        }
+        return;
+    }
+
     appendChatHtml("<b>" + nick.toHtmlEscaped() + ":</b> " + message.toHtmlEscaped(), false);
 }
 
@@ -3343,6 +3515,7 @@ void KailleraP2PDialog::onPeerJoined()
     sendGameLayer();
     sendRollbackDelaySettings(true);
     sendRollbackPredictionSettings(true);
+    sendRollbackPacingSettings(true);
     m_travHostPeerIp.clear();
     m_travHostPeerPort = 0;
     m_travHostPeerDeadlineMs = 0;
@@ -3391,15 +3564,18 @@ void KailleraP2PDialog::onPeerLeft()
     m_lastPing = -1;
     m_hasRemoteRollbackDelaySettings = false;
     m_hasRemoteRollbackPredictionSettings = false;
+    m_hasRemoteRollbackPacingSettings = false;
     if (!m_isHost)
     {
         loadLocalRollbackSettings();
     }
     m_hasSentRollbackDelaySettings = false;
     m_hasSentRollbackPredictionSettings = false;
+    m_hasSentRollbackPacingSettings = false;
     m_lastSentRollbackDelayMode = -1;
     m_lastSentRollbackFrameDelay = -1;
     m_lastSentRollbackPredictionWindow = -1;
+    m_lastSentRollbackPacingMode = -1;
     if (isRollbackMode())
     {
         updateRollbackDelayControls();
@@ -3419,6 +3595,7 @@ void KailleraP2PDialog::onPeerLeft()
         });
     }
     updateRollbackPredictionControls();
+    updateRollbackPacingControls();
     if (!kickedPeer)
     {
         appendPeerLeftNotice(departedName);
@@ -3494,11 +3671,14 @@ void KailleraP2PDialog::resetClientConnectionAttemptState()
     m_lastPing = -1;
     m_hasRemoteRollbackDelaySettings = false;
     m_hasRemoteRollbackPredictionSettings = false;
+    m_hasRemoteRollbackPacingSettings = false;
     m_hasSentRollbackDelaySettings = false;
     m_hasSentRollbackPredictionSettings = false;
+    m_hasSentRollbackPacingSettings = false;
     m_lastSentRollbackDelayMode = -1;
     m_lastSentRollbackFrameDelay = -1;
     m_lastSentRollbackPredictionWindow = -1;
+    m_lastSentRollbackPacingMode = -1;
 
     m_travJoinEnabled = false;
     m_travNextJoinMs = 0;
@@ -3532,6 +3712,7 @@ void KailleraP2PDialog::resetClientConnectionAttemptState()
         updateRollbackDelayControls();
     }
     updateRollbackPredictionControls();
+    updateRollbackPacingControls();
 }
 
 void KailleraP2PDialog::beginTraversalJoinAttempt()
@@ -3650,6 +3831,7 @@ void KailleraP2PDialog::onReady()
         sendGameLayer();
         sendRollbackDelaySettings(true);
         sendRollbackPredictionSettings(true);
+        sendRollbackPacingSettings(true);
     }
 
     m_ready = (m_btnReady != nullptr) ? m_btnReady->isChecked() : !m_ready;

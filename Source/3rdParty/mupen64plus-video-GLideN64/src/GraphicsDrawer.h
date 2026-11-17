@@ -195,8 +195,8 @@ private:
 	GraphicsDrawer(const GraphicsDrawer &) = delete;
 
 	void _initStates();
-	void _initData();
-	void _destroyData();
+	void _initData(bool _keepCombiners = false);
+	void _destroyData(bool _keepCombiners = false);
 
 	void _setSpecialTexrect() const;
 

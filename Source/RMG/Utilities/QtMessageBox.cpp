@@ -10,6 +10,7 @@
 #include "QtMessageBox.hpp"
 
 #include <QAbstractButton>
+#include <QCoreApplication>
 #include <QMessageBox>
 #include <QCheckBox>
 
@@ -50,12 +51,12 @@ static void show_messagebox(QMessageBox::Icon icon, QString title, QWidget* pare
 
 void QtMessageBox::Info(QWidget* parent, QString text, QString details)
 {
-    show_messagebox(QMessageBox::Icon::Information, "Information", parent, text, details);
+    show_messagebox(QMessageBox::Icon::Information, QCoreApplication::translate("QtMessageBox", "Information"), parent, text, details);
 }
 
 void QtMessageBox::Error(QWidget* parent, QString text, QString details)
 {
-    show_messagebox(QMessageBox::Icon::Critical, "Error", parent, text, details);
+    show_messagebox(QMessageBox::Icon::Critical, QCoreApplication::translate("QtMessageBox", "Error"), parent, text, details);
 }
 
 bool QtMessageBox::Question(QWidget* parent, QString text, QString checkBoxText, bool& checkBoxValue)

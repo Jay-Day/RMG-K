@@ -41,16 +41,18 @@ enum class SettingsID
     GUI_OnScreenDisplayMaxMessages,
     GUI_OnScreenDisplayChatEnabled,
     GUI_OnScreenDisplayKailleraPortLabels,
+    GUI_OnScreenDisplayLiveReplayStatus,
     GUI_AutoStartNetplayOnStartup,
     GUI_Toolbar,
     GUI_ToolbarArea,
     GUI_StatusBar,
     GUI_Theme,
     GUI_IconTheme,
+    GUI_Language,
     GUI_CheckForUpdates,
     GUI_LastUpdateCheck,
     GUI_ConfirmExitWhileInGame,
-    GUI_DontAskRaphnetPluginSwitch,
+    GUI_PreferredInputPlugin,
     GUI_Version,
 
     // Netplay Settings
@@ -107,6 +109,13 @@ enum class SettingsID
     Rollback_EnableLocalTesting,
     Rollback_VerbosePifInputLogging,
     Rollback_VerboseGlideInputLogging,
+    Rollback_StallDiagnostics,
+    Rollback_EmulationDiagnostics,
+    Rollback_PacingTrace,
+    Rollback_PacingMode,
+    Rollback_PingDiagnostics,
+    Rollback_HideLocation,
+    Rollback_RememberInputDelay,
 
     // Core Plugin Settings
     Core_GFX_Plugin,
@@ -285,13 +294,14 @@ enum class SettingsID
     Input_DeviceNum,
     Input_DevicePath,
     Input_DeviceSerial,
+    Input_DeviceGUID,
     Input_Deadzone,
     Input_Range,
     Input_RealN64Range,
     Input_Pak,
     Input_GameboyRom,
     Input_GameboySave,
-    Input_RemoveDuplicateMappings,
+    Input_RemoveDuplicateMappings, // Retired; reserve the ID for plugin compatibility.
     Input_FilterEventsForButtons,
     Input_FilterEventsForAxis,
     Input_A_InputType,
@@ -522,17 +532,27 @@ enum class SettingsID
     Input_Hotkey_Fullscreen_Name,
     Input_Hotkey_Fullscreen_Data,
     Input_Hotkey_Fullscreen_ExtraData,
+	
+    // Raphnet Input Plugin Settings
+    RaphnetInput_LastUsbWarning,
+    RaphnetInput_StartupNoticeShown,
+    RaphnetInput_PollingMode,
 
     // GCA Input Plugin Settings
+    GCAInput_Profiles,
+    GCAInput_UseProfile,
     GCAInput_Deadzone,
     GCAInput_Sensitivity,
     GCAInput_CButtonTreshold,
     GCAInput_TriggerTreshold,
+    GCAInput_LeftTriggerAnalog,
+    GCAInput_RightTriggerAnalog,
     GCAInput_SwapZL,
     GCAInput_Port1Enabled,
     GCAInput_Port2Enabled,
     GCAInput_Port3Enabled,
     GCAInput_Port4Enabled,
+    GCAInput_ControllerPorts,
 
     // GCA Button Mapping Settings
     GCAInput_Map_A,
@@ -551,8 +571,11 @@ enum class SettingsID
     GCAInput_Map_CLeft,
     GCAInput_Map_CRight,
 
-    // Internal Settings (not persisted to config file)
-    Internal_InputPluginSwitchRequested,
+    // raphnetraw Input Plugin Settings
+    RaphnetRaw_Player1AdapterPort,
+
+    // Appended so the IDs above stay the same
+    Kaillera_ExportShowChat,
 
     Invalid
 };

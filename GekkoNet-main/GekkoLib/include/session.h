@@ -15,6 +15,7 @@
 struct GekkoSession {
     virtual void Init(GekkoConfig* config) = 0;
     virtual void SetLocalDelay(i32 player, u8 delay) = 0;
+    virtual bool SetPredictionWindow(u8 window) = 0;
     virtual void SetRunahead(u8 runahead) = 0;
     virtual void SetNetAdapter(GekkoNetAdapter* adapter) = 0;
     virtual i32 AddActor(GekkoPlayerType type, GekkoNetAddress* addr) = 0;
@@ -24,6 +25,13 @@ struct GekkoSession {
     virtual f32 FramesAhead() = 0;
     virtual void NetworkStats(i32 player, GekkoNetworkStats* stats) = 0;
     virtual void NetworkPoll() = 0;
+    virtual void DisconnectPlayer(i32 handle) = 0;
+    virtual void SetDisconnectTimeout(u32 timeout_ms) = 0;
+    // Only game sessions advance frames of their own; see gekkonet.h.
+    virtual void SetAdvanceLimit(i32 frame) { (void)frame; }
+    virtual i32 CurrentFrame() { return -1; }
+    virtual i32 ConfirmedFrame() { return -1; }
+    virtual bool PeerStats(i32 handle, GekkoPeerStats* stats) { (void)handle; (void)stats; return false; }
     virtual ~GekkoSession() = default;
 };
 
@@ -36,6 +44,8 @@ namespace Gekko {
         void Init(GekkoConfig* config) override;
 
         void SetLocalDelay(i32 player, u8 delay) override;
+
+        bool SetPredictionWindow(u8 window) override;
 
         void SetRunahead(u8 runahead) override;
 
@@ -54,6 +64,18 @@ namespace Gekko {
         void NetworkStats(i32 player, GekkoNetworkStats* stats) override;
 
         void NetworkPoll() override;
+
+        void DisconnectPlayer(i32 handle) override;
+
+        void SetDisconnectTimeout(u32 timeout_ms) override;
+
+        void SetAdvanceLimit(i32 frame) override;
+
+        i32 CurrentFrame() override;
+
+        i32 ConfirmedFrame() override;
+
+        bool PeerStats(i32 handle, GekkoPeerStats* stats) override;
 
 	private:
 		void Poll();
@@ -99,6 +121,14 @@ namespace Gekko {
 
 		u8 _runahead_frames;
 
+		// largest prediction window this session has run with. predictions made
+		// under it may still be pending, so the state storage stays sized for it
+		// and frames older than it are the only ones known to be confirmed.
+		u8 _max_prediction_window;
+
+		// frames at or past this are not advanced (NULL_FRAME: no limit).
+		Frame _advance_limit;
+
 		std::unique_ptr<u8[]> _disconnected_input;
 
 		GekkoConfig _config;
@@ -122,6 +152,9 @@ namespace Gekko {
 
         void SetLocalDelay(i32 player, u8 delay) override;
 
+        // Spectators never predict.
+        bool SetPredictionWindow(u8 window) override { (void)window; return false; }
+
         void SetRunahead(u8 runahead) override {}
 
         void SetNetAdapter(GekkoNetAdapter* adapter) override;
@@ -139,6 +172,11 @@ namespace Gekko {
         void NetworkStats(i32 player, GekkoNetworkStats* stats) override;
 
         void NetworkPoll() override;
+
+        // Spectators don't drive player connectivity; nothing to force-drop.
+        void DisconnectPlayer(i32 handle) override { (void)handle; }
+
+        void SetDisconnectTimeout(u32 timeout_ms) override { (void)timeout_ms; }
 
 	private:
 		void Poll();
@@ -175,6 +213,9 @@ namespace Gekko {
 
         void SetLocalDelay(i32 player, u8 delay) override;
 
+        // Stress sessions roll back a fixed check distance, not a prediction window.
+        bool SetPredictionWindow(u8 window) override { (void)window; return false; }
+
         void SetRunahead(u8 runahead) override {}
 
         void SetNetAdapter(GekkoNetAdapter* adapter) override;
@@ -192,6 +233,11 @@ namespace Gekko {
         void NetworkStats(i32 player, GekkoNetworkStats* stats) override;
 
         void NetworkPoll() override;
+
+        // No network actors in a stress session.
+        void DisconnectPlayer(i32 handle) override { (void)handle; }
+
+        void SetDisconnectTimeout(u32 timeout_ms) override { (void)timeout_ms; }
 
     private:
         void HandleRollback();

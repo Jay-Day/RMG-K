@@ -106,7 +106,47 @@
                    </item>
                   </widget>
                  </item>
+               </layout>
+               </item>
+               <item>
+                <layout class="QHBoxLayout" name="languageLayout">
+                 <item>
+                  <widget class="QLabel" name="languageLabel">
+                   <property name="text">
+                    <string>Language</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QComboBox" name="languageComboBox">
+                   <item>
+                    <property name="text">
+                     <string>System Default</string>
+                    </property>
+                   </item>
+                   <item>
+                    <property name="text">
+                     <string>English</string>
+                    </property>
+                   </item>
+                   <item>
+                    <property name="text">
+                     <string>Japanese</string>
+                    </property>
+                   </item>
+                  </widget>
+                 </item>
                 </layout>
+               </item>
+               <item>
+                <widget class="QLabel" name="languageRestartNoteLabel">
+                 <property name="text">
+                  <string>Language changes take effect after restarting the application.</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
                </item>
                <item>
                 <widget class="QCheckBox" name="checkForUpdatesCheckBox">
@@ -732,6 +772,16 @@
                 <widget class="QCheckBox" name="osdKailleraPortLabelsCheckBox">
                  <property name="text">
                   <string>Show Kaillera port labels</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="osdLiveReplayStatusCheckBox">
+                 <property name="toolTip">
+                  <string>Show the live replay viewer count in the top-left corner while playing or watching a match.</string>
+                 </property>
+                 <property name="text">
+                  <string>Show live replay viewer count</string>
                  </property>
                 </widget>
                </item>
@@ -3276,7 +3326,7 @@
                    <number>1048576</number>
                   </property>
                   <property name="value">
-                   <number>1024</number>
+                   <number>512</number>
                   </property>
                   <property name="suffix">
                    <string> MB</string>

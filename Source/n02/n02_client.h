@@ -32,15 +32,62 @@ void selectServerDialog(void* parent);
 // Per-frame input synchronization
 // values: input buffer (modified in place with synced data from all players)
 // size: size of local input in bytes
+// capacity: size of the values buffer in bytes
 // Returns: number of bytes of synced data, 0 during delay frames, -1 on error
-int modifyPlayValues(void *values, int size);
+// (including synced data that doesn't fit in capacity)
+int modifyPlayValues(void *values, int size, int capacity);
 
-// Append a synchronized-inputs record (0x12 marker + size + bytes) to the
-// open recording. Mirrors what modifyPlayValues writes for normal play,
-// but is callable from outside n02's frame loop — the P2P rollback path
-// uses GekkoNet for input sync so it never reaches modifyPlayValues.
-// No-op if no recording is open.
+// Append synchronized inputs (0x12 marker + size + bytes) to the active replay
+// capture. The GekkoNet rollback path calls this outside n02's frame loop.
+// No-op unless local saving or live streaming was enabled at recordingOpen().
 void recordingWriteInputs(const void* values, int size);
+
+// Number of input records captured in the most recent session. Thread-safe;
+// used to stamp the live edge so spectators can fast-forward to it.
+int recordingFrameCount();
+
+// Queue chat for the active replay capture. Safe from any thread; the chat is
+// written before the next input frame, to the stream and/or local file.
+// No-op without an active capture. nick/msg are length-bounded.
+void recordingQueueChat(const char* nick, const char* msg);
+
+// Queue a port change for the active replay capture: `name` took controller
+// `slot` (1-based), or left it when `joined` is false. Safe from any thread;
+// written before the next input frame, to the stream and the local file, as
+// a 0x14 record. A leave is the drop record players already understand. A
+// join sets KREC_PORT_JOINED in the player number, which older readers skip.
+// No-op without an active capture.
+constexpr int KREC_PORT_JOINED = 0x100;
+void recordingQueuePortChange(int slot, const char* name, bool joined);
+
+// Emulation thread: after the next input frame, write every port whose
+// player differs from the header's. A live replay viewer who starts from a
+// keyframe only gets the stream from that frame on, so it learns the current
+// ports from these. Call it when a keyframe is confirmed.
+void recordingRepeatPortChanges();
+
+// Begin replay capture for the GekkoNet rollback lobby, closing any previous
+// capture first. Writes a KRC1 header if local saving or streaming is enabled.
+// n02_kaillera_recording_enabled controls local saving independently of the
+// stream sink. Populate recording_player_names first. localPlayer is 1-based.
+void recordingOpen(const char* appName, const char* gameName, int localPlayer, int numPlayers);
+
+// Flush and end replay capture, closing the local file if one was opened.
+void recordingClose();
+
+// The save data the next lobby capture's match starts from (RMG-Core's
+// serialized form), or empty for a blank save. recordingOpen() writes it
+// right after the header as a 0x16 record, in the local file only: a live
+// replay viewer gets the save from the match's manifest instead. Readers
+// before save data stop at that record, which beats replaying the match
+// from a blank save and drifting.
+constexpr unsigned char KREC_SAVE_DATA_RECORD = 0x16;
+void recordingSetSaveData(const std::string& saveData);
+
+// Register a sink for replay bytes (header + every flushed record), independent
+// of local file saving. Pass nullptr to clear. Set/clear only while emulation
+// is stopped; the sink is invoked on the emulation thread during play.
+void setRecordingStreamSink(std::function<void(const void*, int)> sink);
 
 // Send chat message to other players
 void chatSend(char *text);
@@ -136,6 +183,16 @@ UICallbacks& getUICallbacks();
 // Returns true on success
 bool playbackLoad(const char* filename);
 
+// Live spectate: play a .krec that is still being received over the network.
+// playbackBeginStream() arms an empty growing buffer; playbackAppendBytes()
+// feeds krec bytes as they arrive (the game auto-starts once the header is in);
+// playbackStopStream() ends it. Playback starts once this many input frames are
+// buffered and, if starved, stalls until the same cushion has been rebuilt.
+constexpr int LIVE_REPLAY_BUFFER_FRAMES = 120; // approximately 2 seconds at 60 Hz
+bool playbackBeginStream();
+void playbackAppendBytes(const void* data, int len);
+void playbackStopStream();
+
 // Check if playback is currently active
 bool isPlaybackActive();
 
@@ -147,6 +204,31 @@ int playbackGetCurrentFrame();
 
 // Get the total number of frames in the loaded recording
 int playbackGetTotalFrames();
+
+// Live-stream buffering state and the number of complete, unplayed input frames.
+bool playbackIsBuffering();
+int playbackGetBufferedFrames();
+
+// True once a streamed recording's header has been parsed — at which point the
+// game name, player count, and player names (in the recording_player_names
+// global) are available. Lets a live spectator know when it can label the OSD
+// ports from the krec header.
+bool playbackHeaderReady();
+
+// Player count from the parsed playback header (0 until playbackHeaderReady()).
+int playbackNumPlayers();
+
+// The save data a loaded .krec's match started from (its 0x16 record), empty
+// when it started blank. Valid from playbackLoad() until playback ends.
+std::string playbackSaveData();
+
+// True while the playback is a live stream rather than a file.
+bool playbackIsStream();
+
+// Called on the playback's thread with the slot-ordered player names whenever
+// a port change record (see recordingQueuePortChange) or a seek changes them.
+// The names are also copied into recording_player_names.
+void setPlaybackPortNamesCallback(std::function<void(const char (*names)[32])> callback);
 
 } // namespace n02
 

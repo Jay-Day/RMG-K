@@ -88,17 +88,21 @@ private:
     void sendGameLayer();
     void sendRollbackDelaySettings(bool force);
     void sendRollbackPredictionSettings(bool force);
+    void sendRollbackPacingSettings(bool force);
     void setRollbackDelayMode(int mode, bool announceToPeer, bool resetReady);
     void setRollbackCustomFrameDelay(int delay, bool announceToPeer, bool resetReady);
     void setRollbackPredictionWindow(int predictionWindow, bool announceToPeer, bool resetReady);
+    void setRollbackPacingMode(int mode, bool announceToPeer, bool resetReady);
     void updateRollbackDelayControls();
     void updateRollbackPredictionControls();
+    void updateRollbackPacingControls();
     void updatePeerConnectionUI();
     void updateNetcodeModeStatus();
     void setPingLabelText(const QString& text);
     void setPingLabelFromValue(int ping);
     bool parseRollbackDelayMessage(const QString& message, int& mode, int& delay) const;
     bool parseRollbackPredictionMessage(const QString& message, int& predictionWindow) const;
+    bool parseRollbackPacingMessage(const QString& message, int& pacingMode) const;
     int effectiveRollbackFrameDelay() const;
     int effectiveRollbackPredictionWindow() const;
     int calculatedRollbackFrameDelay() const;
@@ -109,6 +113,7 @@ private:
     bool maybeUpdateAutomaticRollbackDelay(bool force = false);
     bool canEditRollbackDelaySettings() const;
     bool canEditRollbackPredictionSettings() const;
+    bool canEditRollbackPacingSettings() const;
     void resetReadyState();
     bool parseGameLayerMessage(const QString& message, GameLayer& layer) const;
     bool isRollbackMode() const;
@@ -222,6 +227,7 @@ private:
     QComboBox* m_customFrameDelayCombo = nullptr;
     QLabel* m_frameDelayHelpLabel = nullptr;
     QComboBox* m_predictionWindowCombo = nullptr;
+    QComboBox* m_pacingModeCombo = nullptr;
 
     int m_lastPing = -1;
     int m_rollbackDelayMode = 0;
@@ -229,6 +235,7 @@ private:
     int m_rollbackFrameDelay = 2;
     int m_autoRollbackFrameDelay = 2;
     int m_rollbackPredictionWindow = 0;
+    int m_rollbackPacingMode = 0;
     struct RollbackDelayPingSample
     {
         unsigned long timestampMs = 0;
@@ -239,11 +246,14 @@ private:
     unsigned long m_rollbackDelayLastUpdateMs = 0;
     bool m_hasRemoteRollbackDelaySettings = false;
     bool m_hasRemoteRollbackPredictionSettings = false;
+    bool m_hasRemoteRollbackPacingSettings = false;
     bool m_hasSentRollbackDelaySettings = false;
     bool m_hasSentRollbackPredictionSettings = false;
+    bool m_hasSentRollbackPacingSettings = false;
     int m_lastSentRollbackDelayMode = -1;
     int m_lastSentRollbackFrameDelay = -1;
     int m_lastSentRollbackPredictionWindow = -1;
+    int m_lastSentRollbackPacingMode = -1;
 
     // Timers
     QTimer* m_stepTimer = nullptr;

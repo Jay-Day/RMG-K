@@ -20,6 +20,8 @@
 
 #include "Adapter.hpp"
 #include "GCInput.hpp"
+#include "ControllerPorts.hpp"
+#include "PlayerSettings.hpp"
 #include "UserInterface/MainDialog.hpp"
 
 #include <algorithm>
@@ -55,8 +57,8 @@ struct SettingsProfile
 
     double TriggerTreshold = 0.5;
     double CButtonTreshold = 0.4;
-
-    bool PortEnabled[NUM_CONTROLLERS] = {true, true, true, true};
+    bool LeftTriggerAnalog = true;
+    bool RightTriggerAnalog = true;
 
     GCButtonMapping Mapping;
 };
@@ -82,7 +84,8 @@ static std::atomic<bool> l_PolledState;
 static std::mutex l_ControllerStateMutex;
 static std::array<GameCubeAdapterControllerState, 4> l_ControllerState;
 static std::thread l_PollThread;
-static SettingsProfile l_Settings = {0};
+static std::array<SettingsProfile, NUM_CONTROLLERS> l_Settings;
+static std::array<bool, NUM_CONTROLLERS> l_PortEnabled;
 
 // Maps Control index (0-3) to physical adapter port index (0-3).
 // -1 means no controller mapped to this Control slot.
@@ -359,30 +362,38 @@ static void gca_poll_thread(void)
 
 static void load_settings(void)
 {
-    l_Settings.DeadzoneValue = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_Deadzone)) / 100.0;
-    l_Settings.SensitivityValue = GCASensitivityPercentToScale(CoreSettingsGetIntValue(SettingsID::GCAInput_Sensitivity));
-    l_Settings.CButtonTreshold = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_CButtonTreshold)) / 100.0;
-    l_Settings.TriggerTreshold = static_cast<double>(CoreSettingsGetIntValue(SettingsID::GCAInput_TriggerTreshold)) / 100.0;
-    l_Settings.PortEnabled[0] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port1Enabled);
-    l_Settings.PortEnabled[1] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port2Enabled);
-    l_Settings.PortEnabled[2] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port3Enabled);
-    l_Settings.PortEnabled[3] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port4Enabled);
+    l_PortEnabled[0] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port1Enabled);
+    l_PortEnabled[1] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port2Enabled);
+    l_PortEnabled[2] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port3Enabled);
+    l_PortEnabled[3] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port4Enabled);
+    for (int player = 0; player < NUM_CONTROLLERS; ++player)
+    {
+        auto& settings = l_Settings[player];
+        settings.DeadzoneValue = static_cast<double>(ReadGameCubePlayerInt(SettingsID::GCAInput_Deadzone, player)) / 100.0;
+        settings.SensitivityValue = GCASensitivityPercentToScale(ReadGameCubePlayerInt(SettingsID::GCAInput_Sensitivity, player));
+        settings.CButtonTreshold = static_cast<double>(ReadGameCubePlayerInt(SettingsID::GCAInput_CButtonTreshold, player)) / 100.0;
+        settings.TriggerTreshold = static_cast<double>(ReadGameCubePlayerInt(SettingsID::GCAInput_TriggerTreshold, player)) / 100.0;
+        settings.LeftTriggerAnalog = ReadGameCubePlayerBool(SettingsID::GCAInput_LeftTriggerAnalog, player);
+        settings.RightTriggerAnalog = ReadGameCubePlayerBool(SettingsID::GCAInput_RightTriggerAnalog, player);
 
-    l_Settings.Mapping.A       = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_A));
-    l_Settings.Mapping.B       = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_B));
-    l_Settings.Mapping.Start   = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_Start));
-    l_Settings.Mapping.Z       = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_Z));
-    l_Settings.Mapping.Z2      = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_Z2));
-    l_Settings.Mapping.L       = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_L));
-    l_Settings.Mapping.R       = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_R));
-    l_Settings.Mapping.DpadUp    = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_DpadUp));
-    l_Settings.Mapping.DpadDown  = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_DpadDown));
-    l_Settings.Mapping.DpadLeft  = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_DpadLeft));
-    l_Settings.Mapping.DpadRight = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_DpadRight));
-    l_Settings.Mapping.CUp     = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_CUp));
-    l_Settings.Mapping.CDown   = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_CDown));
-    l_Settings.Mapping.CLeft   = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_CLeft));
-    l_Settings.Mapping.CRight  = static_cast<GCInput>(CoreSettingsGetIntValue(SettingsID::GCAInput_Map_CRight));
+        settings.Mapping.A       = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_A, player));
+        settings.Mapping.B       = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_B, player));
+        settings.Mapping.Start   = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_Start, player));
+        settings.Mapping.Z       = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_Z, player));
+        settings.Mapping.Z2      = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_Z2, player));
+        settings.Mapping.L       = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_L, player));
+        settings.Mapping.R       = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_R, player));
+        settings.Mapping.DpadUp    = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_DpadUp, player));
+        settings.Mapping.DpadDown  = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_DpadDown, player));
+        settings.Mapping.DpadLeft  = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_DpadLeft, player));
+        settings.Mapping.DpadRight = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_DpadRight, player));
+        settings.Mapping.CUp     = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_CUp, player));
+        settings.Mapping.CDown   = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_CDown, player));
+        settings.Mapping.CLeft   = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_CLeft, player));
+        settings.Mapping.CRight  = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_CRight, player));
+
+        ApplyGCTriggerModes(settings.Mapping, settings.LeftTriggerAnalog, settings.RightTriggerAnalog);
+    }
 }
 
 static int scale_axis(const double input, const double deadzone, const double n64Max)
@@ -572,25 +583,30 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
         return;
     }
 
-    const GCButtonMapping& map = l_Settings.Mapping;
-    const double trigT = l_Settings.TriggerTreshold;
-    const double cT = l_Settings.CButtonTreshold;
+    const auto& settings = l_Settings[Control];
+    const GCButtonMapping& map = settings.Mapping;
+    const double trigT = settings.TriggerTreshold;
+    const double cT = settings.CButtonTreshold;
+    const auto inputActive = [&](GCInput input)
+    {
+        return isGCInputActive(state, input, trigT, cT,
+            settings.LeftTriggerAnalog, settings.RightTriggerAnalog);
+    };
 
-    Keys->A_BUTTON     = isGCInputActive(state, map.A, trigT, cT);
-    Keys->B_BUTTON     = isGCInputActive(state, map.B, trigT, cT);
-    Keys->START_BUTTON = isGCInputActive(state, map.Start, trigT, cT);
-    Keys->Z_TRIG       = isGCInputActive(state, map.Z, trigT, cT) ||
-                         (map.Z2 != GCInput::None && isGCInputActive(state, map.Z2, trigT, cT));
-    Keys->L_TRIG       = isGCInputActive(state, map.L, trigT, cT);
-    Keys->R_TRIG       = isGCInputActive(state, map.R, trigT, cT);
-    Keys->U_DPAD       = isGCInputActive(state, map.DpadUp, trigT, cT);
-    Keys->D_DPAD       = isGCInputActive(state, map.DpadDown, trigT, cT);
-    Keys->L_DPAD       = isGCInputActive(state, map.DpadLeft, trigT, cT);
-    Keys->R_DPAD       = isGCInputActive(state, map.DpadRight, trigT, cT);
-    Keys->U_CBUTTON    = isGCInputActive(state, map.CUp, trigT, cT);
-    Keys->D_CBUTTON    = isGCInputActive(state, map.CDown, trigT, cT);
-    Keys->L_CBUTTON    = isGCInputActive(state, map.CLeft, trigT, cT);
-    Keys->R_CBUTTON    = isGCInputActive(state, map.CRight, trigT, cT);
+    Keys->A_BUTTON     = inputActive(map.A);
+    Keys->B_BUTTON     = inputActive(map.B);
+    Keys->START_BUTTON = inputActive(map.Start);
+    Keys->Z_TRIG       = inputActive(map.Z) || (map.Z2 != GCInput::None && inputActive(map.Z2));
+    Keys->L_TRIG       = inputActive(map.L);
+    Keys->R_TRIG       = inputActive(map.R);
+    Keys->U_DPAD       = inputActive(map.DpadUp);
+    Keys->D_DPAD       = inputActive(map.DpadDown);
+    Keys->L_DPAD       = inputActive(map.DpadLeft);
+    Keys->R_DPAD       = inputActive(map.DpadRight);
+    Keys->U_CBUTTON    = inputActive(map.CUp);
+    Keys->D_CBUTTON    = inputActive(map.CDown);
+    Keys->L_CBUTTON    = inputActive(map.CLeft);
+    Keys->R_CBUTTON    = inputActive(map.CRight);
 
     // Analog stick (not remappable)
     const int8_t x = static_cast<int8_t>(state.LeftStickX + 128);
@@ -598,10 +614,10 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
 
     const double inputX = static_cast<double>(x) / static_cast<double>(INT8_MAX);
     const double inputY = static_cast<double>(y) / static_cast<double>(INT8_MAX);
-    const double n64Max = GCA_N64_AXIS_PEAK * l_Settings.SensitivityValue;
+    const double n64Max = GCA_N64_AXIS_PEAK * settings.SensitivityValue;
 
-    Keys->X_AXIS = scale_axis(inputX, l_Settings.DeadzoneValue, n64Max);
-    Keys->Y_AXIS = scale_axis(inputY, l_Settings.DeadzoneValue, n64Max);
+    Keys->X_AXIS = scale_axis(inputX, settings.DeadzoneValue, n64Max);
+    Keys->Y_AXIS = scale_axis(inputY, settings.DeadzoneValue, n64Max);
 }
 
 EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
@@ -626,16 +642,9 @@ EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)
     // This keeps Control 0 stable for rollback even if the adapter reports
     // controller presence slightly after InitiateControllers().
     l_ControllerStateMutex.lock();
-    l_ControlToPort = {-1, -1, -1, -1};
-    int controlSlot = 0;
-    for (int i = 0; i < NUM_CONTROLLERS; i++)
-    {
-        if (l_Settings.PortEnabled[i])
-        {
-            l_ControlToPort[controlSlot] = i;
-            controlSlot++;
-        }
-    }
+    l_ControlToPort = ResolveGameCubeControllerPorts(
+        CoreSettingsGetIntListValue(SettingsID::GCAInput_ControllerPorts),
+        l_PortEnabled);
 
     for (int i = 0; i < NUM_CONTROLLERS; i++)
     {

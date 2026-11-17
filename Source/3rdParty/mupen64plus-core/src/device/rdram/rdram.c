@@ -134,6 +134,25 @@ static void map_corrupt_rdram(struct rdram* rdram, int corrupt)
 }
 
 
+void rdram_sync_memory_map(struct rdram* rdram)
+{
+    uint32_t mode;
+    uint8_t corrupted_handler = 0;
+    size_t module;
+    size_t modules = get_modules_count(rdram);
+
+    for (module = 0; module < modules; ++module) {
+        mode = rdram->regs[module][RDRAM_MODE_REG] ^ UINT32_C(0xc0c0c0c0);
+        corrupted_handler |= ((mode & RDRAM_MODE_CE_MASK) && (cc_value(mode) == 0));
+    }
+
+    if (rdram->corrupted_handler != corrupted_handler) {
+        map_corrupt_rdram(rdram, corrupted_handler);
+        rdram->corrupted_handler = corrupted_handler;
+    }
+}
+
+
 void init_rdram(struct rdram* rdram,
                 uint32_t* dram,
                 size_t dram_size,
@@ -201,8 +220,6 @@ void write_rdram_regs(void* opaque, uint32_t address, uint32_t value, uint32_t m
 {
     struct rdram* rdram = (struct rdram*)opaque;
     uint32_t reg = rdram_reg(address);
-    uint32_t mode;
-    uint8_t corrupted_handler = 0;
     size_t module;
     size_t modules = get_modules_count(rdram);
 
@@ -225,14 +242,7 @@ void write_rdram_regs(void* opaque, uint32_t address, uint32_t value, uint32_t m
     /* toggle corrupt handler based on CC value for all modules,
      * only check values when writing to the mode register */
     if (reg == RDRAM_MODE_REG) {
-        for (module = 0; module < modules; ++module) {
-            mode = rdram->regs[module][RDRAM_MODE_REG] ^ UINT32_C(0xc0c0c0c0);
-            corrupted_handler |= ((mode & RDRAM_MODE_CE_MASK) && (cc_value(mode) == 0));
-        }
-        if (rdram->corrupted_handler != corrupted_handler) {
-            map_corrupt_rdram(rdram, corrupted_handler);
-            rdram->corrupted_handler = corrupted_handler;
-        }
+        rdram_sync_memory_map(rdram);
     }
 }
 

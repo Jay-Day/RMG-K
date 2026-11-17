@@ -5,7 +5,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 COMPONENTS Gui Widgets Core REQUIRED)
+find_package(Qt6 6.2 COMPONENTS Gui Widgets Core Svg LinguistTools REQUIRED)
 
 if (NOT WIN32)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
@@ -14,6 +14,10 @@ endif(NOT WIN32)
 if (PORTABLE_INSTALL)
     add_definitions(-DPORTABLE_INSTALL)
 endif(PORTABLE_INSTALL)
+
+if (RMGK_TEST_BUILD)
+    add_definitions(-DRMGK_TEST_BUILD)
+endif(RMGK_TEST_BUILD)
 
 if (UPDATER)
     find_package(Qt6 COMPONENTS Network REQUIRED)
@@ -30,7 +34,7 @@ if (KCA_DRAG_DROP)
 endif(KCA_DRAG_DROP)
 
 if (NETPLAY)
-    find_package(Qt6 COMPONENTS WebSockets Network REQUIRED)
+    find_package(Qt6 COMPONENTS WebSockets Network Concurrent REQUIRED)
     add_definitions(-DNETPLAY)
 endif(NETPLAY)
 
@@ -46,6 +50,7 @@ if (WIN32)
 else()
     pkg_check_modules(HIDAPI REQUIRED hidapi-hidraw)
 endif()
+pkg_check_modules(LIBUSB1 REQUIRED libusb-1.0)
 
 set(RMG_SOURCES
     UserInterface/MainWindow.cpp
@@ -70,25 +75,33 @@ set(RMG_SOURCES
     UserInterface/Dialog/Cheats/AddCheatDialog.ui
     UserInterface/Dialog/Cheats/ChooseCheatOptionDialog.cpp
     UserInterface/Dialog/Cheats/ChooseCheatOptionDialog.ui
+    UserInterface/Dialog/UnifiedInputDialog.cpp
     UserInterface/Dialog/RomInfoDialog.cpp
     UserInterface/Dialog/RomInfoDialog.ui
     UserInterface/Dialog/AboutDialog.cpp
     UserInterface/Dialog/AboutDialog.ui
-    UserInterface/Dialog/RaphnetInputDialog.cpp
     UserInterface/Dialog/LogDialog.cpp
     UserInterface/Dialog/LogDialog.ui
     UserInterface/NoFocusDelegate.cpp
     UserInterface/EventFilter.cpp
     UserInterface/UIResources.rc
     UserInterface/UIResources.qrc
+    UserInterface/Flags.qrc
     Thread/RomSearcherThread.cpp
     Thread/EmulationThread.cpp
     Utilities/QtKeyToSdl3Key.cpp
     Utilities/QtMessageBox.cpp
+    Utilities/Translation.cpp
     OnScreenDisplay.cpp
     Callbacks.cpp
     VidExt.cpp
     main.cpp
+    ../RMG-Input/UserInterface/Widget/ControllerImageWidget.cpp
+    ../RMG-Input/UserInterface/UICommon.cpp
+    ../RMG-Input/UserInterface/OptionsDialog.cpp
+    ../RMG-Input/UserInterface/HotkeysDialog.cpp
+    ../RMG-Input/UserInterface/Widget/HotkeyButton.cpp
+    ../RMG-Input/Utilities/Sdl3ButtonLabelToString.cpp
 )
 
 if (UPDATER)
@@ -108,10 +121,18 @@ if (NETPLAY)
         UserInterface/KailleraUIBridge.cpp
         UserInterface/Dialog/Kaillera/KailleraNetplayDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraPlaybackDialog.cpp
+        UserInterface/Dialog/Kaillera/PlaybackTimeline.cpp
         UserInterface/Dialog/Kaillera/KailleraServerBrowserDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraOptionsDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraP2PDialog.cpp
         UserInterface/Dialog/Kaillera/KailleraWaitingGamesDialog.cpp
+        UserInterface/Dialog/Lobby/LobbyClient.cpp
+        UserInterface/Dialog/Lobby/LobbyConnectDialog.cpp
+        UserInterface/Dialog/Lobby/CreateRoomDialog.cpp
+        UserInterface/Dialog/Lobby/RollbackLobbyDialog.cpp
+        UserInterface/Dialog/Lobby/LagStats.cpp
+        UserInterface/Dialog/Lobby/LagStatsDialog.cpp
+        UserInterface/Dialog/Lobby/NetplaySaveDialogs.cpp
         UserInterface/Dialog/Netplay/NetplayCommon.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.cpp
         UserInterface/Dialog/Netplay/CreateNetplaySessionDialog.ui
@@ -128,11 +149,12 @@ if (NETPLAY)
         UserInterface/Widget/Netplay/CreateNetplaySessionWidget.cpp
         UserInterface/Widget/Netplay/CreateNetplaySessionEmptyWidget.cpp
         UserInterface/Widget/Netplay/CreateNetplaySessionEmptyWidget.ui
+        Utilities/KailleraExport/KrecParser.cpp
     )
     if (WIN32)
         list(APPEND RMG_SOURCES
             Utilities/KailleraExport/KrecMp4Export.cpp
-            Utilities/KailleraExport/KrecParser.cpp
+            Utilities/KailleraExport/ChatOverlay.cpp
             Utilities/KailleraExport/EmulatorProxy.cpp
             Utilities/KailleraExport/PifReplay.cpp
             Utilities/KailleraExport/FrameCapture.cpp
@@ -169,16 +191,57 @@ target_include_directories(RMG PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../
+    ${CMAKE_CURRENT_SOURCE_DIR}/../RMG-Input
     ${IMGUI_DIR}
     ${HIDAPI_INCLUDE_DIRS}
+    ${LIBUSB1_INCLUDE_DIRS}
 )
 
-target_link_libraries(RMG Qt6::Gui Qt6::Widgets ${HIDAPI_LIBRARIES})
+target_link_libraries(RMG Qt6::Gui Qt6::Widgets Qt6::Svg ${HIDAPI_LIBRARIES} ${LIBUSB1_LIBRARIES} SDL3::SDL3)
 
-# RMG sources (e.g. QtKeyToSdl3Key.cpp, VidExtProxy.cpp) include <SDL3/SDL.h>
-# on every platform, so link SDL3 unconditionally. The imported target also
-# carries SDL3's include dirs, which matters when SDL3 is in a custom prefix.
-target_link_libraries(RMG SDL3::SDL3)
+set(RMG_TRANSLATION_TS
+    ${CMAKE_CURRENT_SOURCE_DIR}/Translations/rmg_ja_JP.ts
+)
+qt_add_lupdate(RMG
+    TS_FILES ${RMG_TRANSLATION_TS}
+    SOURCES ${RMG_SOURCES} Utilities/Translation.hpp
+)
+if (WIN32 AND CMAKE_GENERATOR STREQUAL "MSYS Makefiles")
+    # Qt's Windows tool wrapper is a batch file in the build directory.  The
+    # MSYS Makefiles generator does not quote that wrapper when the build path
+    # contains spaces, so invoke lrelease directly instead.
+    set(RMG_TRANSLATION_QM_FILES)
+    foreach(RMG_TRANSLATION_TS_FILE IN LISTS RMG_TRANSLATION_TS)
+        get_filename_component(RMG_TRANSLATION_NAME
+            "${RMG_TRANSLATION_TS_FILE}" NAME_WE)
+        set(RMG_TRANSLATION_QM_FILE
+            "${CMAKE_CURRENT_BINARY_DIR}/${RMG_TRANSLATION_NAME}.qm")
+        add_custom_command(
+            OUTPUT "${RMG_TRANSLATION_QM_FILE}"
+            COMMAND Qt6::lrelease "${RMG_TRANSLATION_TS_FILE}"
+                -qm "${RMG_TRANSLATION_QM_FILE}"
+            DEPENDS Qt6::lrelease "${RMG_TRANSLATION_TS_FILE}"
+            VERBATIM
+        )
+        list(APPEND RMG_TRANSLATION_QM_FILES "${RMG_TRANSLATION_QM_FILE}")
+    endforeach()
+    add_custom_target(RMG_lrelease DEPENDS ${RMG_TRANSLATION_QM_FILES})
+    add_dependencies(RMG RMG_lrelease)
+else()
+    qt_add_lrelease(RMG
+        TS_FILES ${RMG_TRANSLATION_TS}
+        QM_FILES_OUTPUT_VARIABLE RMG_TRANSLATION_QM_FILES
+    )
+endif()
+add_custom_command(TARGET RMG POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:RMG>/Data/Translations"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RMG_TRANSLATION_QM_FILES}
+        "$<TARGET_FILE_DIR:RMG>/Data/Translations"
+    VERBATIM
+)
+install(FILES ${RMG_TRANSLATION_QM_FILES}
+    DESTINATION ${DATA_INSTALL_PATH}/Translations
+)
 
 if (WIN32)
     target_link_libraries(RMG opengl32 gdi32 user32)
@@ -197,9 +260,10 @@ if (KCA_DRAG_DROP)
 endif(KCA_DRAG_DROP)
 
 if (NETPLAY)
-    target_link_libraries(RMG Qt6::WebSockets Qt6::Network)
+    target_link_libraries(RMG Qt6::WebSockets Qt6::Network Qt6::Concurrent)
     if (WIN32)
-        target_link_libraries(RMG OpenGL::GL)
+        # ws2_32: LobbyClient calls WSAIoctl directly on the anchor socket.
+        target_link_libraries(RMG OpenGL::GL ws2_32)
         target_include_directories(RMG PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/../n02
         )

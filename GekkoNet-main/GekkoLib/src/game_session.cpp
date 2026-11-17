@@ -1,16 +1,41 @@
 #include "session.h"
 
+#include <algorithm>
 #include <cassert>
+#include <chrono>
+
+namespace {
+
+// Input frames already include the sender's delay. Adding the receiver's local
+// delay converts the raw simulation-frame gap into an error from the desired
+// delay-balanced timeline:
+//
+//     local_frame + local_delay == remote_frame + remote_delay
+//
+// Therefore a lower-delay peer runs numerically ahead by the delay difference.
+// If both peers are still on the same simulation frame, the lower-delay peer is
+// reported behind and the existing time-sync pacing advances it toward that
+// target. This makes each player's own delay determine how late remote input may
+// arrive at that player, rather than imposing their choice on their opponent.
+constexpr Frame DelayBalancedAdvantage(Frame current_frame, Frame remote_input_frame,
+                                       Frame local_delay)
+{
+    return current_frame - remote_input_frame + local_delay;
+}
+
+} // namespace
 
 Gekko::GameSession::GameSession()
 {
 	_host = nullptr;
 	_started = false;
-    _last_saved_frame = GameInput::NULL_FRAME - 1;
+    _last_saved_frame = GameInput::NULL_FRAME;
 	_disconnected_input = nullptr;
     _last_sent_healthcheck = GameInput::NULL_FRAME;
     _runahead_start_frame = GameInput::NULL_FRAME;
     _runahead_frames = 0;
+    _max_prediction_window = 0;
+    _advance_limit = GameInput::NULL_FRAME;
     _config = GekkoConfig();
 }
 
@@ -34,6 +59,7 @@ void Gekko::GameSession::Init(GekkoConfig* config)
 
     // setup state storage
     _storage.Init(_config.input_prediction_window, _config.state_size, _config.limited_saving);
+    _max_prediction_window = _config.input_prediction_window;
 
     // setup disconnected input for disconnected player within the session
     _disconnected_input = std::make_unique<u8[]>(_config.input_size);
@@ -55,6 +81,34 @@ void Gekko::GameSession::SetLocalDelay(i32 player, u8 delay)
             _sync.SetLocalDelay(player, delay);
         }
     }
+}
+
+bool Gekko::GameSession::SetPredictionWindow(u8 window)
+{
+    // lockstep sessions have no rollback path to switch into, and limited
+    // saving keeps only two states, so only a full-saving rollback session
+    // can change its window while running.
+    if (window == 0 || IsLockstepActive() || _config.limited_saving) {
+        return false;
+    }
+
+    // a larger window lets predictions run further ahead, so rollbacks can
+    // reach further back. the storage has to hold those states before any
+    // prediction can use the extra frames.
+    if (window > _max_prediction_window) {
+        if (!_storage.Grow(window)) {
+            return false;
+        }
+        _max_prediction_window = window;
+    }
+
+    // a smaller window only stops new predictions early. predictions already
+    // made under the old window still roll back from the storage kept above.
+    _config.input_prediction_window = window;
+    for (auto& remote : _msg.remotes) {
+        _sync.SetInputPredictionWindow(remote->handle, window);
+    }
+    return true;
 }
 
 void Gekko::GameSession::SetNetAdapter(GekkoNetAdapter* adapter)
@@ -151,9 +205,15 @@ GekkoGameEvent** Gekko::GameSession::UpdateSession(i32* count)
         // check if the session is still doing alright.
         SessionIntegrityCheck();
 
-        // then advance the session
-        if (_game_events.AddAdvanceEvent(_sync, false)) {
-            if (!_config.limited_saving ||
+        // then advance the session, unless it has reached its advance limit
+        const bool at_limit = _advance_limit != GameInput::NULL_FRAME &&
+            _sync.GetCurrentFrame() >= _advance_limit;
+        if (!at_limit && _game_events.AddAdvanceEvent(_sync, false)) {
+            // Frame 0 is the rollback baseline. It is executed only after every
+            // peer's real frame-0 input is present, then saved for rollbacks
+            // beginning at frame 1.
+            if (_sync.GetCurrentFrame() == 0 ||
+                !_config.limited_saving ||
                 IsPlayingLocally() &&
                 _sync.GetCurrentFrame() % _config.input_prediction_window == 0) {
                 _game_events.AddSaveEvent(_sync, _storage, &_last_saved_frame);
@@ -162,7 +222,9 @@ GekkoGameEvent** Gekko::GameSession::UpdateSession(i32* count)
         }
 
         // run ahead if configured
-        HandleRunahead();
+        if (!at_limit) {
+            HandleRunahead();
+        }
     }
 
     *count = _game_events.Count();
@@ -263,8 +325,10 @@ void Gekko::GameSession::SendSessionHealthCheck()
         return;
     }
 
+    // use the largest window seen: after the window shrinks, frames inside the
+    // old window may still be predicted and the storage only reaches that far.
     const Frame current = _sync.GetCurrentFrame();
-    const Frame confirmed = (current - _config.input_prediction_window) - 1;
+    const Frame confirmed = (current - _max_prediction_window) - 1;
 
     if (confirmed <= GameInput::NULL_FRAME) {
         return;
@@ -332,11 +396,72 @@ void Gekko::GameSession::AddDisconnectedPlayerInputs()
 		if (player->GetStatus() == Disconnected) {
             const Frame last_recv = _sync.GetLastReceivedFrom(player->handle) + 1;
             const Frame current = _sync.GetCurrentFrame();
-            for (Frame i = last_recv; i < current; i++) {
+            // up to and including the current frame: one dropped before frame 0
+            // has sent nothing, and frame 0 is never predicted.
+            for (Frame i = last_recv; i <= current; i++) {
                 _sync.AddRemoteInput(player->handle, _disconnected_input.get(), i);
             }
 		}
 	}
+}
+
+void Gekko::GameSession::SetAdvanceLimit(i32 frame)
+{
+    _advance_limit = frame < 0 ? GameInput::NULL_FRAME : frame;
+}
+
+i32 Gekko::GameSession::CurrentFrame()
+{
+    return _sync.GetCurrentFrame();
+}
+
+i32 Gekko::GameSession::ConfirmedFrame()
+{
+    return _sync.GetMinReceivedFrame();
+}
+
+bool Gekko::GameSession::PeerStats(i32 handle, GekkoPeerStats* stats)
+{
+    for (auto& remote : _msg.remotes) {
+        if (remote->handle != handle) {
+            continue;
+        }
+        stats->last_received_frame = _sync.GetLastReceivedFrom(handle);
+        stats->connected = remote->GetStatus() == Connected;
+        stats->frames_ahead = _started ? remote->adv_history.GetAverageAdvantage() : 0.f;
+        // last_received_message is on the steady clock in milliseconds.
+        const u64 heard = remote->stats.last_received_message;
+        const u64 now = (u64)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        stats->silent_ms = heard == 0 || now < heard ? 0u : (u32)std::min<u64>(now - heard, 0xffffffffu);
+        return true;
+    }
+    return false;
+}
+
+void Gekko::GameSession::DisconnectPlayer(i32 handle)
+{
+	// Mirror MessageSystem::HandleTooFarBehindActors for a single actor, but
+	// without waiting out DISCONNECT_TIMEOUT — the caller already knows the peer
+	// is gone (e.g. the lobby server reported it). Once marked Disconnected,
+	// AddDisconnectedPlayerInputs feeds idle input for them and the session
+	// advances immediately instead of stalling on their missing frames.
+	// An actor still Initiating counts too: a session that hasn't started
+	// would otherwise wait for it forever.
+	for (auto& actor : _msg.remotes) {
+		if (actor->handle == handle &&
+			(actor->GetStatus() == Connected || actor->GetStatus() == Initiating)) {
+			_msg.session_events.AddPlayerDisconnectedEvent(actor->handle);
+			actor->SetStatus(Disconnected);
+			actor->sync_num = 0;
+			return;
+		}
+	}
+}
+
+void Gekko::GameSession::SetDisconnectTimeout(u32 timeout_ms)
+{
+    _msg.SetPlayerDisconnectTimeout(timeout_ms);
 }
 
 void Gekko::GameSession::SendSpectatorInputs()
@@ -355,24 +480,22 @@ void Gekko::GameSession::SendSpectatorInputs()
 
 void Gekko::GameSession::HandleRollback()
 {
-	Frame current = _sync.GetCurrentFrame();
-	if (_last_saved_frame == GameInput::NULL_FRAME - 1) {
-		_sync.SetCurrentFrame(current - 1);
-		_game_events.AddSaveEvent(_sync, _storage, &_last_saved_frame);
-		_sync.IncrementFrame();
-	}
-
 	if (IsLockstepActive() || IsPlayingLocally()) {
         return;
     }
 
-	current = _sync.GetCurrentFrame();
+	const Frame current = _sync.GetCurrentFrame();
 	const Frame min = _sync.GetMinIncorrectFrame();
 
-	// dont allow rollbacks starting before the null frame
+    // Frame 0 is never predicted, so the first valid rollback restores its
+    // post-frame state and re-simulates beginning at frame 1.
     if (min == GameInput::NULL_FRAME) {
         return;
     }
+	assert(min > 0);
+	if (min <= 0) {
+		return;
+	}
 
 	const Frame sync_frame = _config.limited_saving ? _last_saved_frame : min - 1;
 	const Frame frame_to_save = std::min(current - 1, min);
@@ -466,7 +589,8 @@ void Gekko::GameSession::HandleReceivedInputs()
                     int current_idx = i - min_frame;
                     u8* input = input_q[current_idx].get();
                     _sync.AddRemoteInput(handle, input, i);
-                    const i8 local_adv = (i8)(current_frame - i - local_delay);
+                    const i8 local_adv =
+                        (i8)DelayBalancedAdvantage(current_frame, i, local_delay);
                     _msg.SendInputAck(handle, i, local_adv);
                 }
             }
@@ -493,7 +617,8 @@ void Gekko::GameSession::SendLocalInputs()
                 const Frame current_frame = _sync.GetCurrentFrame();
                 for (auto& remote : _msg.remotes) {
                     if (remote->GetStatus() == Connected) {
-                        const i8 local_adv = (i8)(current_frame - _sync.GetLastReceivedFrom(remote->handle) - (Frame)delay);
+                        const i8 local_adv = (i8)DelayBalancedAdvantage(
+                            current_frame, _sync.GetLastReceivedFrom(remote->handle), (Frame)delay);
                         remote->adv_history.SetLocalAdvantage(local_adv);
                         remote->adv_history.Update(frame);
                     }

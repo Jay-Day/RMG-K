@@ -5,6 +5,12 @@ include(ExternalProject)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if (NETPLAY AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libjuice/CMakeLists.txt")
+    set(NO_SERVER ON CACHE BOOL "Disable the unused libjuice STUN/TURN server" FORCE)
+    set(NO_TESTS ON CACHE BOOL "Disable libjuice tests in the RMG build" FORCE)
+    add_subdirectory(libjuice EXCLUDE_FROM_ALL)
+endif()
+
 set(M64P_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core)
 if(WIN32)
     set(SO_EXT "dll")
@@ -83,15 +89,26 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/GekkoNet-main/GekkoLib/CMakeLists.txt")
     add_subdirectory("${CMAKE_SOURCE_DIR}/GekkoNet-main/GekkoLib" "${CMAKE_BINARY_DIR}/GekkoNet")
 endif()
 
+set(M64P_CORE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-core")
+file(RELATIVE_PATH M64P_CORE_MAKEFILE "${M64P_CORE_BUILD_DIR}" "${M64P_CORE_DIR}/projects/unix/Makefile")
+file(RELATIVE_PATH M64P_CORE_SRCDIR "${M64P_CORE_BUILD_DIR}" "${M64P_CORE_DIR}/src")
+file(RELATIVE_PATH M64P_CORE_SUBDIR "${M64P_CORE_BUILD_DIR}" "${M64P_CORE_DIR}/subprojects")
+file(RELATIVE_PATH SDL3NET_INCLUDE_DIR_FOR_CORE "${M64P_CORE_BUILD_DIR}" "${SDL3NET_DIR}/include")
+set(SDL3NET_CFLAGS_FOR_CORE "-DUSE_SDL3NET -I${SDL3NET_INCLUDE_DIR_FOR_CORE}")
+set(SDL3NET_LDLIBS_FOR_CORE "../$<TARGET_FILE_NAME:SDL3_net> -l${SDL3_LIBRARIES}")
+if (WIN32)
+    set(SDL3NET_LDLIBS_FOR_CORE "${SDL3NET_LDLIBS_FOR_CORE} -liphlpapi -lws2_32")
+endif (WIN32)
+
 ExternalProject_Add(mupen64plus-core
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core/
 
     CONFIGURE_COMMAND ""
     INSTALL_COMMAND ""
 
-    BUILD_COMMAND ${MAKE_CMD} all -f ${M64P_CORE_DIR}/projects/unix/Makefile 
-        SRCDIR=${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core/src 
-        SUBDIR=${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-core/subprojects 
+    BUILD_COMMAND ${MAKE_CMD} all -f ${M64P_CORE_MAKEFILE}
+        SRCDIR=${M64P_CORE_SRCDIR}
+        SUBDIR=${M64P_CORE_SUBDIR}
         OSD=0 NEW_DYNAREC=1 NO_ASM=$<BOOL:${NO_ASM}> 
         KEYBINDINGS=0 ACCURATE_FPU=1 VULKAN=0 NETPLAY=$<BOOL:${NETPLAY}> 
         TARGET=${CORE_FILE} DEBUG=${MAKE_DEBUG}
@@ -99,16 +116,21 @@ ExternalProject_Add(mupen64plus-core
         OPTFLAGS=${MAKE_OPTFLAGS}
         # TODO: when SDL3_net has made a release,
         # remove the vendored SDL3_net
-        SDLNET_CFLAGS=${SDL3NET_CFLAGS} SDLNET_LDLIBS=${SDL3NET_LDLIBS}
+        SDLNET_CFLAGS=${SDL3NET_CFLAGS_FOR_CORE} SDLNET_LDLIBS=${SDL3NET_LDLIBS_FOR_CORE}
     BUILD_IN_SOURCE False
     BUILD_ALWAYS True
-    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-core
+    BINARY_DIR ${M64P_CORE_BUILD_DIR}
 
-    BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-core/${CORE_FILE}
+    BUILD_BYPRODUCTS ${M64P_CORE_BUILD_DIR}/${CORE_FILE}
     DEPENDS SDL3_net
 )
 
-set(APIDIR "${CMAKE_SOURCE_DIR}/Source/3rdParty/mupen64plus-core/src/api")
+set(APIDIR "${M64P_CORE_DIR}/src/api")
+
+set(M64P_RSP_CXD4_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-cxd4")
+file(RELATIVE_PATH M64P_RSP_CXD4_MAKEFILE "${M64P_RSP_CXD4_BUILD_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-cxd4/projects/unix/Makefile")
+file(RELATIVE_PATH M64P_RSP_CXD4_SRCDIR "${M64P_RSP_CXD4_BUILD_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-cxd4")
+file(RELATIVE_PATH M64P_RSP_CXD4_APIDIR "${M64P_RSP_CXD4_BUILD_DIR}" "${APIDIR}")
 
 ExternalProject_Add(mupen64plus-rsp-cxd4
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-cxd4/
@@ -116,17 +138,22 @@ ExternalProject_Add(mupen64plus-rsp-cxd4
     CONFIGURE_COMMAND ""
     INSTALL_COMMAND ""
 
-    BUILD_COMMAND ${MAKE_CMD} all -f ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-cxd4/projects/unix/Makefile
-        SRCDIR=${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-cxd4
-        APIDIR=${APIDIR} DEBUG=${MAKE_DEBUG} POSTFIX= 
+    BUILD_COMMAND ${MAKE_CMD} all -f ${M64P_RSP_CXD4_MAKEFILE}
+        SRCDIR=${M64P_RSP_CXD4_SRCDIR}
+        APIDIR=${M64P_RSP_CXD4_APIDIR} DEBUG=${MAKE_DEBUG} POSTFIX=
         CC=${MAKE_CC_COMPILER} CXX=${MAKE_CXX_COMPILER}
         OPTFLAGS=${MAKE_OPTFLAGS}
     BUILD_IN_SOURCE False
     BUILD_ALWAYS True
-    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-cxd4
+    BINARY_DIR ${M64P_RSP_CXD4_BUILD_DIR}
 
-    BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-cxd4/mupen64plus-rsp-cxd4.${SO_EXT}
+    BUILD_BYPRODUCTS ${M64P_RSP_CXD4_BUILD_DIR}/mupen64plus-rsp-cxd4.${SO_EXT}
 )
+
+set(M64P_RSP_HLE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-hle")
+file(RELATIVE_PATH M64P_RSP_HLE_MAKEFILE "${M64P_RSP_HLE_BUILD_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-hle/projects/unix/Makefile")
+file(RELATIVE_PATH M64P_RSP_HLE_SRCDIR "${M64P_RSP_HLE_BUILD_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-hle/src")
+file(RELATIVE_PATH M64P_RSP_HLE_APIDIR "${M64P_RSP_HLE_BUILD_DIR}" "${APIDIR}")
 
 ExternalProject_Add(mupen64plus-rsp-hle
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-hle/
@@ -134,16 +161,16 @@ ExternalProject_Add(mupen64plus-rsp-hle
     CONFIGURE_COMMAND ""
     INSTALL_COMMAND ""
 
-    BUILD_COMMAND ${MAKE_CMD} all -f ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-hle/projects/unix/Makefile
-        SRCDIR=${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-rsp-hle/src
-        APIDIR=${APIDIR} DEBUG=${MAKE_DEBUG}
+    BUILD_COMMAND ${MAKE_CMD} all -f ${M64P_RSP_HLE_MAKEFILE}
+        SRCDIR=${M64P_RSP_HLE_SRCDIR}
+        APIDIR=${M64P_RSP_HLE_APIDIR} DEBUG=${MAKE_DEBUG}
         CC=${MAKE_CC_COMPILER} CXX=${MAKE_CXX_COMPILER}
         OPTFLAGS=${MAKE_OPTFLAGS}
     BUILD_IN_SOURCE False
     BUILD_ALWAYS True
-    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-hle
+    BINARY_DIR ${M64P_RSP_HLE_BUILD_DIR}
 
-    BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-hle/mupen64plus-rsp-hle.${SO_EXT}
+    BUILD_BYPRODUCTS ${M64P_RSP_HLE_BUILD_DIR}/mupen64plus-rsp-hle.${SO_EXT}
 )
 
 ExternalProject_Add(mupen64plus-rsp-parallel
@@ -159,22 +186,27 @@ ExternalProject_Add(mupen64plus-rsp-parallel
     BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-rsp-parallel/mupen64plus-rsp-parallel.${SO_EXT}
 )
 
+set(M64P_INPUT_RAPHNETRAW_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-input-raphnetraw")
+file(RELATIVE_PATH M64P_INPUT_RAPHNETRAW_MAKEFILE "${M64P_INPUT_RAPHNETRAW_BUILD_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-input-raphnetraw/projects/unix/Makefile")
+file(RELATIVE_PATH M64P_INPUT_RAPHNETRAW_SRCDIR "${M64P_INPUT_RAPHNETRAW_BUILD_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-input-raphnetraw/src")
+file(RELATIVE_PATH M64P_INPUT_RAPHNETRAW_APIDIR "${M64P_INPUT_RAPHNETRAW_BUILD_DIR}" "${APIDIR}")
+
 ExternalProject_Add(mupen64plus-input-raphnetraw
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-input-raphnetraw/
 
     CONFIGURE_COMMAND ""
     INSTALL_COMMAND ""
 
-    BUILD_COMMAND ${MAKE_CMD} all -f ${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-input-raphnetraw/projects/unix/Makefile
-        SRCDIR=${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-input-raphnetraw/src
-        APIDIR=${APIDIR} DEBUG=${MAKE_DEBUG}
+    BUILD_COMMAND ${MAKE_CMD} all -f ${M64P_INPUT_RAPHNETRAW_MAKEFILE}
+        SRCDIR=${M64P_INPUT_RAPHNETRAW_SRCDIR}
+        APIDIR=${M64P_INPUT_RAPHNETRAW_APIDIR} DEBUG=${MAKE_DEBUG}
         CC=${MAKE_CC_COMPILER} CXX=${MAKE_CXX_COMPILER}
         OPTFLAGS=${MAKE_OPTFLAGS}
     BUILD_IN_SOURCE False
     BUILD_ALWAYS True
-    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-input-raphnetraw
+    BINARY_DIR ${M64P_INPUT_RAPHNETRAW_BUILD_DIR}
 
-    BUILD_BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/mupen64plus-input-raphnetraw/mupen64plus-input-raphnetraw.${SO_EXT}
+    BUILD_BYPRODUCTS ${M64P_INPUT_RAPHNETRAW_BUILD_DIR}/mupen64plus-input-raphnetraw.${SO_EXT}
 )
 
 set(GLIDEN64_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mupen64plus-video-GLideN64")

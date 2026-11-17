@@ -19,14 +19,29 @@
 #include "Kaillera.hpp"
 #include "Plugins.hpp"
 #include "Cheats.hpp"
+#include "NetplaySave.hpp"
 #include "Error.hpp"
 #include "File.hpp"
 #include "Rom.hpp"
+#include "SpeedLimiter.hpp"
+#include "SpeedFactor.hpp"
+#include "Callback.hpp"
 #include "rmgk_gekko.hpp"
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+#include "n02_client.h"
+#endif
 
 #include "m64p/Api.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <cstdint>
+#include <cstdio>
+#include <iomanip>
+#include <mutex>
+#include <sstream>
+#include <vector>
 
 // Windows/POSIX dynamic loading
 #ifdef _WIN32
@@ -39,12 +54,15 @@ static void setRollbackLoggingEnvironment(void)
 {
     const bool pifLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_VerbosePifInputLogging);
     const bool glideLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseGlideInputLogging);
+    const bool emulationLogging = CoreSettingsGetBoolValue(SettingsID::Rollback_EmulationDiagnostics);
 #ifdef _WIN32
     _putenv_s("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0");
     _putenv_s("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0");
+    _putenv_s("RMGK_EMULATION_DIAGNOSTICS", emulationLogging ? "1" : "0");
 #else
     setenv("RMGK_VERBOSE_PIF_INPUT_LOGGING", pifLogging ? "1" : "0", 1);
     setenv("RMGK_VERBOSE_GLIDE_INPUT_LOGGING", glideLogging ? "1" : "0", 1);
+    setenv("RMGK_EMULATION_DIAGNOSTICS", emulationLogging ? "1" : "0", 1);
 #endif
 }
 
@@ -86,6 +104,8 @@ extern "C" {
 
 static bool parse_gekko_address(const std::string& address, std::string& remoteAddress, int& remotePort, int& frameDelay, int& predictionWindow)
 {
+    // GEKKO| (P2P / n02-transport) carries a single remote peer.
+    // Format: GEKKO|remoteIp|remotePort|delay[|prediction]
     constexpr const char* prefix = "GEKKO|";
     if (address.rfind(prefix, 0) != 0)
     {
@@ -128,6 +148,123 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
     return !remoteAddress.empty() && remotePort > 0 && remotePort <= 65535 && frameDelay >= 0 && predictionWindow >= 1;
 }
 
+// LOBBY| carries N-1 remote peers, each with its own slot and endpoint, so
+// 3-/4-player rollback sessions can wire each remote actor to a distinct peer.
+// Format: LOBBY|<delay>|<prediction>|<slot>,<ip>,<port>|<slot>,<ip>,<port>...
+static bool parse_lobby_address(const std::string& address, int& frameDelay, int& predictionWindow,
+    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch)
+{
+    remotes.clear();
+    seats = 0;
+    joinEpoch = -1;
+
+    constexpr const char* prefix = "LOBBY|";
+    if (address.rfind(prefix, 0) != 0)
+    {
+        return false;
+    }
+
+    // Tokenize on '|' starting after the prefix.
+    std::vector<std::string> tokens;
+    size_t pos = std::char_traits<char>::length(prefix);
+    while (pos <= address.size())
+    {
+        const size_t next = address.find('|', pos);
+        if (next == std::string::npos)
+        {
+            tokens.push_back(address.substr(pos));
+            break;
+        }
+        tokens.push_back(address.substr(pos, next - pos));
+        pos = next + 1;
+    }
+
+    // Need at least: delay, prediction, and one peer entry or option.
+    if (tokens.size() < 3)
+    {
+        return false;
+    }
+
+    try
+    {
+        frameDelay = std::stoi(tokens[0]);
+        predictionWindow = std::stoi(tokens[1]);
+    }
+    catch (...)
+    {
+        return false;
+    }
+    if (frameDelay < 0 || predictionWindow < 1)
+    {
+        return false;
+    }
+
+    for (size_t i = 2; i < tokens.size(); i++)
+    {
+        const std::string& tok = tokens[i];
+        // Options ride as key=value tokens among the peers: seats=<ports the
+        // match emulates> and join=<epoch> for a late joiner.
+        const size_t equals = tok.find('=');
+        if (equals != std::string::npos)
+        {
+            const std::string key = tok.substr(0, equals);
+            try
+            {
+                const int value = std::stoi(tok.substr(equals + 1));
+                if (key == "seats" && value >= 2 && value <= 4)
+                    seats = value;
+                else if (key == "join" && value >= 0)
+                    joinEpoch = value;
+            }
+            catch (...)
+            {
+                return false;
+            }
+            continue;
+        }
+        const size_t firstComma = tok.find(',');
+        if (firstComma == std::string::npos)
+        {
+            return false;
+        }
+        const size_t secondComma = tok.find(',', firstComma + 1);
+        if (secondComma == std::string::npos)
+        {
+            return false;
+        }
+        LobbyRemotePeer peer{};
+        try
+        {
+            peer.slot = std::stoi(tok.substr(0, firstComma));
+            peer.ip = tok.substr(firstComma + 1, secondComma - firstComma - 1);
+            if (peer.ip == "ice")
+            {
+                peer.userId = std::stoull(tok.substr(secondComma + 1));
+                if (peer.userId == 0)
+                    return false;
+            }
+            else
+            {
+                const int parsedPort = std::stoi(tok.substr(secondComma + 1));
+                if (parsedPort <= 0 || parsedPort > 65535 || peer.ip.empty())
+                    return false;
+                peer.port = static_cast<unsigned short>(parsedPort);
+            }
+            if (peer.slot < 1 || peer.slot > 4)
+                return false;
+        }
+        catch (...)
+        {
+            return false;
+        }
+        remotes.push_back(std::move(peer));
+    }
+
+    // No peers is a host playing alone until someone is added, which only a
+    // match open to late joiners allows.
+    return !remotes.empty() || seats > 0;
+}
+
 //
 // Local Variables
 //
@@ -167,6 +304,126 @@ static void FrameCallback(unsigned int frameIndex)
 #endif
 }
 
+// Spectate keyframe restore: a savestate the spectator must load before consuming any
+// recorded input, so its replay starts from the broadcaster's snapshot (frame F) rather
+// than boot. Staged from the UI thread (CoreStageSpectateKeyframe); loaded exactly once
+// on the emulation thread in the PIF sync below — the rollback load is synchronous, so it
+// must run on the emulation thread, not cross-thread from the UI.
+static std::mutex          s_SpectateKeyframeMutex;
+static std::vector<unsigned char> s_SpectateKeyframeBuf;
+static int                 s_SpectateKeyframeFrame = -1;
+static bool                s_SpectateKeyframeStaged = false;
+static bool                s_SpectateKeyframeLoaded = false;
+
+// Spectate keyframe divergence probe (diagnostic): after loading a keyframe, hash the
+// just-restored state (= the broadcaster's S(frame)) and the state at the start of each
+// of the next frames the spectator replays, dumping them to <prefix>_spectate.log so
+// they can be diffed against the broadcaster's per-frame host probe to find the first
+// divergent frame. All probe state below is touched only on the emulation thread.
+// -1 = inactive; 1..N = how many replayed frames still to hash.
+static constexpr bool      kSpectateProbeEnabled = false;
+static int                 s_SpectateProbeSeq = -1;
+static int                 s_SpectateProbeFrameBase = -1;
+static std::vector<unsigned char> s_SpectateProbeScratch;
+// Diagnostic: hash of the spectator's state at the moment the deferred keyframe load was
+// staged (pre-jump). Compared at seq 0 to tell "load never drained" (resaved==prejump)
+// from "load landed" (resaved==kfbuf).
+static uint64_t            s_SpectatePreJumpHash = 0;
+// Companion to the state probe: logs the actual controller input the spectator APPLIES
+// each frame after the keyframe load, so it can be diffed against the broadcaster's
+// recorded krec input per frame. Tells us whether the boundary divergence is an input
+// misalignment (inputs differ / are shifted) or hidden state (inputs identical but the
+// state still forks). -1 = inactive; 0..N = frames applied since load.
+static int                 s_SpectateInputProbeCount = -1;
+
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+// Playback seeking. The UI starts a seek; the emulation thread ends it in the PIF
+// sync right after the record before the target was played, so a jump lands on
+// its record instead of wherever a UI timer next looks. Seeks run without the
+// speed limiter and, when the graphics plugin can, without rendering. Rendering
+// resumes a few records early so the first frame shown is a drawn one.
+static constexpr int       kPlaybackSeekRenderLead = 5;
+static std::mutex          s_PlaybackSeekMutex;
+static std::atomic<int>    s_PlaybackSeekTarget{-1};
+static std::atomic<bool>   s_PlaybackSeekSkipping{false};
+static bool                s_PlaybackSeekLimiter = true; // speed limiter state to restore
+static bool                s_PlaybackSeekPause = false;  // pause on arrival
+static int                 s_PlaybackSeekStartRecord = 0;
+static std::chrono::steady_clock::time_point s_PlaybackSeekStartTime;
+static unsigned int        s_PlaybackSeekSkipped = 0;
+static unsigned int        s_PlaybackSeekRendered = 0;
+
+// renders again, adding up what the plugin skipped. Needs s_PlaybackSeekMutex.
+static void stop_playback_seek_skipping(void)
+{
+    if (s_PlaybackSeekSkipping.exchange(false))
+    {
+        unsigned int skipped = 0;
+        unsigned int rendered = 0;
+        CorePluginsSetGfxSkipRendering(false, &skipped, &rendered);
+        s_PlaybackSeekSkipped += skipped;
+        s_PlaybackSeekRendered += rendered;
+    }
+}
+
+static void finish_playback_seek(bool arrived)
+{
+    std::lock_guard<std::mutex> lock(s_PlaybackSeekMutex);
+    if (s_PlaybackSeekTarget.exchange(-1) < 0)
+    {
+        return;
+    }
+
+    stop_playback_seek_skipping();
+    CoreSetFrameOutput(CoreFrameOutput_All);
+    CoreSetSpeedLimiterState(s_PlaybackSeekLimiter);
+
+    if (arrived && s_PlaybackSeekPause)
+    {
+        CorePauseEmulation(); // takes effect at the next VI, the target record's frame
+    }
+
+    if (arrived)
+    {
+        const int records = n02::playbackGetCurrentFrame() - s_PlaybackSeekStartRecord;
+        const double seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - s_PlaybackSeekStartTime).count();
+        std::ostringstream stream;
+        stream << "Playback jump: " << records << " records in " << std::fixed << std::setprecision(2)
+               << seconds << " s (" << static_cast<int>(seconds > 0 ? records / seconds : 0)
+               << " records/s), rendering skipped for " << s_PlaybackSeekSkipped << " of "
+               << (s_PlaybackSeekSkipped + s_PlaybackSeekRendered) << " display lists";
+        CoreAddCallbackMessage(CoreDebugMessageType::Info, stream.str());
+    }
+}
+
+// emulation thread, after each record played
+static void playback_seek_step(void)
+{
+    const int target = s_PlaybackSeekTarget.load();
+    if (target < 0)
+    {
+        return;
+    }
+
+    const int played = n02::playbackGetCurrentFrame();
+    if (played >= target)
+    {
+        finish_playback_seek(true);
+    }
+    else if (played >= target - kPlaybackSeekRenderLead && s_PlaybackSeekSkipping.load())
+    {
+        std::lock_guard<std::mutex> lock(s_PlaybackSeekMutex);
+        stop_playback_seek_skipping();
+    }
+}
+#endif // RMGK_HAVE_P2P_TRANSPORT
+
+// The speed factor a krec playback started with, restored when it stops so a
+// speed picked for the playback doesn't carry into the next session (the core
+// keeps it across ROMs). -1 = not playing back.
+static std::atomic<int> s_PlaybackSpeedRestore{-1};
+
 // Kaillera PIF sync callback (called from mupen64plus-core after netplay sync)
 static void KailleraPifSyncCallback(struct pif* pif)
 {
@@ -186,6 +443,12 @@ static void KailleraPifSyncCallback(struct pif* pif)
         return; // Invalid player number
     }
 
+    // Playback/spectate has no local player: every player's input comes from the krec.
+    // In this mode we must NEVER read or inject this machine's physical controller —
+    // doing so was overriding the recorded input with the viewer's idle joystick and
+    // desyncing the replay. Live netplay (false) still submits the local controller.
+    const bool inPlayback = CoreIsKailleraPlaybackMode();
+
     // Check if this is a controller read command for channel 0 (local player)
     // We only want to sync on actual input reads, not status queries or other commands
     bool isControllerRead = (pif_channel_has_command(pif->channels[0]) &&
@@ -197,16 +460,147 @@ static void KailleraPifSyncCallback(struct pif* pif)
         // First controller read this frame - read local input and sync with Kaillera
         s_SyncedThisFrame = true;  // Mark as synced BEFORE calling Kaillera
 
-        // Read 4-byte controller response from local controller
-        // N64 controller format: [buttons_hi][buttons_lo][x_axis][y_axis]
-        uint8_t* rx = pif->channels[0].rx_buf;
-        uint32_t local_input = (rx[0] << 24) | (rx[1] << 16) | (rx[2] << 8) | rx[3];
+        // Spectate keyframe restore: the first controller read after a keyframe is
+        // staged, jump to the broadcaster's snapshot before consuming any
+        // recorded input. The load must NOT happen synchronously here — this runs inside
+        // an SI DMA (dma_si_read -> update_pif_ram -> sync callback), and a full machine
+        // load mid-SI / mid-dynarec-block leaves the half-finished SI completion and the
+        // rest of the current block running on top of the restored state, desyncing at
+        // F+1. Instead defer it: the core performs the load at its next safe interrupt
+        // boundary (gen_interrupt), exactly like a normal savestate load, then the game
+        // re-dispatches cleanly from the restored PC and consumes the first tail
+        // record. The broadcaster captured this state after frame F, so that record is
+        // F+1—not F. (One controller poll per frame is assumed: gen_interrupt fires between
+        // this pre-load read and the next read, so the load is done by then.)
+        {
+            std::lock_guard<std::mutex> kfLock(s_SpectateKeyframeMutex);
+            // Wait until the krec tail has actually arrived (>=1 indexed input record)
+            // before loading. The server slices the tail to the first input after the
+            // saved state, so frameIndex[0] is exactly that next record. Loading before
+            // it arrives would leave nothing to realign the reader to.
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+            if (s_SpectateKeyframeStaged && !s_SpectateKeyframeLoaded && !s_SpectateKeyframeBuf.empty() &&
+                n02::playbackGetTotalFrames() > 0) {
+                CoreRollbackState kfState{};
+                kfState.buffer = s_SpectateKeyframeBuf.data();
+                kfState.len    = static_cast<int>(s_SpectateKeyframeBuf.size());
+                kfState.frame  = s_SpectateKeyframeFrame;
+                const bool deferOk = CoreRollbackLoadGameStateDeferred(kfState);
 
+                // Realign the krec reader to the first record after the snapshot. ROM boot
+                // may poll controllers before the deferred load lands; seeking to zero
+                // ensures none of those speculative reads shift the post-load input tail.
+                const bool seekOk = n02::playbackSeekToFrame(0);
+                if (!deferOk || !seekOk)
+                {
+                    CoreSetError("Could not align the live replay keyframe with its input tail");
+                    n02::playbackStopStream();
+                    return;
+                }
+                s_SpectateKeyframeLoaded = true;
+
+                if (kSpectateProbeEnabled)
+                {
+                    // Optional diagnostic: compare post-load state/input hashes with the
+                    // broadcaster when investigating a deterministic divergence.
+                    s_SpectateProbeFrameBase = s_SpectateKeyframeFrame;
+                    s_SpectateProbeScratch.assign(s_SpectateKeyframeBuf.size() + 65536, 0);
+                    s_SpectateProbeSeq = 0;
+                    s_SpectatePreJumpHash = 0;
+                    CoreRollbackState pj{};
+                    if (CoreRollbackSaveGameStateInto(pj, s_SpectateProbeScratch.data(),
+                                                      static_cast<int>(s_SpectateProbeScratch.size()),
+                                                      s_SpectateKeyframeFrame)) {
+                        s_SpectatePreJumpHash = rmgk_gekko::hash_bytes(pj.buffer,
+                                                    static_cast<size_t>(pj.len));
+                    }
+                    std::ostringstream sc;
+                    sc << "spectate_stage frame=" << s_SpectateKeyframeFrame
+                       << " kflen=" << s_SpectateKeyframeBuf.size()
+                       << " prejump_hash=" << std::hex << s_SpectatePreJumpHash << std::dec
+                       << " tail_frames=" << n02::playbackGetTotalFrames()
+                       << " defer_ok=" << (deferOk ? 1 : 0)
+                       << " seek_ok=" << (seekOk ? 1 : 0);
+                    rmgk_gekko::write_spectate_probe(sc.str());
+                    s_SpectateInputProbeCount = 0;
+                }
+                else
+                {
+                    s_SpectateProbeSeq = -1;
+                    s_SpectateProbeFrameBase = -1;
+                    s_SpectateProbeScratch.clear();
+                    s_SpectatePreJumpHash = 0;
+                    s_SpectateInputProbeCount = -1;
+                }
+
+                // Don't consume a krec record on this pre-load read; clear the per-frame
+                // sync flag so the first read after the deferred load consumes tail[0].
+                s_SyncedThisFrame = false;
+                return;
+            }
+#endif
+        }
+
+        // Divergence probe seq 1..N: each subsequent frame's first controller read runs
+        // at the start of that frame, i.e. AFTER the previous frame fully advanced — so
+        // re-saving here fingerprints the spectator's state at the start of replayed
+        // frame (base + seq), comparable to the broadcaster's host probe for that frame.
+        // A mismatch starting at base+1 means the very first replayed input is wrong
+        // (boundary alignment); a mismatch only after many clean frames means a slow
+        // reseed from state the savestate doesn't carry.
+        if (s_SpectateProbeSeq >= 0 && s_SpectateProbeSeq <= 30) {
+            const int probeFrame = s_SpectateProbeFrameBase + s_SpectateProbeSeq;
+            CoreRollbackState probe{};
+            if (CoreRollbackSaveGameStateInto(probe, s_SpectateProbeScratch.data(),
+                                              static_cast<int>(s_SpectateProbeScratch.size()), probeFrame)) {
+                const uint64_t h = rmgk_gekko::hash_bytes(probe.buffer, static_cast<size_t>(probe.len));
+                std::ostringstream stream;
+                stream << "spectate_probe side=spec frame=" << probeFrame
+                       << " hash=" << std::hex << h << std::dec
+                       << " len=" << probe.len;
+                rmgk_gekko::write_spectate_probe(stream.str());
+
+                // DECISIVE load-landed check: seq 0 is the first read after the deferred
+                // keyframe load should have drained at gen_interrupt. If the load landed,
+                // re-saving here reproduces the keyframe buffer byte-for-byte (Phase 1
+                // idempotency), so resaved_hash == kfbuf_hash. If they differ, the load
+                // never executed (the spectator is still on its own boot/replay timeline).
+                if (s_SpectateProbeSeq == 0) {
+                    uint64_t kfHash = 0; size_t kfLen = 0;
+                    {
+                        std::lock_guard<std::mutex> kfLock(s_SpectateKeyframeMutex);
+                        kfLen = s_SpectateKeyframeBuf.size();
+                        if (kfLen > 0)
+                            kfHash = rmgk_gekko::hash_bytes(s_SpectateKeyframeBuf.data(), kfLen);
+                    }
+                    const char* verdict = (kfLen > 0 && kfHash == h) ? "landed"
+                                        : (h == s_SpectatePreJumpHash)  ? "NOT_DRAINED"
+                                        : "other";
+                    std::ostringstream lc;
+                    lc << "spectate_loadcheck frame=" << probeFrame
+                       << " kfbuf_hash=" << std::hex << kfHash
+                       << " resaved_hash=" << h
+                       << " prejump_hash=" << s_SpectatePreJumpHash << std::dec
+                       << " kflen=" << kfLen << " resavedlen=" << probe.len
+                       << " verdict=" << verdict;
+                    rmgk_gekko::write_spectate_probe(lc.str());
+                }
+            }
+            s_SpectateProbeSeq++;
+        }
+
+        // Live netplay submits THIS client's local controller in slot 0 and gets back
+        // all players' synced inputs. In playback/spectate slot 0 must stay zero so the
+        // krec fully populates the buffer — reading the local controller here is what
+        // drove the spectator's P1 with the viewer's joystick.
         uint32_t sync_buffer[MAX_PLAYERS] = {0};
-        sync_buffer[0] = local_input;
+        if (!inPlayback) {
+            uint8_t* rx = pif->channels[0].rx_buf;
+            sync_buffer[0] = (rx[0] << 24) | (rx[1] << 16) | (rx[2] << 8) | rx[3];
+        }
 
         // Synchronize with Kaillera - this must be called exactly ONCE per emulator frame
-        int ret = CoreModifyKailleraPlayValues(sync_buffer, sizeof(uint32_t));
+        int ret = CoreModifyKailleraPlayValues(sync_buffer, sizeof(uint32_t), sizeof(sync_buffer));
 
         if (ret < 0) {
             // Game ended or network error. For live netplay we keep emulation
@@ -226,17 +620,47 @@ static void KailleraPifSyncCallback(struct pif* pif)
         }
 
         if (ret == 0) {
-            // Frame delay period - n02 returns 0 while buffering initial frames
-            // Use cached input from previous sync (or zeros if none yet)
-            return;
-        }
+            // No fresh synced input this frame. Live netplay: frame-delay buffering —
+            // return and let the previous cached input stand. Playback/spectate: the
+            // next krec record hasn't arrived yet (live edge); do NOT return, because the
+            // viewer's physical controller is still sitting in PIF RAM and would drive
+            // this frame. Fall through so the PIF write re-applies the last cached krec
+            // input (or forced neutral) instead of the local controller.
+            if (!inPlayback) {
+                return;
+            }
+        } else {
+            int num_received = ret / sizeof(uint32_t);
 
-        int num_received = ret / sizeof(uint32_t);
+            // Cache synced results for subsequent polls this frame and for writing to PIF
+            s_CachedNumReceived = num_received;
+            for (int i = 0; i < MAX_PLAYERS; i++) {
+                s_CachedSyncBuffer[i] = sync_buffer[i];
+            }
 
-        // Cache synced results for subsequent polls this frame and for writing to PIF
-        s_CachedNumReceived = num_received;
-        for (int i = 0; i < MAX_PLAYERS; i++) {
-            s_CachedSyncBuffer[i] = sync_buffer[i];
+            // Spectate input probe: log the input the spectator actually applies this
+            // frame so it lines up with the broadcaster's recorded krec bytes.
+            if (s_SpectateInputProbeCount >= 0 && s_SpectateInputProbeCount <= 30 && num_received > 0) {
+                std::ostringstream istream;
+                istream << "spectate_input side=spec frame=" << (s_SpectateProbeFrameBase + s_SpectateInputProbeCount)
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+                        << " mode=" << n02::getActiveMode()
+#endif
+                        << " ipb=" << (inPlayback ? 1 : 0);
+                for (int p = 0; p < num_received && p < 2; p++) {
+                    char buf[16];
+                    snprintf(buf, sizeof(buf), " p%d=%08x", p, s_CachedSyncBuffer[p]);
+                    istream << buf;
+                }
+                rmgk_gekko::write_spectate_probe(istream.str());
+                s_SpectateInputProbeCount++;
+            }
+
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+            if (inPlayback) {
+                playback_seek_step();
+            }
+#endif
         }
     }
 
@@ -275,6 +699,13 @@ static void KailleraPifSyncCallback(struct pif* pif)
                     rx[2] = (s_CachedSyncBuffer[i] >> 8) & 0xFF;
                     rx[3] = s_CachedSyncBuffer[i] & 0xFF;
                 }
+                else if (inPlayback && pif->channels[i].rx_buf != NULL) {
+                    // Playback with no synced krec input yet: force neutral so the
+                    // viewer's local controller (already written here by the input
+                    // plugin) can never drive the replay.
+                    uint8_t* rx = pif->channels[i].rx_buf;
+                    rx[0] = rx[1] = rx[2] = rx[3] = 0;
+                }
             }
             else if (cmd == JCMD_PAK_READ && pif->channels[i].rx_buf != NULL) {
                 // No controller pak present
@@ -287,6 +718,93 @@ static void KailleraPifSyncCallback(struct pif* pif)
         }
     }
 #endif // NETPLAY
+}
+
+CORE_EXPORT void CoreStageSpectateKeyframe(const unsigned char* data, int len, int frame)
+{
+    // UI thread: stage a savestate for the spectator's emulation to restore on its
+    // emulation thread before the first recorded input is consumed (see the PIF sync
+    // callback). Stage BEFORE the spectate emulation starts so the load wins the race.
+    std::lock_guard<std::mutex> lock(s_SpectateKeyframeMutex);
+    if (data != nullptr && len > 0)
+        s_SpectateKeyframeBuf.assign(data, data + len);
+    else
+        s_SpectateKeyframeBuf.clear();
+    s_SpectateKeyframeFrame  = frame;
+    s_SpectateKeyframeStaged = (data != nullptr && len > 0);
+    s_SpectateKeyframeLoaded = false;
+}
+
+CORE_EXPORT bool CoreStartPlaybackSeek(int record, bool pauseOnArrival)
+{
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    std::lock_guard<std::mutex> lock(s_PlaybackSeekMutex);
+    const int played = n02::playbackGetCurrentFrame();
+    if (!n02::isPlaybackActive() || record <= played)
+    {
+        return false;
+    }
+
+    if (s_PlaybackSeekTarget.load() < 0)
+    {
+        s_PlaybackSeekLimiter     = CoreIsSpeedLimiterEnabled();
+        s_PlaybackSeekStartRecord = played;
+        s_PlaybackSeekStartTime   = std::chrono::steady_clock::now();
+        s_PlaybackSeekSkipped     = 0;
+        s_PlaybackSeekRendered    = 0;
+        // pacing stays on, it also runs the pause loop
+        CoreSetFrameOutput(CoreFrameOutput_Pacing | CoreFrameOutput_Input);
+        CoreSetSpeedLimiterState(false);
+    }
+
+    // RMGK_SEEK_RENDER=1 keeps rendering during seeks, to compare
+    static const bool keepRendering = []()
+    {
+        const char* value = std::getenv("RMGK_SEEK_RENDER");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (!keepRendering && record - played > kPlaybackSeekRenderLead && !s_PlaybackSeekSkipping.load())
+    {
+        s_PlaybackSeekSkipping = CorePluginsSetGfxSkipRendering(true);
+    }
+
+    s_PlaybackSeekPause  = pauseOnArrival;
+    s_PlaybackSeekTarget = record;
+    return true;
+#else
+    (void)record;
+    (void)pauseOnArrival;
+    return false;
+#endif
+}
+
+CORE_EXPORT void CoreStopPlaybackSeek(void)
+{
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    finish_playback_seek(false);
+#endif
+}
+
+CORE_EXPORT bool CoreIsPlaybackSeeking(void)
+{
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    return s_PlaybackSeekTarget.load() >= 0;
+#else
+    return false;
+#endif
+}
+
+CORE_EXPORT void CoreClearSpectateKeyframe(void)
+{
+    std::lock_guard<std::mutex> lock(s_SpectateKeyframeMutex);
+    s_SpectateKeyframeBuf.clear();
+    s_SpectateKeyframeFrame  = -1;
+    s_SpectateKeyframeStaged = false;
+    s_SpectateKeyframeLoaded = false;
+    // Disarm the divergence probe so a partial window can't fire into a later session.
+    s_SpectateProbeSeq        = -1;
+    s_SpectateProbeFrameBase  = -1;
+    s_SpectateInputProbeCount = -1;
 }
 
 //
@@ -467,7 +985,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 
 #ifdef NETPLAY
     // Apply RSP plugin override and reload plugins BEFORE ROM open
-    if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0))
+    if (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0))
     {
         apply_kaillera_rsp_override();
         CoreApplyPluginSettings();  // Force reload with HLE RSP
@@ -551,10 +1069,48 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #ifdef NETPLAY
     // Apply deterministic settings AFTER all overlays for synchronized netplay or
     // explicit local rollback testing.
-    if (localRollbackEnabled || (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0)))
+    const bool syncedSession = localRollbackEnabled ||
+        (netplay && (address == "KAILLERA" || address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0));
+    if (syncedSession)
     {
         apply_kaillera_deterministic_settings();
     }
+#else
+    const bool syncedSession = false;
+#endif
+
+#ifdef RMGK_HAVE_P2P_TRANSPORT
+    // A replay file starts from the save its match did. (A live replay's
+    // viewer got that from the match's manifest already.)
+    if (address == "KAILLERA" && CoreIsKailleraPlaybackMode() && !n02::playbackIsStream())
+    {
+        CoreNetplaySaveData replaySave;
+        const std::string recorded = n02::playbackSaveData();
+        if (!recorded.empty() && !CoreDeserializeNetplaySaveData(recorded, replaySave))
+        {
+            CoreClearCheats();
+            CoreDetachPlugins();
+            CoreApplyPluginSettings();
+            CoreCloseRom();
+            return false;
+        }
+        CoreSetNetplaySaveData(replaySave);
+    }
+#endif
+
+    // A synced session keeps the game's saves in memory, starting from the
+    // host's pick (blank without one), so no player's own save files are read
+    // or changed. Offline play turns that off and uses the save files.
+    if (!CoreApplyNetplaySaveData(syncedSession))
+    {
+        CoreClearCheats();
+        CoreDetachPlugins();
+        CoreApplyPluginSettings();
+        CoreCloseRom();
+        return false;
+    }
+
+#ifdef NETPLAY
 
     // Kaillera connection happens BEFORE emulation via kailleraSelectServerDialog
     // Just verify it's initialized if netplay was requested
@@ -609,6 +1165,56 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                 }
             }
         }
+        else if (address.rfind("LOBBY|", 0) == 0)
+        {
+            int frameDelay = 0;
+            int predictionWindow = 4;
+            std::vector<LobbyRemotePeer> remotes;
+            int seats = 0;
+            int joinEpoch = -1;
+            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch))
+            {
+                CoreSetError("CoreStartEmulation: invalid Lobby session parameters");
+                m64p_ret = M64ERR_INPUT_INVALID;
+                netplay_ret = false;
+            }
+            else if (!rmgk_gekko::set_deterministic(true))
+            {
+                m64p_ret = M64ERR_SYSTEM_FAIL;
+                netplay_ret = false;
+            }
+            else
+            {
+                CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
+                // Size the session by the highest occupied SEAT, not the player
+                // count. Seats are N64 controller ports and the lobby lets them
+                // be sparse — two players in P1 and P3 is a 3-port session with
+                // one empty port, not a 2-port one. Using the count here made
+                // the slot-3 player fail its own `slot > players` check.
+                // A match that can take late joiners emulates every seat the
+                // room has (seats=), so an empty seat is an idle controller
+                // someone can take over later.
+                int totalSeats = std::max(player, seats);
+                for (const auto& remote : remotes)
+                {
+                    if (remote.slot > totalSeats)
+                        totalSeats = remote.slot;
+                }
+                netplay_ret = rmgk_gekko::start_lobby_session("rmgk-gekko",
+                    totalSeats, static_cast<int>(sizeof(uint32_t)),
+                    player, static_cast<unsigned short>(port),
+                    remotes.data(), static_cast<int>(remotes.size()),
+                    frameDelay, predictionWindow, joinEpoch);
+                if (!netplay_ret)
+                {
+                    if (CoreGetError().empty())
+                    {
+                        CoreSetError("CoreStartEmulation: GekkoNet session initialization failed");
+                    }
+                    m64p_ret = M64ERR_SYSTEM_FAIL;
+                }
+            }
+        }
         else
         {
             // Legacy netplay (Mupen64Plus built-in)
@@ -632,7 +1238,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         {
             CoreSettingsSetValue(SettingsID::Core_CPU_Emulator, 2);
             netplay_ret = rmgk_gekko::start_local_session("rmgk-gekko-local",
-                2, static_cast<int>(sizeof(uint32_t)), 0);
+                4, static_cast<int>(sizeof(uint32_t)), 0);
             rollbackExecute = netplay_ret;
             if (!netplay_ret)
             {
@@ -647,7 +1253,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
 #ifdef NETPLAY
     else
     {
-        rollbackExecute = address.rfind("GEKKO|", 0) == 0;
+        rollbackExecute = address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0;
     }
 #endif
 
@@ -687,11 +1293,32 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             {
                 set_callback(address == "KAILLERA" ? KailleraPifSyncCallback : nullptr);
             }
+
+            // A recording being played back drives its players' controllers
+            // through that callback, so a raw input plugin (e.g. raphnet) isn't
+            // polled for them: it would cap jumps at the adapter's polling rate.
+            typedef void (*set_pif_sync_replay_players_t)(int);
+#ifdef _WIN32
+            set_pif_sync_replay_players_t set_replay_players =
+                (set_pif_sync_replay_players_t)GetProcAddress((HMODULE)coreHandle, "set_pif_sync_replay_players");
+#else
+            set_pif_sync_replay_players_t set_replay_players =
+                (set_pif_sync_replay_players_t)dlsym(coreHandle, "set_pif_sync_replay_players");
+#endif
+            if (set_replay_players)
+            {
+                set_replay_players(address == "KAILLERA" && CoreIsKailleraPlaybackMode() ?
+                    CoreGetKailleraNumPlayers() : 0);
+            }
         }
 #endif
 
         CoreRollbackSetVerboseStats(CoreSettingsGetBoolValue(SettingsID::Rollback_VerboseStats));
         setRollbackLoggingEnvironment();
+
+#ifdef NETPLAY
+        s_PlaybackSpeedRestore = (address == "KAILLERA" && CoreIsKailleraPlaybackMode()) ? CoreGetSpeedFactor() : -1;
+#endif
 
         if (rollbackExecute)
         {
@@ -714,8 +1341,23 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             {
                 error += m64p::Core.ErrorMessage(m64p_ret);
             }
+
+            // A plugin fatal error at startup is almost always the video plugin
+            // failing to initialize — most often an OpenGL version / driver
+            // problem (the raw message is opaque). Point the user at the cause.
+            if (error.find("plugin function returned a fatal error") != std::string::npos)
+            {
+                error += "  This usually means the graphics plugin couldn't start — "
+                         "often an outdated or unsupported graphics driver (GLideN64 needs "
+                         "OpenGL 3.3+). Update your GPU driver, or pick a different video "
+                         "plugin in Settings.";
+            }
         }
     }
+
+    // a seek cut short by the end of emulation still restores normal output
+    CoreStopPlaybackSeek();
+    s_PlaybackSpeedRestore = -1;
 
     if (!netplay && rollbackExecute)
     {
@@ -731,7 +1373,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             // Don't shutdown Kaillera here - keep connection alive for restart
             // Kaillera will be shutdown when user leaves the server dialog
         }
-        else if (address.rfind("GEKKO|", 0) == 0)
+        else if (address.rfind("GEKKO|", 0) == 0 || address.rfind("LOBBY|", 0) == 0)
         {
             rmgk_gekko::close_session();
         }
@@ -775,6 +1417,14 @@ CORE_EXPORT bool CoreStopEmulation(void)
     if (!m64p::Core.IsHooked())
     {
         return false;
+    }
+
+    // the speed can only be set while the core runs
+    const int playbackSpeed = s_PlaybackSpeedRestore.exchange(-1);
+    if (playbackSpeed > 0 && (CoreIsEmulationRunning() || CoreIsEmulationPaused()) &&
+        CoreGetSpeedFactor() != playbackSpeed)
+    {
+        CoreSetSpeedFactor(playbackSpeed);
     }
 
     ret = m64p::Core.DoCommand(M64CMD_STOP, 0, nullptr);

@@ -170,7 +170,7 @@ void p2p_rollback_transport_clear(){
 //===========================================================
 //===========================================================
 DWORD p2p_initial_time;
-#define ADJUST_RATIO_T 1/30
+#define ADJUST_RATIO_T 1/30.f
 void p2p_InitializeTime(){
 	p2p_initial_time = GetTickCount();
 }

@@ -26,9 +26,5 @@ Data/kailleraclient.dll
 Source/3rdParty/mupen64plus-core/src/asm_defines/asm_defines_gas.h
 Source/3rdParty/mupen64plus-core/src/asm_defines/asm_defines_nasm.h
 fightcade-fbneo-master
-ucrt64.exe - Shortcut.lnk
-
-# GGPO local build directories
-ggpo-master/
-Source/3rdParty/ggpo/build*/
-bsnes-netplay-master
+# Any Windows shortcut trying to sneak in
+*.lnk
