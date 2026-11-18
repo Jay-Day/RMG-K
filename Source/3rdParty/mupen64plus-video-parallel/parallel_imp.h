@@ -10,6 +10,7 @@ extern "C"
 #endif
 
     extern int32_t vk_rescaling;
+    extern bool rmgk_netplay_timing;
     extern bool vk_ssreadbacks;
     extern bool vk_ssdither;
 

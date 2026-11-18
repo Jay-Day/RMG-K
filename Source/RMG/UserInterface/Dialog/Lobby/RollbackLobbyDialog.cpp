@@ -2682,6 +2682,7 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         // it. End the watch (closing the lobby window lands here too) instead of
         // leaving playback frozen, waiting for data that will never come. The
         // server drops a disconnected viewer itself.
+        m_pendingSpectate = PendingSpectate{};
         if (m_spectatingMatchId != 0)
         {
             m_spectatingMatchId = 0;
@@ -3210,6 +3211,8 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     m_currentRoomHostId = 0;
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
     m_knownSeatedUsers.clear();
     m_roomSeatsSeen = false;
     m_localDelayPublished = false;
@@ -3741,6 +3744,9 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     // still had a live local match (host dropped it for everyone).
     const QString prevState = m_currentRoomState;
     m_currentRoomState = state;
+    // A match that ended while it waited for our open game to close.
+    if (state != "in_game")
+        m_gameClosingMatchId = 0;
     if (prevState == "in_game" && state != "in_game" &&
         (m_emulationActive || m_awaitingEmulationStart))
     {
@@ -4476,6 +4482,10 @@ void RollbackLobbyDialog::notifyEmulationStarted()
 void RollbackLobbyDialog::notifyEmulationFinished()
 {
     m_localGameOpen = false;
+    // A watch that waited for this game to close can start, once the window
+    // has finished putting the game away.
+    if (m_pendingSpectate.matchId != 0)
+        QTimer::singleShot(0, this, &RollbackLobbyDialog::startPendingSpectate);
     // Always close out a broadcast if one is running, even on paths that fall
     // through the early-return below (it flushes the tail + sends BROADCAST_END).
     stopBroadcast();
@@ -5066,6 +5076,8 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     emit liveReplayViewerCountCleared();
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
     m_awaitingEmulationStart = false;
     m_emulationActive = false;
     endLiveRollbackSettings();
@@ -5596,7 +5608,8 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
 
 void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName, const QString& romMd5)
 {
-    if (m_spectatingMatchId != 0) return; // already spectating
+    if (matchId == m_spectatingMatchId || matchId == m_pendingSpectate.matchId)
+        return; // already watching it, or about to
 
     // Watch with the exact ROM the players use, matched by MD5 like joining a
     // room. Another build of the game (e.g. a different Smash Remix version) would
@@ -5616,6 +5629,27 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
         }
     }
 
+    // Watching something else: that live replay closes first. Its shutdown
+    // clears the settings the next stream brings, so the next one starts
+    // only once it's gone.
+    if (m_spectatingMatchId != 0 || m_pendingSpectate.matchId != 0)
+    {
+        m_pendingSpectate = PendingSpectate{matchId, gameName, romPath};
+        if (m_spectatingMatchId != 0)
+        {
+            stopSpectating();
+            emit spectateStreamClosed(QStringLiteral("switch"));
+        }
+        if (!m_localGameOpen)
+            QTimer::singleShot(0, this, &RollbackLobbyDialog::startPendingSpectate);
+        return;
+    }
+
+    launchSpectate(matchId, gameName, romPath);
+}
+
+void RollbackLobbyDialog::launchSpectate(quint64 matchId, const QString& gameName, const QString& romPath)
+{
     m_spectatingMatchId = matchId;
     m_spectateStreamArmed = false; // wait for this subscribe's SPECTATE_BEGIN before accepting data
     m_client->startSpectate(matchId);
@@ -5623,6 +5657,17 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
     setSpectatorChatVisible(true);
     emit spectateLaunch(matchId, gameName, romPath);
     appendChatSystemLine(CHANNEL_SPECTATE, tr("Connecting to live replay…"));
+}
+
+void RollbackLobbyDialog::startPendingSpectate()
+{
+    if (m_pendingSpectate.matchId == 0 || m_localGameOpen || m_spectatingMatchId != 0)
+        return;
+    const PendingSpectate next = m_pendingSpectate;
+    m_pendingSpectate = PendingSpectate{};
+    if (m_client->state() != LobbyClient::ConnectionState::Connected)
+        return;
+    launchSpectate(next.matchId, next.gameName, next.romPath);
 }
 
 void RollbackLobbyDialog::stopSpectating()
@@ -5735,6 +5780,8 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 {
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
     if (!reason.isEmpty())
     {
         appendChatSystemLine(CHANNEL_ROOM, reason);
@@ -5764,6 +5811,44 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 
 void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers)
 {
+    // The match takes over the window. Whatever is open there (a live replay
+    // watched from inside the room, an offline game) closes first, and the
+    // match waits until it's gone: a game closing after this point would
+    // clear the pre-match settings and report this match as finished, leaving
+    // us playing while the lobby shows us waiting to join.
+    m_pendingSpectate = PendingSpectate{};
+    const bool wasWatching = m_spectatingMatchId != 0;
+    if (wasWatching)
+    {
+        stopSpectating();
+        emit spectateStreamClosed(QStringLiteral("match_begin"));
+    }
+    if (m_localGameOpen)
+    {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_gameClosingMatchId != matchId)
+        {
+            m_gameClosingMatchId = matchId;
+            m_gameClosingDeadlineMs = nowMs + 10'000;
+            if (!wasWatching)
+                emit closeMatchRequested();
+        }
+        else if (nowMs >= m_gameClosingDeadlineMs)
+        {
+            m_currentMatchId = matchId;
+            m_awaitingEmulationStart = true;
+            abortMatchStart(tr("Match start failed: the game that was open didn't close."));
+            return;
+        }
+        QTimer::singleShot(50, this, [this, matchId, peers]() {
+            if (m_gameClosingMatchId == matchId)
+                onMatchBegin(matchId, peers);
+        });
+        return;
+    }
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
+
     QString iceError;
     if (!m_client->allIcePeersConnected(peers, &iceError))
     {
@@ -5797,6 +5882,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
 
     const QString line = QString(tr("Match #%1 starting with %2 player(s)")).arg(matchId).arg(peers.size());
     appendChatSystemLine(CHANNEL_LOBBY, line);

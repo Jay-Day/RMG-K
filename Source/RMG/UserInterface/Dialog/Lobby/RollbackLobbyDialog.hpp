@@ -310,6 +310,8 @@ private:
     // Begin spectating a broadcast match: tell the server and ask MainWindow to
     // launch a streaming-playback session with the ROM matching romMd5.
     void beginSpectate(quint64 matchId, const QString& gameName, const QString& romMd5);
+    void launchSpectate(quint64 matchId, const QString& gameName, const QString& romPath);
+    void startPendingSpectate();
 
     // Shows the Spectators chat tab (and selects it) while watching a live
     // replay; hiding it returns the column to lobby chat.
@@ -496,6 +498,14 @@ private:
     // Non-zero while this client is spectating a broadcast match (the match id
     // we asked the server to stream). Cleared when the spectate session ends.
     quint64    m_spectatingMatchId = 0;
+    // The match to watch next, once the live replay on screen has closed.
+    struct PendingSpectate
+    {
+        quint64 matchId = 0;
+        QString gameName;
+        QString romPath;
+    };
+    PendingSpectate m_pendingSpectate;
     // Session boundary guard. The persistent lobby socket can still deliver krec
     // chunks from a PREVIOUS watch of the same match after we re-subscribe (same
     // matchId, so they'd otherwise pass the filter and corrupt the new replay).
@@ -565,6 +575,10 @@ private:
     quint64 m_currentMatchId        = 0;
     quint64 m_iceWaitingMatchId     = 0;
     qint64  m_iceMatchDeadlineMs    = 0;
+    // A match that waits for the game on screen (a live replay, an offline
+    // game) to close before it starts.
+    quint64 m_gameClosingMatchId    = 0;
+    qint64  m_gameClosingDeadlineMs = 0;
 
     // Seated user ids as of the last ROOM_STATE, used to detect when a *new*
     // player joins (so we can flash/chime). m_roomSeatsSeen suppresses the chime
