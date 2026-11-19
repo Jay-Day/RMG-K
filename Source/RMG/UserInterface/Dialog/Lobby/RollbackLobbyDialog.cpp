@@ -4142,6 +4142,14 @@ void RollbackLobbyDialog::updateSaveDataControls()
         return tr("%n min ago", nullptr, int(seconds / 60));
     };
 
+    // "The game saved" means in memory: say so until a file holds the change,
+    // or it reads as if the progress were already safe on disk.
+    const bool unsavedChange = m_matchSaveChanged && m_matchSave && m_keepCopyWrittenMs < m_matchSaveChangedMs;
+    // It's the host's progress, so only the host's copy reads as a warning.
+    const QString unsavedText = tr("in memory only: use Save As to keep it");
+    const QString unsavedHtml = !iAmHost ? unsavedText
+        : QStringLiteral("<span style='color:%1; font-weight:600;'>%2</span>").arg(warnTextHex(), unsavedText);
+
     QStringList parts;
     // The host's label is in the host's language; a blank save reads in ours.
     const QString label = m_roomSaveDataEnabled && m_roomSaveDataKinds.isEmpty() ? tr("Blank save")
@@ -4151,10 +4159,14 @@ void RollbackLobbyDialog::updateSaveDataControls()
         parts << tr("<b>Save data:</b> %1").arg(label.toHtmlEscaped());
         parts << (m_matchSaveChanged ? tr("the game saved %1").arg(ago(m_matchSaveChangedMs))
                                      : tr("not changed yet"));
+        if (unsavedChange)
+            parts << unsavedHtml;
     }
     else if (m_matchSaveChanged && m_matchSave)
     {
         parts << tr("<b>Save data:</b> the last match changed the save");
+        if (unsavedChange)
+            parts << unsavedHtml;
         if (iAmHost && m_hostSaveChoice && m_roomSaveDataEnabled)
             parts << (m_hostSaveChoice->ContinueAfterMatch ? tr("the next match continues from it")
                                                            : tr("the next match starts from %1 again").arg(label.toHtmlEscaped()));
@@ -4204,6 +4216,23 @@ bool RollbackLobbyDialog::pickStartingSave()
         return false;
 
     m_hostSaveChoice = dialog.choice();
+    // A kept netplay save is played on: the game's saves go back into it.
+    if (m_hostSaveChoice->KeepFileUpdated)
+    {
+        m_keepCopyFile = m_hostSaveChoice->File;
+        m_keepCopyEnabled = true;
+        m_keepCopyFromPick = true;
+    }
+    else if (m_keepCopyFromPick &&
+             !(lastMatch && m_hostSaveChoice->File.isEmpty() && m_hostSaveChoice->Data == *lastMatch))
+    {
+        // Another save was picked: its progress doesn't belong in that file.
+        // (Picking where the last match left off carries on in the same file.)
+        m_keepCopyFile.clear();
+        m_keepCopyEnabled = false;
+        m_keepCopyFromPick = false;
+    }
+    updateSaveDataControls();
     return true;
 }
 
@@ -4322,7 +4351,9 @@ void RollbackLobbyDialog::saveMatchSaveAs()
         return;
     }
     m_keepCopyFile = file;
-    m_keepCopyEnabled = dialog.keepUpdated() && m_matchSaveActive;
+    m_keepCopyFromPick = false;
+    // Between matches too: the next match in this room then updates the file.
+    m_keepCopyEnabled = dialog.keepUpdated();
     appendChatSystemLine(CHANNEL_ROOM, m_keepCopyEnabled
         ? tr("Saved to %1. It's kept updated while you play.").arg(QDir::toNativeSeparators(file))
         : tr("Saved to %1.").arg(QDir::toNativeSeparators(file)));
@@ -5045,6 +5076,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
         m_matchSaveChanged = false;
         m_keepCopyFile.clear();
         m_keepCopyEnabled = false;
+        m_keepCopyFromPick = false;
     }
     if (m_saveDataCheck) m_saveDataCheck->setVisible(false);
     updateSaveDataControls();

@@ -640,6 +640,7 @@ private:
     qint64 m_matchSaveChangedMs = 0;
     QString m_keepCopyFile;            // the Save As file kept updated
     bool m_keepCopyEnabled = false;
+    bool m_keepCopyFromPick = false;   // the file is the starting save the host picked
     qint64 m_keepCopyWrittenMs = 0;
     QTimer* m_saveDataTimer = nullptr;
     quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet
