@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cstdint>
 #include <string>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace KailleraExport
 {
@@ -32,9 +35,9 @@ bool MuxVideoAndAudio(const std::string& ffmpegPath,
 class FfmpegEncoder
 {
 public:
-    bool open(const FfmpegEncoderConfig& config, std::string* errorMessage);
+    bool openEncoder(const FfmpegEncoderConfig& config, std::string* errorMessage);
     bool writeFrame(const uint8_t* rgbData, int width, int height, std::string* errorMessage);
-    void close();
+    void closeEncoder();
     bool isHardwareAccelerated() const;
     const std::string& selectedVideoEncoder() const;
 
@@ -43,6 +46,9 @@ private:
     int m_FrameWidth = 0;
     int m_FrameHeight = 0;
     void* m_ProcessHandle = nullptr;
+#ifndef _WIN32
+    pid_t m_ProcessPid = -1;
+#endif
     std::string m_SelectedVideoEncoder;
     bool m_HardwareAccelerated = false;
 };

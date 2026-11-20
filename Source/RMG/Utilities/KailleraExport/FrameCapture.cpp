@@ -635,7 +635,7 @@ void FrameCaptureCallback(unsigned int)
         s_FrameHeight = height;
 
         std::string errorMessage;
-        if (!s_Encoder->open(s_EncoderConfig, &errorMessage))
+        if (!s_Encoder->openEncoder(s_EncoderConfig, &errorMessage))
         {
             fprintf(stderr, "%s\n", errorMessage.c_str());
             s_Emulator->stop();
