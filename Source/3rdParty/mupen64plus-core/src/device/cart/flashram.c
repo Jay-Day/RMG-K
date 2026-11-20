@@ -59,7 +59,10 @@ static void flashram_command(struct flashram* flashram, uint32_t command)
 
         /* do chip/sector erase */
         if (flashram->mode == FLASHRAM_MODE_SECTOR_ERASE) {
-            offset = (flashram->erase_page & 0xff80) * 128;
+            /* Wrap the 16-bit page number (from the game, or a savestate)
+             * into the 128 KB chip: unwrapped, it reached 8 MB past the
+             * save's buffer. */
+            offset = ((flashram->erase_page & 0xff80) * 128) & (FLASHRAM_SIZE - 1);
             memset(mem + offset, 0xff, 128*128);
             flashram->istorage->save(flashram->storage, offset, 128*128);
         }
@@ -81,8 +84,8 @@ static void flashram_command(struct flashram* flashram, uint32_t command)
         /* set program busy flag */
         flashram->status |= 0x01;
 
-        /* program selected page */
-        offset = (command & 0xffff) * 128;
+        /* program selected page (wrapped into the chip, as for erase) */
+        offset = ((command & 0xffff) * 128) & (FLASHRAM_SIZE - 1);
         for (i = 0; i < 128; ++i) {
             mem[(offset+i)^S8] = flashram->page_buf[i];
         }
@@ -208,8 +211,9 @@ unsigned int flashram_dma_write(void* opaque, uint8_t* dram, uint32_t dram_addr,
             cart_addr &= 0xffff;
         }
 
-        /* do actual DMA */
-        for(i = 0; i < length && (dram_addr+i) < flashram->rdram->dram_size; ++i) {
+        /* do actual DMA, stopping at the end of the chip */
+        for(i = 0; i < length && (dram_addr+i) < flashram->rdram->dram_size
+                && (cart_addr+i) < FLASHRAM_SIZE; ++i) {
             dram[(dram_addr+i)^S8] = mem[(cart_addr+i)^S8];
         }
     }

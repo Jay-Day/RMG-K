@@ -119,10 +119,6 @@ public:
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
 
-    // MainWindow calls this once a spectate session is fully torn down, so a
-    // switch to another match can start its new session.
-    void notifySpectateSessionClosed();
-
     // Lag stats for the running rollback match (or the last one), built from
     // our own numbers and the other players' reports. /lagstat in the in-game
     // chat shows this on the overlay and adds it to the room chat.
@@ -468,6 +464,8 @@ private:
     // Begin spectating a broadcast match: tell the server and ask MainWindow to
     // launch a streaming-playback session with the ROM matching romMd5.
     void beginSpectate(quint64 matchId, const QString& gameName, const QString& romMd5);
+    void launchSpectate(quint64 matchId, const QString& gameName, const QString& romPath);
+    void startPendingSpectate();
 
     // Shows the Spectators chat tab (and selects it) while watching a live
     // replay; hiding it returns the column to lobby chat.
@@ -812,6 +810,14 @@ private:
     quint64    m_playerChatMatchId = 0;
     bool       m_playerChatLive = false;
     QString    m_roomSubText; // room details for the title tooltip, before the viewer count
+    // The match to watch next, once the live replay on screen has closed.
+    struct PendingSpectate
+    {
+        quint64 matchId = 0;
+        QString gameName;
+        QString romPath;
+    };
+    PendingSpectate m_pendingSpectate;
     // Session boundary guard. The persistent lobby socket can still deliver krec
     // chunks from a PREVIOUS watch of the same match after we re-subscribe (same
     // matchId, so they'd otherwise pass the filter and corrupt the new replay).
@@ -819,15 +825,6 @@ private:
     // the stale data on the wire — so we drop every keyframe/data message until we
     // see the BEGIN for the current subscribe. Reset false in beginSpectate.
     bool       m_spectateStreamArmed = false;
-
-    // A switch to another match, held until the current session has shut down.
-    struct PendingSpectate
-    {
-        quint64 matchId = 0;
-        QString gameName;
-        QString romMd5;
-    };
-    PendingSpectate m_pendingSpectate;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];
@@ -908,6 +905,10 @@ private:
     quint64 m_currentMatchId        = 0;
     quint64 m_iceWaitingMatchId     = 0;
     qint64  m_iceMatchDeadlineMs    = 0;
+    // A match that waits for the game on screen (a live replay, an offline
+    // game) to close before it starts.
+    quint64 m_gameClosingMatchId    = 0;
+    qint64  m_gameClosingDeadlineMs = 0;
 
     // Seated user ids as of the last ROOM_STATE, used to detect when a *new*
     // player joins (so we can flash/chime). m_roomSeatsSeen suppresses the chime
@@ -995,6 +996,7 @@ private:
     qint64 m_matchSaveChangedMs = 0;
     QString m_keepCopyFile;            // the Save As file kept updated
     bool m_keepCopyEnabled = false;
+    bool m_keepCopyFromPick = false;   // the file is the starting save the host picked
     qint64 m_keepCopyWrittenMs = 0;
     QTimer* m_saveDataTimer = nullptr;
     quint64 m_admitRequestedUserId = 0;   // host clicked Add; no answer yet

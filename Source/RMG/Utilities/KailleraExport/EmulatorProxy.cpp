@@ -3,10 +3,13 @@
 
 #include <algorithm>
 #include <cstdarg>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -141,118 +144,162 @@ bool EmulatorProxy::loadPlugin(const std::string& path, m64p_plugin_type type)
     return true;
 }
 
-void EmulatorProxy::configureGlideN64()
+static bool readIniLines(const std::filesystem::path& path, std::vector<std::string>& lines)
 {
-    std::vector<std::filesystem::path> iniFiles;
-    iniFiles.push_back(std::filesystem::path(m_ConfigDir) / "GLideN64.ini");
-    iniFiles.push_back(std::filesystem::path(m_ConfigDir) / "GLideN64.custom.ini");
-
-    for (const auto& iniPath : iniFiles)
+    std::ifstream input(path);
+    if (!input.is_open())
     {
-        if (!std::filesystem::exists(iniPath))
+        return false;
+    }
+
+    std::string line;
+    while (std::getline(input, line))
+    {
+        if (!line.empty() && line.back() == '\r')
         {
-            continue;
+            line.pop_back();
         }
+        lines.push_back(line);
+    }
+    return true;
+}
 
-        std::ifstream input(iniPath);
-        if (!input.is_open())
+static void writeIniLines(const std::filesystem::path& path, const std::vector<std::string>& lines)
+{
+    std::ofstream output(path, std::ios::trunc);
+    if (!output.is_open())
+    {
+        return;
+    }
+
+    for (const std::string& line : lines)
+    {
+        output << line << '\n';
+    }
+}
+
+using IniOverrides = std::vector<std::pair<std::string, std::string>>;
+
+// Replaces the value of every "key=" line that names an overridden key,
+// from firstLine up to (not including) lastLine. Returns which keys it found.
+static std::vector<bool> replaceIniValues(std::vector<std::string>& lines,
+                                          size_t firstLine,
+                                          size_t lastLine,
+                                          const IniOverrides& overrides)
+{
+    std::vector<bool> found(overrides.size(), false);
+    for (size_t i = firstLine; i < lastLine && i < lines.size(); i++)
+    {
+        for (size_t o = 0; o < overrides.size(); o++)
         {
-            continue;
-        }
-
-        std::vector<std::string> lines;
-        std::string line;
-        while (std::getline(input, line))
-        {
-            if (!line.empty() && line.back() == '\r')
+            const std::string prefix = overrides[o].first + "=";
+            if (lines[i].rfind(prefix, 0) == 0)
             {
-                line.pop_back();
+                lines[i] = prefix + overrides[o].second;
+                found[o] = true;
+                break;
             }
-            lines.push_back(line);
-        }
-        input.close();
-
-        const int nativeResFactor = std::max(1, m_RenderWidth / 320);
-        bool inUserSection = false;
-        for (std::string& currentLine : lines)
-        {
-            if (!currentLine.empty() && currentLine.front() == '[')
-            {
-                inUserSection = (currentLine == "[User]");
-                continue;
-            }
-
-            if (currentLine.rfind("onScreenDisplay\\showFPS=", 0) == 0)
-            {
-                currentLine = "onScreenDisplay\\showFPS=0";
-            }
-            else if (currentLine.rfind("onScreenDisplay\\showVIS=", 0) == 0)
-            {
-                currentLine = "onScreenDisplay\\showVIS=0";
-            }
-            else if (currentLine.rfind("onScreenDisplay\\showPercent=", 0) == 0)
-            {
-                currentLine = "onScreenDisplay\\showPercent=0";
-            }
-            else if (currentLine.rfind("onScreenDisplay\\showInternalResolution=", 0) == 0)
-            {
-                currentLine = "onScreenDisplay\\showInternalResolution=0";
-            }
-            else if (currentLine.rfind("onScreenDisplay\\showRenderingResolution=", 0) == 0)
-            {
-                currentLine = "onScreenDisplay\\showRenderingResolution=0";
-            }
-            else if (currentLine.rfind("onScreenDisplay\\showStatistics=", 0) == 0)
-            {
-                currentLine = "onScreenDisplay\\showStatistics=0";
-            }
-
-            if (!inUserSection)
-            {
-                continue;
-            }
-
-            if (currentLine.rfind("frameBufferEmulation\\nativeResFactor=", 0) == 0)
-            {
-                currentLine = "frameBufferEmulation\\nativeResFactor=" + std::to_string(nativeResFactor);
-            }
-            else if (currentLine.rfind("video\\windowedWidth=", 0) == 0)
-            {
-                currentLine = "video\\windowedWidth=" + std::to_string(m_RenderWidth);
-            }
-            else if (currentLine.rfind("video\\windowedHeight=", 0) == 0)
-            {
-                currentLine = "video\\windowedHeight=" + std::to_string(m_RenderHeight);
-            }
-            else if (currentLine.rfind("video\\multisampling=", 0) == 0)
-            {
-                currentLine = "video\\multisampling=" + std::to_string(m_Msaa);
-            }
-            else if (currentLine.rfind("video\\maxMultiSampling=", 0) == 0)
-            {
-                currentLine = "video\\maxMultiSampling=" + std::to_string(m_Msaa);
-            }
-            else if (currentLine.rfind("texture\\anisotropy=", 0) == 0)
-            {
-                currentLine = "texture\\anisotropy=" + std::to_string(m_Aniso);
-            }
-            else if (currentLine.rfind("texture\\maxAnisotropy=", 0) == 0)
-            {
-                currentLine = "texture\\maxAnisotropy=" + std::to_string(m_Aniso);
-            }
-        }
-
-        std::ofstream output(iniPath, std::ios::trunc);
-        if (!output.is_open())
-        {
-            continue;
-        }
-
-        for (const std::string& currentLine : lines)
-        {
-            output << currentLine << '\n';
         }
     }
+    return found;
+}
+
+void EmulatorProxy::configureGlideN64()
+{
+    // GLideN64 shows its FPS counter and renders at 640x480 unless its
+    // settings say otherwise, so every one of these has to end up in the
+    // file, including when the user has never saved graphics settings.
+    const IniOverrides osdOverrides = {
+        { "onScreenDisplay\\showFPS", "0" },
+        { "onScreenDisplay\\showVIS", "0" },
+        { "onScreenDisplay\\showPercent", "0" },
+        { "onScreenDisplay\\showInternalResolution", "0" },
+        { "onScreenDisplay\\showRenderingResolution", "0" },
+        { "onScreenDisplay\\showStatistics", "0" },
+    };
+    IniOverrides profileOverrides = {
+        { "frameBufferEmulation\\nativeResFactor", std::to_string(std::max(1, m_RenderWidth / 320)) },
+        { "video\\windowedWidth", std::to_string(m_RenderWidth) },
+        { "video\\windowedHeight", std::to_string(m_RenderHeight) },
+        { "video\\multisampling", std::to_string(m_Msaa) },
+        { "video\\maxMultiSampling", std::to_string(m_Msaa) },
+        { "texture\\anisotropy", std::to_string(m_Aniso) },
+        { "texture\\maxAnisotropy", std::to_string(m_Aniso) },
+    };
+    profileOverrides.insert(profileOverrides.end(), osdOverrides.begin(), osdOverrides.end());
+
+    // The per-game file only needs its on-screen display lines turned off.
+    {
+        const std::filesystem::path customPath = std::filesystem::path(m_ConfigDir) / "GLideN64.custom.ini";
+        std::vector<std::string> lines;
+        if (readIniLines(customPath, lines))
+        {
+            replaceIniValues(lines, 0, lines.size(), osdOverrides);
+            writeIniLines(customPath, lines);
+        }
+    }
+
+    // The main file keeps its settings in the section named by "profile".
+    const std::filesystem::path iniPath = std::filesystem::path(m_ConfigDir) / "GLideN64.ini";
+    std::vector<std::string> lines;
+    readIniLines(iniPath, lines);
+
+    std::string profile = "User";
+    for (const std::string& currentLine : lines)
+    {
+        if (currentLine.rfind("profile=", 0) == 0 && currentLine.size() > 8)
+        {
+            profile = currentLine.substr(8);
+            break;
+        }
+    }
+
+    const std::string profileHeader = "[" + profile + "]";
+    size_t headerLine = lines.size();
+    for (size_t i = 0; i < lines.size(); i++)
+    {
+        if (lines[i] == profileHeader)
+        {
+            headerLine = i;
+            break;
+        }
+    }
+
+    if (headerLine == lines.size())
+    {
+        // No usable settings (no file, or one without a profile): start a
+        // new one. 23 is the first settings version with profiles; the
+        // plugin loads these values and rewrites the file as its own version.
+        profile = "User";
+        lines = {
+            "[General]",
+            "version=23",
+            "profile=User",
+            "",
+            "[User]",
+            "version=23",
+        };
+        headerLine = 4;
+    }
+
+    size_t sectionEnd = headerLine + 1;
+    while (sectionEnd < lines.size() && (lines[sectionEnd].empty() || lines[sectionEnd].front() != '['))
+    {
+        sectionEnd++;
+    }
+
+    const std::vector<bool> found = replaceIniValues(lines, headerLine + 1, sectionEnd, profileOverrides);
+    std::vector<std::string> missing;
+    for (size_t o = 0; o < profileOverrides.size(); o++)
+    {
+        if (!found[o])
+        {
+            missing.push_back(profileOverrides[o].first + "=" + profileOverrides[o].second);
+        }
+    }
+    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(headerLine) + 1, missing.begin(), missing.end());
+
+    writeIniLines(iniPath, lines);
 }
 
 void EmulatorProxy::disableGlideN64Osd()

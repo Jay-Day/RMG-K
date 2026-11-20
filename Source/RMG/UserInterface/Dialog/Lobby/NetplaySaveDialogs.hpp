@@ -34,6 +34,9 @@ struct NetplaySaveChoice
     // After a match that changed the save, the next one starts from where it
     // ended instead of from this save again.
     bool ContinueAfterMatch = true;
+    // The game's saves are written back to File (a netplay save the host
+    // kept) as the match goes, so the file always holds the latest progress.
+    bool KeepFileUpdated = false;
 };
 
 // "EEPROM 4K", "SRAM", "FlashRAM": the kinds data holds.
@@ -74,6 +77,8 @@ class StartingSaveDialog : public QDialog
     void addEntry(Entry entry, bool select);
     void browse(void);
     void showDetails(void);
+    // The picked entry is a netplay save file the match can write back to.
+    bool canKeepFile(int row) const;
 
     QString m_romMd5;
     QString m_gameName;
@@ -82,6 +87,9 @@ class StartingSaveDialog : public QDialog
     QListWidget* m_list = nullptr;
     QLabel* m_details = nullptr;
     ToggleSwitch* m_continueCheck = nullptr;
+    ToggleSwitch* m_keepFileCheck = nullptr;
+    // What the host last chose for the box, kept while it's hidden.
+    bool m_keepFileWanted = true;
     LobbyButton* m_useButton = nullptr;
 };
 

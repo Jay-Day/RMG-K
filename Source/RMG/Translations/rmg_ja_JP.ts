@@ -2791,6 +2791,10 @@ A local replay is saved only if Record locally is checked.</source>
             <translation>対戦開始に失敗しました: リモートプレイヤーが見つかりません。</translation>
         </message>
         <message>
+            <source>Match start failed: the game that was open didn&apos;t close.</source>
+            <translation>対戦開始に失敗しました: 開いていたゲームを終了できませんでした。</translation>
+        </message>
+        <message>
             <source>Already in a room</source>
             <translation>ルームに参加中</translation>
         </message>
@@ -3539,6 +3543,10 @@ The game saves to memory only during the match: nobody's own save files are touc
             <translation>まだ変更なし</translation>
         </message>
         <message>
+            <source>in memory only: use Save As to keep it</source>
+            <translation>メモリ上のみ：残すには「名前を付けて保存」</translation>
+        </message>
+        <message>
             <source>&lt;b&gt;Save data:&lt;/b&gt; the last match changed the save</source>
             <translation>&lt;b&gt;セーブデータ：&lt;/b&gt;前回の対戦でセーブが変わりました</translation>
         </message>
@@ -3666,6 +3674,18 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
 Turn this off to start every match from the save picked here.</source>
             <translation>対戦でセーブが変わると、次の対戦は変わったセーブから始まります。
 オフにすると、毎回ここで選んだセーブから始まります。</translation>
+        </message>
+        <message>
+            <source>Keep this save file updated as the game saves</source>
+            <translation>ゲームがセーブするたびにこのセーブファイルを更新する</translation>
+        </message>
+        <message>
+            <source>Rewrites the picked file each time the game saves, so it always holds your latest progress.
+Turn this off to leave the file as it is. The game then saves to memory only,
+and you use Save As to keep a copy.</source>
+            <translation>ゲームがセーブするたびに選んだファイルを書き換えるので、常に最新の進行状況が残ります。
+オフにするとファイルはそのまま残ります。その場合セーブはメモリ上だけで行われ、
+残すには「名前を付けて保存」を使います。</translation>
         </message>
         <message>
             <source>Use This Save</source>

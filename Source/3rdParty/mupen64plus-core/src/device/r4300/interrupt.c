@@ -463,14 +463,16 @@ int save_eventqueue_infos(const struct cp0* cp0, char *buf)
     return len+4;
 }
 
-void load_eventqueue_infos(struct cp0* cp0, const char *buf)
+void load_eventqueue_infos(struct cp0* cp0, const char *buf, size_t size)
 {
-    int len = 0;
+    size_t len = 0;
     uint32_t* cp0_regs = r4300_cp0_regs(cp0);
 
     clear_queue(&cp0->q);
 
-    while (*((const unsigned int*)&buf[len]) != 0xFFFFFFFF)
+    /* The list ends at a 0xFFFFFFFF type. A savestate from elsewhere may
+     * leave it out, so stop at the end of the buffer too. */
+    while (len + 8 <= size && *((const unsigned int*)&buf[len]) != 0xFFFFFFFF)
     {
         int type = *((const unsigned int*)&buf[len]);
         unsigned int count = *((const unsigned int*)&buf[len+4]);

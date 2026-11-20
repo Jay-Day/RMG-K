@@ -221,6 +221,16 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
                                    "Turn this off to start every match from the save picked here."));
     m_continueCheck->setChecked(!current || current->ContinueAfterMatch);
     layout->addWidget(m_continueCheck);
+
+    // Playing on a kept netplay save: the game's saves go back into the file,
+    // or the progress is gone when the room closes.
+    m_keepFileCheck = new ToggleSwitch(tr("Keep this save file updated as the game saves"), this);
+    m_keepFileCheck->setObjectName("StartingSaveKeepFile");
+    m_keepFileCheck->setToolTip(tr("Rewrites the picked file each time the game saves, so it always holds your latest progress.\n"
+                                   "Turn this off to leave the file as it is. The game then saves to memory only,\n"
+                                   "and you use Save As to keep a copy."));
+    m_keepFileWanted = !current || current->File.isEmpty() || current->KeepFileUpdated;
+    layout->addWidget(m_keepFileCheck);
     root->addLayout(layout, 1);
     root->addWidget(rule(this));
 
@@ -234,6 +244,8 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(browseButton, &QPushButton::clicked, this, &StartingSaveDialog::browse);
     connect(m_list, &QListWidget::currentRowChanged, this, &StartingSaveDialog::showDetails);
+    connect(m_continueCheck, &QCheckBox::toggled, this, &StartingSaveDialog::showDetails);
+    connect(m_keepFileCheck, &QCheckBox::clicked, this, [this](bool checked) { m_keepFileWanted = checked; });
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this]() {
         if (m_useButton->isEnabled())
             accept();
@@ -364,9 +376,24 @@ void StartingSaveDialog::browse(void)
     addEntry(std::move(entry), true);
 }
 
+bool StartingSaveDialog::canKeepFile(int row) const
+{
+    if (row < 0 || row >= int(m_entries.size()))
+        return false;
+    const Entry& entry = m_entries[size_t(row)];
+    return !entry.File.isEmpty() && !entry.Native && !entry.OtherRom && !entry.Blank;
+}
+
 void StartingSaveDialog::showDetails(void)
 {
     const int row = m_list->currentRow();
+    // Only a netplay save file is written back to, and only when matches
+    // continue from one another: otherwise each match would replace the file
+    // with a fresh start's save.
+    const bool keepable = canKeepFile(row);
+    m_keepFileCheck->setVisible(keepable);
+    m_keepFileCheck->setEnabled(keepable && m_continueCheck->isChecked());
+    m_keepFileCheck->setChecked(keepable && m_continueCheck->isChecked() && m_keepFileWanted);
     if (row < 0 || row >= int(m_entries.size()))
     {
         m_details->clear();
@@ -434,6 +461,7 @@ NetplaySaveChoice StartingSaveDialog::choice(void) const
         choice.File = entry.File;
     }
     choice.ContinueAfterMatch = m_continueCheck->isChecked();
+    choice.KeepFileUpdated = canKeepFile(row) && choice.ContinueAfterMatch && m_keepFileCheck->isChecked();
     return choice;
 }
 

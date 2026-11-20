@@ -2908,6 +2908,7 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         // it. End the watch (closing the lobby window lands here too) instead of
         // leaving playback frozen, waiting for data that will never come. The
         // server drops a disconnected viewer itself.
+        m_pendingSpectate = PendingSpectate{};
         if (m_spectatingMatchId != 0)
         {
             m_spectatingMatchId = 0;
@@ -3891,6 +3892,8 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
     m_currentRoomHostName.clear();
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
     m_knownSeatedUsers.clear();
     m_roomSeatsSeen = false;
     m_localDelayPublished = false;
@@ -4493,6 +4496,9 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     m_roomMaxPlayers = maxPlayers;
     m_roomSeatedCount = int(roomState.value("players").toArray().size());
     updateRoomSizeControls();
+    // A match that ended while it waited for our open game to close.
+    if (state != "in_game")
+        m_gameClosingMatchId = 0;
     if (prevState == "in_game" && state != "in_game" &&
         (m_emulationActive || m_awaitingEmulationStart))
     {
@@ -4943,6 +4949,14 @@ void RollbackLobbyDialog::updateSaveDataControls()
         return tr("%n min ago", nullptr, int(seconds / 60));
     };
 
+    // "The game saved" means in memory: say so until a file holds the change,
+    // or it reads as if the progress were already safe on disk.
+    const bool unsavedChange = m_matchSaveChanged && m_matchSave && m_keepCopyWrittenMs < m_matchSaveChangedMs;
+    // It's the host's progress, so only the host's copy reads as a warning.
+    const QString unsavedText = tr("in memory only: use Save As to keep it");
+    const QString unsavedHtml = !iAmHost ? unsavedText
+        : QStringLiteral("<span style='color:%1; font-weight:600;'>%2</span>").arg(LobbyTheme::tokens().warn.name(), unsavedText);
+
     QStringList parts;
     // The host's label is in the host's language; a blank save reads in ours.
     const QString label = m_roomSaveDataEnabled && m_roomSaveDataKinds.isEmpty() ? tr("Blank save")
@@ -4952,10 +4966,14 @@ void RollbackLobbyDialog::updateSaveDataControls()
         parts << tr("<b>Save data:</b> %1").arg(label.toHtmlEscaped());
         parts << (m_matchSaveChanged ? tr("the game saved %1").arg(ago(m_matchSaveChangedMs))
                                      : tr("not changed yet"));
+        if (unsavedChange)
+            parts << unsavedHtml;
     }
     else if (m_matchSaveChanged && m_matchSave)
     {
         parts << tr("<b>Save data:</b> the last match changed the save");
+        if (unsavedChange)
+            parts << unsavedHtml;
         if (iAmHost && m_hostSaveChoice && m_roomSaveDataEnabled)
             parts << (m_hostSaveChoice->ContinueAfterMatch ? tr("the next match continues from it")
                                                            : tr("the next match starts from %1 again").arg(label.toHtmlEscaped()));
@@ -5006,6 +5024,23 @@ bool RollbackLobbyDialog::pickStartingSave()
         return false;
 
     m_hostSaveChoice = dialog.choice();
+    // A kept netplay save is played on: the game's saves go back into it.
+    if (m_hostSaveChoice->KeepFileUpdated)
+    {
+        m_keepCopyFile = m_hostSaveChoice->File;
+        m_keepCopyEnabled = true;
+        m_keepCopyFromPick = true;
+    }
+    else if (m_keepCopyFromPick &&
+             !(lastMatch && m_hostSaveChoice->File.isEmpty() && m_hostSaveChoice->Data == *lastMatch))
+    {
+        // Another save was picked: its progress doesn't belong in that file.
+        // (Picking where the last match left off carries on in the same file.)
+        m_keepCopyFile.clear();
+        m_keepCopyEnabled = false;
+        m_keepCopyFromPick = false;
+    }
+    updateSaveDataControls();
     return true;
 }
 
@@ -5125,7 +5160,9 @@ void RollbackLobbyDialog::saveMatchSaveAs()
         return;
     }
     m_keepCopyFile = file;
-    m_keepCopyEnabled = dialog.keepUpdated() && m_matchSaveActive;
+    m_keepCopyFromPick = false;
+    // Between matches too: the next match in this room then updates the file.
+    m_keepCopyEnabled = dialog.keepUpdated();
     appendChatSystemLine(CHANNEL_ROOM, m_keepCopyEnabled
         ? tr("Saved to %1. It's kept updated while you play.").arg(QDir::toNativeSeparators(file))
         : tr("Saved to %1.").arg(QDir::toNativeSeparators(file)));
@@ -5623,6 +5660,10 @@ void RollbackLobbyDialog::notifyEmulationStarted()
 void RollbackLobbyDialog::notifyEmulationFinished()
 {
     m_localGameOpen = false;
+    // A watch that waited for this game to close can start, once the window
+    // has finished putting the game away.
+    if (m_pendingSpectate.matchId != 0)
+        QTimer::singleShot(0, this, &RollbackLobbyDialog::startPendingSpectate);
     // Always close out a broadcast if one is running, even on paths that fall
     // through the early-return below (it flushes the tail + sends BROADCAST_END).
     stopBroadcast();
@@ -6269,6 +6310,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
         m_matchSaveChanged = false;
         m_keepCopyFile.clear();
         m_keepCopyEnabled = false;
+        m_keepCopyFromPick = false;
     }
     if (m_saveDataCheck) m_saveDataCheck->setVisible(false);
     updateSaveDataControls();
@@ -6294,6 +6336,8 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     emit liveReplayViewerCountCleared();
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
     m_awaitingEmulationStart = false;
     m_emulationActive = false;
     endLiveRollbackSettings();
@@ -7285,7 +7329,8 @@ void RollbackLobbyDialog::onBroadcastDrainTick()
 
 void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName, const QString& romMd5)
 {
-    if (m_spectatingMatchId == matchId) return; // already watching this one
+    if (matchId == m_spectatingMatchId || matchId == m_pendingSpectate.matchId)
+        return; // already watching it, or about to
 
     // Watch with the exact ROM the players use, matched by MD5 like joining a
     // room. Another build of the game (e.g. a different Smash Remix version) would
@@ -7305,17 +7350,27 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
         }
     }
 
-    // Switching matches: the current playback has to shut down first, which
-    // takes the emulator a moment. MainWindow says when it's done, and the new
-    // watch starts from notifySpectateSessionClosed.
-    if (m_spectatingMatchId != 0)
+    // Watching something else: that live replay closes first. Its shutdown
+    // clears the settings the next stream brings, so the next one starts
+    // only once it's gone.
+    if (m_spectatingMatchId != 0 || m_pendingSpectate.matchId != 0)
     {
-        m_pendingSpectate = PendingSpectate{ matchId, gameName, romMd5 };
-        emit spectateStreamClosed(QStringLiteral("switching"));
+        m_pendingSpectate = PendingSpectate{matchId, gameName, romPath};
+        if (m_spectatingMatchId != 0)
+        {
+            stopSpectating();
+            emit spectateStreamClosed(QStringLiteral("switch"));
+        }
+        if (!m_localGameOpen)
+            QTimer::singleShot(0, this, &RollbackLobbyDialog::startPendingSpectate);
         return;
     }
 
-    m_pendingSpectate = PendingSpectate{};
+    launchSpectate(matchId, gameName, romPath);
+}
+
+void RollbackLobbyDialog::launchSpectate(quint64 matchId, const QString& gameName, const QString& romPath)
+{
     m_spectatingMatchId = matchId;
     m_spectateStreamArmed = false; // wait for this subscribe's SPECTATE_BEGIN before accepting data
     m_client->startSpectate(matchId);
@@ -7326,23 +7381,15 @@ void RollbackLobbyDialog::beginSpectate(quint64 matchId, const QString& gameName
     onRoomListChanged();
 }
 
-void RollbackLobbyDialog::notifySpectateSessionClosed()
+void RollbackLobbyDialog::startPendingSpectate()
 {
-    if (m_pendingSpectate.matchId == 0)
+    if (m_pendingSpectate.matchId == 0 || m_localGameOpen || m_spectatingMatchId != 0)
         return;
     const PendingSpectate next = m_pendingSpectate;
     m_pendingSpectate = PendingSpectate{};
-    QTimer::singleShot(0, this, [this, next]() {
-        // The match may have ended while the old session shut down.
-        for (const auto& room : m_client->rooms())
-        {
-            if (room.matchId == next.matchId && room.broadcasting && m_currentRoomId == 0)
-            {
-                beginSpectate(next.matchId, next.gameName, next.romMd5);
-                break;
-            }
-        }
-    });
+    if (m_client->state() != LobbyClient::ConnectionState::Connected)
+        return;
+    launchSpectate(next.matchId, next.gameName, next.romPath);
 }
 
 void RollbackLobbyDialog::stopSpectating()
@@ -7462,6 +7509,8 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 {
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
     if (!reason.isEmpty())
     {
         appendChatSystemLine(CHANNEL_ROOM, reason);
@@ -7491,6 +7540,44 @@ void RollbackLobbyDialog::abortMatchStart(const QString& reason)
 
 void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient::LobbyMatchPeer>& peers)
 {
+    // The match takes over the window. Whatever is open there (a live replay
+    // watched from inside the room, an offline game) closes first, and the
+    // match waits until it's gone: a game closing after this point would
+    // clear the pre-match settings and report this match as finished, leaving
+    // us playing while the lobby shows us waiting to join.
+    m_pendingSpectate = PendingSpectate{};
+    const bool wasWatching = m_spectatingMatchId != 0;
+    if (wasWatching)
+    {
+        stopSpectating();
+        emit spectateStreamClosed(QStringLiteral("match_begin"));
+    }
+    if (m_localGameOpen)
+    {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (m_gameClosingMatchId != matchId)
+        {
+            m_gameClosingMatchId = matchId;
+            m_gameClosingDeadlineMs = nowMs + 10'000;
+            if (!wasWatching)
+                emit closeMatchRequested();
+        }
+        else if (nowMs >= m_gameClosingDeadlineMs)
+        {
+            m_currentMatchId = matchId;
+            m_awaitingEmulationStart = true;
+            abortMatchStart(tr("Match start failed: the game that was open didn't close."));
+            return;
+        }
+        QTimer::singleShot(50, this, [this, matchId, peers]() {
+            if (m_gameClosingMatchId == matchId)
+                onMatchBegin(matchId, peers);
+        });
+        return;
+    }
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
+
     QString iceError;
     if (!m_client->allIcePeersConnected(peers, &iceError))
     {
@@ -7524,6 +7611,8 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     m_iceWaitingMatchId = 0;
     m_iceMatchDeadlineMs = 0;
+    m_gameClosingMatchId = 0;
+    m_gameClosingDeadlineMs = 0;
 
     const QString line = QString(tr("Match #%1 starting with %2 player(s)")).arg(matchId).arg(peers.size());
     appendChatSystemLine(CHANNEL_LOBBY, line);
