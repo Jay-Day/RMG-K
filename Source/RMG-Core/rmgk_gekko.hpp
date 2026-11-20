@@ -30,6 +30,14 @@ struct LobbyRemotePeer
     unsigned short port = 0;
 };
 
+// One more player on this PC in a lobby-driven session, on top of the session's
+// localPlayer. The seat plays on one of this PC's own controllers.
+struct LobbyLocalSeat
+{
+    int slot = 0;        // 1-indexed N64 controller slot
+    int controller = 0;  // 0-indexed input plugin controller on this PC
+};
+
 // Lag diagnostics for a rollback match (see rmgk_gekko::lag_stats). Each frame's
 // time splits into waiting for remote input, the presentation pacer's sleep,
 // and the rest: this PC's own work (emulating, re-simulating rollbacks,
@@ -103,6 +111,7 @@ struct RollbackLagStats
     bool valid = false;           // there's a match to report on
     bool active = false;          // it's still running (false: the last one)
     int localSlot = 0;
+    std::vector<int> localSlots;  // every seat played on this PC, localSlot first
     int delay = 0;
     int prediction = 0;
     double frameHz = 60.0;
@@ -135,11 +144,14 @@ class rmgk_gekko
     // remote controller slot. `players` is the number of controller ports the
     // match emulates. A late joiner passes the session's epoch as joinEpoch:
     // its emulation then runs one boot frame and holds until
-    // provide_join_state() hands it the state to start from.
+    // provide_join_state() hands it the state to start from. extraLocals are
+    // the other players on this PC, who take part in every session of the match
+    // with localPlayer.
     static bool start_lobby_session(const char* gameName, int players, int inputSize,
         int localPlayer, unsigned short localPort,
         const LobbyRemotePeer* remotes, int numRemotes,
-        int localDelay, int predictionWindow, int joinEpoch = -1);
+        int localDelay, int predictionWindow, int joinEpoch = -1,
+        const std::vector<LobbyLocalSeat>& extraLocals = {});
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     // n02-style shared transport: adopt an already-bound UDP socket (the
     // lobby's anchor) for the next lobby session instead of binding our own.

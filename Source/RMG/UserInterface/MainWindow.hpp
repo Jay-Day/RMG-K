@@ -91,6 +91,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     Widget::VKWidget    *ui_Widget_Vulkan          = nullptr;
     Widget::RomBrowserWidget *ui_Widget_RomBrowser = nullptr;
     EventFilter *ui_EventFilter                    = nullptr;
+    InputMethodFilter *ui_InputMethodFilter        = nullptr;
     QLabel *ui_StatusBar_Label                     = nullptr;
 
     QByteArray ui_Geometry;
@@ -177,6 +178,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     bool ui_AutoStartNetplayOnStartupPending = false;
     bool ui_NetplayChatInputActive = false;
     QString ui_NetplayChatInput;
+    QString ui_NetplayChatPreedit;
+    QChar ui_NetplayChatHighSurrogate;
     // True while a rollback *lobby* game is running, so the in-game chat
     // overlay routes through the lobby room chat instead of Kaillera.
     bool ui_LobbyNetplaySession = false;
@@ -298,8 +301,12 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
 
 #ifdef NETPLAY
     bool handleNetplayChatKeyPress(QKeyEvent *event);
+    void openNetplayChatPrompt(void);
+    void appendNetplayChatText(const QString& text);
     void updateNetplayChatPrompt(void);
     void closeNetplayChatPrompt(void);
+    void on_InputMethodFilter_Query(QInputMethodQueryEvent *event);
+    void on_InputMethodFilter_Event(QInputMethodEvent *event);
     // /lagstat typed in the in-game chat: the lag report on the overlay.
     void showLagReportOverlay(bool wholeMatch);
 #endif // NETPLAY

@@ -15,11 +15,14 @@
 class QLineEdit;
 class QPushButton;
 class QLabel;
+class QRegularExpression;
 
 namespace UserInterface
 {
 namespace Dialog
 {
+
+class LobbyButton;
 
 // Small modal asking for a username before opening the main lobby. Server URL
 // is hardcoded to the production endpoint; persists username via QSettings.
@@ -35,11 +38,19 @@ public:
     QString username()  const { return m_username; }
     void setUsername(const QString& username);
     void setStatusMessage(const QString& message);
+    // Asking for a new name while connected: Cancel keeps the old one.
+    void setRenameMode();
 
     // Production lobby endpoint every client connects to. Exposed so callers
     // that bypass this dialog (e.g. the netplay launcher's rollback tab) can
     // connect with the same URL without duplicating the constant.
     static QString defaultServerUrl();
+
+    // The lobby decides what's a valid name. These keep typing to its characters,
+    // and catch what's too long for a replay's 32-byte field before it's refused.
+    static QRegularExpression usernameCharacters();
+    static bool usernameFits(const QString& username);
+    static QString fitUsername(QString username);
 
 private slots:
     void onConnect();
@@ -51,7 +62,8 @@ private:
     void saveSettings();
 
     QLineEdit*   m_usernameEdit  = nullptr;
-    QPushButton* m_connectButton = nullptr;
+    QLabel*      m_heading       = nullptr;
+    LobbyButton* m_connectButton = nullptr;
     QLabel*      m_validationLbl = nullptr;
 
     QString m_serverUrl;

@@ -49,6 +49,7 @@ set(RMG_CORE_SOURCES
     Version.cpp
     Cheats.cpp
     NetplaySave.cpp
+    GameOptions.cpp
     String.cpp
     Volume.cpp
     VidExt.cpp

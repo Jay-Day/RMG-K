@@ -41,6 +41,10 @@
 m64p_error open_rom(const unsigned char* romimage, unsigned int size);
 m64p_error close_rom(void);
 
+/* Netplay game options: writes count patches into the open ROM image, all of
+ * them or (on any bad one) none. See M64CMD_ROM_PATCH. */
+m64p_error patch_rom(const m64p_rom_patch* patches, int count);
+
 m64p_error open_disk(void);
 m64p_error close_disk(void);
 

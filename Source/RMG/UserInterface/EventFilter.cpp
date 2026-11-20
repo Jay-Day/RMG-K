@@ -9,6 +9,10 @@
  */
 #include "EventFilter.hpp"
 
+#include <QCoreApplication>
+#include <QWidget>
+#include <QWindow>
+
 using namespace UserInterface;
 
 EventFilter::EventFilter(QObject *parent) : QObject(parent)
@@ -34,6 +38,65 @@ bool EventFilter::eventFilter(QObject *object, QEvent *event)
         return true;
     default:
         break;
+    }
+
+    return QObject::eventFilter(object, event);
+}
+
+InputMethodFilter::InputMethodFilter(QWidget *window) : QObject(window), window(window)
+{
+}
+
+void InputMethodFilter::SetEnabled(bool enabled)
+{
+    if (enabled == this->enabled)
+    {
+        return;
+    }
+
+    this->enabled = enabled;
+    if (enabled)
+    {
+        QCoreApplication::instance()->installEventFilter(this);
+    }
+    else
+    {
+        QCoreApplication::instance()->removeEventFilter(this);
+    }
+}
+
+bool InputMethodFilter::isInWindow(QObject *object) const
+{
+    if (const QWidget *widget = qobject_cast<QWidget*>(object))
+    {
+        return widget->window() == this->window;
+    }
+
+    if (const QWindow *nativeWindow = qobject_cast<QWindow*>(object))
+    {
+        // the render surface is a child window of the main one
+        while (nativeWindow->parent() != nullptr)
+        {
+            nativeWindow = nativeWindow->parent();
+        }
+        return nativeWindow == this->window->windowHandle();
+    }
+
+    return false;
+}
+
+bool InputMethodFilter::eventFilter(QObject *object, QEvent *event)
+{
+    if (event->type() == QEvent::Type::InputMethodQuery && this->isInWindow(object))
+    {
+        emit this->on_InputMethodFilter_Query(static_cast<QInputMethodQueryEvent*>(event));
+        return true;
+    }
+
+    if (event->type() == QEvent::Type::InputMethod && this->isInWindow(object))
+    {
+        emit this->on_InputMethodFilter_Event(static_cast<QInputMethodEvent*>(event));
+        return true;
     }
 
     return QObject::eventFilter(object, event);

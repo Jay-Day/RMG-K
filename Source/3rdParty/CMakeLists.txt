@@ -271,6 +271,8 @@ set(IMGUI_SOURCES
 )
 add_library(imgui STATIC ${IMGUI_SOURCES})
 target_include_directories(imgui PRIVATE ${IMGUI_DIR})
+# chat can hold emoji and rarer Han characters, which are past U+FFFF
+target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
 
 set(SDL_GAMECONTROLLERDB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDL_GameControllerDB)
 set(SDL_GAMECONTROLLERDB_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/SDL_GameControllerDB)

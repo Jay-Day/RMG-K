@@ -3,10 +3,20 @@
 #include "ChatOverlay.hpp"
 #include "PifReplay.hpp"
 
+#include <RMG-Core/Directories.hpp>
+
+#include <QColor>
+#include <QFont>
+#include <QFontDatabase>
+#include <QFontMetrics>
+#include <QImage>
+#include <QPainter>
+#include <QString>
+#include <QStringList>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cctype>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
@@ -64,130 +74,11 @@ static std::condition_variable s_EncodeSpaceCv;
 static PortLabelConfig s_PortLabelConfig;
 static bool s_ChatOverlay = false;
 
-using GlyphRows = std::array<uint8_t, 7>;
-
-static GlyphRows glyphForChar(char c)
-{
-    switch (static_cast<char>(std::toupper(static_cast<unsigned char>(c))))
-    {
-    case 'A': return {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11};
-    case 'B': return {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E};
-    case 'C': return {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E};
-    case 'D': return {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E};
-    case 'E': return {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F};
-    case 'F': return {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10};
-    case 'G': return {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F};
-    case 'H': return {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11};
-    case 'I': return {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E};
-    case 'J': return {0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E};
-    case 'K': return {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11};
-    case 'L': return {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F};
-    case 'M': return {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11};
-    case 'N': return {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11};
-    case 'O': return {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
-    case 'P': return {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10};
-    case 'Q': return {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D};
-    case 'R': return {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11};
-    case 'S': return {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E};
-    case 'T': return {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
-    case 'U': return {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
-    case 'V': return {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04};
-    case 'W': return {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A};
-    case 'X': return {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11};
-    case 'Y': return {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04};
-    case 'Z': return {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F};
-    case '0': return {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E};
-    case '1': return {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E};
-    case '2': return {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F};
-    case '3': return {0x1E, 0x01, 0x01, 0x0E, 0x01, 0x01, 0x1E};
-    case '4': return {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02};
-    case '5': return {0x1F, 0x10, 0x10, 0x1E, 0x01, 0x01, 0x1E};
-    case '6': return {0x0E, 0x10, 0x10, 0x1E, 0x11, 0x11, 0x0E};
-    case '7': return {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08};
-    case '8': return {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E};
-    case '9': return {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x01, 0x0E};
-    case '-': return {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00};
-    case '_': return {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F};
-    case '.': return {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C};
-    case ':': return {0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00};
-    case ' ': return {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    default: return {0x1F, 0x01, 0x02, 0x04, 0x04, 0x00, 0x04};
-    }
-}
-
-static void blendPixel(uint8_t* rgb, uint8_t red, uint8_t green, uint8_t blue, uint8_t alpha)
-{
-    const int inverseAlpha = 255 - alpha;
-    rgb[0] = static_cast<uint8_t>((rgb[0] * inverseAlpha + red * alpha) / 255);
-    rgb[1] = static_cast<uint8_t>((rgb[1] * inverseAlpha + green * alpha) / 255);
-    rgb[2] = static_cast<uint8_t>((rgb[2] * inverseAlpha + blue * alpha) / 255);
-}
-
-static void fillRect(uint8_t* frame,
-                     int width,
-                     int height,
-                     int x,
-                     int y,
-                     int rectWidth,
-                     int rectHeight,
-                     uint8_t red,
-                     uint8_t green,
-                     uint8_t blue,
-                     uint8_t alpha)
-{
-    const int startX = std::clamp(x, 0, width);
-    const int startY = std::clamp(y, 0, height);
-    const int endX = std::clamp(x + rectWidth, 0, width);
-    const int endY = std::clamp(y + rectHeight, 0, height);
-
-    for (int py = startY; py < endY; ++py)
-    {
-        for (int px = startX; px < endX; ++px)
-        {
-            blendPixel(frame + (static_cast<size_t>(py) * width + px) * 3U, red, green, blue, alpha);
-        }
-    }
-}
-
-static int textWidth(const std::string& text, int scale)
-{
-    if (text.empty())
-    {
-        return 0;
-    }
-    return static_cast<int>(text.size()) * 6 * scale - scale;
-}
-
-static void drawText(uint8_t* frame,
-                     int width,
-                     int height,
-                     int x,
-                     int y,
-                     const std::string& text,
-                     int scale,
-                     uint8_t red,
-                     uint8_t green,
-                     uint8_t blue)
-{
-    int cursorX = x;
-    for (char c : text)
-    {
-        const GlyphRows glyph = glyphForChar(c);
-        for (int row = 0; row < 7; ++row)
-        {
-            for (int col = 0; col < 5; ++col)
-            {
-                if ((glyph[static_cast<size_t>(row)] & (1U << (4 - col))) == 0)
-                {
-                    continue;
-                }
-                fillRect(frame, width, height, cursorX + col * scale, y + row * scale,
-                         scale, scale, red, green, blue, 255);
-            }
-        }
-        cursorX += 6 * scale;
-    }
-}
+// The labels for one frame size, drawn once. Qt lays the text out, so any script
+// works and fonts it lacks are found on the system. Only the strip they sit in is kept.
+static QImage s_PortLabelStrip;
+static int s_PortLabelStripY = 0;
+static int s_PortLabelFrameHeight = 0;
 
 static std::string normalizedLabelName(const std::string& name, int playerIndex)
 {
@@ -221,23 +112,54 @@ static int scaledPortLabelOffset(int playerIndex, int height)
     return -((-offset * height + 360) / 720);
 }
 
-static int chooseLabelTextScale(const std::string& label, int normalScale, int maxTextWidth)
+static QFont portLabelFont(int pixelSize)
 {
-    const int compactScale = std::max(1, normalScale - 1);
-    if (textWidth(label, normalScale) <= maxTextWidth || compactScale == normalScale)
-    {
-        return normalScale;
-    }
+    static const QString family = []() {
+        const int id = QFontDatabase::addApplicationFont(
+            QString::fromStdString((CoreGetSharedDataDirectory() / "font.ttf").string()));
+        const QStringList families = QFontDatabase::applicationFontFamilies(id);
+        return families.isEmpty() ? QFont().family() : families.first();
+    }();
 
-    return compactScale;
+    QFont font(family);
+    font.setPixelSize(pixelSize);
+    return font;
 }
 
-static void truncateLabelToFit(std::string& label, int scale, int maxTextWidth)
+static void renderPortLabelStrip(int width, int height)
 {
-    const size_t maxChars = std::max<size_t>(1, static_cast<size_t>((maxTextWidth + scale) / (6 * scale)));
-    if (label.size() > maxChars)
+    const int playerCount = std::clamp(s_PortLabelConfig.playerCount, 1, 4);
+    const int scale = std::max(2, height / 240);
+    const int labelHeight = 15 * scale;
+    const int portWidth = width / 4;
+    const int maxTextWidth = std::max(scale, portWidth - 8 * scale);
+
+    s_PortLabelFrameHeight = height;
+    s_PortLabelStripY = std::max(0, height - labelHeight - 4 * scale);
+    s_PortLabelStrip = QImage(width, std::min(labelHeight, height - s_PortLabelStripY), QImage::Format_ARGB32_Premultiplied);
+    s_PortLabelStrip.fill(Qt::transparent);
+
+    QPainter painter(&s_PortLabelStrip);
+    painter.setPen(Qt::white);
+    for (int i = 0; i < playerCount; ++i)
     {
-        label.resize(maxChars);
+        QString label = QString::fromStdString(normalizedLabelName(s_PortLabelConfig.playerNames[static_cast<size_t>(i)], i));
+
+        QFont font = portLabelFont(10 * scale);
+        if (QFontMetrics(font).horizontalAdvance(label) > maxTextWidth)
+        {
+            font = portLabelFont(8 * scale);
+            label = QFontMetrics(font).elidedText(label, Qt::ElideRight, maxTextWidth);
+        }
+
+        const int portCenterX = portWidth * i + portWidth / 2 + scaledPortLabelOffset(i, height);
+        const int labelWidth = std::min(portWidth - 4 * scale, QFontMetrics(font).horizontalAdvance(label) + 8 * scale);
+        const int labelX = std::clamp(portCenterX - labelWidth / 2, 0, std::max(0, width - labelWidth));
+        const QRect box(labelX, 0, labelWidth, labelHeight);
+
+        painter.fillRect(box, QColor(0, 0, 0, 170));
+        painter.setFont(font);
+        painter.drawText(box, Qt::AlignCenter, label);
     }
 }
 
@@ -248,27 +170,28 @@ static void drawPortLabels(uint8_t* frame, int width, int height)
         return;
     }
 
-    const int playerCount = std::clamp(s_PortLabelConfig.playerCount, 1, 4);
-    const int scale = std::max(2, height / 240);
-    const int labelHeight = 15 * scale;
-    const int labelY = std::max(0, height - labelHeight - 4 * scale);
-
-    for (int i = 0; i < playerCount; ++i)
+    if (s_PortLabelStrip.isNull() || s_PortLabelStrip.width() != width || s_PortLabelFrameHeight != height)
     {
-        std::string label = normalizedLabelName(s_PortLabelConfig.playerNames[static_cast<size_t>(i)], i);
-        const int portWidth = width / 4;
-        const int portCenterX = portWidth * i + portWidth / 2 + scaledPortLabelOffset(i, height);
-        const int maxTextWidth = std::max(scale, portWidth - 8 * scale);
-        const int textScale = chooseLabelTextScale(label, scale, maxTextWidth);
-        truncateLabelToFit(label, textScale, maxTextWidth);
+        renderPortLabelStrip(width, height);
+    }
 
-        const int labelWidth = std::min(portWidth - 4 * scale, textWidth(label, textScale) + 8 * scale);
-        const int labelX = std::clamp(portCenterX - labelWidth / 2, 0, std::max(0, width - labelWidth));
-        fillRect(frame, width, height, labelX, labelY, labelWidth, labelHeight, 0, 0, 0, 170);
-
-        const int textX = labelX + std::max(0, (labelWidth - textWidth(label, textScale)) / 2);
-        const int textY = labelY + std::max(0, (labelHeight - 7 * textScale) / 2);
-        drawText(frame, width, height, textX, textY, label, textScale, 255, 255, 255);
+    for (int y = 0; y < s_PortLabelStrip.height(); ++y)
+    {
+        const QRgb* source = reinterpret_cast<const QRgb*>(s_PortLabelStrip.constScanLine(y));
+        uint8_t* rgb = frame + static_cast<size_t>(y + s_PortLabelStripY) * width * 3U;
+        for (int x = 0; x < width; ++x, rgb += 3)
+        {
+            const int alpha = qAlpha(source[x]);
+            if (alpha == 0)
+            {
+                continue;
+            }
+            // the strip's colors are premultiplied
+            const int inverseAlpha = 255 - alpha;
+            rgb[0] = static_cast<uint8_t>(qRed(source[x]) + rgb[0] * inverseAlpha / 255);
+            rgb[1] = static_cast<uint8_t>(qGreen(source[x]) + rgb[1] * inverseAlpha / 255);
+            rgb[2] = static_cast<uint8_t>(qBlue(source[x]) + rgb[2] * inverseAlpha / 255);
+        }
     }
 }
 
@@ -544,6 +467,7 @@ void InitializeFrameCapture(EmulatorProxy* emulator,
     s_QueueTail = 0;
     s_QueueCount = 0;
     s_PortLabelConfig = portLabelConfig;
+    s_PortLabelStrip = QImage();
     s_ChatOverlay = chatOverlay;
     for (int i = 0; i < kEncodeSlotCount; ++i)
     {

@@ -123,6 +123,56 @@ bool WriteKrecMetadata(const std::filesystem::path& path, const std::string& jso
     return true;
 }
 
+bool ReadKrecGameOptions(const std::filesystem::path& path, std::string& section)
+{
+    section.clear();
+    std::ifstream file(path, std::ios::binary);
+    char magic[4] = {};
+    if (!file.is_open() || !file.read(magic, sizeof(magic)))
+    {
+        return false;
+    }
+    const bool isKrc1 = std::memcmp(magic, "KRC1", 4) == 0;
+    if (!isKrc1 && std::memcmp(magic, "KRC0", 4) != 0)
+    {
+        return false;
+    }
+
+    // The save record (0x16), if any, comes first, then the game options (0x17).
+    file.seekg(isKrc1 ? 400 : 272);
+    for (int record = 0; record < 2; record++)
+    {
+        char type = 0;
+        uint32_t length = 0;
+        if (!file.read(&type, 1))
+        {
+            return true;
+        }
+        if ((static_cast<uint8_t>(type) != 0x16 && static_cast<uint8_t>(type) != 0x17) ||
+            !file.read(reinterpret_cast<char*>(&length), sizeof(length)))
+        {
+            return true;
+        }
+        if (static_cast<uint8_t>(type) == 0x16)
+        {
+            file.seekg(length, std::ios::cur);
+            continue;
+        }
+        // far more than any game options section can hold
+        if (length > 1024 * 1024)
+        {
+            return true;
+        }
+        section.resize(length);
+        if (!file.read(section.data(), static_cast<std::streamsize>(length)))
+        {
+            section.clear();
+        }
+        return true;
+    }
+    return true;
+}
+
 bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::string* errorMessage)
 {
     // opened by its wide path: player names in file names can be in any script
@@ -244,7 +294,7 @@ bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::st
             scan += std::min(line.message.size() + 1, static_cast<size_t>(end - scan));
             outData.chat.push_back(std::move(line));
         }
-        else if (type == 0x16)
+        else if (type == 0x16 || type == 0x17)
         {
             uint32_t length = 0;
             if (scan + 4 > end)
@@ -257,7 +307,7 @@ bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::st
             {
                 break;
             }
-            outData.saveData.assign(reinterpret_cast<const char*>(scan), length);
+            (type == 0x16 ? outData.saveData : outData.gameOptions).assign(reinterpret_cast<const char*>(scan), length);
             scan += length;
         }
         else

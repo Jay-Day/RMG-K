@@ -262,6 +262,55 @@ m64p_error close_rom(void)
     return M64ERR_SUCCESS;
 }
 
+/* The byte at .z64 offset i of the ROM image, in whichever word order
+ * main_run left it. */
+static uint8_t* rom_byte(uint8_t* rom, uint32_t i)
+{
+    return &rom[g_RomWordsLittleEndian ? (i ^ S8) : i];
+}
+
+m64p_error patch_rom(const m64p_rom_patch* patches, int count)
+{
+    uint8_t* rom = (uint8_t*)mem_base_u32(g_mem_base, MM_CART_ROM);
+    int i;
+    uint32_t k;
+
+    if (patches == NULL || count < 1)
+        return M64ERR_INPUT_ASSERT;
+
+    /* Check every patch first: a game half patched is worse than none. */
+    for (i = 0; i < count; ++i)
+    {
+        const m64p_rom_patch* patch = &patches[i];
+        if (patch->data == NULL || patch->size == 0 ||
+            patch->offset >= (uint32_t)g_rom_size || patch->size > (uint32_t)g_rom_size - patch->offset)
+        {
+            DebugMessage(M64MSG_ERROR, "patch_rom(): patch at 0x%08" PRIX32 " (%" PRIu32 " bytes) is outside the %d-byte ROM",
+                         (uint32_t)patch->offset, (uint32_t)patch->size, g_rom_size);
+            return M64ERR_INPUT_INVALID;
+        }
+        if (patch->expect == NULL)
+            continue;
+        for (k = 0; k < patch->size; ++k)
+        {
+            if (*rom_byte(rom, patch->offset + k) != patch->expect[k])
+            {
+                DebugMessage(M64MSG_ERROR, "patch_rom(): ROM byte at 0x%08" PRIX32 " isn't what the patch expects",
+                             (uint32_t)(patch->offset + k));
+                return M64ERR_INCOMPATIBLE;
+            }
+        }
+    }
+
+    for (i = 0; i < count; ++i)
+    {
+        for (k = 0; k < patches[i].size; ++k)
+            *rom_byte(rom, patches[i].offset + k) = patches[i].data[k];
+    }
+    DebugMessage(M64MSG_INFO, "Patched the ROM in %d place(s).", count);
+    return M64ERR_SUCCESS;
+}
+
 m64p_error open_disk(void)
 {
     md5_state_t state;
