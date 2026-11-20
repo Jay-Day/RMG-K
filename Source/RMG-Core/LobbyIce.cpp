@@ -9,6 +9,7 @@
 #include <juice/juice.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -62,6 +63,19 @@ std::map<std::uint64_t, bool> g_nextPeerUsesUpperPortRange;
 std::map<std::uint64_t, std::vector<PendingRemoteSignal>> g_pendingRemoteSignals;
 std::deque<LobbyIceSignal> g_localSignals;
 std::deque<QueuedPacket> g_packets;
+// What each channel has waiting in g_packets (guarded by g_mutex). A channel
+// is only emptied while something reads it (pre-match packets only before a
+// match, say), so a peer that keeps sending on one nobody reads would grow
+// the queue for as long as it stays connected. Past these limits a channel's
+// new packets are dropped, like any other lost datagram.
+struct ChannelLoad
+{
+    std::size_t packets = 0;
+    std::size_t bytes = 0;
+};
+std::array<ChannelLoad, 256> g_channelLoad;
+constexpr std::size_t CHANNEL_QUEUE_PACKET_CAP = 4096;
+constexpr std::size_t CHANNEL_QUEUE_BYTE_CAP = 2 * 1024 * 1024;
 std::atomic<bool> g_diagnosticsEnabled{false};
 std::vector<LobbyIceDiagnostic> g_diagnostics;
 std::size_t g_diagnosticsDropped = 0;
@@ -220,9 +234,26 @@ void on_recv(juice_agent_t* agent, const char* data, size_t size, void* userPtr)
             peer->pingSentAtUs.erase(it);
         }
     }
-    packet.data.assign(data + 1, data + size);
     std::lock_guard<std::mutex> lock(g_mutex);
+    ChannelLoad& load = g_channelLoad[channelByte];
+    if (load.packets >= CHANNEL_QUEUE_PACKET_CAP || load.bytes + (size - 1) > CHANNEL_QUEUE_BYTE_CAP)
+        return;
+    packet.data.assign(data + 1, data + size);
+    load.packets++;
+    load.bytes += size - 1;
     g_packets.push_back(std::move(packet));
+}
+
+// Recounts g_channelLoad after packets left the queue. Call with g_mutex held.
+void recount_channel_load()
+{
+    g_channelLoad.fill(ChannelLoad{});
+    for (const QueuedPacket& packet : g_packets)
+    {
+        ChannelLoad& load = g_channelLoad[static_cast<std::uint8_t>(packet.channel)];
+        load.packets++;
+        load.bytes += packet.data.size();
+    }
 }
 
 std::shared_ptr<Peer> find_peer(std::uint64_t peerUserId)
@@ -353,6 +384,7 @@ void LobbyIce::reset()
         g_pendingRemoteSignals.clear();
         g_localSignals.clear();
         g_packets.clear();
+        g_channelLoad.fill(ChannelLoad{});
         g_localUserId = 0;
         g_stunHost.clear();
         g_stunPort = 0;
@@ -490,6 +522,7 @@ void LobbyIce::remove_peer(std::uint64_t peerUserId)
         std::erase_if(g_packets, [peerUserId](const QueuedPacket& packet) {
             return packet.peerUserId == peerUserId;
         });
+        recount_channel_load();
     }
     {
         std::lock_guard<std::mutex> agentLock(peer->agentMutex);
@@ -624,5 +657,6 @@ std::vector<LobbyIcePacket> LobbyIce::take_packets(LobbyIceChannel channel)
             ++it;
         }
     }
+    g_channelLoad[static_cast<std::uint8_t>(channel)] = {};
     return out;
 }

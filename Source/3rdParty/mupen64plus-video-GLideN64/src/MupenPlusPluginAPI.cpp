@@ -70,4 +70,11 @@ EXPORT void CALL RmgkSetSkipRendering(int skip, unsigned int * skipped, unsigned
 	RSP_SetSkipRendering(skip != 0, skipped, rendered);
 }
 
+// RMG-K: the same for frames a rollback re-simulates and never shows (see
+// RSP_SetSkipHiddenRendering)
+EXPORT void CALL RmgkSetSkipHiddenRendering(int skip)
+{
+	RSP_SetSkipHiddenRendering(skip != 0);
+}
+
 } // extern "C"

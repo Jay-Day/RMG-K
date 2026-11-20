@@ -81,6 +81,19 @@ bool CorePluginsShutdown(void);
 // skipped/rendered receive the display lists skipped and still rendered since the last call.
 bool CorePluginsSetGfxSkipRendering(bool skip, unsigned int* skipped = nullptr, unsigned int* rendered = nullptr);
 
+// The same for the frames a rollback re-simulates and never shows. The plugin
+// only skips while its drawing can't change what the game sees. Returns false
+// when the plugin can't.
+bool CorePluginsSetGfxSkipHiddenRendering(bool skip);
+
+// Prepares the loaded plugins for a session that has to stay in sync with
+// other machines (netplay, replays), or puts them back for normal play.
+// Synced: loads the RSP plugin that matches the loaded graphics plugin
+// (HLE for GLideN64, cxd4 for the others; the user's RSP setting is left
+// alone and comes back with CoreApplyPluginSettings) and has the graphics
+// plugin use the shared interrupt timing.
+bool CorePluginsApplyNetplayMode(bool synced);
+
 // -1: unavailable, 0: no valid response, 1: normal/checking, 2: slow USB.
 int CoreGetRaphnetHealth(void);
 void CorePauseRaphnetMonitoring(bool pause);

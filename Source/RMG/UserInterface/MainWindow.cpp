@@ -4377,6 +4377,12 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QStr
     {
         return; // already spectating
     }
+    // Switching from one live replay to another launches as the last game
+    // reports finished, when its thread may still be on its way out.
+    if (this->emulationThread->isRunning() && !CoreIsEmulationRunning())
+    {
+        this->emulationThread->wait(500);
+    }
     if (this->emulationThread->isRunning())
     {
         this->showErrorMessage("Busy", "Stop the current game before watching a live replay.");
@@ -4442,7 +4448,13 @@ void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 o
     // Track the broadcaster's live edge (monotonic) — the fast-forward target.
     if (liveFrame > this->ui_SpectateLiveFrame)
         this->ui_SpectateLiveFrame = liveFrame;
-    n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size()));
+    if (!n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size())))
+    {
+        this->stopLobbySpectate();
+        this->showErrorMessage(QStringLiteral("Live Replay Error"),
+            QStringLiteral("The live replay sent data that can't be played. Playback was stopped."));
+        return;
+    }
     this->ui_SpectateExpectedOffset += bytes.size();
 
     // The krec header carries the slot-ordered player names; once it has been
