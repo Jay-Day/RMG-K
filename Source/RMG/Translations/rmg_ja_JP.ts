@@ -1820,8 +1820,8 @@ USB %2
             <translation>Raphnetのrawアクセス対応アダプターが見つかりませんでした。</translation>
         </message>
         <message>
-            <source>Could not start the raphnet input test. Close other apps using the adapter; Dale64 will retry automatically.</source>
-            <translation>Raphnet入力テストを開始できませんでした。アダプターを使用中の他のアプリを閉じてください。Dale64が自動的に再試行します。</translation>
+            <source>Could not start the raphnet input test. Close other apps using the adapter; RMG-K will retry automatically.</source>
+            <translation>Raphnet入力テストを開始できませんでした。アダプターを使用中の他のアプリを閉じてください。RMG-Kが自動的に再試行します。</translation>
         </message>
         <message>
             <source>No valid controller response. Check the selected adapter port and connection.</source>
@@ -2475,8 +2475,8 @@ Local setting — each player may choose a different value.</source>
 ローカル設定です。各プレイヤーが異なる値を選択できます。</translation>
         </message>
         <message>
-            <source>Your Dale64 client is out of date. This lobby requires version 0.9.13 or vdev-2367 or newer.</source>
-            <translation>Dale64クライアントが古いため接続できません。このロビーにはバージョン0.9.13、またはvdev-2367以降が必要です。</translation>
+            <source>Your RMG-K client is out of date. This lobby requires version 0.9.13 or vdev-2367 or newer.</source>
+            <translation>RMG-Kクライアントが古いため接続できません。このロビーにはバージョン0.9.13、またはvdev-2367以降が必要です。</translation>
         </message>
         <message>
             <source>That username isn't allowed.</source>
@@ -2495,8 +2495,8 @@ Local setting — each player may choose a different value.</source>
             <translation>モデレーターによりルームが閉じられました。</translation>
         </message>
         <message>
-            <source>Dale64 Lobby</source>
-            <translation>Dale64 ロビー</translation>
+            <source>RMG-K Lobby</source>
+            <translation>RMG-K ロビー</translation>
         </message>
         <message>
             <source>RMG-K · Rollback Netplay</source>
@@ -3289,16 +3289,16 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>ロビーとの接続が切れたため、対戦から外されました。再接続すると、ホストがあなたを再びゲームに追加できます。</translation>
         </message>
         <message>
-            <source>they're on a different Dale64 version</source>
-            <translation>相手のDale64のバージョンが異なります</translation>
+            <source>they're on a different RMG-K version</source>
+            <translation>相手のRMG-Kのバージョンが異なります</translation>
         </message>
         <message>
             <source>another player is joining right now</source>
             <translation>別のプレイヤーが参加中です</translation>
         </message>
         <message>
-            <source>this match or their Dale64 can't add players mid-game</source>
-            <translation>この対戦または相手のDale64は途中参加に対応していません</translation>
+            <source>this match or their RMG-K can't add players mid-game</source>
+            <translation>この対戦または相手のRMG-Kは途中参加に対応していません</translation>
         </message>
         <message>
             <source>they're not waiting to join any more</source>
@@ -3611,16 +3611,16 @@ The game saves to memory only during the match: nobody's own save files are touc
             <translation>%1に保存しました。</translation>
         </message>
         <message>
-            <source>This room uses save data, which %1 can't play with yet. They need a newer Dale64, or turn off Sync save data.</source>
-            <translation>このルームはセーブデータを使いますが、%1はまだ対応していません。新しいDale64に更新してもらうか、「セーブデータを同期」をオフにしてください。</translation>
+            <source>This room uses save data, which %1 can't play with yet. They need a newer RMG-K, or turn off Sync save data.</source>
+            <translation>このルームはセーブデータを使いますが、%1はまだ対応していません。新しいRMG-Kに更新してもらうか、「セーブデータを同期」をオフにしてください。</translation>
         </message>
         <message>
             <source>%1 can't play with save data</source>
             <translation>%1はセーブデータに対応していません</translation>
         </message>
         <message>
-            <source>They need a newer Dale64, or turn off Sync save data.</source>
-            <translation>新しいDale64に更新してもらうか、「セーブデータを同期」をオフにしてください。</translation>
+            <source>They need a newer RMG-K, or turn off Sync save data.</source>
+            <translation>新しいRMG-Kに更新してもらうか、「セーブデータを同期」をオフにしてください。</translation>
         </message>
         <message>
             <source>Matches start from your save</source>
@@ -3704,8 +3704,8 @@ Turn this off to start every match from the save picked here.</source>
             <translation>セーブデータ (*.rmgsave *.eep *.sra *.fla);;すべてのファイル (*)</translation>
         </message>
         <message>
-            <source>Dale64 couldn't read %1 as save data.</source>
-            <translation>Dale64は%1をセーブデータとして読み込めませんでした。</translation>
+            <source>RMG-K couldn't read %1 as save data.</source>
+            <translation>RMG-Kは%1をセーブデータとして読み込めませんでした。</translation>
         </message>
         <message>
             <source>emulator save file · %1</source>
@@ -4139,12 +4139,12 @@ A local replay is saved only if Save replay is on.</source>
             <translation>このPCの全員が座れる空席がそのルームにはありません。</translation>
         </message>
         <message>
-            <source>That room needs a newer version of Dale64.</source>
-            <translation>そのルームには新しいバージョンのDale64が必要です。</translation>
+            <source>That room needs a newer version of RMG-K.</source>
+            <translation>そのルームには新しいバージョンのRMG-Kが必要です。</translation>
         </message>
         <message>
-            <source>Someone in that room is on an older Dale64 that can't play with several players on one PC. Remove the other players on this PC to join.</source>
-            <translation>そのルームに、1台のPCで複数人がプレイすることに対応していない古いDale64の参加者がいます。参加するには、このPCの他のプレイヤーを外してください。</translation>
+            <source>Someone in that room is on an older RMG-K that can't play with several players on one PC. Remove the other players on this PC to join.</source>
+            <translation>そのルームに、1台のPCで複数人がプレイすることに対応していない古いRMG-Kの参加者がいます。参加するには、このPCの他のプレイヤーを外してください。</translation>
         </message>
         <message>
             <source>Quick Match pairs two players, one on each PC. Remove the other players on this PC, or create a room to play together.</source>
@@ -4467,8 +4467,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>%1は更新が必要です</translation>
         </message>
         <message>
-            <source>Their version of Dale64 can't receive challenges.</source>
-            <translation>相手のDale64は対戦の申し込みに対応していません。</translation>
+            <source>Their version of RMG-K can't receive challenges.</source>
+            <translation>相手のRMG-Kは対戦の申し込みに対応していません。</translation>
         </message>
         <message>
             <source>That's a lot of challenges</source>
@@ -4503,8 +4503,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>相手がロビーを退出したため、メッセージは届きませんでした。</translation>
         </message>
         <message>
-            <source>Their version of Dale64 can't receive private messages.</source>
-            <translation>相手のDale64はプライベートメッセージに対応していません。</translation>
+            <source>Their version of RMG-K can't receive private messages.</source>
+            <translation>相手のRMG-Kはプライベートメッセージに対応していません。</translation>
         </message>
         <message>
             <source>%1: %2</source>
@@ -5593,8 +5593,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>他のプレイヤー</translation>
         </message>
         <message>
-            <source>No lag stats from %1: they may be on an older Dale64, or their connection to you is down.</source>
-            <translation>%1からラグ統計が届いていません。古いDale64を使っているか、あなたとの接続が切れている可能性があります。</translation>
+            <source>No lag stats from %1: they may be on an older RMG-K, or their connection to you is down.</source>
+            <translation>%1からラグ統計が届いていません。古いRMG-Kを使っているか、あなたとの接続が切れている可能性があります。</translation>
         </message>
         <message>
             <source>%1's numbers are %2 old.</source>
@@ -5665,8 +5665,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>Ping</translation>
         </message>
         <message>
-            <source>Dale64 lag check, %1</source>
-            <translation>Dale64 ラグチェック（%1）</translation>
+            <source>RMG-K lag check, %1</source>
+            <translation>RMG-K ラグチェック（%1）</translation>
         </message>
         <message>
             <source>long</source>
@@ -5856,8 +5856,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>統計なし</translation>
         </message>
         <message>
-            <source>This player hasn't sent lag stats: they may be on an older Dale64, or their connection to you is down.</source>
-            <translation>このプレイヤーからラグ統計が届いていません。古いDale64を使っているか、あなたとの接続が切れている可能性があります。</translation>
+            <source>This player hasn't sent lag stats: they may be on an older RMG-K, or their connection to you is down.</source>
+            <translation>このプレイヤーからラグ統計が届いていません。古いRMG-Kを使っているか、あなたとの接続が切れている可能性があります。</translation>
         </message>
         <message>
             <source>%1 ms</source>
@@ -6414,8 +6414,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>ブックマーク</translation>
         </message>
         <message>
-            <source>This recording&apos;s extra data comes from a newer version of Dale64, so its bookmarks can&apos;t be changed here.</source>
-            <translation>この録画の追加データは新しいバージョンのDale64で作成されたため、ここではブックマークを変更できません。</translation>
+            <source>This recording&apos;s extra data comes from a newer version of RMG-K, so its bookmarks can&apos;t be changed here.</source>
+            <translation>この録画の追加データは新しいバージョンのRMG-Kで作成されたため、ここではブックマークを変更できません。</translation>
         </message>
         <message>
             <source>The bookmarks couldn&apos;t be saved: %1</source>
@@ -6536,16 +6536,16 @@ A local replay is saved only if Save replay is on.</source>
             <translation>この対戦は「%1」で行われます。</translation>
         </message>
         <message>
-            <source>This room uses %1, which %2 can't play with yet. They need a newer Dale64, or turn %1 off.</source>
-            <translation>このルームは「%1」を使いますが、%2はまだ対応していません。新しいDale64に更新してもらうか、「%1」をオフにしてください。</translation>
+            <source>This room uses %1, which %2 can't play with yet. They need a newer RMG-K, or turn %1 off.</source>
+            <translation>このルームは「%1」を使いますが、%2はまだ対応していません。新しいRMG-Kに更新してもらうか、「%1」をオフにしてください。</translation>
         </message>
         <message>
             <source>%1 can't play with %2</source>
             <translation>%1は「%2」に対応していません</translation>
         </message>
         <message>
-            <source>They need a newer Dale64, or turn %1 off.</source>
-            <translation>新しいDale64に更新してもらうか、「%1」をオフにしてください。</translation>
+            <source>They need a newer RMG-K, or turn %1 off.</source>
+            <translation>新しいRMG-Kに更新してもらうか、「%1」をオフにしてください。</translation>
         </message>
         <message>
             <source>How long your game has been running</source>

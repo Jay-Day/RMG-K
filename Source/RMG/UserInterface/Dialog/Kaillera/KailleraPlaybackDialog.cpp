@@ -1389,7 +1389,7 @@ QString KailleraPlaybackDialog::promptForFfmpegPath()
     messageBox.setWindowTitle("Export MP4");
     messageBox.setText("MP4 export requires FFmpeg.");
     messageBox.setInformativeText(
-        "Dale64 can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
+        "RMG-K can download a GPL FFmpeg essentials build for replay export, or you can choose an existing ffmpeg.exe.");
 
     QPushButton* downloadButton = messageBox.addButton("Download FFmpeg", QMessageBox::AcceptRole);
     QPushButton* chooseButton = messageBox.addButton("Choose ffmpeg.exe", QMessageBox::ActionRole);
@@ -1968,7 +1968,7 @@ bool KailleraPlaybackDialog::editBookmarks(const QString& krecPath, const std::f
             document.object().value("schema").toInt() != 1)
         {
             QMessageBox::warning(this, tr("Bookmarks"),
-                tr("This recording's extra data comes from a newer version of Dale64, so its bookmarks can't be changed here."));
+                tr("This recording's extra data comes from a newer version of RMG-K, so its bookmarks can't be changed here."));
             return false;
         }
         metadata = document.object();

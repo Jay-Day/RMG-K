@@ -1,6 +1,8 @@
 <RCC>
 <qresource prefix="/lobby">
   <file alias="fonts/Audiowide-Regular.ttf">Resource/lobby/fonts/Audiowide-Regular.ttf</file>
+  <file alias="brand-mark.svg">Resource/lobby/brand-mark.svg</file>
+  <file alias="brand-mark-dark.svg">Resource/lobby/brand-mark-dark.svg</file>
   <file alias="icons/add-line.svg">Resource/lobby/icons/add-line.svg</file>
   <file alias="icons/arrow-down-s-line.svg">Resource/lobby/icons/arrow-down-s-line.svg</file>
   <file alias="icons/arrow-left-s-line.svg">Resource/lobby/icons/arrow-left-s-line.svg</file>

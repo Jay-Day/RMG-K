@@ -349,7 +349,7 @@ void StartingSaveDialog::browse(void)
     if (!CoreReadNetplaySaveFile(file.toStdU32String(), entry.Data, entry.Info))
     {
         QMessageBox::warning(this, tr("Choose Save Data"),
-            tr("Dale64 couldn't read %1 as save data.").arg(QFileInfo(file).fileName()));
+            tr("RMG-K couldn't read %1 as save data.").arg(QFileInfo(file).fileName()));
         return;
     }
 

@@ -338,7 +338,7 @@ void LagStatsDialog::fillPlayers()
         if (!row.reported)
         {
             QLabel* none = cell(tr("no stats"), m_playersBox, false, t.muted);
-            none->setToolTip(tr("This player hasn't sent lag stats: they may be on an older Dale64, or their connection to you is down."));
+            none->setToolTip(tr("This player hasn't sent lag stats: they may be on an older RMG-K, or their connection to you is down."));
             m_players->addWidget(none, gridRow, Fps, 1, Stutters - Fps + 1);
         }
         else

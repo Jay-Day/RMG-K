@@ -11,7 +11,7 @@
  * because people come here to find something to watch.
  *
  *   ┌───────────────────────────────────────────────────────────────┐
- *   │ Dale64  ● ONLINE  42 players · 14 rooms             Mira [US] │ ← top bar
+ *   │ RMG-K  ● ONLINE  42 players · 14 rooms              Mira [US] │ ← top bar
  *   ├───────────────────────────────────────────┬───────────────────┤
  *   │ [ game picker ] [Quick Match] [Create]    │ Players           │ ← play bar
  *   │ ┌Live now───────────┐┌Open rooms────────┐ │ ● searching...    │
@@ -762,9 +762,9 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
               | Qt::WindowCloseButtonHint)
 {
 #ifdef RMGK_TEST_BUILD
-    setWindowTitle(tr("Dale64 Lobby") + " [TEST]");
+    setWindowTitle(tr("RMG-K Lobby") + " [TEST]");
 #else
-    setWindowTitle(tr("Dale64 Lobby"));
+    setWindowTitle(tr("RMG-K Lobby"));
 #endif
     setWindowIcon(QIcon(":Resource/RMG.png"));
     setWindowModality(Qt::NonModal);
@@ -990,7 +990,7 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     auto* words = new QVBoxLayout;
     words->setSpacing(1);
     words->setAlignment(Qt::AlignVCenter);
-    m_brandLabel = new QLabel(QStringLiteral("Dale64"), m_marquee);
+    m_brandLabel = new QLabel(QStringLiteral("RMG-K"), m_marquee);
     m_brandLabel->setObjectName("LobbyBrand");
     m_brandLabel->setFont(LobbyTheme::pixelFont(18, 0.3));
     words->addWidget(m_brandLabel);
@@ -2981,7 +2981,7 @@ void RollbackLobbyDialog::onHelloFailed(const QString& reason)
     else if (reason == "invalid_hello") human = tr("Server rejected the connection handshake.");
     else if (reason == "invalid_payload") human = tr("That username isn't allowed.");
     else if (reason == "version_mismatch") human =
-        tr("Your Dale64 client is out of date. This lobby requires version 0.9.13 "
+        tr("Your RMG-K client is out of date. This lobby requires version 0.9.13 "
         "or vdev-2367 or newer.");
     else if (reason == "server_full") human = tr("The lobby is currently full.");
 
@@ -4052,9 +4052,9 @@ void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
     else if (reason == "ping_too_high") human =
         tr("Your ping to that room's host is higher than the room allows.");
     else if (reason == "needs_update") human =
-        tr("That room needs a newer version of Dale64.");
+        tr("That room needs a newer version of RMG-K.");
     else if (reason == "peer_needs_update") human =
-        tr("Someone in that room is on an older Dale64 that can't play with several players on one PC. "
+        tr("Someone in that room is on an older RMG-K that can't play with several players on one PC. "
            "Remove the other players on this PC to join.");
     QMessageBox::warning(this, tr("Couldn't join room"), human);
 }
@@ -5399,10 +5399,10 @@ void RollbackLobbyDialog::refreshStartButton()
         !iAmHost         ? tr("Only the host can start the game.")
         : !waiting       ? tr("Already in a match.")
         : !needSaveData.isEmpty() ? tr("This room uses save data, which %1 can't play with yet. "
-                                       "They need a newer Dale64, or turn off Sync save data.")
+                                       "They need a newer RMG-K, or turn off Sync save data.")
                                        .arg(needSaveData.join(QStringLiteral(", ")))
         : !needGameOptions.isEmpty() ? tr("This room uses %1, which %2 can't play with yet. "
-                                          "They need a newer Dale64, or turn %1 off.")
+                                          "They need a newer RMG-K, or turn %1 off.")
                                           .arg(gameOptionNames, needGameOptions.join(QStringLiteral(", ")))
         : !enoughPlayers ? (seated == 1 && m_roomHasLateJoinOption && !m_roomLateJoinEnabled
                               ? tr("Need at least 2 players to start. To start alone, turn on Allow joins after start.")
@@ -5468,13 +5468,13 @@ void RollbackLobbyDialog::refreshStartButton()
         {
             showWhy(QStringLiteral("error-warning-line"), t.warn, t.warnTint,
                     tr("%1 can't play with save data").arg(needSaveData.join(QStringLiteral(", "))),
-                    tr("They need a newer Dale64, or turn off Sync save data."));
+                    tr("They need a newer RMG-K, or turn off Sync save data."));
         }
         else if (!needGameOptions.isEmpty())
         {
             showWhy(QStringLiteral("error-warning-line"), t.warn, t.warnTint,
                     tr("%1 can't play with %2").arg(needGameOptions.join(QStringLiteral(", ")), gameOptionNames),
-                    tr("They need a newer Dale64, or turn %1 off.").arg(gameOptionNames));
+                    tr("They need a newer RMG-K, or turn %1 off.").arg(gameOptionNames));
         }
         else if (!enoughPlayers)
         {
@@ -7834,11 +7834,11 @@ void RollbackLobbyDialog::onMatchAdmitFailed(quint64 matchId, quint64 userId, co
     const QString name = lobbyUserName(userId);
     QString why;
     if (reason == QStringLiteral("version_mismatch"))
-        why = tr("they're on a different Dale64 version");
+        why = tr("they're on a different RMG-K version");
     else if (reason == QStringLiteral("admit_busy"))
         why = tr("another player is joining right now");
     else if (reason == QStringLiteral("late_join_unsupported"))
-        why = tr("this match or their Dale64 can't add players mid-game");
+        why = tr("this match or their RMG-K can't add players mid-game");
     else if (reason == QStringLiteral("not_waiting"))
         why = tr("they're not waiting to join any more");
     else

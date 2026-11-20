@@ -13,6 +13,7 @@
 #include <QPainterPath>
 #include <QRadialGradient>
 #include <QSignalBlocker>
+#include <QSvgRenderer>
 #include <QTimer>
 #include <QVariantAnimation>
 #include <QVBoxLayout>
@@ -593,22 +594,38 @@ void PortStripe::paintEvent(QPaintEvent*)
         painter.fillRect(QRectF(i * w, 0, w + 1, height()), LobbyTheme::portColor(i + 1));
 }
 
+namespace
+{
+    // The mark is 30 px tall and sits 2 px low in its box, so beside the
+    // wordmark it centers on the letters rather than on the label's line box,
+    // whose tall ascent leaves room above the caps.
+    constexpr int kBrandMarkHeight = 30;
+    constexpr int kBrandMarkDrop = 2;
+
+    qreal brandMarkWidth(const QSvgRenderer& renderer)
+    {
+        const QRectF box = renderer.viewBoxF();
+        return box.height() > 0 ? kBrandMarkHeight * box.width() / box.height() : kBrandMarkHeight;
+    }
+} // namespace
+
 BrandMark::BrandMark(QWidget* parent)
     : QWidget(parent)
+    , m_renderer(new QSvgRenderer(QStringLiteral(":/lobby/brand-mark.svg"), this))
+    , m_darkRenderer(new QSvgRenderer(QStringLiteral(":/lobby/brand-mark-dark.svg"), this))
 {
-    setFixedSize(18, 18);
+    setFixedSize(static_cast<int>(std::ceil(brandMarkWidth(*m_renderer))), kBrandMarkHeight + kBrandMarkDrop);
 }
 
 void BrandMark::paintEvent(QPaintEvent*)
 {
+    // Rendered straight onto the widget, so it is drawn at the screen's
+    // pixel ratio instead of scaled from a pixmap.
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(Qt::NoPen);
-    for (int i = 0; i < 4; ++i)
-    {
-        painter.setBrush(LobbyTheme::portColor(i + 1));
-        painter.drawRoundedRect(QRectF((i % 2) * 10, (i / 2) * 10, 8, 8), 2, 2);
-    }
+    const qreal w = brandMarkWidth(*m_renderer);
+    QSvgRenderer* renderer = LobbyTheme::isDark() ? m_darkRenderer : m_renderer;
+    renderer->render(&painter, QRectF((width() - w) / 2.0, kBrandMarkDrop, w, kBrandMarkHeight));
 }
 
 // ── Small status pieces ──────────────────────────────────────────────

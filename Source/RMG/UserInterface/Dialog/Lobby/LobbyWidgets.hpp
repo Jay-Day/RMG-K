@@ -12,6 +12,7 @@
 #include <QWidget>
 
 class QLabel;
+class QSvgRenderer;
 class QTimer;
 class QVariantAnimation;
 
@@ -203,7 +204,8 @@ protected:
     void paintEvent(QPaintEvent* event) override;
 };
 
-// The four port colours as the brand's square mark.
+// The RMG-K logo beside the wordmark, drawn from its SVG so it stays sharp at
+// any pixel ratio.
 class BrandMark : public QWidget
 {
     Q_OBJECT
@@ -213,6 +215,12 @@ public:
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+
+private:
+    QSvgRenderer* m_renderer = nullptr;
+    // On the dark theme the charcoal outline and slopes would melt into the
+    // marquee, so that theme has its own drawing with lighter ones.
+    QSvgRenderer* m_darkRenderer = nullptr;
 };
 
 class LedDot : public QWidget
