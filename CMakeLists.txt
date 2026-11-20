@@ -142,7 +142,7 @@ endif()
 add_subdirectory(Source/RMG-Core)
 add_subdirectory(Source/RMG)
 add_subdirectory(Source/RMG-Audio)
-if (WIN32 AND NETPLAY)
+if (NETPLAY)
     add_subdirectory(Source/RMG-Audio-Capture)
 endif()
 add_subdirectory(Source/RMG-Input)
@@ -156,7 +156,7 @@ install(TARGETS RMG
 install(TARGETS RMG-Audio
     DESTINATION ${PLUGIN_INSTALL_PATH}/Audio
 )
-if (WIN32 AND NETPLAY)
+if (NETPLAY)
     install(TARGETS RMG-Audio-Capture
         DESTINATION ${PLUGIN_INSTALL_PATH}/Audio
     )
