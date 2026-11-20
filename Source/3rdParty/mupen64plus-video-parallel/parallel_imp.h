@@ -34,6 +34,8 @@ extern "C"
     void vk_destroy();
     void vk_resize();
     void vk_read_screen(unsigned char* dest);
+    // RMG-K: hooks the app draws its on-screen display through (RmgkVulkanOverlayHooks)
+    void vk_set_overlay(const void* hooks);
 
 #ifdef __cplusplus
 }

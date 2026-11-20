@@ -4,6 +4,7 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QChildEvent>
 #include <QContextMenuEvent>
 #include <QDateTime>
 #include <QFontMetrics>
@@ -14,13 +15,12 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QScrollArea>
 #include <QScrollBar>
-#include <QStackedWidget>
 #include <QStyleOptionTab>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidgetAction>
 
@@ -78,9 +78,11 @@ namespace
                 painter.drawPixmap(x, 13, LobbyTheme::icon(m_icon, color, 11, devicePixelRatioF()));
                 x += 16;
             }
-            painter.setFont(LobbyTheme::pixelFont(9, 0.9));
+            const QFont font = LobbyTheme::pixelFont(9, 0.9);
+            painter.setFont(font);
             painter.setPen(color);
-            painter.drawText(QRect(x, 11, width() - x - 8, 15), Qt::AlignLeft | Qt::AlignVCenter, m_text);
+            painter.drawText(QRectF(x, 11 + LobbyTheme::pixelTextDrop(font), width() - x - 8, 15),
+                             Qt::AlignLeft | Qt::AlignVCenter, m_text);
         }
 
     private:
@@ -292,10 +294,32 @@ void LobbyMenu::paintEvent(QPaintEvent*)
 
 // ── ChatTabBar ───────────────────────────────────────────────────────
 
+namespace
+{
+    const char* const kTabFaceProperty = "chatTabFace";
+    const char* const kTabAttentionProperty = "chatTabAttention";
+    // Shorter than the tab, so it never makes the tab taller.
+    constexpr int kTabFaceHeight = 22;
+} // namespace
+
 ChatTabBar::ChatTabBar(QWidget* parent)
     : QTabBar(parent)
 {
     connect(this, &QTabBar::currentChanged, this, &ChatTabBar::positionBadges);
+
+    // QTabBar's own scroll buttons, drawn to match the lobby instead of the platform.
+    for (const char* name : { "ScrollLeftButton", "ScrollRightButton" })
+    {
+        if (auto* button = findChild<QToolButton*>(QLatin1String(name), Qt::FindDirectChildrenOnly))
+            m_scrollButtons << button;
+    }
+    for (QToolButton* button : std::as_const(m_scrollButtons))
+    {
+        button->installEventFilter(this);
+        button->setAttribute(Qt::WA_Hover);
+        button->setCursor(Qt::PointingHandCursor);
+        connect(button, &QToolButton::clicked, this, &ChatTabBar::positionBadges);
+    }
 }
 
 void ChatTabBar::showTab(int index, bool visible)
@@ -304,9 +328,42 @@ void ChatTabBar::showTab(int index, bool visible)
         setTabVisible(index, visible);
 }
 
+void ChatTabBar::setTabFace(int index, QWidget* face)
+{
+    face->setProperty(kTabFaceProperty, true);
+    // Until it's placed: QTabBar counts a button's current size into the tab's height.
+    face->resize(face->sizeHint().width(), kTabFaceHeight);
+    setTabButton(index, QTabBar::LeftSide, face);
+}
+
+QWidget* ChatTabBar::tabFace(int index) const
+{
+    QWidget* face = tabButton(index, QTabBar::LeftSide);
+    return face && face->property(kTabFaceProperty).toBool() ? face : nullptr;
+}
+
+void ChatTabBar::setTabAttention(int index, bool attention)
+{
+    if (QWidget* face = tabFace(index))
+        face->setProperty(kTabAttentionProperty, attention);
+    for (QToolButton* button : std::as_const(m_scrollButtons))
+        button->update();
+}
+
+void ChatTabBar::refreshTab(int index)
+{
+    // The same text, but QTabBar lays every tab out again for it.
+    setTabText(index, tabText(index));
+}
+
 QSize ChatTabBar::tabSizeHint(int index) const
 {
     QSize size = QTabBar::tabSizeHint(index);
+    if (const QWidget* face = tabFace(index))
+    {
+        size.setWidth(face->sizeHint().width() + 2);
+        return size;
+    }
     if (tabText(index).isEmpty())
     {
         const QWidget* badge = tabButton(index, QTabBar::RightSide);
@@ -315,27 +372,200 @@ QSize ChatTabBar::tabSizeHint(int index) const
     return size;
 }
 
+QSize ChatTabBar::minimumTabSizeHint(int index) const
+{
+    // Only tabs with a face give way. The others keep their size, and the bar scrolls.
+    if (const QWidget* face = tabFace(index))
+        return QSize(face->minimumSizeHint().width() + 2, tabSizeHint(index).height());
+    return tabSizeHint(index);
+}
+
 void ChatTabBar::tabLayoutChange()
 {
     QTabBar::tabLayoutChange();
     positionBadges();
 }
 
+void ChatTabBar::childEvent(QChildEvent* event)
+{
+    QTabBar::childEvent(event);
+    // Faces and badges. QTabBar moves them each time it lays out or scrolls the
+    // tabs, so each move gets corrected.
+    if (event->added() && event->child()->isWidgetType())
+        event->child()->installEventFilter(this);
+}
+
+bool ChatTabBar::eventFilter(QObject* watched, QEvent* event)
+{
+    for (QToolButton* button : std::as_const(m_scrollButtons))
+    {
+        if (watched == button)
+        {
+            if (event->type() == QEvent::Paint)
+            {
+                paintScrollButton(button);
+                return true;
+            }
+            return QTabBar::eventFilter(watched, event);
+        }
+    }
+    if (event->type() == QEvent::Move && watched->parent() == this)
+    {
+        for (int index = 0; index < count(); ++index)
+        {
+            if (watched == tabButton(index, QTabBar::LeftSide) || watched == tabButton(index, QTabBar::RightSide))
+            {
+                placeTabButtons(index);
+                break;
+            }
+        }
+    }
+    return QTabBar::eventFilter(watched, event);
+}
+
+void ChatTabBar::mousePressEvent(QMouseEvent* event)
+{
+    // Taken, so the release comes here too.
+    if (event->button() == Qt::MiddleButton && tabFace(tabAt(event->position().toPoint())))
+    {
+        event->accept();
+        return;
+    }
+    QTabBar::mousePressEvent(event);
+}
+
+void ChatTabBar::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::MiddleButton)
+    {
+        const int index = tabAt(event->position().toPoint());
+        if (tabFace(index))
+        {
+            emit tabCloseRequested(index);
+            return;
+        }
+    }
+    QTabBar::mouseReleaseEvent(event);
+}
+
+void ChatTabBar::contextMenuEvent(QContextMenuEvent* event)
+{
+    const int index = tabAt(event->pos());
+    if (tabFace(index))
+    {
+        emit tabMenuRequested(index, event->globalPos());
+        return;
+    }
+    QTabBar::contextMenuEvent(event);
+}
+
 void ChatTabBar::positionBadges()
 {
+    for (int index = 0; index < count(); ++index)
+        placeTabButtons(index);
+    // Any layout or scroll can move a tab with a badge into view or out of it.
+    for (QToolButton* button : std::as_const(m_scrollButtons))
+        button->update();
+}
+
+void ChatTabBar::placeTabButtons(int index)
+{
+    if (!isTabVisible(index))
+        return;
+    if (QWidget* face = tabFace(index))
+    {
+        // Across the whole tab, inside its border.
+        const QRect tab = tabRect(index).adjusted(1, 0, -1, 0);
+        const QRect rect(tab.left(), tab.top() + (tab.height() - kTabFaceHeight + 1) / 2, tab.width(), kTabFaceHeight);
+        if (face->geometry() != rect)
+            face->setGeometry(rect);
+    }
+
     constexpr int gap = 5;
+    QWidget* badge = tabButton(index, QTabBar::RightSide);
+    if (!badge || tabText(index).isEmpty())
+        return;
+
+    QStyleOptionTab option;
+    initStyleOption(&option, index);
+    const QRect button = style()->subElementRect(QStyle::SE_TabBarTabRightButton, &option, this);
+    const QRect text = style()->subElementRect(QStyle::SE_TabBarTabText, &option, this);
+    const QPoint pos(std::min(button.left(), text.right() + 1 + gap), button.top());
+    if (text.isValid() && badge->pos() != pos)
+        badge->move(pos);
+}
+
+QRect ChatTabBar::tabArea() const
+{
+    // The style puts the scroll buttons at either end or both at one end.
+    QRect area = rect();
+    for (const QToolButton* button : m_scrollButtons)
+    {
+        if (!button->isVisible())
+            continue;
+        if (button->geometry().center().x() < width() / 2)
+            area.setLeft(std::max(area.left(), button->geometry().right() + 1));
+        else
+            area.setRight(std::min(area.right(), button->x() - 1));
+    }
+    return area;
+}
+
+ChatTabBar::HiddenUnread ChatTabBar::unreadOutOfView(bool left) const
+{
+    const QRect area = tabArea();
+    HiddenUnread found = HiddenUnread::None;
     for (int index = 0; index < count(); ++index)
     {
-        QWidget* badge = tabButton(index, QTabBar::RightSide);
-        if (!badge || !isTabVisible(index) || tabText(index).isEmpty())
+        if (!isTabVisible(index))
             continue;
+        const QWidget* face = tabFace(index);
+        const QWidget* badge = tabButton(index, QTabBar::RightSide);
+        if (face ? !face->property(kTabAttentionProperty).toBool() : !badge)
+            continue;
+        const QRect rect = tabRect(index);
+        if (!(left ? rect.left() < area.left() : rect.right() > area.right()))
+            continue;
+        // A fixed tab's badge is amber for a mention; the dot matches it.
+        if (face || !badge->property("mention").toBool())
+            return HiddenUnread::Message;
+        found = HiddenUnread::Mention;
+    }
+    return found;
+}
 
-        QStyleOptionTab option;
-        initStyleOption(&option, index);
-        const QRect button = style()->subElementRect(QStyle::SE_TabBarTabRightButton, &option, this);
-        const QRect text = style()->subElementRect(QStyle::SE_TabBarTabText, &option, this);
-        if (text.isValid())
-            badge->move(std::min(button.left(), text.right() + 1 + gap), button.top());
+void ChatTabBar::paintScrollButton(QToolButton* button)
+{
+    QPainter painter(button);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const Tokens& t = LobbyTheme::tokens();
+    const bool left = button == m_scrollButtons.value(0);
+    // Opaque: the tabs scroll underneath. A rule on the side the tabs are.
+    painter.fillRect(button->rect(), t.panel);
+    const QRect area = tabArea();
+    if (button->geometry().right() < area.left())
+        painter.fillRect(QRect(button->width() - 1, 5, 1, button->height() - 10), t.line);
+    else
+        painter.fillRect(QRect(0, 5, 1, button->height() - 10), t.line);
+    const bool hover = button->isEnabled() && button->underMouse();
+    if (hover || button->isDown())
+    {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(t.raise);
+        painter.drawRoundedRect(QRectF(button->rect()).adjusted(2.5, 4, -2.5, -4), 5, 5);
+    }
+    const QColor color = !button->isEnabled() ? t.faint : hover ? t.ink : t.muted;
+    constexpr int side = 16;
+    const QPixmap arrow = LobbyTheme::icon(left ? QStringLiteral("arrow-left-s-line") : QStringLiteral("arrow-right-s-line"),
+                                           color, side, button->devicePixelRatioF());
+    painter.drawPixmap(QRect((button->width() - side) / 2, (button->height() - side) / 2, side, side), arrow);
+    // Something unread that way: a dot on the arrow's outer corner.
+    const HiddenUnread unread = unreadOutOfView(left);
+    if (unread != HiddenUnread::None)
+    {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(unread == HiddenUnread::Mention ? t.warn : t.liveBg);
+        painter.drawEllipse(QPointF(left ? 5.5 : button->width() - 5.5, 7.5), 3.0, 3.0);
     }
 }
 
@@ -389,7 +619,7 @@ void PlayerTile::paintEvent(QPaintEvent*)
     const bool darkInk = !t.dark ? false : (slot == 3 || slot == 4);
     painter.setPen(darkInk ? QColor(0, 0, 0, 200) : QColor(Qt::white));
     painter.setFont(LobbyTheme::pixelFont(int(width() * 0.46)));
-    painter.drawText(rect(), Qt::AlignCenter, LobbyTheme::nameInitial(m_name));
+    painter.drawText(QRectF(rect()).translated(0, LobbyTheme::pixelTextDrop(painter.font())), Qt::AlignCenter, LobbyTheme::nameInitial(m_name));
 }
 
 // ── ChatView ─────────────────────────────────────────────────────────
@@ -1011,489 +1241,6 @@ void MentionPopup::paintEvent(QPaintEvent*)
     painter.setPen(QPen(t.line2, 1.0));
     painter.setBrush(Qt::NoBrush);
     painter.drawPath(shape);
-}
-
-// ── PrivateMessagesPanel ─────────────────────────────────────────────
-
-namespace
-{
-    // One conversation in the inbox.
-    class InboxRow : public QFrame
-    {
-    public:
-        InboxRow(const QString& name, const QString& country, const QString& preview,
-                 const QString& time, int unread, bool gone, QWidget* parent)
-            : QFrame(parent)
-        {
-            setObjectName("PmInboxRow");
-            setAttribute(Qt::WA_Hover);
-            setCursor(Qt::PointingHandCursor);
-            setFixedHeight(46);
-            auto* lay = new QHBoxLayout(this);
-            lay->setContentsMargins(12, 7, 12, 7);
-            lay->setSpacing(9);
-            auto* tile = new PlayerTile(30, this);
-            tile->setPlayer(name);
-            tile->setDimmed(gone);
-            lay->addWidget(tile);
-
-            auto* words = new QVBoxLayout;
-            words->setSpacing(0);
-            auto* top = new QHBoxLayout;
-            top->setSpacing(5);
-            auto* nameLabel = new ElidedLabel(gone ? Role::Faint : Role::Ink, this);
-            nameLabel->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
-            nameLabel->setText(name);
-            top->addWidget(nameLabel);
-            auto* flag = new CountryFlag(this);
-            flag->setCountry(country);
-            top->addWidget(flag);
-            top->addStretch(1);
-            auto* timeLabel = new QLabel(time, this);
-            timeLabel->setFont(LobbyTheme::uiFont(10));
-            timeLabel->setProperty("role", "muted");
-            top->addWidget(timeLabel);
-            words->addLayout(top);
-
-            auto* bottom = new QHBoxLayout;
-            bottom->setSpacing(6);
-            auto* previewLabel = new ElidedLabel(gone ? Role::Faint : unread > 0 ? Role::Ink2 : Role::Muted, this);
-            previewLabel->setFont(LobbyTheme::uiFont(11, unread > 0 ? QFont::DemiBold : QFont::Normal));
-            previewLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-            previewLabel->setText(preview);
-            bottom->addWidget(previewLabel, 1);
-            if (unread > 0)
-            {
-                auto* badge = new QLabel(unread > 99 ? QStringLiteral("99+") : QString::number(unread), this);
-                badge->setObjectName("ChatBadge");
-                badge->setFont(LobbyTheme::uiFont(9, QFont::Bold));
-                badge->setAlignment(Qt::AlignCenter);
-                bottom->addWidget(badge);
-            }
-            words->addLayout(bottom);
-            lay->addLayout(words, 1);
-        }
-
-        std::function<void()> onClick;
-
-    protected:
-        void mouseReleaseEvent(QMouseEvent* event) override
-        {
-            if (event->button() == Qt::LeftButton && rect().contains(event->position().toPoint()) && onClick)
-                onClick();
-        }
-
-        void paintEvent(QPaintEvent*) override
-        {
-            QPainter painter(this);
-            const Tokens& t = LobbyTheme::tokens();
-            if (underMouse())
-                painter.fillRect(rect(), t.tint);
-            painter.fillRect(QRect(0, 0, width(), 1), t.line);
-        }
-    };
-} // namespace
-
-PrivateMessagesPanel::PrivateMessagesPanel(QWidget* parent)
-    : QWidget(parent)
-{
-    auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
-    m_pages = new QStackedWidget(this);
-    root->addWidget(m_pages);
-
-    // ── Inbox ──
-    auto* inbox = new QWidget(m_pages);
-    auto* inboxLay = new QVBoxLayout(inbox);
-    inboxLay->setContentsMargins(0, 0, 0, 0);
-    inboxLay->setSpacing(0);
-    auto* heading = new QHBoxLayout;
-    heading->setContentsMargins(12, 5, 8, 3);
-    auto* title = new QLabel(tr("Private messages").toUpper(), inbox);
-    QFont titleFont = LobbyTheme::uiFont(9, QFont::DemiBold);
-    titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 0.9);
-    title->setFont(titleFont);
-    title->setProperty("role", "muted");
-    heading->addWidget(title);
-    heading->addStretch(1);
-    auto* compose = new IconButton(QStringLiteral("edit-2-line"), 22, inbox);
-    compose->setObjectName("PmNewMessage");
-    compose->setToolTip(tr("New message"));
-    compose->setAccessibleName(tr("New message"));
-    connect(compose, &QToolButton::clicked, this, &PrivateMessagesPanel::newMessageRequested);
-    heading->addWidget(compose);
-    inboxLay->addLayout(heading);
-
-    auto* scroll = new QScrollArea(inbox);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->viewport()->setAutoFillBackground(false);
-    m_inboxRows = new QWidget(scroll);
-    m_inboxLayout = new QVBoxLayout(m_inboxRows);
-    m_inboxLayout->setContentsMargins(0, 0, 0, 0);
-    m_inboxLayout->setSpacing(0);
-    m_inboxLayout->addStretch(1);
-    scroll->setWidget(m_inboxRows);
-    m_inboxRows->setAutoFillBackground(false); // setWidget turns it on
-    inboxLay->addWidget(scroll, 1);
-    m_inboxEmpty = new QLabel(tr("Nothing yet. Right-click a player to send them a message."), inbox);
-    m_inboxEmpty->setFont(LobbyTheme::uiFont(12));
-    m_inboxEmpty->setProperty("role", "muted");
-    m_inboxEmpty->setWordWrap(true);
-    m_inboxEmpty->setAlignment(Qt::AlignCenter);
-    m_inboxEmpty->setContentsMargins(20, 0, 20, 30);
-    inboxLay->addWidget(m_inboxEmpty, 1);
-    m_pages->addWidget(inbox);
-
-    // ── One thread ──
-    auto* thread = new QWidget(m_pages);
-    auto* threadLay = new QVBoxLayout(thread);
-    threadLay->setContentsMargins(0, 0, 0, 0);
-    threadLay->setSpacing(0);
-    auto* header = new QFrame(thread);
-    header->setObjectName("PmThreadHeader");
-    auto* headerLay = new QHBoxLayout(header);
-    headerLay->setContentsMargins(6, 6, 8, 6);
-    headerLay->setSpacing(8);
-    auto* back = new IconButton(QStringLiteral("arrow-left-s-line"), 22, header);
-    back->setObjectName("PmBack");
-    back->setToolTip(tr("All conversations"));
-    back->setAccessibleName(tr("All conversations"));
-    connect(back, &QToolButton::clicked, this, &PrivateMessagesPanel::showInbox);
-    headerLay->addWidget(back);
-    m_headerTile = new PlayerTile(26, header);
-    headerLay->addWidget(m_headerTile);
-    auto* who = new QVBoxLayout;
-    who->setSpacing(1);
-    auto* nameRow = new QHBoxLayout;
-    nameRow->setSpacing(5);
-    m_headerName = new ElidedLabel(Role::Ink, header);
-    m_headerName->setFont(LobbyTheme::uiFont(12, QFont::Bold));
-    nameRow->addWidget(m_headerName);
-    m_headerFlag = new CountryFlag(header);
-    nameRow->addWidget(m_headerFlag);
-    m_headerTo = new StatusTag(StatusTag::Kind::Neutral, header);
-    nameRow->addWidget(m_headerTo);
-    nameRow->addStretch(1);
-    who->addLayout(nameRow);
-    auto* statusRow = new QHBoxLayout;
-    statusRow->setSpacing(4);
-    m_headerDot = new LedDot(header);
-    statusRow->addWidget(m_headerDot);
-    m_headerStatus = new ElidedLabel(Role::Muted, header);
-    m_headerStatus->setFont(LobbyTheme::uiFont(10));
-    m_headerStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    statusRow->addWidget(m_headerStatus, 1);
-    who->addLayout(statusRow);
-    headerLay->addLayout(who, 1);
-    m_headerChallenge = new IconButton(QStringLiteral("sword-fill"), 24, header);
-    m_headerChallenge->setObjectName("PmChallenge");
-    m_headerChallenge->setToolTip(tr("Challenge"));
-    m_headerChallenge->setAccessibleName(tr("Challenge"));
-    connect(m_headerChallenge, &QToolButton::clicked, this, [this]() {
-        if (m_openRemote != 0)
-            emit challengeRequested(m_openRemote);
-    });
-    headerLay->addWidget(m_headerChallenge);
-    m_headerMore = new IconButton(QStringLiteral("more-2-fill"), 24, header);
-    m_headerMore->setObjectName("PmMore");
-    m_headerMore->setToolTip(tr("More"));
-    m_headerMore->setAccessibleName(tr("More"));
-    connect(m_headerMore, &QToolButton::clicked, this, [this]() {
-        if (m_openRemote != 0)
-            emit menuRequested(m_openRemote, m_headerMore->mapToGlobal(QPoint(0, m_headerMore->height())));
-    });
-    headerLay->addWidget(m_headerMore);
-    threadLay->addWidget(header);
-
-    m_threadStack = new QStackedWidget(thread);
-    auto* stackWrap = new QVBoxLayout;
-    stackWrap->setContentsMargins(10, 6, 4, 2);
-    stackWrap->addWidget(m_threadStack);
-    threadLay->addLayout(stackWrap, 1);
-    m_pages->addWidget(thread);
-
-    rebuildInbox();
-}
-
-ChatView* PrivateMessagesPanel::threadView(quint64 localId, const QString& localName,
-                                           quint64 remoteId, const QString& remoteName, bool localIsOwner)
-{
-    Thread& thread = m_threads[keyOf(localId, remoteId)];
-    if (thread.view)
-        return thread.view;
-
-    thread.localId = localId;
-    thread.localName = localName;
-    thread.localIsOwner = localIsOwner;
-    thread.remoteId = remoteId;
-    thread.remoteName = remoteName;
-    thread.view = new ChatView(m_threadStack);
-    m_threadStack->addWidget(thread.view);
-    connect(thread.view, &ChatView::userActivated, this, &PrivateMessagesPanel::userActivated);
-    thread.view->addLine(QString("<i style='color:%1;'>%2</i>")
-        .arg(LobbyTheme::tokens().muted.name(),
-             tr("Only the two of you see this. It's gone when either of you leaves the lobby.")));
-    rebuildInbox();
-    return thread.view;
-}
-
-void PrivateMessagesPanel::noteMessage(quint64 localId, quint64 remoteId, const QString& preview, qint64 timeMs, bool incoming)
-{
-    const auto it = m_threads.find(keyOf(localId, remoteId));
-    if (it == m_threads.end())
-        return;
-    it->preview = preview;
-    it->lastMs = timeMs;
-    const bool seen = m_active && m_openLocal == localId && m_openRemote == remoteId;
-    if (incoming && !seen)
-    {
-        ++it->unread;
-        emit unreadChanged();
-    }
-    rebuildInbox();
-}
-
-void PrivateMessagesPanel::openThread(quint64 localId, quint64 remoteId)
-{
-    const auto it = m_threads.find(keyOf(localId, remoteId));
-    if (it == m_threads.end())
-        return;
-    m_openLocal = localId;
-    m_openRemote = remoteId;
-    m_threadStack->setCurrentWidget(it->view);
-    m_pages->setCurrentIndex(1);
-    if (m_active && it->unread > 0)
-    {
-        it->unread = 0;
-        emit unreadChanged();
-        rebuildInbox();
-    }
-    refreshHeader();
-    emit currentChanged();
-}
-
-void PrivateMessagesPanel::showInbox()
-{
-    m_openLocal = 0;
-    m_openRemote = 0;
-    m_pages->setCurrentIndex(0);
-    emit currentChanged();
-}
-
-void PrivateMessagesPanel::clear()
-{
-    for (const Thread& thread : m_threads)
-    {
-        if (thread.view)
-            thread.view->deleteLater();
-    }
-    m_threads.clear();
-    m_openLocal = 0;
-    m_openRemote = 0;
-    m_pages->setCurrentIndex(0);
-    rebuildInbox();
-    emit unreadChanged();
-    emit currentChanged();
-}
-
-quint64 PrivateMessagesPanel::threadLocalFor(quint64 remoteId) const
-{
-    const Thread* latest = nullptr;
-    for (const Thread& thread : m_threads)
-    {
-        if (thread.remoteId == remoteId && !thread.gone && (!latest || thread.lastMs > latest->lastMs))
-            latest = &thread;
-    }
-    return latest ? latest->localId : 0;
-}
-
-ChatView* PrivateMessagesPanel::existingView(quint64 remoteId) const
-{
-    const quint64 local = threadLocalFor(remoteId);
-    const auto it = m_threads.constFind(keyOf(local, remoteId));
-    return local != 0 && it != m_threads.constEnd() ? it->view : nullptr;
-}
-
-void PrivateMessagesPanel::setActive(bool active)
-{
-    m_active = active;
-    if (!active)
-        return;
-    if (Thread* thread = openThreadData(); thread && thread->unread > 0)
-    {
-        thread->unread = 0;
-        emit unreadChanged();
-        rebuildInbox();
-    }
-}
-
-void PrivateMessagesPanel::setRemoteStatus(quint64 remoteId, const QString& state, const QString& statusText,
-                                           const QString& country, bool canChallenge)
-{
-    bool changed = false;
-    for (Thread& thread : m_threads)
-    {
-        if (thread.remoteId != remoteId || thread.gone)
-            continue;
-        thread.state = state;
-        thread.statusText = statusText;
-        thread.canChallenge = canChallenge;
-        if (thread.remoteCountry != country)
-        {
-            thread.remoteCountry = country;
-            changed = true;
-        }
-    }
-    if (changed)
-        rebuildInbox();
-    if (m_openRemote == remoteId)
-        refreshHeader();
-}
-
-void PrivateMessagesPanel::markGone(quint64 userId)
-{
-    bool found = false;
-    for (Thread& thread : m_threads)
-    {
-        if ((thread.remoteId != userId && thread.localId != userId) || thread.gone)
-            continue;
-        thread.gone = true;
-        thread.localGone = thread.localId == userId;
-        found = true;
-        thread.preview = thread.localGone ? tr("%1 left this PC").arg(thread.localName) : tr("Left the lobby");
-        thread.view->addLine(QString("<i style='color:%1;'>%2</i>")
-            .arg(LobbyTheme::tokens().muted.name(),
-                 thread.localGone ? tr("%1 left this PC. Nobody can answer as them any more.").arg(thread.localName.toHtmlEscaped())
-                                  : tr("%1 left the lobby. Messages can't reach them.").arg(thread.remoteName.toHtmlEscaped())));
-    }
-    if (!found)
-        return;
-    rebuildInbox();
-    if (m_openRemote == userId || m_openLocal == userId)
-    {
-        refreshHeader();
-        emit currentChanged();
-    }
-}
-
-PrivateMessagesPanel::Thread* PrivateMessagesPanel::openThreadData()
-{
-    const auto it = m_threads.find(keyOf(m_openLocal, m_openRemote));
-    return m_openLocal != 0 && it != m_threads.end() ? &it.value() : nullptr;
-}
-
-const PrivateMessagesPanel::Thread* PrivateMessagesPanel::openThreadData() const
-{
-    const auto it = m_threads.constFind(keyOf(m_openLocal, m_openRemote));
-    return m_openLocal != 0 && it != m_threads.constEnd() ? &it.value() : nullptr;
-}
-
-QString PrivateMessagesPanel::openRemoteName() const
-{
-    const Thread* thread = openThreadData();
-    return thread ? thread->remoteName : QString();
-}
-
-QString PrivateMessagesPanel::openLocalName() const
-{
-    const Thread* thread = openThreadData();
-    return thread ? thread->localName : QString();
-}
-
-bool PrivateMessagesPanel::openLocalIsOwner() const
-{
-    const Thread* thread = openThreadData();
-    return !thread || thread->localIsOwner;
-}
-
-bool PrivateMessagesPanel::openRemoteGone() const
-{
-    const Thread* thread = openThreadData();
-    return thread && thread->gone;
-}
-
-bool PrivateMessagesPanel::openLocalGone() const
-{
-    const Thread* thread = openThreadData();
-    return thread && thread->localGone;
-}
-
-int PrivateMessagesPanel::unreadTotal() const
-{
-    int total = 0;
-    for (const Thread& thread : m_threads)
-        total += thread.unread;
-    return total;
-}
-
-QList<ChatView*> PrivateMessagesPanel::views() const
-{
-    QList<ChatView*> out;
-    for (const Thread& thread : m_threads)
-    {
-        if (thread.view)
-            out << thread.view;
-    }
-    return out;
-}
-
-void PrivateMessagesPanel::rebuildInbox()
-{
-    while (m_inboxLayout->count() > 1)
-    {
-        QLayoutItem* item = m_inboxLayout->takeAt(0);
-        if (QWidget* widget = item->widget())
-        {
-            widget->hide();
-            widget->deleteLater();
-        }
-        delete item;
-    }
-
-    QList<const Thread*> sorted;
-    for (const Thread& thread : m_threads)
-        sorted << &thread;
-    std::sort(sorted.begin(), sorted.end(), [](const Thread* a, const Thread* b) { return a->lastMs > b->lastMs; });
-
-    int position = 0;
-    for (const Thread* thread : sorted)
-    {
-        const QString time = thread->lastMs > 0
-            ? QDateTime::fromMSecsSinceEpoch(thread->lastMs).toString("hh:mm") : QString();
-        auto* row = new InboxRow(thread->remoteName, thread->remoteCountry, thread->preview, time,
-                                 thread->unread, thread->gone, m_inboxRows);
-        row->onClick = [this, local = thread->localId, remote = thread->remoteId]() {
-            // Later: the click is inside a row this rebuild would delete.
-            QTimer::singleShot(0, this, [this, local, remote]() { openThread(local, remote); });
-        };
-        m_inboxLayout->insertWidget(position++, row);
-    }
-    m_inboxEmpty->setVisible(sorted.isEmpty());
-    m_inboxRows->parentWidget()->parentWidget()->setVisible(!sorted.isEmpty());
-}
-
-void PrivateMessagesPanel::refreshHeader()
-{
-    const Thread* thread = openThreadData();
-    if (!thread)
-        return;
-    const Tokens& t = LobbyTheme::tokens();
-    m_headerTile->setPlayer(thread->remoteName);
-    m_headerTile->setDimmed(thread->gone);
-    m_headerName->setText(thread->remoteName);
-    m_headerFlag->setCountry(thread->remoteCountry);
-    m_headerTo->setVisible(!thread->localIsOwner);
-    if (!thread->localIsOwner)
-        m_headerTo->setTag(StatusTag::Kind::Neutral, tr("To %1").arg(thread->localName));
-    m_headerStatus->setText(thread->localGone ? tr("%1 left this PC").arg(thread->localName)
-                            : thread->gone ? tr("Left the lobby") : thread->statusText);
-    m_headerDot->setColor(thread->gone ? t.faint : presenceColor(thread->state));
-    // A challenge goes out as this PC's owner, so answering as someone else it would
-    // come from a name the other side wasn't talking to.
-    m_headerChallenge->setVisible(!thread->gone && thread->canChallenge && thread->localIsOwner);
-    m_headerMore->setVisible(!thread->gone);
 }
 
 #endif // NETPLAY

@@ -4507,10 +4507,6 @@ A local replay is saved only if Save replay is on.</source>
             <translation>%1は今、対戦の申し込みを受けられません。</translation>
         </message>
         <message>
-            <source>You: %1</source>
-            <translation>自分: %1</translation>
-        </message>
-        <message>
             <source>%1 (private): %2</source>
             <translation>%1（プライベート）: %2</translation>
         </message>
@@ -4599,16 +4595,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>プライベート</translation>
         </message>
         <message>
-            <source>Private messages</source>
-            <translation>プライベートメッセージ</translation>
-        </message>
-        <message>
             <source>As %1</source>
             <translation>%1として</translation>
-        </message>
-        <message>
-            <source>Type /w and a name to start a conversation</source>
-            <translation>/w と名前を入力して会話を始めます</translation>
         </message>
         <message>
             <source>%1 left the lobby</source>
@@ -5148,22 +5136,14 @@ A local replay is saved only if Save replay is on.</source>
         </message>
     </context>
     <context>
-        <name>UserInterface::Dialog::PrivateMessagesPanel</name>
+        <name>UserInterface::Dialog::PrivateChats</name>
         <message>
-            <source>Private messages</source>
-            <translation>プライベートメッセージ</translation>
+            <source>Close</source>
+            <translation>閉じる</translation>
         </message>
         <message>
-            <source>New message</source>
-            <translation>新規メッセージ</translation>
-        </message>
-        <message>
-            <source>Nothing yet. Right-click a player to send them a message.</source>
-            <translation>まだありません。プレイヤーを右クリックしてメッセージを送れます。</translation>
-        </message>
-        <message>
-            <source>All conversations</source>
-            <translation>すべての会話</translation>
+            <source>%1 (to %2)</source>
+            <translation>%1（%2宛）</translation>
         </message>
         <message>
             <source>Challenge</source>
@@ -6059,6 +6039,14 @@ A local replay is saved only if Save replay is on.</source>
         <translation>オフにすると、メッセージを送れるのは直近10分以内にあなたがメッセージを送ったプレイヤーとモデレーターだけになります。</translation>
     </message>
     <message>
+        <source>Notification sounds</source>
+        <translation>通知音</translation>
+    </message>
+    <message>
+        <source>Off: notifications still show, without a sound.</source>
+        <translation>オフにすると、通知は表示されますが音は鳴りません。</translation>
+    </message>
+    <message>
         <source>Not taking messages</source>
         <translation>メッセージを受け付けていません</translation>
     </message>
@@ -6140,6 +6128,14 @@ A local replay is saved only if Save replay is on.</source>
     <message>
         <source>≤%1 ms</source>
         <translation>%1 ms以下</translation>
+    </message>
+    <message>
+        <source>Hide details</source>
+        <translation>詳細を隠す</translation>
+    </message>
+    <message>
+        <source>Show details</source>
+        <translation>詳細を表示</translation>
     </message>
 </context>
 <context>
@@ -6240,6 +6236,37 @@ A local replay is saved only if Save replay is on.</source>
     </message>
 </context>
 <context>
+    <name>UserInterface::Dialog::PanelLayout</name>
+    <message>
+        <source>Players</source>
+        <translation>プレイヤー</translation>
+    </message>
+    <message>
+        <source>Chat</source>
+        <translation>チャット</translation>
+    </message>
+    <message>
+        <source>Live now</source>
+        <translation>進行中の対戦</translation>
+    </message>
+    <message>
+        <source>Open rooms</source>
+        <translation>ルーム一覧</translation>
+    </message>
+    <message>
+        <source>Move a panel</source>
+        <translation>パネルを移動</translation>
+    </message>
+    <message>
+        <source>Drag its header</source>
+        <translation>ヘッダーをドラッグ</translation>
+    </message>
+    <message>
+        <source>Reset layout</source>
+        <translation>レイアウトをリセット</translation>
+    </message>
+</context>
+<context>
     <name>UserInterface::Dialog::RollbackLobbyDialog</name>
     <message>
         <source>Only this PC is playing for now. When someone joins the room, click Add to Game on their seat.</source>
@@ -6293,6 +6320,14 @@ A local replay is saved only if Save replay is on.</source>
     <message>
         <source>Vertical</source>
         <translation>縦に並べる</translation>
+    </message>
+    <message>
+        <source>Minimal</source>
+        <translation>コンパクト表示</translation>
+    </message>
+    <message>
+        <source>Drag to move the chat</source>
+        <translation>ドラッグしてチャットを移動</translation>
     </message>
 </context>
         <context>

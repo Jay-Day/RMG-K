@@ -97,7 +97,7 @@ void LobbyConnectDialog::buildUi()
     auto* words = new QVBoxLayout;
     words->setSpacing(1);
     auto* word = new QLabel(QStringLiteral("RMG-K"), header);
-    word->setFont(LobbyTheme::pixelFont(18, 0.3));
+    word->setFont(LobbyTheme::brandFont(18, 0.3));
     words->addWidget(word);
     auto* tagline = new QLabel(tr("ROLLBACK NETPLAY"), header);
     QFont taglineFont = LobbyTheme::uiFont(8, QFont::Bold);

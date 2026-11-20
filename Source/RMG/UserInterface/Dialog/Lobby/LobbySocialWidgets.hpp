@@ -18,10 +18,8 @@
 
 class QActionGroup;
 class QLabel;
-class QScrollArea;
-class QStackedWidget;
 class QTimer;
-class QVBoxLayout;
+class QToolButton;
 
 namespace UserInterface
 {
@@ -67,7 +65,10 @@ protected:
 };
 
 // The chat tabs. An icon-only tab is only as wide as its icon and badge; left to
-// itself, QTabBar reserves room for text it doesn't have.
+// itself, QTabBar reserves room for text it doesn't have. A tab can have a face
+// instead of text: a widget it's sized by and that covers it. When the bar runs
+// out of room, tabs with a face shrink to their face's minimum first, and then the
+// bar scrolls.
 class ChatTabBar : public QTabBar
 {
     Q_OBJECT
@@ -80,12 +81,43 @@ public:
     // leave a gap where it was.
     void showTab(int index, bool visible);
 
+    // The tab takes the face's size; give it no text. The bar owns the face
+    // from here, and deletes it with its tab.
+    void setTabFace(int index, QWidget* face);
+    QWidget* tabFace(int index) const;
+    // A face's tab has something unread. Its scroll button says so while it's out of view.
+    void setTabAttention(int index, bool attention);
+    // Lays the tabs out again after a tab's face changed size.
+    void refreshTab(int index);
+
+signals:
+    // A right click on a tab with a face. A middle click on one asks to close it
+    // (tabCloseRequested).
+    void tabMenuRequested(int index, const QPoint& globalPos);
+
 protected:
     QSize tabSizeHint(int index) const override;
+    QSize minimumTabSizeHint(int index) const override;
     void tabLayoutChange() override;
+    void childEvent(QChildEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     void positionBadges();
+    // Puts a tab's face and badge where they go, which QTabBar doesn't know.
+    void placeTabButtons(int index);
+    void paintScrollButton(QToolButton* button);
+    // Where tabs show, between the scroll buttons.
+    QRect tabArea() const;
+    // What the tabs scrolled out of view to that side have unread. A lobby mention
+    // alone is the quieter of the two, as its badge is.
+    enum class HiddenUnread { None, Mention, Message };
+    HiddenUnread unreadOutOfView(bool left) const;
+
+    QList<QToolButton*> m_scrollButtons;
 };
 
 // A player's initial on a tile in one of the port colours, picked from the name so
@@ -287,105 +319,6 @@ private:
     int m_typed = 0;
     int m_selected = 0;
     QString m_heading;
-};
-
-// The mail tab: an inbox, and one thread per person. Threads belong to one player
-// on this PC and one user id, never a name, because anyone can pick up a guest's
-// name after they leave. They last as long as the connection; the server keeps
-// nothing.
-class PrivateMessagesPanel : public QWidget
-{
-    Q_OBJECT
-
-public:
-    explicit PrivateMessagesPanel(QWidget* parent = nullptr);
-
-    // Finds or starts the thread between this PC's localId and remoteId.
-    ChatView* threadView(quint64 localId, const QString& localName,
-                         quint64 remoteId, const QString& remoteName, bool localIsOwner);
-    // Records a line for the inbox's preview. Unread unless the thread is open.
-    void noteMessage(quint64 localId, quint64 remoteId, const QString& preview, qint64 timeMs, bool incoming);
-    void openThread(quint64 localId, quint64 remoteId);
-    void showInbox();
-    void clear();
-
-    // Which of this PC's players already talks to remoteId, or 0.
-    quint64 threadLocalFor(quint64 remoteId) const;
-    ChatView* existingView(quint64 remoteId) const;
-
-    // Whether the panel is what the person is looking at.
-    void setActive(bool active);
-
-    // How the remote player's row and header read right now. A player who left,
-    // from either end of a thread, stays listed, but it can't be written to any more.
-    void setRemoteStatus(quint64 remoteId, const QString& state, const QString& statusText,
-                         const QString& country, bool canChallenge);
-    void markGone(quint64 userId);
-
-    bool threadOpen() const { return m_openLocal != 0; }
-    quint64 openLocalId() const { return m_openLocal; }
-    quint64 openRemoteId() const { return m_openRemote; }
-    QString openRemoteName() const;
-    QString openLocalName() const;
-    bool openLocalIsOwner() const;
-    bool openRemoteGone() const;
-    bool openLocalGone() const;
-    int unreadTotal() const;
-    QList<ChatView*> views() const;
-
-signals:
-    // The open thread changed, so the message box must say something else.
-    void currentChanged();
-    void unreadChanged();
-    void userActivated(quint64 userId, const QPoint& globalPos);
-    void challengeRequested(quint64 remoteId);
-    void menuRequested(quint64 remoteId, const QPoint& globalPos);
-    void newMessageRequested();
-
-private:
-    struct Thread
-    {
-        quint64 localId = 0;
-        QString localName;
-        bool localIsOwner = true;
-        quint64 remoteId = 0;
-        QString remoteName;
-        QString remoteCountry;
-        QString state;
-        QString statusText;
-        bool canChallenge = true;
-        bool gone = false;
-        bool localGone = false; // gone because it was this PC's end that left
-        int unread = 0;
-        QString preview;
-        qint64 lastMs = 0;
-        ChatView* view = nullptr;
-    };
-
-    static quint64 keyOf(quint64 localId, quint64 remoteId) { return (localId << 32) ^ remoteId; }
-    Thread* openThreadData();
-    const Thread* openThreadData() const;
-    void rebuildInbox();
-    void refreshHeader();
-
-    QHash<quint64, Thread> m_threads;
-    quint64 m_openLocal = 0;
-    quint64 m_openRemote = 0;
-    bool m_active = false;
-
-    QStackedWidget* m_pages;
-    QWidget* m_inboxRows;
-    QVBoxLayout* m_inboxLayout;
-    QLabel* m_inboxEmpty;
-    QStackedWidget* m_threadStack;
-    PlayerTile* m_headerTile;
-    ElidedLabel* m_headerName;
-    CountryFlag* m_headerFlag;
-    StatusTag* m_headerTo;
-    LedDot* m_headerDot;
-    ElidedLabel* m_headerStatus;
-    IconButton* m_headerChallenge;
-    IconButton* m_headerMore;
 };
 
 } // namespace Dialog

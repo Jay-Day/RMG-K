@@ -149,6 +149,7 @@ QSize ElidedLabel::minimumSizeHint() const
 void ElidedLabel::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
+    painter.translate(0, LobbyTheme::pixelTextDrop(font()));
     QRect area = rect();
 
     if (!m_lead.isEmpty())
@@ -373,20 +374,22 @@ void LobbyButton::paintEvent(QPaintEvent*)
         painter.drawPixmap(QPointF(x, face.center().y() - iconSide / 2.0), pixmap);
     }
 
+    // Display-font caps are centered on the letters, not on the font's line box.
+    const qreal drop = m_pixelLabel ? LobbyTheme::pixelTextDrop(font) : 0.0;
     const QRectF textArea(x + iconWidth, face.top(), textWidth + 1, face.height());
     painter.setPen(ink);
     painter.setFont(font);
     if (m_subText.isEmpty())
     {
         const QString label = QFontMetrics(font).elidedText(labelText(), Qt::ElideRight, textWidth + 1);
-        painter.drawText(textArea, Qt::AlignLeft | Qt::AlignVCenter, label);
+        painter.drawText(textArea.translated(0, drop), Qt::AlignLeft | Qt::AlignVCenter, label);
     }
     else
     {
         const int labelHeight = QFontMetrics(font).height();
         const int subHeight = QFontMetrics(subFont).height();
         const qreal y = face.top() + (face.height() - labelHeight - subHeight) / 2.0;
-        painter.drawText(QRectF(textArea.left(), y, textArea.width(), labelHeight),
+        painter.drawText(QRectF(textArea.left(), y + drop, textArea.width(), labelHeight),
                          Qt::AlignLeft | Qt::AlignVCenter, labelText());
         painter.setFont(subFont);
         QColor subInk = ink;
@@ -790,7 +793,7 @@ void UserAvatar::paintEvent(QPaintEvent*)
     painter.drawRoundedRect(QRectF(rect()), 7, 7);
     painter.setFont(LobbyTheme::pixelFont(13));
     painter.setPen(Qt::white);
-    painter.drawText(rect(), Qt::AlignCenter, m_initial);
+    painter.drawText(QRectF(rect()).translated(0, LobbyTheme::pixelTextDrop(painter.font())), Qt::AlignCenter, m_initial);
 }
 
 IconBadge::IconBadge(int side, qreal radius, int iconSide, QWidget* parent)
@@ -852,7 +855,15 @@ QLabel* UserInterface::Dialog::makeSectionLabel(const QString& text, QWidget* pa
     auto* label = new QLabel(text.toUpper(), parent);
     label->setFont(LobbyTheme::pixelFont(11, 1.0));
     label->setProperty("role", "heading");
+    centerDisplayCaps(label);
     return label;
+}
+
+void UserInterface::Dialog::centerDisplayCaps(QLabel* label)
+{
+    // In at the top and out at the bottom: the text moves, the label's height doesn't.
+    const int drop = qRound(LobbyTheme::pixelTextDrop(label->font()));
+    label->setContentsMargins(0, drop, 0, -drop);
 }
 
 StatusTag::StatusTag(Kind kind, QWidget* parent)
@@ -1179,7 +1190,7 @@ void CartridgeTile::paintEvent(QPaintEvent*)
             px -= small ? 2 : 4;
         painter.setFont(LobbyTheme::pixelFont(px));
         painter.setPen(Qt::white);
-        painter.drawText(label, Qt::AlignCenter, initials);
+        painter.drawText(QRectF(label).translated(0, LobbyTheme::pixelTextDrop(painter.font())), Qt::AlignCenter, initials);
     }
     painter.strokePath(labelPath, QPen(QColor(0, 0, 0, 70), 1.0));
     painter.strokePath(shell, QPen(QColor(0, 0, 0, t.dark ? 110 : 70), 1.0));
@@ -1238,7 +1249,7 @@ void GameBadge::paintEvent(QPaintEvent*)
         const int px = std::max(9, static_cast<int>(width() * (initials.size() > 2 ? 0.28 : 0.36)));
         painter.setFont(LobbyTheme::pixelFont(px));
         painter.setPen(QColor(255, 255, 255, 235));
-        painter.drawText(box, Qt::AlignCenter, initials);
+        painter.drawText(box.translated(0, LobbyTheme::pixelTextDrop(painter.font())), Qt::AlignCenter, initials);
     }
     painter.strokePath(shape, QPen(t.dark ? QColor(255, 255, 255, 22) : QColor(0, 0, 0, 30), 1.0));
 }
@@ -1533,7 +1544,7 @@ void StatePill::paintEvent(QPaintEvent*)
 
     painter.setFont(LobbyTheme::pixelFont(10, 0.7));
     painter.setPen(color);
-    painter.drawText(QRect(26, 0, width() - 26, height()), Qt::AlignLeft | Qt::AlignVCenter, m_text.toUpper());
+    painter.drawText(QRectF(26, LobbyTheme::pixelTextDrop(painter.font()), width() - 26, height()), Qt::AlignLeft | Qt::AlignVCenter, m_text.toUpper());
 }
 
 // ── PortCard ─────────────────────────────────────────────────────────
@@ -1590,7 +1601,7 @@ protected:
             return;
         painter.setFont(LobbyTheme::pixelFont(26));
         painter.setPen(m_muted ? QColor(Qt::white) : inkOnPort(m_slot));
-        painter.drawText(rect(), Qt::AlignCenter, m_initial);
+        painter.drawText(QRectF(rect()).translated(0, LobbyTheme::pixelTextDrop(painter.font())), Qt::AlignCenter, m_initial);
     }
 
 private:
@@ -1664,11 +1675,11 @@ protected:
         const QRect valueArea(7, 19, width() - 14, 21);
         if (m_centered || m_unit.isEmpty())
         {
-            painter.drawText(valueArea, horizontal | Qt::AlignVCenter,
+            painter.drawText(QRectF(valueArea).translated(0, LobbyTheme::pixelTextDrop(painter.font())), horizontal | Qt::AlignVCenter,
                              fm.elidedText(m_value, Qt::ElideRight, valueArea.width()));
             return;
         }
-        painter.drawText(valueArea, Qt::AlignLeft | Qt::AlignVCenter, m_value);
+        painter.drawText(QRectF(valueArea).translated(0, LobbyTheme::pixelTextDrop(painter.font())), Qt::AlignLeft | Qt::AlignVCenter, m_value);
         painter.setFont(LobbyTheme::uiFont(10, QFont::DemiBold));
         painter.setPen(t.muted);
         painter.drawText(valueArea.adjusted(fm.horizontalAdvance(m_value) + 2, 0, 0, 0),
@@ -1703,6 +1714,7 @@ PortCard::PortCard(int slot, QWidget* parent)
     capLay->setSpacing(6);
     m_capLabel = new QLabel(QString("P%1").arg(slot), m_cap);
     m_capLabel->setFont(LobbyTheme::pixelFont(13, 0.4));
+    centerDisplayCaps(m_capLabel);
     capLay->addWidget(m_capLabel);
 
     m_hostBadge = new QWidget(m_cap);
@@ -1977,6 +1989,17 @@ void PortCard::setHostTools(bool dragHandle, bool kick)
 {
     m_dragHandle->setVisible(dragHandle);
     m_kick->setVisible(kick);
+    // The whole cap drags, so it says so anywhere on it; the kick button keeps its own.
+    if (dragHandle)
+    {
+        m_cap->setCursor(Qt::OpenHandCursor);
+        m_cap->setToolTip(m_dragHandle->toolTip());
+    }
+    else
+    {
+        m_cap->unsetCursor();
+        m_cap->setToolTip(QString());
+    }
 }
 
 void PortCard::setLifted(bool lifted)

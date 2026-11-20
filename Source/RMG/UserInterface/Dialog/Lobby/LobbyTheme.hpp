@@ -60,11 +60,16 @@ QColor portColor(int slot);
 QColor mix(const QColor& a, const QColor& b, qreal amountOfA);
 QString css(const QColor& color);
 
-// Audiowide for labels and big numbers: a retro arcade face drawn as outlines,
-// so it stays sharp at any display scale (the pixel font Silkscreen blurred at
-// 125%). It has no kana, so Japanese falls back to the system UI font at the
-// same size. Small labels in it take the "heading" role rather than "ink2".
+// Josefin Sans Bold for labels and big numbers: an outline face, so it stays
+// sharp at any display scale (the pixel font Silkscreen blurred at 125%). It
+// has no kana, so Japanese falls back to the system UI font at the same size.
+// Small labels in it take the "heading" role rather than "ink2".
 QFont pixelFont(int px, qreal letterSpacing = 0.0);
+// Josefin's capitals sit high in its line box: how far to move a line of them
+// down so AlignVCenter centers the letters themselves. 0 for any other font.
+qreal pixelTextDrop(const QFont& font);
+// Audiowide, for the RMG-K wordmark only.
+QFont brandFont(int px, qreal letterSpacing = 0.0);
 // The first character of a name, for avatars. Can be two code units.
 QString nameInitial(const QString& name);
 QFont uiFont(int px, QFont::Weight weight = QFont::Normal);

@@ -86,6 +86,12 @@ bool CorePluginsSetGfxSkipRendering(bool skip, unsigned int* skipped = nullptr, 
 // when the plugin can't.
 bool CorePluginsSetGfxSkipHiddenRendering(bool skip);
 
+// Hands a graphics plugin that renders with Vulkan the hooks it calls to have
+// the app's on-screen display drawn into its frames (see VulkanOverlay.h).
+// Returns false when the plugin can't.
+struct RmgkVulkanOverlayHooks;
+bool CorePluginsSetGfxVulkanOverlay(const RmgkVulkanOverlayHooks* hooks);
+
 // Prepares the loaded plugins for a session that has to stay in sync with
 // other machines (netplay, replays), or puts them back for normal play.
 // Synced: loads the RSP plugin that matches the loaded graphics plugin

@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QFontDatabase>
+#include <QFontMetricsF>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
@@ -13,6 +14,7 @@
 #include <QRegularExpression>
 #include <QSvgRenderer>
 
+#include <algorithm>
 #include <utility>
 
 namespace UserInterface
@@ -139,6 +141,17 @@ namespace
     {
         static const QString family = []() {
             const int id = QFontDatabase::addApplicationFont(
+                QStringLiteral(":/lobby/fonts/JosefinSans-Bold.ttf"));
+            const QStringList families = QFontDatabase::applicationFontFamilies(id);
+            return families.isEmpty() ? QString() : families.first();
+        }();
+        return family;
+    }
+
+    QString brandFamily()
+    {
+        static const QString family = []() {
+            const int id = QFontDatabase::addApplicationFont(
                 QStringLiteral(":/lobby/fonts/Audiowide-Regular.ttf"));
             const QStringList families = QFontDatabase::applicationFontFamilies(id);
             return families.isEmpty() ? QString() : families.first();
@@ -252,6 +265,34 @@ QFont pixelFont(int px, qreal letterSpacing)
     if (!family.isEmpty())
         families << family;
     families << QStringLiteral("Yu Gothic UI") << font.family();
+    font.setFamilies(families);
+    font.setPixelSize(px);
+    // The only face there is; asking for it keeps Qt from emboldening it, and
+    // Japanese, which falls back to the UI font, comes out as heavy.
+    font.setWeight(QFont::Bold);
+    if (letterSpacing != 0.0)
+        font.setLetterSpacing(QFont::AbsoluteSpacing, letterSpacing);
+    return font;
+}
+
+qreal pixelTextDrop(const QFont& font)
+{
+    // How far the middle of the capitals sits above the middle of the line
+    // box, which is what AlignVCenter centers. Other fonts are left alone.
+    if (pixelFamily().isEmpty() || font.families().value(0) != pixelFamily())
+        return 0.0;
+    const QFontMetricsF fm(font);
+    return std::max<qreal>(0.0, fm.capHeight() / 2.0 - (fm.ascent() - fm.descent()) / 2.0);
+}
+
+QFont brandFont(int px, qreal letterSpacing)
+{
+    QFont font = QApplication::font();
+    QStringList families;
+    const QString family = brandFamily();
+    if (!family.isEmpty())
+        families << family;
+    families << font.family();
     font.setFamilies(families);
     font.setPixelSize(px);
     font.setWeight(QFont::Normal);
@@ -496,8 +537,9 @@ QString styleSheet()
 
         QFrame#ChatTabRow { background: transparent; border: none; border-bottom: 1px solid @line; }
         QTabBar#ChatTabs { background: transparent; qproperty-drawBase: 0; }
+        /* 2px of the height on top: the display font's capitals sit high in their line. */
         QTabBar#ChatTabs::tab {
-            height: 26px; padding: 0 10px; margin-right: 2px; color: @muted; background: transparent;
+            height: 24px; padding: 2px 10px 0 10px; margin-right: 2px; color: @muted; background: transparent;
             border: 1px solid transparent; border-top-left-radius: 7px; border-top-right-radius: 7px;
         }
         QTabBar#ChatTabs::tab:hover { color: @ink2; }
@@ -505,6 +547,8 @@ QString styleSheet()
             color: @ink; background: @panel; border-color: @line; border-bottom-color: @panel;
             border-top: 2px solid @accent;
         }
+        QTabBar#ChatTabs::scroller { width: 44px; }
+        QTabBar#ChatTabs::tear { background: transparent; border: none; }
         QLabel#ChatBadge {
             color: #ffffff; background-color: @liveBg; border-radius: 7px; padding: 0 4px;
             min-width: 6px; min-height: 14px; max-height: 14px;
@@ -615,7 +659,7 @@ QString styleSheet()
         {"@panel2", t.panel2}, {"@accent", t.accent}, {"@panel", t.panel}, {"@raise", t.raise},
         {"@line2", t.line2}, {"@line", t.line}, {"@well", t.well}, {"@tint", t.tint},
         {"@ink2", t.ink2}, {"@ink", t.ink}, {"@muted", t.muted}, {"@faint", t.faint},
-        // Small Audiowide labels. Dark-on-light makes its thin strokes look
+        // Small display-font labels. Dark-on-light makes thin strokes look
         // lighter than the same contrast does on dark, so light uses full ink.
         {"@heading", t.dark ? t.ink2 : t.ink},
         {"@warnEdge", mix(t.warn, t.line, 0.35)}, {"@warnTint", t.warnTint},
