@@ -1,10 +1,12 @@
 <RCC>
 <qresource prefix="/lobby">
   <file alias="fonts/Audiowide-Regular.ttf">Resource/lobby/fonts/Audiowide-Regular.ttf</file>
+  <file alias="fonts/JosefinSans-Bold.ttf">Resource/lobby/fonts/JosefinSans-Bold.ttf</file>
   <file alias="brand-mark.svg">Resource/lobby/brand-mark.svg</file>
   <file alias="brand-mark-dark.svg">Resource/lobby/brand-mark-dark.svg</file>
   <file alias="icons/add-line.svg">Resource/lobby/icons/add-line.svg</file>
   <file alias="icons/arrow-down-s-line.svg">Resource/lobby/icons/arrow-down-s-line.svg</file>
+  <file alias="icons/arrow-go-back-line.svg">Resource/lobby/icons/arrow-go-back-line.svg</file>
   <file alias="icons/arrow-left-s-line.svg">Resource/lobby/icons/arrow-left-s-line.svg</file>
   <file alias="icons/arrow-right-line.svg">Resource/lobby/icons/arrow-right-line.svg</file>
   <file alias="icons/arrow-right-s-line.svg">Resource/lobby/icons/arrow-right-s-line.svg</file>
@@ -34,6 +36,7 @@
   <file alias="icons/magic-line.svg">Resource/lobby/icons/magic-line.svg</file>
   <file alias="icons/mail-line.svg">Resource/lobby/icons/mail-line.svg</file>
   <file alias="icons/mail-send-line.svg">Resource/lobby/icons/mail-send-line.svg</file>
+  <file alias="icons/menu-line.svg">Resource/lobby/icons/menu-line.svg</file>
   <file alias="icons/more-2-fill.svg">Resource/lobby/icons/more-2-fill.svg</file>
   <file alias="icons/notification-off-line.svg">Resource/lobby/icons/notification-off-line.svg</file>
   <file alias="icons/play-fill.svg">Resource/lobby/icons/play-fill.svg</file>

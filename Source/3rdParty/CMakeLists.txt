@@ -269,7 +269,14 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.h 
     ${IMGUI_DIR}/backends/imgui_impl_opengl3_loader.h 
 )
+# the OSD over a Vulkan graphics plugin (Parallel); the plugin owns the
+# Vulkan loader, so its functions are looked up at run time
+list(APPEND IMGUI_SOURCES
+    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_vulkan.h
+)
 add_library(imgui STATIC ${IMGUI_SOURCES})
+target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
 target_include_directories(imgui PRIVATE ${IMGUI_DIR})
 # chat can hold emoji and rarer Han characters, which are past U+FFFF
 target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)

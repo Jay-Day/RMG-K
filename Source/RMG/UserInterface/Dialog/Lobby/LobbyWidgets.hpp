@@ -284,6 +284,9 @@ private:
 
 // A section's heading text.
 QLabel* makeSectionLabel(const QString& text, QWidget* parent);
+// Moves a display-font label's text down onto the middle of its box (see
+// LobbyTheme::pixelTextDrop). Call it after setting the font.
+void centerDisplayCaps(QLabel* label);
 
 // The player's initial on an accent tile, for the top bar's user chip.
 class UserAvatar : public QWidget
@@ -595,6 +598,8 @@ public:
     void setDropTarget(bool target);
 
     QWidget* dragHandle() const { return m_dragHandle; }
+    // The whole colored cap, the grip included: a drag can start anywhere on it.
+    QWidget* dragArea() const { return m_cap; }
     IconButton* kickButton() const { return m_kick; }
     LobbyButton* admitButton() const { return m_admit; }
     int slotNumber() const { return m_slot; }

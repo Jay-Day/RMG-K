@@ -393,6 +393,12 @@ extern "C" EXPORT void CALL RmgkSetNetplayTiming(int enabled)
     rmgk_netplay_timing = enabled != 0;
 }
 
+// RMG-K: the app's on-screen display is drawn over each frame through these.
+extern "C" EXPORT void CALL RmgkSetVulkanOverlay(const void* hooks)
+{
+    vk_set_overlay(hooks);
+}
+
 EXPORT void CALL ResizeVideoOutput(int width, int height)
 {
     window_width = width;

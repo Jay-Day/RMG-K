@@ -11,7 +11,10 @@
 
 #include "RollbackLobbyDialog.hpp"
 
+#include "LobbyBrowsePanels.hpp"
+#include "LobbyPrivateChats.hpp"
 #include "LobbyRegions.hpp"
+#include "LobbyPanelLayout.hpp"
 #include "LobbySocialDialogs.hpp"
 #include "LobbySocialWidgets.hpp"
 #include "LobbyTheme.hpp"
@@ -58,6 +61,7 @@ namespace
 
     const char* const kIgnoredSetting = "Lobby/IgnoredPlayers";
     const char* const kDoNotDisturbSetting = "Lobby/DoNotDisturb";
+    const char* const kNoSoundsSetting = "Lobby/NoSounds";
     const char* const kNoChallengesSetting = "Lobby/NoChallenges";
     const char* const kNoPrivateMessagesSetting = "Lobby/NoPrivateMessages";
     const char* const kSpectatorOverlaySetting = "Lobby/SpectatorChatOverGame";
@@ -168,6 +172,7 @@ void RollbackLobbyDialog::connectSocialSignals()
     QSettings settings("RMG-K", "n02");
     m_ignored = settings.value(kIgnoredSetting).toStringList();
     m_doNotDisturb = settings.value(kDoNotDisturbSetting, false).toBool();
+    m_noSounds = settings.value(kNoSoundsSetting, false).toBool();
     m_client->setChallengesOff(settings.value(kNoChallengesSetting, false).toBool());
     m_client->setPrivateMessagesOff(settings.value(kNoPrivateMessagesSetting, false).toBool());
     m_spectatorOverlayToggle->setChecked(settings.value(kSpectatorOverlaySetting, false).toBool());
@@ -188,7 +193,7 @@ void RollbackLobbyDialog::resetSocialState()
     m_outgoingChallenge = LobbyClient::Challenge{};
     m_challengeOutcome.title.clear();
     m_challengeCard->setVisible(false);
-    m_pmPanel->clear();
+    m_privateChats->clear();
     m_lastPmLocal = 0;
     m_lastPmRemote = 0;
     m_pmReceivedMs.clear();
@@ -196,8 +201,6 @@ void RollbackLobbyDialog::resetSocialState()
     for (QList<int>& pending : m_pendingMentions)
         pending.clear();
     m_mentionJump->setVisible(false);
-    if (m_chatTabs->currentIndex() == kChatTabMail)
-        m_chatTabs->setCurrentIndex(kChatTabLobby);
     if (m_moderationDialog)
     {
         m_moderationDialog->deleteLater();
@@ -244,11 +247,7 @@ bool RollbackLobbyDialog::socialEventFilter(QObject* watched, QEvent* event)
 void RollbackLobbyDialog::refreshChatTabIcons()
 {
     if (m_chatTabs)
-    {
-        m_chatTabs->setTabIcon(kChatTabMail, QIcon(LobbyTheme::icon(QStringLiteral("mail-line"),
-            LobbyTheme::tokens().ink2, 14, devicePixelRatioF())));
         refreshSpectatorTab();
-    }
 }
 
 void RollbackLobbyDialog::alertFrom(quint64 userId)
@@ -261,7 +260,8 @@ void RollbackLobbyDialog::alertFrom(quint64 userId)
         return;
     m_lastAlertMs.insert(userId, now);
     QApplication::alert(this);
-    QApplication::beep();
+    if (!m_noSounds)
+        QApplication::beep();
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -499,6 +499,21 @@ void RollbackLobbyDialog::showUserMenu()
         rowLay->addWidget(toggle);
         menu.addLiveWidget(row);
 
+        // Separate from the above: badges and the taskbar flash stay, the chime goes.
+        auto* soundsRow = new QWidget(&menu);
+        auto* soundsLay = new QHBoxLayout(soundsRow);
+        soundsLay->setContentsMargins(11, 4, 11, 4);
+        auto* sounds = new ToggleSwitch(tr("Notification sounds"), soundsRow);
+        sounds->setObjectName("LobbyNotificationSounds");
+        sounds->setToolTip(tr("Off: notifications still show, without a sound."));
+        sounds->setChecked(!m_noSounds);
+        connect(sounds, &QCheckBox::toggled, this, [this](bool on) {
+            m_noSounds = !on;
+            QSettings("RMG-K", "n02").setValue(kNoSoundsSetting, m_noSounds);
+        });
+        soundsLay->addWidget(sounds);
+        menu.addLiveWidget(soundsRow);
+
         connect(menu.addItem(QStringLiteral("forbid-line"), tr("Ignored players…")), &QAction::triggered,
                 this, &RollbackLobbyDialog::showIgnoredPlayers);
     }
@@ -531,6 +546,17 @@ void RollbackLobbyDialog::showUserMenu()
     connect(side, &QAction::toggled, this, [pickLayout](bool on) { if (on) pickLayout(false); });
     QAction* above = menu.addCheckItem(QStringLiteral("layout-row-line"), tr("Vertical"), stacked, layouts);
     connect(above, &QAction::toggled, this, [pickLayout](bool on) { if (on) pickLayout(true); });
+    // Not a third layout: either one can draw its lists a line a row.
+    menu.addSeparator();
+    QAction* minimal = menu.addCheckItem(QStringLiteral("menu-line"), tr("Minimal"),
+                                         m_liveGallery && m_liveGallery->isMinimal());
+    connect(minimal, &QAction::toggled, this, [this](bool on) {
+        QSettings("RMG-K", "n02").setValue(kMinimalListsSetting, on);
+        m_liveGallery->setMinimal(on);
+        m_roomsColumn->setMinimal(on);
+    });
+    menu.addSeparator();
+    m_panelLayout->addMenuItems(menu);
 
     if (m_client->isModerator())
     {
@@ -953,13 +979,12 @@ void RollbackLobbyDialog::openPrivateMessage(quint64 userId)
     if (found == m_client->users().constEnd() || m_client->isOnThisPc(userId))
         return;
     // Carry on any conversation they're already in with this PC.
-    quint64 local = m_pmPanel->threadLocalFor(userId);
+    quint64 local = m_privateChats->localFor(userId);
     if (local == 0)
         local = m_client->selfUserId();
-    m_pmPanel->threadView(local, lobbyUserName(local), userId, found->username, local == m_client->selfUserId());
+    m_privateChats->conversation(local, lobbyUserName(local), userId, found->username, local == m_client->selfUserId());
     refreshPrivateMessageStatus(userId);
-    m_chatTabs->setCurrentIndex(kChatTabMail);
-    m_pmPanel->openThread(local, userId);
+    m_privateChats->open(local, userId);
     m_chatInput->setFocus();
 }
 
@@ -974,8 +999,8 @@ bool RollbackLobbyDialog::canMessage(const LobbyClient::LobbyUser& user) const
 
 void RollbackLobbyDialog::sendCurrentPrivateMessage(const QString& text)
 {
-    if (m_pmPanel->threadOpen())
-        m_client->sendPrivateMessage(m_pmPanel->openRemoteId(), m_pmPanel->openLocalId(), text);
+    if (const PrivateConversation* pm = m_privateChats->conversationAt(m_chatTabs->currentIndex()))
+        m_client->sendPrivateMessage(pm->remoteId, pm->localId, text);
 }
 
 void RollbackLobbyDialog::onPrivateMessage(const LobbyClient::ChatMessage& msg)
@@ -988,11 +1013,12 @@ void RollbackLobbyDialog::onPrivateMessage(const LobbyClient::ChatMessage& msg)
     const QString localName = outgoing ? msg.fromUsername : msg.toUsername;
     const QString remoteName = outgoing ? msg.toUsername : msg.fromUsername;
 
-    ChatView* view = m_pmPanel->threadView(local, localName, remote, remoteName, local == m_client->selfUserId());
+    ChatView* view = m_privateChats->conversation(local, localName, remote, remoteName, local == m_client->selfUserId());
     refreshPrivateMessageStatus(remote);
     const auto ts = QDateTime::fromMSecsSinceEpoch(msg.serverTimeMs).toString("hh:mm");
     view->addLine(chatMessageHtml(ts, msg.fromUserId, msg.fromUsername, chatBodyHtml(msg.message, nullptr), msg.fromAdmin, outgoing));
-    m_pmPanel->noteMessage(local, remote, outgoing ? tr("You: %1").arg(msg.message) : msg.message, msg.serverTimeMs, !outgoing);
+    // Its tab shows up if it isn't open, but never takes over the one being read.
+    m_privateChats->noteMessage(local, remote, msg.serverTimeMs, !outgoing);
     if (outgoing)
         return;
 
@@ -1004,8 +1030,7 @@ void RollbackLobbyDialog::onPrivateMessage(const LobbyClient::ChatMessage& msg)
     if (QTreeWidgetItem* row = m_userItems.value(remote); row && sender != m_client->users().constEnd())
         refreshPlayerRow(row, *sender);
     refreshChatInput();
-    const bool looking = isActiveWindow() && m_chatTabs->currentIndex() == kChatTabMail &&
-                         m_pmPanel->openLocalId() == local && m_pmPanel->openRemoteId() == remote;
+    const bool looking = isActiveWindow() && m_privateChats->isCurrent(local, remote);
     if (!looking)
         alertFrom(remote);
     // Not roomChatReceived: that also writes the line into a saved replay.
@@ -1014,7 +1039,7 @@ void RollbackLobbyDialog::onPrivateMessage(const LobbyClient::ChatMessage& msg)
 
 void RollbackLobbyDialog::onPrivateMessageFailed(quint64 toUserId, const QString& reason)
 {
-    ChatView* view = m_pmPanel->existingView(toUserId);
+    ChatView* view = m_privateChats->existingView(toUserId);
     if (!view)
         return;
     QString why = tr("That message couldn't be delivered.");
@@ -1039,10 +1064,11 @@ void RollbackLobbyDialog::refreshPrivateMessageStatus(quint64 userId)
         status += tr(" · %1 ms").arg(measured);
     else if (estimate > 0)
         status += tr(" · ~%1 ms").arg(estimate);
-    m_pmPanel->setRemoteStatus(userId, found->state, status, found->anonymous ? QString() : found->country,
-                               found->social && found->state != QLatin1String("playing"));
+    m_privateChats->setRemoteStatus(userId, found->state, status, found->anonymous ? QString() : found->country,
+                                    found->social && found->state != QLatin1String("playing"));
     // Whether they take messages may have changed under the open conversation.
-    if (m_pmPanel->threadOpen() && m_pmPanel->openRemoteId() == userId)
+    if (const PrivateConversation* pm = m_privateChats->conversationAt(m_chatTabs->currentIndex());
+        pm && pm->remoteId == userId)
         refreshChatInput();
 }
 
@@ -1140,7 +1166,7 @@ QString RollbackLobbyDialog::chatIconHtml(const QString& icon, const QColor& col
     // The document needs each tinted icon registered under a name of its own.
     const QString name = QString("lobby-icon://%1/%2").arg(icon, color.name().mid(1));
     const QPixmap pixmap = LobbyTheme::icon(icon, color, px, devicePixelRatioF());
-    QList<ChatView*> views = m_pmPanel ? m_pmPanel->views() : QList<ChatView*>();
+    QList<ChatView*> views = m_privateChats ? m_privateChats->views() : QList<ChatView*>();
     views << m_chatViewLobby << m_chatViewRoom << m_chatViewSpectate;
     for (ChatView* view : views)
     {
@@ -1219,7 +1245,8 @@ void RollbackLobbyDialog::noteMention(const QString& channel, const LobbyClient:
         if (m_chatTabs->isTabVisible(tab))
         {
             m_chatMentioned[tab] = true;
-            setChatUnread(tab, m_chatUnread[tab]);
+            // appendChatLine counted the line already, except on the lobby's tab.
+            setChatUnread(tab, m_chatUnread[tab] + (tab == kChatTabLobby ? 1 : 0));
         }
     }
     else if (view->verticalScrollBar()->value() < view->verticalScrollBar()->maximum())
@@ -1240,8 +1267,8 @@ void RollbackLobbyDialog::noteMention(const QString& channel, const LobbyClient:
 
 void RollbackLobbyDialog::startMention(const QString& name)
 {
-    // A mention belongs in a channel people are reading, so not the mail tab.
-    if (m_chatTabs->currentIndex() == kChatTabMail)
+    // A mention belongs in a channel people are reading, so not a private conversation.
+    if (m_privateChats->conversationAt(m_chatTabs->currentIndex()))
         m_chatTabs->setCurrentIndex(m_currentRoomId != 0 ? kChatTabRoom : kChatTabLobby);
     m_chatInput->insert(QStringLiteral("@%1 ").arg(name));
     m_chatInput->setFocus();
@@ -1262,7 +1289,7 @@ void RollbackLobbyDialog::refreshMentionPopup()
     // "/w " at the start of the box completes a name the same way.
     const bool whisper = !mention && start == 3 && text.startsWith(QLatin1String("/w "));
     if (!(mention || whisper) ||
-        (m_chatTabs->currentIndex() == kChatTabMail && !whisper))
+        (m_privateChats->conversationAt(m_chatTabs->currentIndex()) && !whisper))
     {
         m_mentionPopup->hide();
         return;

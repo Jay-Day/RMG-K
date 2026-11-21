@@ -11,8 +11,10 @@
 
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Settings.hpp>
+#include <RMG-Core/VulkanOverlay.h>
 
 #include <backends/imgui_impl_opengl3.h>
+#include <backends/imgui_impl_vulkan.h>
 #include <imgui.h>
 #include <QLocale>
 #include <algorithm>
@@ -38,6 +40,16 @@
 static bool l_Initialized     = false;
 static bool l_Enabled         = false;
 static bool l_RenderingPaused = false;
+
+// With a Vulkan graphics plugin (Parallel) there is no OpenGL context. The plugin
+// owns the device, so the Vulkan side is set up from the first frame it offers
+// (see VulkanOverlay.h) and the draws go into the plugin's own render pass.
+static bool l_VulkanMode   = false;
+static bool l_VulkanReady  = false;
+static bool l_VulkanFailed = false;
+static RmgkVulkanOverlayFrame l_VulkanFrame = {};
+static VkRenderPass l_VulkanRenderPass = VK_NULL_HANDLE;
+static PFN_vkDestroyRenderPass l_VulkanDestroyRenderPass = nullptr;
 
 enum class OnScreenDisplayMessageType
 {
@@ -653,11 +665,212 @@ static void OnScreenDisplayRenderLagReport(void)
     ImGui::PopStyleColor(2);
 }
 
+static bool OnScreenDisplayBuildFrame(void);
+
+// The plugin's swapchain render pass isn't handed over, and doesn't need to be:
+// a pipeline works in any render pass with the same attachment formats.
+static VkRenderPass OnScreenDisplayVulkanCreateRenderPass(const RmgkVulkanOverlayFrame& frame)
+{
+    const auto createRenderPass = reinterpret_cast<PFN_vkCreateRenderPass>(
+        frame.getInstanceProcAddr(frame.instance, "vkCreateRenderPass"));
+    l_VulkanDestroyRenderPass = reinterpret_cast<PFN_vkDestroyRenderPass>(
+        frame.getInstanceProcAddr(frame.instance, "vkDestroyRenderPass"));
+    if (createRenderPass == nullptr || l_VulkanDestroyRenderPass == nullptr)
+    {
+        return VK_NULL_HANDLE;
+    }
+
+    VkAttachmentDescription attachment = {};
+    attachment.format = static_cast<VkFormat>(frame.format);
+    attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference color = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass = {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color;
+    VkRenderPassCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    info.attachmentCount = 1;
+    info.pAttachments = &attachment;
+    info.subpassCount = 1;
+    info.pSubpasses = &subpass;
+
+    VkRenderPass renderPass = VK_NULL_HANDLE;
+    if (createRenderPass(static_cast<VkDevice>(frame.device), &info, nullptr, &renderPass) != VK_SUCCESS)
+    {
+        return VK_NULL_HANDLE;
+    }
+    return renderPass;
+}
+
+static void OnScreenDisplayVulkanDestroyRenderPass(void)
+{
+    if (l_VulkanRenderPass != VK_NULL_HANDLE && l_VulkanDestroyRenderPass != nullptr)
+    {
+        l_VulkanDestroyRenderPass(static_cast<VkDevice>(l_VulkanFrame.device), l_VulkanRenderPass, nullptr);
+    }
+    l_VulkanRenderPass = VK_NULL_HANDLE;
+}
+
+static bool OnScreenDisplayVulkanCreate(const RmgkVulkanOverlayFrame& frame)
+{
+    if (frame.getInstanceProcAddr == nullptr || frame.instance == nullptr || frame.device == nullptr)
+    {
+        return false;
+    }
+
+    const bool loaded = ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_1,
+        [](const char* name, void* userData) -> PFN_vkVoidFunction {
+            const RmgkVulkanOverlayFrame* from = static_cast<const RmgkVulkanOverlayFrame*>(userData);
+            return reinterpret_cast<PFN_vkVoidFunction>(from->getInstanceProcAddr(from->instance, name));
+        }, const_cast<RmgkVulkanOverlayFrame*>(&frame));
+    if (!loaded)
+    {
+        return false;
+    }
+
+    l_VulkanFrame = frame;
+    l_VulkanRenderPass = OnScreenDisplayVulkanCreateRenderPass(frame);
+    if (l_VulkanRenderPass == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+
+    ImGui_ImplVulkan_InitInfo info = {};
+    info.ApiVersion = VK_API_VERSION_1_1;
+    info.Instance = static_cast<VkInstance>(frame.instance);
+    info.PhysicalDevice = static_cast<VkPhysicalDevice>(frame.physicalDevice);
+    info.Device = static_cast<VkDevice>(frame.device);
+    info.QueueFamily = frame.queueFamily;
+    info.Queue = static_cast<VkQueue>(frame.queue);
+    // One per font texture alive at once. A texture is replaced whenever the atlas
+    // grows (a resize bakes new sizes every frame) and the old one lingers a few frames.
+    info.DescriptorPoolSize = IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE * 2;
+    info.MinImageCount = 2;
+    info.ImageCount = std::max<uint32_t>(2, frame.imageCount);
+    info.PipelineInfoMain.RenderPass = l_VulkanRenderPass;
+    info.PipelineInfoMain.Subpass = 0;
+    info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    if (!ImGui_ImplVulkan_Init(&info))
+    {
+        OnScreenDisplayVulkanDestroyRenderPass();
+        return false;
+    }
+
+    l_VulkanReady = true;
+    return true;
+}
+
+static void OnScreenDisplayVulkanDestroy(void)
+{
+    if (!l_VulkanReady)
+    {
+        return;
+    }
+    ImGui_ImplVulkan_Shutdown();
+    OnScreenDisplayVulkanDestroyRenderPass();
+    l_VulkanReady = false;
+}
+
+static int OnScreenDisplayVulkanPrepare(const RmgkVulkanOverlayFrame* frame)
+{
+    if (!l_Initialized || !l_VulkanMode || l_VulkanFailed || frame == nullptr ||
+        frame->width == 0 || frame->height == 0)
+    {
+        return 0;
+    }
+
+    if (l_VulkanReady && frame->device != l_VulkanFrame.device)
+    {
+        OnScreenDisplayVulkanDestroy();
+    }
+    if (!l_VulkanReady && !OnScreenDisplayVulkanCreate(*frame))
+    {
+        // not every frame: one failure is the answer for this device
+        l_VulkanFailed = true;
+        return 0;
+    }
+    if (frame->format != l_VulkanFrame.format)
+    {
+        // the swapchain came back in another format: same pipeline, new render pass
+        const VkRenderPass renderPass = OnScreenDisplayVulkanCreateRenderPass(*frame);
+        if (renderPass == VK_NULL_HANDLE)
+        {
+            return 0;
+        }
+        ImGui_ImplVulkan_PipelineInfo pipeline = {};
+        pipeline.RenderPass = renderPass;
+        pipeline.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        ImGui_ImplVulkan_CreateMainPipeline(&pipeline);
+        OnScreenDisplayVulkanDestroyRenderPass();
+        l_VulkanRenderPass = renderPass;
+    }
+    l_VulkanFrame = *frame;
+
+    ImGui::GetIO().DisplaySize = ImVec2(static_cast<float>(frame->width), static_cast<float>(frame->height));
+    if (!OnScreenDisplayBuildFrame())
+    {
+        return 0;
+    }
+
+    // Font glyphs new this frame. The upload goes to the plugin's queue, so it's
+    // done here under the plugin's lock, not while the plugin has a render pass open.
+    const ImDrawData* drawData = ImGui::GetDrawData();
+    bool texturesPending = false;
+    if (drawData->Textures != nullptr)
+    {
+        for (const ImTextureData* texture : *drawData->Textures)
+        {
+            texturesPending = texturesPending || texture->Status != ImTextureStatus_OK;
+        }
+    }
+    if (texturesPending)
+    {
+        if (frame->queueLock != nullptr)
+        {
+            frame->queueLock(frame->userData);
+        }
+        for (ImTextureData* texture : *drawData->Textures)
+        {
+            if (texture->Status != ImTextureStatus_OK)
+            {
+                ImGui_ImplVulkan_UpdateTexture(texture);
+            }
+        }
+        if (frame->queueUnlock != nullptr)
+        {
+            frame->queueUnlock(frame->userData);
+        }
+    }
+    return 1;
+}
+
+static void OnScreenDisplayVulkanDraw(void* commandBuffer)
+{
+    if (!l_VulkanReady || commandBuffer == nullptr)
+    {
+        return;
+    }
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), static_cast<VkCommandBuffer>(commandBuffer));
+}
+
+static void OnScreenDisplayVulkanShutdown(void)
+{
+    OnScreenDisplayVulkanDestroy();
+    l_VulkanFailed = false;
+}
+
 //
 // Exported Functions
 //
 
-bool OnScreenDisplayInit(void)
+bool OnScreenDisplayInit(bool vulkan)
 {
     if (l_Initialized)
     {
@@ -668,11 +881,15 @@ bool OnScreenDisplayInit(void)
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
 
-    if (!ImGui_ImplOpenGL3_Init())
+    if (!vulkan && !ImGui_ImplOpenGL3_Init())
     {
+        ImGui::DestroyContext();
         return false;
     }
 
+    l_VulkanMode = vulkan;
+    l_VulkanReady = false;
+    l_VulkanFailed = false;
     l_FontsDirty = true;
     l_Initialized = true;
     return true;
@@ -685,7 +902,25 @@ void OnScreenDisplayShutdown(void)
         return;
     }
 
-    ImGui_ImplOpenGL3_Shutdown();
+    if (l_VulkanMode)
+    {
+        // The plugin asks for the Vulkan side to go before its device does. If it
+        // didn't, the device is gone by now and there is nothing left to free.
+        if (l_VulkanReady)
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            io.BackendRendererName = nullptr;
+            io.BackendRendererUserData = nullptr;
+            ImGui::GetPlatformIO().ClearRendererHandlers();
+            l_VulkanReady = false;
+        }
+        l_VulkanRenderPass = VK_NULL_HANDLE;
+        l_VulkanMode = false;
+    }
+    else
+    {
+        ImGui_ImplOpenGL3_Shutdown();
+    }
     ImGui::DestroyContext();
 
     if (l_FallbackFontLoad.valid())
@@ -994,11 +1229,33 @@ void OnScreenDisplaySetLiveReplayStatus(const std::string& message)
     l_LiveReplayStatus = message;
 }
 
+const RmgkVulkanOverlayHooks* OnScreenDisplayGetVulkanHooks(void)
+{
+    static const RmgkVulkanOverlayHooks hooks = {
+        &OnScreenDisplayVulkanPrepare, &OnScreenDisplayVulkanDraw, &OnScreenDisplayVulkanShutdown
+    };
+    return &hooks;
+}
+
 void OnScreenDisplayRender(void)
+{
+    if (l_VulkanMode)
+    {
+        return;
+    }
+    if (OnScreenDisplayBuildFrame())
+    {
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+}
+
+// Lays this frame's OSD out. False when there is nothing to show, and then
+// there is no frame to draw.
+static bool OnScreenDisplayBuildFrame(void)
 {
     if (!l_Initialized || l_RenderingPaused)
     {
-        return;
+        return false;
     }
 
     const auto currentTime = std::chrono::high_resolution_clock::now();
@@ -1067,11 +1324,18 @@ void OnScreenDisplayRender(void)
 
     if (!hasMessages)
     {
-        return;
+        return false;
     }
 
     OnScreenDisplayUpdateFonts();
-    ImGui_ImplOpenGL3_NewFrame();
+    if (l_VulkanMode)
+    {
+        ImGui_ImplVulkan_NewFrame();
+    }
+    else
+    {
+        ImGui_ImplOpenGL3_NewFrame();
+    }
     ImGui::NewFrame();
     
     ImGuiIO& io = ImGui::GetIO();
@@ -1236,8 +1500,7 @@ void OnScreenDisplayRender(void)
     OnScreenDisplayRenderCenterMessage();
 
     ImGui::Render();
-
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    return true;
 }
 
 void OnScreenDisplayPause(void)

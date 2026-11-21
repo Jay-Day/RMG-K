@@ -71,8 +71,9 @@ class LobbyButton;
 class LobbyCard;
 class MentionPopup;
 class ModerationDialog;
+class PanelLayout;
 class PortCard;
-class PrivateMessagesPanel;
+class PrivateChats;
 class RoomsColumn;
 class RoomWindow;
 class Spinner;
@@ -282,7 +283,6 @@ private:
     QWidget* buildPlayBar();
     QWidget* buildBrowseView();
     QWidget* buildInRoomView();
-    QWidget* buildSidebar();
     QWidget* buildChatColumn();
     QWidget* buildPlayersColumn();
     void     applyStylesheet();
@@ -290,8 +290,6 @@ private:
     void     refreshTheme();
     void     setLobbyTheme(LobbyTheme::ThemeChoice choice);
     void     setBrowseStacked(bool stacked);
-    void     restoreBrowseSplit();
-    QString  browseSplitterKey() const;
 
     void     showUserMenu();
     void     updateUserChip();
@@ -586,9 +584,8 @@ private:
     QLabel*      m_userRole = nullptr;
 
     // ── Main panels ──
-    QSplitter*   m_splitter      = nullptr;
+    PanelLayout* m_panelLayout   = nullptr;  // where the stage, players and chat sit
     QSplitter*   m_browseSplitter = nullptr; // Live gallery / open rooms divider
-    QSplitter*   m_sideSplitter  = nullptr;  // players / chat divider
     QTreeWidget* m_playersTree   = nullptr;
     QLabel*      m_playersCount  = nullptr;
     QLineEdit*   m_playersSearch = nullptr;
@@ -640,21 +637,21 @@ private:
     IconLabel*   m_spectatorEye   = nullptr;
     QLabel*      m_spectatorCount = nullptr;
     ToggleSwitch* m_spectatorOverlayToggle = nullptr;
-    ChatTabBar*  m_chatTabs      = nullptr; // Lobby | Room | Spectators | mail
+    ChatTabBar*  m_chatTabs      = nullptr; // Lobby | Room | Spectators | a tab per private conversation
     QStackedWidget* m_chatStack  = nullptr; // one view per tab
     QLineEdit*   m_chatInput     = nullptr; // sends to the selected tab
     QWidget*     m_chatCard      = nullptr;
     StatusTag*   m_composeAs     = nullptr; // who on this PC a private reply is from
-    // Room only shows while seated, Spectators only while watching, mail only on
-    // a server that relays private messages.
-    enum ChatTab { kChatTabLobby, kChatTabRoom, kChatTabSpectators, kChatTabMail, kChatTabCount };
+    // Room only shows while seated, Spectators only while watching. Private
+    // conversations' tabs come after these (m_privateChats).
+    enum ChatTab { kChatTabLobby, kChatTabRoom, kChatTabSpectators, kChatTabCount };
     int          m_chatUnread[kChatTabCount] = {};
     bool         m_chatMentioned[kChatTabCount] = {}; // an unseen line in that tab names this PC
     // Lines naming this PC below where the reader has scrolled, as block numbers.
     QList<int>   m_pendingMentions[kChatTabCount];
     MentionPopup* m_mentionPopup = nullptr;
     QPushButton* m_mentionJump   = nullptr;
-    PrivateMessagesPanel* m_pmPanel = nullptr;
+    PrivateChats* m_privateChats = nullptr;
     quint64      m_lastPmLocal   = 0; // who /r answers: this PC's side...
     quint64      m_lastPmRemote  = 0; // ...and theirs
     // When each player last wrote to this PC. The lobby lets us answer for a
@@ -663,6 +660,7 @@ private:
 
     QStringList  m_ignored;
     bool         m_doNotDisturb = false;
+    bool         m_noSounds = false;      // alerts flash, badge and show, but stay quiet
     QHash<quint64, qint64> m_lastAlertMs; // per sender
 
     // ── Challenges ──

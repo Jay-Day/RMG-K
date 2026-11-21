@@ -453,6 +453,7 @@ public:
         meta->setSpacing(2);
         m_time = new QLabel(m_meta);
         m_time->setFont(LobbyTheme::pixelFont(11));
+        centerDisplayCaps(m_time);
         m_time->setProperty("role", "heading");
         m_time->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         meta->addWidget(m_time);
@@ -489,7 +490,67 @@ public:
         m_more->setToolTip(tr("Show details"));
         actions->addWidget(m_more);
         line->addLayout(actions);
-        root->addLayout(line);
+        // In the minimal list this line is part of what a click opens; until
+        // then the single line below stands in for it.
+        m_full = new QWidget(this);
+        line->setContentsMargins(0, 0, 0, 0);
+        m_full->setLayout(line);
+        root->addWidget(m_full);
+
+        // The minimal line: the game, who's playing, seats, for how long, to how many.
+        m_compact = new QWidget(this);
+        auto* compact = new QHBoxLayout(m_compact);
+        compact->setContentsMargins(0, 0, 0, 0);
+        compact->setSpacing(8);
+        m_compactBadge = new GameBadge(20, m_compact);
+        compact->addWidget(m_compactBadge);
+        m_compactPlayers = new PlayersLine(m_compact);
+        compact->addWidget(m_compactPlayers, 3);
+        // The game and its open seats share a column, so the columns line up row to row.
+        m_compactGameBox = new QWidget(m_compact);
+        m_compactGameBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* gameLine = new QHBoxLayout(m_compactGameBox);
+        gameLine->setContentsMargins(0, 0, 0, 0);
+        gameLine->setSpacing(8);
+        m_compactGame = new ElidedLabel(Role::Muted, m_compactGameBox);
+        m_compactGame->setFont(LobbyTheme::uiFont(11));
+        m_compactGame->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        gameLine->addWidget(m_compactGame, 1);
+        m_compactSeats = new ElidedLabel(Role::Ok, m_compactGameBox);
+        m_compactSeats->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
+        m_compactSeats->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+        gameLine->addWidget(m_compactSeats);
+        compact->addWidget(m_compactGameBox, 2);
+        m_compactMeta = new QWidget(m_compact);
+        auto* compactMeta = new QHBoxLayout(m_compactMeta);
+        compactMeta->setContentsMargins(0, 0, 0, 0);
+        compactMeta->setSpacing(3);
+        m_compactTime = new QLabel(m_compactMeta);
+        m_compactTime->setFont(LobbyTheme::pixelFont(11));
+        centerDisplayCaps(m_compactTime);
+        m_compactTime->setProperty("role", "heading");
+        compactMeta->addWidget(m_compactTime);
+        compactMeta->addSpacing(7);
+        m_compactViewerIcon = new IconLabel(QStringLiteral("eye-line"), Role::Muted, 12, m_compactMeta);
+        compactMeta->addWidget(m_compactViewerIcon);
+        m_compactViewers = new ElidedLabel(Role::Muted, m_compactMeta);
+        m_compactViewers->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
+        m_compactViewers->setMinimumWidth(QFontMetrics(m_compactViewers->font()).horizontalAdvance(QStringLiteral("00")));
+        compactMeta->addWidget(m_compactViewers);
+        // A match without a replay keeps the space, so its time lines up with the rest.
+        for (QWidget* keep : {static_cast<QWidget*>(m_compactViewerIcon), static_cast<QWidget*>(m_compactViewers)})
+        {
+            QSizePolicy policy = keep->sizePolicy();
+            policy.setRetainSizeWhenHidden(true);
+            keep->setSizePolicy(policy);
+        }
+        compact->addWidget(m_compactMeta);
+        m_compactMore = new IconButton(QStringLiteral("arrow-right-s-line"), 22, m_compact);
+        m_compactMore->setObjectName("MatchMoreButton");
+        m_compactMore->setToolTip(tr("Show details"));
+        compact->addWidget(m_compactMore);
+        root->addWidget(m_compact);
+        m_compact->setVisible(false);
 
         // The details line up under the names.
         m_details = new QWidget(this);
@@ -532,6 +593,7 @@ public:
         connect(m_watch, &QPushButton::clicked, this, [this]() { onWatchClicked(); });
         connect(m_join, &QPushButton::clicked, this, [this]() { emit joinRequested(m_view.roomId); });
         connect(m_more, &QToolButton::clicked, this, [this]() { emit toggled(m_view.roomId); });
+        connect(m_compactMore, &QToolButton::clicked, this, [this]() { emit toggled(m_view.roomId); });
     }
 
     void apply(const LiveMatchView& view) override
@@ -602,12 +664,27 @@ public:
         m_roomLine->setToolTip(named ? view.roomName : QString());
         m_roomLine->setVisible(named || !room.isEmpty());
 
+        m_compactBadge->setGame(view.game, view.coverPath);
+        m_compactBadge->setToolTip(view.game);
+        m_compactPlayers->set(view.players, view.roomName, LobbyTheme::uiFont(12, QFont::DemiBold));
+        m_compactGame->setText(view.game);
+        m_compactGame->setToolTip(view.game);
+        m_compactSeats->setVisible(view.openSeats > 0);
+        m_compactSeats->setText(m_seats->text());
+        m_compactViewerIcon->setVisible(m_streaming);
+        m_compactViewers->setVisible(m_streaming);
+        m_compactViewers->setText(QString::number(view.viewers));
+        m_compactViewerIcon->setRole(view.viewers > 0 ? Role::Muted : Role::Faint);
+        m_compactViewers->setRole(view.viewers > 0 ? Role::Muted : Role::Faint);
+        m_compactMeta->setToolTip(m_viewerBox->toolTip());
+
         refreshColumns();
     }
 
     void updateDuration() override
     {
         m_time->setText(formatDuration(m_view.startedAtMs));
+        m_compactTime->setText(m_time->text());
     }
 
     void setExpanded(bool expanded)
@@ -618,7 +695,17 @@ public:
         m_details->setVisible(expanded);
         m_more->setIconName(expanded ? QStringLiteral("arrow-down-s-line") : QStringLiteral("arrow-right-s-line"));
         m_more->setToolTip(expanded ? tr("Hide details") : tr("Show details"));
+        refreshDensity();
         update();
+    }
+
+    // The minimal list: one line a match, the whole row once it's opened.
+    void setMinimal(bool minimal)
+    {
+        if (m_minimal == minimal)
+            return;
+        m_minimal = minimal;
+        refreshDensity();
     }
 
 signals:
@@ -684,9 +771,28 @@ private:
     void refreshColumns()
     {
         m_meta->setVisible(width() >= 360);
+        // The minimal line: the game's name goes first (the badge still says
+        // which), then the numbers.
+        const bool roomy = width() >= 520;
+        if (m_compactGame->isHidden() == roomy)
+        {
+            m_compactGame->setVisible(roomy);
+            m_compactGameBox->setSizePolicy(roomy ? QSizePolicy::Ignored : QSizePolicy::Preferred, QSizePolicy::Preferred);
+            static_cast<QBoxLayout*>(m_compact->layout())->setStretchFactor(m_compactGameBox, roomy ? 2 : 0);
+        }
+        m_compactMeta->setVisible(width() >= 300);
+    }
+
+    void refreshDensity()
+    {
+        const bool compact = m_minimal && !m_expanded;
+        m_full->setVisible(!compact);
+        m_compact->setVisible(compact);
+        layout()->setContentsMargins(kListMargin, compact ? 4 : 8, kListMargin - 4, compact ? 4 : 8);
     }
 
     bool m_expanded = false;
+    bool m_minimal = false;
     bool m_streaming = false;
     GameBadge* m_badge = nullptr;
     PlayersLine* m_players = nullptr;
@@ -706,6 +812,18 @@ private:
     QWidget* m_details = nullptr;
     DetailLine m_lines[4];
     ElidedLabel* m_roomLine = nullptr;
+    QWidget* m_full = nullptr;
+    QWidget* m_compact = nullptr;
+    GameBadge* m_compactBadge = nullptr;
+    PlayersLine* m_compactPlayers = nullptr;
+    QWidget* m_compactGameBox = nullptr;
+    ElidedLabel* m_compactGame = nullptr;
+    ElidedLabel* m_compactSeats = nullptr;
+    QWidget* m_compactMeta = nullptr;
+    QLabel* m_compactTime = nullptr;
+    IconLabel* m_compactViewerIcon = nullptr;
+    ElidedLabel* m_compactViewers = nullptr;
+    IconButton* m_compactMore = nullptr;
 };
 
 // The match with the biggest audience, above the list.
@@ -759,6 +877,7 @@ public:
         stats->addSpacing(10);
         m_time = new QLabel(this);
         m_time->setFont(LobbyTheme::pixelFont(13));
+        centerDisplayCaps(m_time);
         stats->addWidget(m_time);
         right->addLayout(stats);
         m_watch = new LobbyButton(tr("Watch"), LobbyButton::Kind::Secondary, this);
@@ -913,6 +1032,7 @@ LiveGallery::LiveGallery(QWidget* parent)
         const int saved = m_sortCombo->findData(settings.value("RollbackLobby/LiveSort", 0).toInt());
         if (saved >= 0)
             m_sortCombo->setCurrentIndex(saved);
+        m_minimal = settings.value(kMinimalListsSetting, false).toBool();
     }
     connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
         QSettings settings("RMG-K", "n02");
@@ -987,6 +1107,14 @@ void LiveGallery::setThisGameAvailable(bool available)
 void LiveGallery::setOffline(bool offline)
 {
     m_offline = offline;
+    rebuild();
+}
+
+void LiveGallery::setMinimal(bool minimal)
+{
+    if (m_minimal == minimal)
+        return;
+    m_minimal = minimal;
     rebuild();
 }
 
@@ -1074,10 +1202,10 @@ void LiveGallery::rebuild()
     fitHeader();
 
     // The most watched 1v1 is featured above the list, when the list is wide
-    // enough for it and somebody is actually watching.
+    // enough for it and somebody is actually watching. Not in the minimal list.
     const Sort sort = static_cast<Sort>(m_sortCombo->currentData().toInt());
     quint64 featuredId = 0;
-    if (sort == Sort::MostWatched && m_builtWide && !visible.isEmpty())
+    if (sort == Sort::MostWatched && m_builtWide && !m_minimal && !visible.isEmpty())
     {
         const LiveMatchView& top = visible.first();
         if (top.matchId != 0 && top.viewers > 0 && top.players.size() == 2 && top.hasRom)
@@ -1103,6 +1231,7 @@ void LiveGallery::rebuild()
                 setExpandedRoom(m_expandedRoomId == roomId ? 0 : roomId);
             });
         }
+        row->setMinimal(m_minimal);
         row->apply(match);
         kept.insert(match.roomId, row);
     }
@@ -1185,7 +1314,10 @@ bool LiveGallery::eventFilter(QObject* watched, QEvent* event)
     }
     else if (watched == m_list && event->type() == QEvent::Leave)
     {
-        rebuild(); // the real order was on hold while the pointer was here
+        // The real order was on hold while the pointer was here. Queued: hiding
+        // a row under the pointer sends this from inside rebuild(), and a rebuild
+        // run there would leave the outer one holding rows it has deleted.
+        QMetaObject::invokeMethod(this, &LiveGallery::rebuild, Qt::QueuedConnection);
     }
     return LobbyCard::eventFilter(watched, event);
 }
@@ -1201,9 +1333,15 @@ public:
         : QFrame(parent)
     {
         setAttribute(Qt::WA_Hover);
-        setFixedHeight(68);
+        setFixedHeight(kFullHeight);
 
-        auto* grid = new QGridLayout(this);
+        // The whole row; in the minimal list, what a click opens.
+        auto* pages = new QVBoxLayout(this);
+        pages->setContentsMargins(0, 0, 0, 0);
+        pages->setSpacing(0);
+        m_full = new QWidget(this);
+        pages->addWidget(m_full);
+        auto* grid = new QGridLayout(m_full);
         grid->setContentsMargins(12, 7, 10, 7);
         grid->setHorizontalSpacing(8);
         grid->setVerticalSpacing(1);
@@ -1244,6 +1382,12 @@ public:
         m_join->setObjectName("RoomJoinButton");
         m_join->setButtonSize(LobbyButton::Size::Small);
         grid->addWidget(m_join, 0, 1, 2, 1, Qt::AlignVCenter | Qt::AlignRight);
+        // The minimal list's way to close the row again.
+        m_less = new IconButton(QStringLiteral("arrow-down-s-line"), 22, this);
+        m_less->setObjectName("RoomMoreButton");
+        m_less->setToolTip(tr("Hide details"));
+        m_less->setVisible(false);
+        grid->addWidget(m_less, 0, 2, 2, 1, Qt::AlignVCenter);
 
         auto* meta = new QHBoxLayout;
         meta->setSpacing(6);
@@ -1276,6 +1420,53 @@ public:
             else
                 emit joinRequested(m_view.roomId);
         });
+
+        // The minimal line: the room, its game, its seats and your ping.
+        m_compact = new QWidget(this);
+        auto* compact = new QHBoxLayout(m_compact);
+        compact->setContentsMargins(12, 0, 10, 0);
+        compact->setSpacing(6);
+        // The lock and the in-game tag go in the name's column, so the game's lines up.
+        auto* nameBox = new QWidget(m_compact);
+        nameBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* nameLine = new QHBoxLayout(nameBox);
+        nameLine->setContentsMargins(0, 0, 0, 0);
+        nameLine->setSpacing(5);
+        m_compactLock = new IconLabel(QStringLiteral("lock-fill"), Role::Muted, 12, nameBox);
+        nameLine->addWidget(m_compactLock);
+        m_compactInGame = new StatusTag(StatusTag::Kind::Red, nameBox);
+        m_compactInGame->setTag(StatusTag::Kind::Red, tr("In game"));
+        nameLine->addWidget(m_compactInGame);
+        m_compactName = new ElidedLabel(Role::Ink, nameBox);
+        m_compactName->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
+        m_compactName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        nameLine->addWidget(m_compactName, 1);
+        compact->addWidget(nameBox, 3);
+        m_compactGame = new ElidedLabel(Role::Muted, m_compact);
+        m_compactGame->setFont(LobbyTheme::uiFont(11));
+        m_compactGame->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        compact->addWidget(m_compactGame, 2);
+        m_compactSeats = new QLabel(m_compact);
+        m_compactSeats->setFont(LobbyTheme::uiFont(11));
+        m_compactSeats->setProperty("role", "muted");
+        m_compactSeats->setMinimumWidth(22);
+        compact->addWidget(m_compactSeats);
+        m_compactBars = new SignalBars(m_compact);
+        compact->addWidget(m_compactBars);
+        m_compactPing = new QLabel(m_compact);
+        m_compactPing->setFont(LobbyTheme::uiFont(11));
+        m_compactPing->setProperty("role", "muted");
+        m_compactPing->setMinimumWidth(22);
+        compact->addWidget(m_compactPing);
+        m_more = new IconButton(QStringLiteral("arrow-right-s-line"), 22, m_compact);
+        m_more->setObjectName("RoomMoreButton");
+        m_more->setToolTip(tr("Show details"));
+        compact->addWidget(m_more);
+        pages->addWidget(m_compact);
+        m_compact->setVisible(false);
+
+        connect(m_more, &QToolButton::clicked, this, [this]() { emit clicked(m_view.roomId); });
+        connect(m_less, &QToolButton::clicked, this, [this]() { emit clicked(m_view.roomId); });
     }
 
     void apply(const RoomRowView& view)
@@ -1315,6 +1506,18 @@ public:
         m_bars->setToolTip(pingTip);
         m_ping->setToolTip(pingTip);
 
+        m_compactLock->setVisible(view.hasPassword);
+        m_compactInGame->setVisible(view.inGame);
+        m_compactName->setText(view.name);
+        m_compactName->setToolTip(view.name);
+        m_compactGame->setText(view.game);
+        m_compactGame->setToolTip(view.game);
+        m_compactSeats->setText(m_seats->text());
+        m_compactBars->setPing(view.pingMs, !view.pingMeasured);
+        m_compactPing->setText(m_ping->text());
+        m_compactBars->setToolTip(pingTip);
+        m_compactPing->setToolTip(pingTip);
+
         const bool full = view.maxPlayers > 0 && view.players >= view.maxPlayers;
         // Everyone on this PC sits down together or nobody does.
         const int freeSeats = view.maxPlayers - view.players;
@@ -1323,6 +1526,8 @@ public:
         const bool blocked = !view.hasRom || tooFewSeats || refused;
         m_name->setRole(view.mine ? Role::Accent : view.hasRom ? Role::Ink : Role::Muted);
         m_game->setRole(view.hasRom ? Role::Muted : Role::Faint);
+        m_compactName->setRole(view.mine ? Role::Accent : view.hasRom ? Role::Ink : Role::Muted);
+        m_compactGame->setRole(view.hasRom ? Role::Muted : Role::Faint);
         m_join->setDashed(!view.mine && blocked);
         m_join->setIconName(view.hasPassword && !view.mine && !blocked && !full
             ? QStringLiteral("lock-line") : QString());
@@ -1380,6 +1585,23 @@ public:
         update();
     }
 
+    // The minimal list: one line a room, the whole row once it's opened.
+    void setMinimal(bool minimal)
+    {
+        if (m_minimal == minimal)
+            return;
+        m_minimal = minimal;
+        refreshDensity();
+    }
+
+    void setExpanded(bool expanded)
+    {
+        if (m_expanded == expanded)
+            return;
+        m_expanded = expanded;
+        refreshDensity();
+    }
+
     const RoomRowView& view() const { return m_view; }
 
 signals:
@@ -1417,6 +1639,13 @@ protected:
             emit clicked(m_view.roomId);
     }
 
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QFrame::resizeEvent(event);
+        // A narrow minimal line keeps the room's name and lets the game's go.
+        m_compactGame->setVisible(width() >= 420);
+    }
+
     void mouseDoubleClickEvent(QMouseEvent* event) override
     {
         if (event->button() != Qt::LeftButton)
@@ -1437,13 +1666,38 @@ protected:
     }
 
 private:
+    static constexpr int kFullHeight = 68;
+    static constexpr int kCompactHeight = 32;
+
     void refreshSelection()
     {
         m_join->setKind(m_selected ? LobbyButton::Kind::Primary : LobbyButton::Kind::Secondary);
     }
 
+    void refreshDensity()
+    {
+        const bool compact = m_minimal && !m_expanded;
+        m_compact->setVisible(compact);
+        m_full->setVisible(!compact);
+        m_less->setVisible(m_minimal && !compact);
+        setFixedHeight(compact ? kCompactHeight : kFullHeight);
+    }
+
     RoomRowView m_view;
     bool m_selected = false;
+    bool m_minimal = false;
+    bool m_expanded = false;
+    QWidget* m_full = nullptr;
+    QWidget* m_compact = nullptr;
+    IconLabel* m_compactLock = nullptr;
+    StatusTag* m_compactInGame = nullptr;
+    ElidedLabel* m_compactName = nullptr;
+    ElidedLabel* m_compactGame = nullptr;
+    QLabel* m_compactSeats = nullptr;
+    SignalBars* m_compactBars = nullptr;
+    QLabel* m_compactPing = nullptr;
+    IconButton* m_more = nullptr;
+    IconButton* m_less = nullptr;
     IconLabel* m_lock = nullptr;
     StatusTag* m_inGame = nullptr;
     ElidedLabel* m_name = nullptr;
@@ -1469,9 +1723,14 @@ RoomsColumn::RoomsColumn(QWidget* parent)
     setObjectName("RoomsColumn");
     {
         QSettings settings("RMG-K", "n02");
+        // "This game first" used to be the sort saved as Default. Whoever had it
+        // keeps it, on top of the lowest ping first.
         const int saved = settings.value("RollbackLobby/RoomsSort", 0).toInt();
-        if (saved >= 0 && saved <= static_cast<int>(Sort::Name))
+        if (saved > static_cast<int>(Sort::Default) && saved <= static_cast<int>(Sort::Name))
             m_sort = static_cast<Sort>(saved);
+        m_thisGameFirst = settings.value("RollbackLobby/RoomsThisGameFirst",
+                                         saved == static_cast<int>(Sort::Default)).toBool();
+        m_minimal = settings.value(kMinimalListsSetting, false).toBool();
         settings.beginGroup("RollbackLobby/RoomFilters");
         m_inLibraryOnly = settings.value("InLibrary", false).toBool();
         m_hideFull = settings.value("HideFull", false).toBool();
@@ -1569,6 +1828,7 @@ void RoomsColumn::saveFilters() const
 {
     QSettings settings("RMG-K", "n02");
     settings.setValue("RollbackLobby/RoomsSort", static_cast<int>(m_sort));
+    settings.setValue("RollbackLobby/RoomsThisGameFirst", m_thisGameFirst);
     settings.beginGroup("RollbackLobby/RoomFilters");
     settings.setValue("InLibrary", m_inLibraryOnly);
     settings.setValue("HideFull", m_hideFull);
@@ -1620,6 +1880,11 @@ void RoomsColumn::showFilterMenu()
     }
 
     menu.addHeading(QString(), tr("Sort"), false);
+    // Not one of the sorts: it splits the list in two, and the sort picked
+    // below orders each part.
+    QAction* thisGameFirst = addToggle(tr("This game first"), &m_thisGameFirst);
+    thisGameFirst->setEnabled(m_thisGameAvailable);
+    menu.addSeparator();
     auto* sorts = new QActionGroup(&menu);
     const auto addSort = [&](const QString& label, Sort sort) {
         QAction* action = menu.addCheckItem(QString(), label, m_sort == sort, sorts);
@@ -1630,7 +1895,6 @@ void RoomsColumn::showFilterMenu()
             applied();
         });
     };
-    addSort(tr("This game first"), Sort::Default);
     addSort(tr("Lowest ping"), Sort::Ping);
     addSort(tr("Most players"), Sort::Players);
     addSort(tr("Name"), Sort::Name);
@@ -1657,6 +1921,15 @@ void RoomsColumn::setThisGameAvailable(bool available)
 void RoomsColumn::setOffline(bool offline)
 {
     m_offline = offline;
+    rebuild();
+}
+
+void RoomsColumn::setMinimal(bool minimal)
+{
+    if (m_minimal == minimal)
+        return;
+    m_minimal = minimal;
+    m_expandedRoomId = 0;
     rebuild();
 }
 
@@ -1690,9 +1963,13 @@ void RoomsColumn::rebuild()
     }
 
     const Sort sort = m_sort;
-    std::stable_sort(visible.begin(), visible.end(), [sort](const RoomRowView& a, const RoomRowView& b) {
+    const bool thisGameFirst = m_thisGameFirst;
+    std::stable_sort(visible.begin(), visible.end(), [sort, thisGameFirst](const RoomRowView& a, const RoomRowView& b) {
         if (a.mine != b.mine)
             return a.mine;
+        // The selected game's rooms, then everything else as one group, not game by game.
+        if (thisGameFirst && a.sameGame != b.sameGame)
+            return a.sameGame;
         switch (sort)
         {
             case Sort::Ping:
@@ -1715,11 +1992,7 @@ void RoomsColumn::rebuild()
                 break;
             }
             case Sort::Default:
-                // Rooms you can actually sit in first, then the selected game.
-                if (a.hasRom != b.hasRom)
-                    return a.hasRom;
-                if (a.sameGame != b.sameGame)
-                    return a.sameGame;
+                // No longer offered: it's m_thisGameFirst now (see the constructor).
                 break;
         }
         return a.roomId < b.roomId;
@@ -1739,6 +2012,13 @@ void RoomsColumn::rebuild()
             connect(row, &RoomRow::playerMenuRequested, this, &RoomsColumn::playerMenuRequested);
             connect(row, &RoomRow::clicked, this, [this](quint64 roomId) {
                 selectRow(roomId);
+                // The minimal list opens one row at a time, like the Live list.
+                if (m_minimal)
+                {
+                    m_expandedRoomId = m_expandedRoomId == roomId ? 0 : roomId;
+                    for (auto* other : m_rows)
+                        other->setExpanded(other->view().roomId == m_expandedRoomId);
+                }
                 const auto it = m_rows.constFind(roomId);
                 if (it != m_rows.constEnd())
                     emit hostProbeRequested(it.value()->view().hostId);
@@ -1746,6 +2026,8 @@ void RoomsColumn::rebuild()
         }
         row->apply(room);
         row->setSelected(room.roomId == m_selectedRoomId);
+        row->setMinimal(m_minimal);
+        row->setExpanded(room.roomId == m_expandedRoomId);
         kept.insert(room.roomId, row);
     }
     // Later, not now: this can run inside a click on the very row being dropped.
@@ -1756,6 +2038,8 @@ void RoomsColumn::rebuild()
         row->deleteLater();
     }
     m_rows = kept;
+    if (!m_rows.contains(m_expandedRoomId))
+        m_expandedRoomId = 0;
 
     // Lay the rows out in order, ahead of the note and the stretch.
     for (auto* row : m_rows)

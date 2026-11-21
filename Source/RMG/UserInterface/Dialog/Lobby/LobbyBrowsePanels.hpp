@@ -84,6 +84,9 @@ struct RoomRowView
     QString gameOptionsTip;
 };
 
+// QSettings("RMG-K", "n02") key: both lists drawn a line a row (off by default).
+inline constexpr char kMinimalListsSetting[] = "RollbackLobby/MinimalLists";
+
 class LiveMatchBase;
 class LiveMatchRow;
 class FeaturedMatch;
@@ -104,6 +107,9 @@ public:
     void setOffline(bool offline);
     // Ticks the durations. The room list only refreshes on events.
     void updateDurations();
+    // One line a match, and no featured one; a click opens a row as it is now.
+    void setMinimal(bool minimal);
+    bool isMinimal() const { return m_minimal; }
 
 signals:
     void watchRequested(quint64 roomId);
@@ -138,6 +144,7 @@ private:
     bool m_builtWide = false;
     bool m_thisGameOnly = false;
     bool m_offline = false;
+    bool m_minimal = false;
 
     QLabel* m_countLabel = nullptr;
     QPushButton* m_allChip = nullptr;
@@ -164,6 +171,8 @@ public:
     void setRooms(const QList<RoomRowView>& rooms);
     void setThisGameAvailable(bool available);
     void setOffline(bool offline);
+    // One line a room; a click opens a row as it is now.
+    void setMinimal(bool minimal);
 
 signals:
     void joinRequested(quint64 roomId);
@@ -175,6 +184,8 @@ signals:
     void playerMenuRequested(const QString& name, const QPoint& globalPos);
 
 private:
+    // The saved numbers are kept: Default (0) was "this game first", which is now
+    // m_thisGameFirst over any of the others.
     enum class Sort { Default, Ping, Players, Name };
 
     void rebuild();
@@ -186,10 +197,14 @@ private:
     QList<RoomRowView> m_rooms;
     QHash<quint64, RoomRow*> m_rows;
     quint64 m_selectedRoomId = 0;
+    quint64 m_expandedRoomId = 0; // the minimal list's open row
+    bool m_minimal = false;
     bool m_thisGameOnly = false;
     bool m_thisGameAvailable = false;
     bool m_offline = false;
-    Sort m_sort = Sort::Default;
+    Sort m_sort = Sort::Ping;
+    // The selected game's rooms above every other game's, each part in m_sort order.
+    bool m_thisGameFirst = true;
     // The filters, kept between sessions. m_maxPing 0 shows every ping.
     bool m_inLibraryOnly = false;
     bool m_hideFull = false;

@@ -14,8 +14,15 @@
 #include <string>
 #include <vector>
 
-// attempts to initialize the OSD
-bool OnScreenDisplayInit(void);
+struct RmgkVulkanOverlayHooks;
+
+// attempts to initialize the OSD, for OpenGL in the current context
+// or for a graphics plugin that renders with Vulkan
+bool OnScreenDisplayInit(bool vulkan = false);
+
+// what a Vulkan graphics plugin calls to have the OSD drawn
+// into its frames (see RMG-Core/VulkanOverlay.h)
+const RmgkVulkanOverlayHooks* OnScreenDisplayGetVulkanHooks(void);
 
 // shuts down the OSD when initialized
 void OnScreenDisplayShutdown(void);

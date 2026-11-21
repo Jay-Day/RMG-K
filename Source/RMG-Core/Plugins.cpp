@@ -687,6 +687,21 @@ CORE_EXPORT bool CorePluginsSetGfxSkipRendering(bool skip, unsigned int* skipped
     return true;
 }
 
+using SetVulkanOverlay = void (CALL *)(const RmgkVulkanOverlayHooks*);
+
+CORE_EXPORT bool CorePluginsSetGfxVulkanOverlay(const RmgkVulkanOverlayHooks* hooks)
+{
+    auto& plugin = get_plugin(CorePluginType::Gfx);
+    const auto setVulkanOverlay = plugin.IsHooked() ? reinterpret_cast<SetVulkanOverlay>(
+        CoreGetLibrarySymbol(plugin.GetHandle(), "RmgkSetVulkanOverlay")) : nullptr;
+    if (setVulkanOverlay == nullptr)
+    {
+        return false;
+    }
+    setVulkanOverlay(hooks);
+    return true;
+}
+
 using SetSkipHiddenRendering = void (CALL *)(int);
 
 CORE_EXPORT bool CorePluginsSetGfxSkipHiddenRendering(bool skip)
