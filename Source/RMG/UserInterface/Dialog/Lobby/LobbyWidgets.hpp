@@ -11,6 +11,8 @@
 #include <QToolButton>
 #include <QWidget>
 
+#include <functional>
+
 class QLabel;
 class QSvgRenderer;
 class QTimer;
@@ -233,6 +235,10 @@ public:
     // A slow on-air breathe. It only ticks while the dot is on screen, so a
     // pulsing LED in a hidden or minimized window costs nothing.
     void setPulsing(bool pulsing);
+    // Where the dot's middle goes, top to bottom in its own coordinates, asked
+    // each time it paints, so it can sit level with text beside it. Without
+    // one it's the widget's middle.
+    void setCenterY(std::function<qreal()> centerY);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -243,6 +249,7 @@ private:
     QColor m_color;
     QTimer* m_pulse = nullptr;
     int m_pulseStep = 0;
+    std::function<qreal()> m_centerY;
 };
 
 class Spinner : public QWidget

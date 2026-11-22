@@ -564,6 +564,12 @@ private:
     // The chat line naming the game options the match just synced plays with.
     void announceMatchGameOptions(const QString& channel, const QString& romMd5);
 
+    // A room made through Create Room: its host's choices in it are remembered
+    // for its game (CreateRoomDialog::romSettingsGroup), and the next room made
+    // for the game starts with them.
+    void rememberRoomChoices(const QVariantMap& choices);
+    void restoreRoomChoices();
+
     LobbyClient* m_client = nullptr;
 
     bool    m_connectPromptOpen = false;
@@ -880,6 +886,10 @@ private:
     QHash<quint64, QTreeWidgetItem*> m_userItems;
 
     class CreateRoomDialog* m_createRoomDialog = nullptr;
+    // The game of the room this client made through Create Room, while in it,
+    // and whether that room got its remembered choices yet.
+    QString m_createdRoomMd5;
+    bool    m_createdRoomRestored = false;
 
     QString  m_username;
     QString  m_lastRoomName;

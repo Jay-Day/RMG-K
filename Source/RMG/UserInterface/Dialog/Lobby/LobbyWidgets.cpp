@@ -645,6 +645,12 @@ void LedDot::setColor(const QColor& color)
     update();
 }
 
+void LedDot::setCenterY(std::function<qreal()> centerY)
+{
+    m_centerY = std::move(centerY);
+    update();
+}
+
 namespace
 {
     // One breath of a pulsing LedDot: 20 steps of 80 ms. Like the Spinner, a
@@ -696,7 +702,7 @@ void LedDot::paintEvent(QPaintEvent*)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
-    const QPointF center(width() / 2.0, height() / 2.0);
+    const QPointF center(width() / 2.0, m_centerY ? m_centerY() : height() / 2.0);
     const QColor color = m_color.isValid() ? m_color : LobbyTheme::tokens().muted;
     if (!m_pulse)
     {

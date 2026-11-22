@@ -276,6 +276,7 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
             entry.Title = tr("Your save for this game");
             entry.Detail = tr("%1 · changed %2").arg(netplaySaveSummary(entry.Data), dateText(changed));
             entry.Native = false;
+            entry.Offline = true;
             addEntry(std::move(entry), false);
         }
     }
@@ -462,6 +463,53 @@ NetplaySaveChoice StartingSaveDialog::choice(void) const
     }
     choice.ContinueAfterMatch = m_continueCheck->isChecked();
     choice.KeepFileUpdated = canKeepFile(row) && choice.ContinueAfterMatch && m_keepFileCheck->isChecked();
+    return choice;
+}
+
+QString StartingSaveDialog::source(void) const
+{
+    const int row = m_list->currentRow();
+    if (row < 0 || row >= int(m_entries.size()))
+        return QString();
+    const Entry& entry = m_entries[size_t(row)];
+    return entry.Blank ? QStringLiteral("blank")
+         : entry.Offline ? QStringLiteral("offline")
+         : !entry.File.isEmpty() ? QStringLiteral("file")
+                                 : QString();
+}
+
+std::optional<NetplaySaveChoice> StartingSaveDialog::pickAgain(const QString& source, const QString& file,
+                                                               bool continueAfterMatch, bool keepFileUpdated,
+                                                               const QString& romFile, const QString& romMd5)
+{
+    NetplaySaveChoice choice;
+    choice.ContinueAfterMatch = continueAfterMatch;
+    if (source == QLatin1String("blank"))
+    {
+        choice.Label = tr("Blank save");
+        return choice;
+    }
+    if (source == QLatin1String("offline"))
+    {
+        std::vector<std::filesystem::path> files;
+        if (romFile.isEmpty() || !CoreReadOfflineSaveData(romFile.toStdU32String(), choice.Data, files))
+            return std::nullopt;
+        choice.Label = tr("Your save for this game");
+        return choice;
+    }
+    if (source != QLatin1String("file") || file.isEmpty() || !QFileInfo(file).isFile())
+        return std::nullopt;
+
+    // The same checks as picking it in the dialog.
+    CoreNetplaySaveInfo info;
+    if (!CoreReadNetplaySaveFile(file.toStdU32String(), choice.Data, info))
+        return std::nullopt;
+    const bool native = QFileInfo(file).suffix().toLower() != QStringLiteral("rmgsave");
+    if (!native && QString::fromStdString(info.RomMD5).compare(romMd5, Qt::CaseInsensitive) != 0)
+        return std::nullopt;
+    choice.Label = QString::fromStdString(info.Name);
+    choice.File = file;
+    choice.KeepFileUpdated = keepFileUpdated && continueAfterMatch && !native;
     return choice;
 }
 

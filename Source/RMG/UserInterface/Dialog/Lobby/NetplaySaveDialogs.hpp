@@ -60,6 +60,16 @@ class StartingSaveDialog : public QDialog
 
     void setCoverPath(const QString& coverPath);
     NetplaySaveChoice choice(void) const;
+    // Where choice() is from, so a later room can pick it again: "blank",
+    // "offline" or "file" (choice().File), or empty for where the last match
+    // left off, which a later room doesn't have.
+    QString source(void) const;
+    // That save picked again for a new room of the same game, read afresh,
+    // without the dialog. None when it can't be picked now: the file is gone,
+    // unreadable or made with another ROM, or there's no offline save.
+    static std::optional<NetplaySaveChoice> pickAgain(const QString& source, const QString& file,
+                                                      bool continueAfterMatch, bool keepFileUpdated,
+                                                      const QString& romFile, const QString& romMd5);
 
   private:
     struct Entry
@@ -72,6 +82,7 @@ class StartingSaveDialog : public QDialog
         bool Native = false;    // a plain emulator save file: no record of its game
         bool OtherRom = false;  // a .rmgsave made with a different ROM
         bool Blank = false;     // a new cartridge: nothing saved yet
+        bool Offline = false;   // the host's offline save for the game
     };
 
     void addEntry(Entry entry, bool select);

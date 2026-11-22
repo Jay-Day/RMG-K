@@ -116,6 +116,7 @@
 #include <QLocale>
 #include <QMenu>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -230,6 +231,66 @@ namespace
     private:
         std::function<void(const QPoint&)> m_moved;
         std::function<void(const QPoint&, bool)> m_ended;
+    };
+
+    // A line of display-font caps. On its own it's centered on the letters
+    // rather than on Josefin's line box (see LobbyTheme::pixelTextDrop); given
+    // a label beside it, its capitals stand on that label's baseline, so both
+    // lines of text end on one line. The shift goes in at paint time, fraction
+    // and all: whole-pixel margins land a pixel off at some scales.
+    class DisplayCapsLabel : public QLabel
+    {
+    public:
+        using QLabel::QLabel;
+
+        void setBaselineLabel(QLabel* label)
+        {
+            m_baselineLabel = label;
+            update();
+        }
+
+        // The middle of the capitals as painted, top to bottom in another
+        // widget's coordinates.
+        qreal capMiddle(const QWidget* in) const
+        {
+            const qreal y = textBaseline(this) + shift() - QFontMetricsF(font()).capHeight() / 2.0;
+            return mapTo(window(), QPointF(0, y)).y() - in->mapTo(window(), QPointF(0, 0)).y();
+        }
+
+    protected:
+        void paintEvent(QPaintEvent*) override
+        {
+            QPainter painter(this);
+            drawFrame(&painter);
+            painter.translate(0, shift());
+            const int flags = QStyle::visualAlignment(layoutDirection(), alignment()).toInt() | Qt::TextHideMnemonic;
+            style()->drawItemText(&painter, contentsRect(), flags, palette(), isEnabled(), text(), foregroundRole());
+        }
+
+    private:
+        // Where a one-line label, centered top to bottom, puts its baseline.
+        // QLabel starts rich text on a whole pixel, rounding toward the top.
+        static qreal textBaseline(const QLabel* label)
+        {
+            const QFontMetricsF fm(label->font());
+            const QRectF box = label->contentsRect();
+            qreal top = box.top() + std::max<qreal>(0.0, (box.height() - fm.height()) / 2.0);
+            if (label->textFormat() == Qt::RichText ||
+                (label->textFormat() == Qt::AutoText && Qt::mightBeRichText(label->text())))
+                top = std::floor(top);
+            return top + fm.ascent();
+        }
+
+        qreal shift() const
+        {
+            if (!m_baselineLabel)
+                return LobbyTheme::pixelTextDrop(font());
+            const qreal theirs = m_baselineLabel->mapTo(window(), QPointF(0, textBaseline(m_baselineLabel))).y() -
+                                 mapTo(window(), QPointF(0, 0)).y();
+            return theirs - textBaseline(this);
+        }
+
+        QPointer<QLabel> m_baselineLabel;
     };
 
     struct StatusColors { QString ok; QString wait; QString fail; QString idle; };
@@ -998,9 +1059,12 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     auto* status = new QHBoxLayout;
     status->setSpacing(6);
     m_statusLed = new LedDot(m_marquee);
+    // Room above and below for the dot to follow the word.
+    m_statusLed->setFixedHeight(20);
     status->addWidget(m_statusLed);
-    m_statusText = new QLabel(tr("Offline"), m_marquee);
-    m_statusText->setFont(LobbyTheme::pixelFont(11, 0.8));
+    auto* statusText = new DisplayCapsLabel(tr("Offline"), m_marquee);
+    statusText->setFont(LobbyTheme::pixelFont(11, 0.8));
+    m_statusText = statusText;
     status->addWidget(m_statusText);
     h->addLayout(status);
 
@@ -1009,6 +1073,10 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     m_serverMeta->setTextFormat(Qt::RichText);
     m_serverMeta->setProperty("role", "muted");
     h->addWidget(m_serverMeta);
+    // The word's capitals end where the counts' letters do, and the dot sits
+    // level with the capitals.
+    statusText->setBaselineLabel(m_serverMeta);
+    m_statusLed->setCenterY([led = m_statusLed, statusText]() { return statusText->capMiddle(led); });
 
     h->addStretch(1);
 
@@ -1444,7 +1512,8 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
     });
     switches->addWidget(m_broadcastCheck, 1, 0);
 
-    // Off in every new room. The server repeats the host and waiting checks.
+    // Off in a new room, unless the last room made for its game had it on.
+    // The server repeats the host and waiting checks.
     m_lateJoinCheck = new ToggleSwitch(tr("Allow joins after start"), net);
     m_lateJoinCheck->setObjectName("LateJoinSwitch");
     m_lateJoinCheck->setVisible(false);
@@ -1453,10 +1522,12 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
         if (m_currentRoomId == 0 || !m_client || m_currentRoomHostId != m_client->selfUserId())
             return;
         m_client->updateRoomLateJoin(checked);
+        rememberRoomChoices({ { QStringLiteral("LateJoin"), checked } });
     });
     switches->addWidget(m_lateJoinCheck, 0, 1);
 
-    // Off in every new room: the match starts from a blank save. The server
+    // Off in a new room, so the match starts from a blank save, unless the last
+    // room made for its game used a save that can still be picked. The server
     // repeats the host and waiting checks.
     m_saveDataCheck = new ToggleSwitch(tr("Sync save data"), net);
     m_saveDataCheck->setObjectName("SaveDataSwitch");
@@ -1476,6 +1547,7 @@ QWidget* RollbackLobbyDialog::buildInRoomView()
             publishHostSaveChoice();
         else
             m_client->updateRoomSaveData(false);
+        rememberRoomChoices({ { QStringLiteral("SaveData"), checked } });
     });
     switches->addWidget(m_saveDataCheck, 1, 1);
     switches->setColumnStretch(2, 1);
@@ -3572,14 +3644,12 @@ void RollbackLobbyDialog::refreshPlayerRow(QTreeWidgetItem* item, const LobbyCli
     if (!isSelf)
     {
         // The bars give the tier; the tooltip gives the number. An estimate is
-        // hedged and only stands in until a real UDP probe lands — say what
-        // makes it real rather than implying a measurement is on its way.
+        // hedged, and with neither a measurement nor an estimate there is
+        // nothing to state.
         if (measured >= 0)
             tipLines << QString(tr("Ping: %1 ms")).arg(measured);
-        else
-            tipLines << (estimate > 0
-                ? QString(tr("Ping: ~%1 ms (estimate — click to measure)")).arg(estimate)
-                : tr("Ping: click to measure"));
+        else if (estimate > 0)
+            tipLines << QString(tr("Ping: ~%1 ms (estimate)")).arg(estimate);
     }
     item->setToolTip(0, tipLines.join(QChar('\n')));
 
@@ -3944,9 +4014,12 @@ void RollbackLobbyDialog::onRoomCreateRequested()
 
 void RollbackLobbyDialog::onRoomCreated(quint64 roomId)
 {
+    m_createdRoomMd5.clear();
+    m_createdRoomRestored = false;
     if (m_createRoomDialog)
     {
         m_lastRoomName = m_createRoomDialog->name();
+        m_createdRoomMd5 = m_createRoomDialog->romMd5();
         m_createRoomDialog->accept();
     }
     enterRoom(roomId,
@@ -3955,6 +4028,7 @@ void RollbackLobbyDialog::onRoomCreated(quint64 roomId)
 
 void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
 {
+    m_createdRoomMd5.clear();
     QString roomName;
     auto it = m_client->rooms().constFind(roomId);
     if (it != m_client->rooms().constEnd())
@@ -4211,6 +4285,17 @@ namespace
         }
         return std::nullopt;
     }
+
+    // A pack's option as the room's list carries it, with the English label:
+    // other clients show their own pack's when they have it. The server takes
+    // labels of up to 48 characters.
+    LobbyClient::LobbyGameOption roomGameOption(const CoreGameOptionInfo& info)
+    {
+        QString english = QString::fromStdString(info.EnglishLabel);
+        if (english.size() > 48)
+            english.truncate(english.at(47).isHighSurrogate() ? 47 : 48);
+        return { QString::fromStdString(info.Id), english };
+    }
 }
 
 void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
@@ -4405,6 +4490,15 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
         m_roomWiredOnly = limits.value("wiredOnly").toBool();
     }
     updateJoinLimitControls();
+
+    // A room made through Create Room starts with what was chosen in the last
+    // one made for its game, once the server says what this room offers.
+    if (iAmHost && state == "waiting" && !m_createdRoomRestored && !m_createdRoomMd5.isEmpty() &&
+        m_createdRoomMd5.compare(romMd5, Qt::CaseInsensitive) == 0)
+    {
+        m_createdRoomRestored = true;
+        restoreRoomChoices();
+    }
 
     if (m_publishSaveChoiceWhenWaiting && iAmHost && state == "waiting")
     {
@@ -4696,6 +4790,70 @@ void RollbackLobbyDialog::onRoomStateChanged(const QJsonObject& roomState)
     refreshAdmitButtons();
 }
 
+void RollbackLobbyDialog::rememberRoomChoices(const QVariantMap& choices)
+{
+    if (m_createdRoomMd5.isEmpty() || m_createdRoomMd5.compare(m_currentRoomMd5, Qt::CaseInsensitive) != 0)
+        return;
+    QSettings s("RMG-K", "n02");
+    s.beginGroup(CreateRoomDialog::romSettingsGroup(m_createdRoomMd5));
+    for (auto it = choices.cbegin(); it != choices.cend(); ++it)
+        s.setValue(it.key(), it.value());
+    s.endGroup();
+}
+
+// What the room doesn't offer, or can't take now, stays off without a word:
+// an option the game's pack no longer has or that doesn't fit the ROM, or a
+// save file that's gone. The changes come back in ROOM_STATE like the host's own.
+void RollbackLobbyDialog::restoreRoomChoices()
+{
+    QSettings s("RMG-K", "n02");
+    s.beginGroup(CreateRoomDialog::romSettingsGroup(m_currentRoomMd5));
+    const QString romFile = localRomPathForMd5(m_currentRoomMd5);
+
+    if (m_roomHasLateJoinOption && !m_roomLateJoinEnabled && s.value("LateJoin", false).toBool())
+        m_client->updateRoomLateJoin(true);
+
+    if (m_roomHasSaveDataOption && !m_roomSaveDataEnabled && s.value("SaveData", false).toBool())
+    {
+        m_hostSaveChoice = StartingSaveDialog::pickAgain(s.value("SaveSource").toString(), s.value("SaveFile").toString(),
+                                                         s.value("SaveContinue", true).toBool(),
+                                                         s.value("SaveKeepFile", false).toBool(),
+                                                         romFile, m_currentRoomMd5);
+        if (m_hostSaveChoice)
+        {
+            if (m_hostSaveChoice->KeepFileUpdated)
+            {
+                m_keepCopyFile = m_hostSaveChoice->File;
+                m_keepCopyEnabled = true;
+                m_keepCopyFromPick = true;
+            }
+            publishHostSaveChoice();
+        }
+    }
+
+    const QStringList gameOptions = s.value("GameOptions").toStringList();
+    if (m_roomGameOptionsOffered && m_roomGameOptions.isEmpty() && !gameOptions.isEmpty())
+    {
+        QList<LobbyClient::LobbyGameOption> list;
+        std::vector<std::string> ids;
+        for (const CoreGameOptionInfo& info : CoreGetGameOptions(m_currentRoomMd5.toStdString(), gameOptionLanguage()))
+        {
+            if (!gameOptions.contains(QString::fromStdString(info.Id)))
+                continue;
+            list.append(roomGameOption(info));
+            ids.push_back(info.Id);
+        }
+        CoreNetplayGameOptions resolved;
+        if (!list.isEmpty() && CoreResolveGameOptions(romFile.toStdU32String(), m_currentRoomMd5.toStdString(),
+                                                      ids, resolved))
+        {
+            m_client->updateRoomGameOptions(list);
+            m_gameOptionsResync->start();
+        }
+    }
+    s.endGroup();
+}
+
 void RollbackLobbyDialog::updateRecordingControls()
 {
     updateSaveDataControls();
@@ -4955,6 +5113,11 @@ bool RollbackLobbyDialog::pickStartingSave()
         return false;
 
     m_hostSaveChoice = dialog.choice();
+    rememberRoomChoices({ { QStringLiteral("SaveData"), true },
+                          { QStringLiteral("SaveSource"), dialog.source() },
+                          { QStringLiteral("SaveFile"), m_hostSaveChoice->File },
+                          { QStringLiteral("SaveContinue"), m_hostSaveChoice->ContinueAfterMatch },
+                          { QStringLiteral("SaveKeepFile"), m_hostSaveChoice->KeepFileUpdated } });
     // A kept netplay save is played on: the game's saves go back into it.
     if (m_hostSaveChoice->KeepFileUpdated)
     {
@@ -5245,8 +5408,7 @@ void RollbackLobbyDialog::onGameOptionToggled(const QString& id, bool checked)
         m_currentRoomHostId != m_client->selfUserId() || m_currentRoomState != "waiting")
         return;
 
-    // The room's list with this one added or taken out, in pack order, with
-    // the English labels: other clients show their own pack's when they have it.
+    // The room's list with this one added or taken out, in pack order.
     QList<LobbyClient::LobbyGameOption> list;
     std::vector<std::string> ids;
     QString label;
@@ -5260,11 +5422,7 @@ void RollbackLobbyDialog::onGameOptionToggled(const QString& id, bool checked)
                           [&infoId](const auto& option) { return option.id == infoId; });
         if (!on)
             continue;
-        // The server takes labels of up to 48 characters.
-        QString english = QString::fromStdString(info.EnglishLabel);
-        if (english.size() > 48)
-            english.truncate(english.at(47).isHighSurrogate() ? 47 : 48);
-        list.append({ infoId, english });
+        list.append(roomGameOption(info));
         ids.push_back(info.Id);
     }
 
@@ -5289,6 +5447,11 @@ void RollbackLobbyDialog::onGameOptionToggled(const QString& id, bool checked)
     // The switches follow the room's ROOM_STATE. The server refuses a change
     // without a word, so they go back to what the room has if none comes.
     m_gameOptionsResync->start();
+
+    QStringList on;
+    for (const auto& option : std::as_const(list))
+        on << option.id;
+    rememberRoomChoices({ { QStringLiteral("GameOptions"), on } });
 }
 
 void RollbackLobbyDialog::announceMatchGameOptions(const QString& channel, const QString& romMd5)
@@ -6255,6 +6418,7 @@ void RollbackLobbyDialog::onRoomLeft(const QString& reason)
     }
 
     m_currentRoomId = 0;
+    m_createdRoomMd5.clear();
     m_currentRoomGame.clear();
     m_currentRoomRegion.clear();
     m_currentRoomState.clear();

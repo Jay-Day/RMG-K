@@ -2443,24 +2443,16 @@ Room setting — only the host may change this value.</source>
             <translation>Ping: %1 ms</translation>
         </message>
         <message>
-            <source>Ping: ~%1 ms (estimate — click to measure)</source>
-            <translation>Ping: ~%1 ms（推定値 — クリックして測定）</translation>
-        </message>
-        <message>
-            <source>Ping: click to measure</source>
-            <translation>Ping: クリックして測定</translation>
+            <source>Ping: ~%1 ms (estimate)</source>
+            <translation>Ping: ~%1 ms（推定値）</translation>
         </message>
         <message>
             <source>Your measured ping to the host</source>
             <translation>ホストへの実測Ping</translation>
         </message>
         <message>
-            <source>Estimated from regions — click the row to measure</source>
-            <translation>地域からの推定値 — 行をクリックして測定</translation>
-        </message>
-        <message>
-            <source>Click the row to measure your ping to the host</source>
-            <translation>行をクリックしてホストへのPingを測定</translation>
+            <source>Estimated from regions</source>
+            <translation>地域からの推定値</translation>
         </message>
         <message>
             <source>Frames of input delay added before sending to peer.
@@ -4987,12 +4979,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>ホストまでの測定済みPing</translation>
         </message>
         <message>
-            <source>Estimated from regions — click the row to measure</source>
-            <translation>地域からの推定値 — 行をクリックして測定</translation>
-        </message>
-        <message>
-            <source>Click the row to measure your ping to the host</source>
-            <translation>行をクリックしてホストまでのPingを測定</translation>
+            <source>Estimated from regions</source>
+            <translation>地域からの推定値</translation>
         </message>
         <message>
             <source>Return</source>
