@@ -452,6 +452,7 @@ static bool runReplayExport(const ReplayExportOptions& options, std::string* err
     portLabelConfig.enabled = options.labelPorts;
     portLabelConfig.playerCount = krecData.header.numPlayers;
     portLabelConfig.playerNames = krecData.header.playerNames;
+    portLabelConfig.changes = krecData.portChanges;
 
     const bool chatOverlay = options.includeChat && !krecData.chat.empty();
     if (chatOverlay)

@@ -406,8 +406,22 @@ private:
     QString chatMessageHtml(const QString& time, quint64 userId, const QString& who, const QString& bodyHtml,
                             bool fromAdmin, bool mine = false, bool fromPlayer = false) const;
     void    refreshChatInput();
+    // A channel's message box (Lobby, Room or Spectators): what it says, and
+    // whether it takes a message.
+    void    refreshChannelCompose(QLineEdit* input, int tab, bool connected);
     void    setChatUnread(int tab, int count);
     void    setRoomChatVisible(bool visible);
+
+    // Split chat (see the section in the .cpp): a pane under the tabs holding
+    // one channel, with its own message box.
+    void    setChatTabAvailable(int tab, bool available);
+    void    setChatSplit(bool on);
+    void    refreshChatSplit();
+    // The tab the focused message box sends to, and whether a tab's lines are
+    // on screen (selected above, or in the pane below).
+    int     activeChatTab() const;
+    bool    chatTabShown(int tab) const;
+    ChatView* chatViewFor(int tab) const;
 
     // Parse and execute a chat slash command (/login, /kick, /mute, /timeout,
     // /ban, /unban, /unmute, /modlist, /modhelp). Returns true if text was a
@@ -445,6 +459,13 @@ private:
     // Both stay editable while this client plays the match; the running
     // session follows the live values handed to rmgk_gekko.
     int     worstLocalPeerPingMs() const;
+    // What Auto would pick for the seated player userId: from their worst
+    // ping to a player on another PC, as this client knows the pings. -1 when
+    // a ping it needs isn't known (with partial, only some of them).
+    int     suggestedDelayFor(quint64 userId, int* worstPing, QString* worstName, bool partial) const;
+    // The line under your delay saying what Auto would pick for this match,
+    // and every seat's Delay tooltip.
+    void    refreshDelaySuggestions();
     void    applyLocalFrameDelay(bool force);
     void    applyRoomPrediction(bool force);
     bool    inLiveMatch() const;
@@ -486,6 +507,7 @@ private:
         quint64  peerId    = 0;           // the connection they play through, 0 when empty
         int      slot      = 0;           // 1-4, drives the per-player accent color
         int      frameDelay = -1;          // published local input delay
+        bool     delayAuto = false;          // ...and whether Auto picked it
         int      iceAttempt = 1;            // current ICE generation, one-based
         int      iceMaxAttempts = 20;
     };
@@ -645,7 +667,8 @@ private:
     ToggleSwitch* m_spectatorOverlayToggle = nullptr;
     ChatTabBar*  m_chatTabs      = nullptr; // Lobby | Room | Spectators | a tab per private conversation
     QStackedWidget* m_chatStack  = nullptr; // one view per tab
-    QLineEdit*   m_chatInput     = nullptr; // sends to the selected tab
+    QLineEdit*   m_chatTopInput  = nullptr; // sends to the selected tab
+    QLineEdit*   m_chatInput     = nullptr; // the message box in use: the tabs' or the split pane's
     QWidget*     m_chatCard      = nullptr;
     StatusTag*   m_composeAs     = nullptr; // who on this PC a private reply is from
     // Room only shows while seated, Spectators only while watching. Private
@@ -657,6 +680,20 @@ private:
     QList<int>   m_pendingMentions[kChatTabCount];
     MentionPopup* m_mentionPopup = nullptr;
     QPushButton* m_mentionJump   = nullptr;
+    int          m_mentionJumpTab = -1; // the tab the jump button scrolls
+    // Split chat.
+    bool         m_chatTabAvailable[kChatTabCount] = { true, false, false }; // the channel exists now
+    bool         m_chatSplitOn    = false; // the player wants it
+    int          m_chatSplitTab   = -1;    // the channel in the pane below, -1 while not split
+    QSplitter*   m_chatSplit      = nullptr;
+    QWidget*     m_chatSplitPane  = nullptr;
+    ChatTabBar*  m_chatSplitTabs  = nullptr; // one tab: the channel below
+    QVBoxLayout* m_chatSplitPage  = nullptr; // where its page goes
+    QWidget*     m_chatSplitCompose = nullptr;
+    QLineEdit*   m_chatSplitInput = nullptr;
+    QWidget*     m_chatTopCompose = nullptr;
+    IconButton*  m_chatSplitButton = nullptr;
+    QWidget*     m_chatStandIn[kChatTabCount] = {}; // holds a moved page's place in the stack
     PrivateChats* m_privateChats = nullptr;
     quint64      m_lastPmLocal   = 0; // who /r answers: this PC's side...
     quint64      m_lastPmRemote  = 0; // ...and theirs
@@ -735,6 +772,7 @@ private:
     // host-editable. Both stay editable during this client's own match.
     FrameStepper* m_delayStepper      = nullptr;
     ToggleSwitch* m_delayAutoCheck    = nullptr;
+    QLabel*       m_delaySuggestion   = nullptr;
     FrameStepper* m_predictionStepper = nullptr;
     QLabel*       m_predictionHint    = nullptr;
     IconLabel*    m_predictionLock    = nullptr;

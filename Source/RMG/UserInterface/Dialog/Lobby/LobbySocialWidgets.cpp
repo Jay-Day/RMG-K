@@ -451,7 +451,7 @@ void ChatTabBar::mouseReleaseEvent(QMouseEvent* event)
 void ChatTabBar::contextMenuEvent(QContextMenuEvent* event)
 {
     const int index = tabAt(event->pos());
-    if (tabFace(index))
+    if (index >= 0)
     {
         emit tabMenuRequested(index, event->globalPos());
         return;

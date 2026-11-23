@@ -80,6 +80,8 @@ public:
 signals:
     // The selected conversation changed under the message box.
     void currentChanged();
+    // A conversation's tab showed or hid.
+    void tabsChanged();
     void userActivated(quint64 userId, const QPoint& globalPos);
     void challengeRequested(quint64 remoteId);
     void menuRequested(quint64 remoteId, const QPoint& globalPos);

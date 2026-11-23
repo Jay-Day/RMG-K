@@ -3521,6 +3521,18 @@ int LobbyClient::measuredPingMs(quint64 userId) const
     return it == m_measuredPing.constEnd() ? -1 : it.value();
 }
 
+int LobbyClient::pairPingMs(quint64 first, quint64 second) const
+{
+    first = m_seatPeers.value(first, first);
+    second = m_seatPeers.value(second, second);
+    if (first == second)
+        return 0;
+    if (first == m_selfUserId || second == m_selfUserId)
+        return measuredPingMs(first == m_selfUserId ? second : first);
+    // Reported by the lower id of the two.
+    return m_roomPeerPings.value(std::min(first, second)).value(std::max(first, second), -1);
+}
+
 int LobbyClient::worstRoomPingMs(const QList<quint64>& roomUserIds, bool* complete) const
 {
     QSet<quint64> uniqueIds;

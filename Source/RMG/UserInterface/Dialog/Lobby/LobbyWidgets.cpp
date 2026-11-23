@@ -14,6 +14,7 @@
 #include <QRadialGradient>
 #include <QSignalBlocker>
 #include <QSvgRenderer>
+#include <QTextLayout>
 #include <QTimer>
 #include <QVariantAnimation>
 #include <QVBoxLayout>
@@ -1702,6 +1703,92 @@ private:
     int m_ping = -2; // -2: no bars
 };
 
+// The player's name, kept whole: on one line while it fits, else wrapped onto
+// more, at spaces or between CJK characters first and inside a word only when
+// one word is wider than the card. Past three lines the last one ends in "…".
+class PortCard::NameLabel : public QWidget
+{
+public:
+    explicit NameLabel(QWidget* parent)
+        : QWidget(parent)
+    {
+    }
+
+    void setText(const QString& text)
+    {
+        m_text = text;
+        relayout();
+    }
+
+    // How wide it may get; 0 for as wide as it is.
+    void setLineWidth(int width)
+    {
+        m_width = width;
+        relayout();
+    }
+
+    int naturalWidth() const { return qCeil(QFontMetricsF(font()).horizontalAdvance(m_text)); }
+
+protected:
+    void changeEvent(QEvent* event) override
+    {
+        QWidget::changeEvent(event);
+        if (event->type() == QEvent::FontChange)
+            relayout();
+    }
+
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setPen(LobbyTheme::roleColor(LobbyTheme::Role::Ink));
+        const QFontMetricsF fm(font());
+        for (int i = 0; i < m_lines.size(); ++i)
+            painter.drawText(QRectF(0, i * fm.height(), width(), fm.height()), Qt::AlignCenter, m_lines.at(i));
+    }
+
+private:
+    static constexpr int kMaxLines = 3;
+
+    void relayout()
+    {
+        const QFontMetricsF fm(font());
+        m_lines.clear();
+        if (m_width <= 0 || fm.horizontalAdvance(m_text) <= m_width)
+        {
+            m_lines << m_text;
+        }
+        else
+        {
+            QTextLayout layout(m_text, font());
+            QTextOption option;
+            option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+            layout.setTextOption(option);
+            layout.beginLayout();
+            for (QTextLine line = layout.createLine(); line.isValid(); line = layout.createLine())
+            {
+                line.setLineWidth(m_width);
+                if (m_lines.size() == kMaxLines - 1)
+                {
+                    // The last line takes the rest, cut short if it must be.
+                    m_lines << fm.elidedText(m_text.mid(line.textStart()).trimmed(), Qt::ElideRight, m_width);
+                    break;
+                }
+                m_lines << m_text.mid(line.textStart(), line.textLength()).trimmed();
+            }
+            layout.endLayout();
+        }
+        qreal widest = 0;
+        for (const QString& line : std::as_const(m_lines))
+            widest = std::max(widest, fm.horizontalAdvance(line));
+        setFixedSize(qCeil(widest), qCeil(fm.height() * m_lines.size()));
+        update();
+    }
+
+    QString m_text;
+    QStringList m_lines;
+    int m_width = 0;
+};
+
 PortCard::PortCard(int slot, QWidget* parent)
     : QFrame(parent), m_slot(slot)
 {
@@ -1792,22 +1879,29 @@ PortCard::PortCard(int slot, QWidget* parent)
     playerLay->addWidget(m_portrait, 0, Qt::AlignHCenter);
     playerLay->addSpacing(5);
 
-    auto* nameRow = new QHBoxLayout;
-    nameRow->setSpacing(6);
-    nameRow->addStretch(1);
-    m_name = new ElidedLabel(Role::Ink, m_playerPage);
+    m_nameRow = new QHBoxLayout;
+    m_nameRow->setSpacing(6);
+    m_nameRow->addStretch(1);
+    m_name = new NameLabel(m_playerPage);
+    m_name->setObjectName("SeatName");
     m_name->setFont(LobbyTheme::uiFont(14, QFont::Bold));
-    nameRow->addWidget(m_name);
+    m_nameRow->addWidget(m_name);
     m_youTag = new StatusTag(StatusTag::Kind::Neutral, m_playerPage);
     m_youTag->setTag(StatusTag::Kind::Neutral, tr("You"));
-    nameRow->addWidget(m_youTag);
+    m_nameRow->addWidget(m_youTag);
     m_flag = new CountryFlag(m_playerPage);
-    nameRow->addWidget(m_flag);
+    m_nameRow->addWidget(m_flag);
     // How they're connected, named in its tooltip: no line of its own.
     m_connectionIcon = new ConnectionGlyph(m_playerPage);
-    nameRow->addWidget(m_connectionIcon);
-    nameRow->addStretch(1);
-    playerLay->addLayout(nameRow);
+    m_nameRow->addWidget(m_connectionIcon);
+    m_nameRow->addStretch(1);
+    playerLay->addLayout(m_nameRow);
+    // Where the badges go when they'd squeeze the name (refreshNameLayout).
+    m_badgeRow = new QHBoxLayout;
+    m_badgeRow->setSpacing(6);
+    m_badgeRow->addStretch(1);
+    m_badgeRow->addStretch(1);
+    playerLay->addLayout(m_badgeRow);
 
     // How far a connection has got, while it isn't up yet.
     m_progress = new QWidget(m_playerPage);
@@ -1889,6 +1983,7 @@ void PortCard::showPlayer(const QString& name, bool isSelf, bool isHost, const Q
     m_youTag->setVisible(isSelf);
     m_hostBadge->setVisible(isHost);
     m_portrait->setInitial(LobbyTheme::nameInitial(name));
+    refreshNameLayout();
 
     const QColor capInk = inkOnPort(m_slot);
     m_capLabel->setStyleSheet(QString("color: %1;").arg(capInk.name()));
@@ -1902,6 +1997,7 @@ void PortCard::setCountry(const QString& country, const QString& tooltip)
 {
     m_flag->setCountry(country);
     m_flag->setToolTip(tooltip);
+    refreshNameLayout();
 }
 
 void PortCard::setConnection(const QString& connection)
@@ -1909,6 +2005,44 @@ void PortCard::setConnection(const QString& connection)
     m_connectionIcon->setConnection(connection);
     m_connectionIcon->setToolTip(ConnectionGlyph::displayName(connection));
     m_connectionIcon->setVisible(!connection.isEmpty());
+    refreshNameLayout();
+}
+
+void PortCard::setDelayTip(const QString& tip)
+{
+    m_delayStat->setToolTip(tip);
+}
+
+void PortCard::resizeEvent(QResizeEvent* event)
+{
+    QFrame::resizeEvent(event);
+    refreshNameLayout();
+}
+
+void PortCard::refreshNameLayout()
+{
+    const QMargins margins = m_playerPage->layout()->contentsMargins();
+    const int width = std::max(1, this->width() - margins.left() - margins.right());
+    int badges = 0;
+    for (QWidget* badge : {static_cast<QWidget*>(m_youTag), static_cast<QWidget*>(m_flag),
+                           static_cast<QWidget*>(m_connectionIcon)})
+    {
+        if (!badge->isHidden())
+            badges += badge->sizeHint().width() + m_nameRow->spacing();
+    }
+    const bool besideName = m_name->naturalWidth() + badges <= width;
+    QHBoxLayout* row = besideName ? m_nameRow : m_badgeRow;
+    if (row->indexOf(m_youTag) < 0)
+    {
+        int at = besideName ? m_nameRow->indexOf(m_name) + 1 : 1;
+        for (QWidget* badge : {static_cast<QWidget*>(m_youTag), static_cast<QWidget*>(m_flag),
+                               static_cast<QWidget*>(m_connectionIcon)})
+        {
+            (besideName ? m_badgeRow : m_nameRow)->removeWidget(badge);
+            row->insertWidget(at++, badge);
+        }
+    }
+    m_name->setLineWidth(besideName ? 0 : width);
 }
 
 void PortCard::setDelay(int frames)

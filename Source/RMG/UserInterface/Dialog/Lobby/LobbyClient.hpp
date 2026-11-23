@@ -308,6 +308,10 @@ public:
     // Host-local paths come from our probes; non-host paths are reported to
     // the host over ICE. `complete` is true only when every pair is known.
     int worstRoomPingMs(const QList<quint64>& roomUserIds, bool* complete = nullptr) const;
+    // The ping between two seated players as this client knows it: its own
+    // measurement when it's one of them, else what was reported to the host
+    // (only the host hears those). 0 for two seats on one PC, -1 if unknown.
+    int pairPingMs(quint64 first, quint64 second) const;
 
     // True when every remote in this match has negotiated a direct ICE path.
     // error describes unsupported clients or the first incomplete peer.

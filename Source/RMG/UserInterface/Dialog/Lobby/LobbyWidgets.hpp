@@ -13,6 +13,7 @@
 
 #include <functional>
 
+class QHBoxLayout;
 class QLabel;
 class QSvgRenderer;
 class QTimer;
@@ -612,14 +613,23 @@ public:
     int slotNumber() const { return m_slot; }
     bool isOpen() const { return m_open; }
 
+    // What the Delay stat says on hover: how the delay was picked, and what
+    // Auto would pick.
+    void setDelayTip(const QString& tip);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     class Portrait;
     class StatBox;
+    class NameLabel;
 
     void refreshBottom();
+    // The name keeps its line while the badges fit beside it; otherwise they
+    // go on the line under it, and the name wraps if it needs more than one.
+    void refreshNameLayout();
     // What the connection state shows above the stats. A member waiting to join
     // isn't in the match yet, so there's no connection to report on.
     void refreshConnecting();
@@ -644,7 +654,9 @@ private:
 
     QWidget* m_playerPage = nullptr;
     Portrait* m_portrait = nullptr;
-    ElidedLabel* m_name = nullptr;
+    NameLabel* m_name = nullptr;
+    QHBoxLayout* m_nameRow = nullptr;
+    QHBoxLayout* m_badgeRow = nullptr;
     StatusTag* m_youTag = nullptr;
     CountryFlag* m_flag = nullptr;
     ConnectionGlyph* m_connectionIcon = nullptr;

@@ -274,15 +274,29 @@ bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::st
         }
         else if (type == 0x14)
         {
-            while (scan < end && *scan != 0)
+            const std::string nick = readCStringField(scan, static_cast<size_t>(end - scan));
+            scan += std::min(nick.size() + 1, static_cast<size_t>(end - scan));
+            if (end - scan < 4)
             {
-                ++scan;
+                break;
             }
-            if (scan < end)
-            {
-                ++scan;
-            }
+            int32_t playerNumber = 0;
+            memcpy(&playerNumber, scan, sizeof(int32_t));
             scan += 4;
+
+            // a late joiner's record sets n02::KREC_PORT_JOINED in the player number
+            constexpr int32_t kPortJoined = 0x100;
+            KrecPortChange change;
+            change.record = outData.totalInputFrames;
+            change.slot = playerNumber & ~kPortJoined;
+            if (change.slot >= 1 && change.slot <= 4)
+            {
+                if ((playerNumber & kPortJoined) != 0)
+                {
+                    change.name = nick;
+                }
+                outData.portChanges.push_back(std::move(change));
+            }
         }
         else if (type == 0x08)
         {

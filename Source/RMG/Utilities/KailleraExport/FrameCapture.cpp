@@ -74,11 +74,20 @@ static std::condition_variable s_EncodeSpaceCv;
 static PortLabelConfig s_PortLabelConfig;
 static bool s_ChatOverlay = false;
 
+// The port names as the replay stands (emulation thread), and as they stood
+// for the frame in each slot. Like the OSD, a replay with names leaves a port
+// without one unlabeled: nobody is in it.
+static std::array<std::string, 4> s_PortNames;
+static size_t s_NextPortChange = 0;
+static std::array<std::string, 4> s_SlotPortNames[kEncodeSlotCount];
+static bool s_PortLabelsNamed = false;
+
 // The labels for one frame size, drawn once. Qt lays the text out, so any script
 // works and fonts it lacks are found on the system. Only the strip they sit in is kept.
 static QImage s_PortLabelStrip;
 static int s_PortLabelStripY = 0;
 static int s_PortLabelFrameHeight = 0;
+static std::array<std::string, 4> s_PortLabelStripNames; // drawn again when they change
 
 static std::string normalizedLabelName(const std::string& name, int playerIndex)
 {
@@ -126,7 +135,7 @@ static QFont portLabelFont(int pixelSize)
     return font;
 }
 
-static void renderPortLabelStrip(int width, int height)
+static void renderPortLabelStrip(int width, int height, const std::array<std::string, 4>& names)
 {
     const int playerCount = std::clamp(s_PortLabelConfig.playerCount, 1, 4);
     const int scale = std::max(2, height / 240);
@@ -135,6 +144,7 @@ static void renderPortLabelStrip(int width, int height)
     const int maxTextWidth = std::max(scale, portWidth - 8 * scale);
 
     s_PortLabelFrameHeight = height;
+    s_PortLabelStripNames = names;
     s_PortLabelStripY = std::max(0, height - labelHeight - 4 * scale);
     s_PortLabelStrip = QImage(width, std::min(labelHeight, height - s_PortLabelStripY), QImage::Format_ARGB32_Premultiplied);
     s_PortLabelStrip.fill(Qt::transparent);
@@ -143,7 +153,12 @@ static void renderPortLabelStrip(int width, int height)
     painter.setPen(Qt::white);
     for (int i = 0; i < playerCount; ++i)
     {
-        QString label = QString::fromStdString(normalizedLabelName(s_PortLabelConfig.playerNames[static_cast<size_t>(i)], i));
+        const std::string& name = names[static_cast<size_t>(i)];
+        if (s_PortLabelsNamed && name.empty())
+        {
+            continue;
+        }
+        QString label = QString::fromStdString(normalizedLabelName(name, i));
 
         QFont font = portLabelFont(10 * scale);
         if (QFontMetrics(font).horizontalAdvance(label) > maxTextWidth)
@@ -163,16 +178,17 @@ static void renderPortLabelStrip(int width, int height)
     }
 }
 
-static void drawPortLabels(uint8_t* frame, int width, int height)
+static void drawPortLabels(uint8_t* frame, int width, int height, const std::array<std::string, 4>& names)
 {
     if (!s_PortLabelConfig.enabled || s_PortLabelConfig.playerCount <= 0)
     {
         return;
     }
 
-    if (s_PortLabelStrip.isNull() || s_PortLabelStrip.width() != width || s_PortLabelFrameHeight != height)
+    if (s_PortLabelStrip.isNull() || s_PortLabelStrip.width() != width || s_PortLabelFrameHeight != height ||
+        s_PortLabelStripNames != names)
     {
-        renderPortLabelStrip(width, height);
+        renderPortLabelStrip(width, height, names);
     }
 
     for (int y = 0; y < s_PortLabelStrip.height(); ++y)
@@ -364,7 +380,7 @@ static void EncodeWorkerMain()
                    static_cast<size_t>(stride));
         }
 
-        drawPortLabels(s_FlippedBuffer.data(), width, height);
+        drawPortLabels(s_FlippedBuffer.data(), width, height, s_SlotPortNames[slotIndex]);
         if (s_ChatOverlay)
         {
             DrawChatOverlay(s_FlippedBuffer.data(), width, height, s_SlotFrames[slotIndex]);
@@ -467,12 +483,21 @@ void InitializeFrameCapture(EmulatorProxy* emulator,
     s_QueueTail = 0;
     s_QueueCount = 0;
     s_PortLabelConfig = portLabelConfig;
+    s_PortNames = portLabelConfig.playerNames;
+    s_NextPortChange = 0;
+    s_PortLabelsNamed =
+        std::any_of(portLabelConfig.playerNames.begin(), portLabelConfig.playerNames.end(),
+                    [](const std::string& name) { return !name.empty(); }) ||
+        std::any_of(portLabelConfig.changes.begin(), portLabelConfig.changes.end(),
+                    [](const KrecPortChange& change) { return !change.name.empty(); });
     s_PortLabelStrip = QImage();
+    s_PortLabelStripNames = {};
     s_ChatOverlay = chatOverlay;
     for (int i = 0; i < kEncodeSlotCount; ++i)
     {
         s_SlotStates[i] = EncodeSlotState::Free;
         s_RawBuffers[i].clear();
+        s_SlotPortNames[i] = s_PortNames;
     }
     s_FlippedBuffer.clear();
 }
@@ -583,6 +608,14 @@ void FrameCaptureCallback(unsigned int)
         AdvanceChatOverlay(GetPifReplayFrameIndex(), s_SubmittedFrames);
     }
 
+    // the ports change hands as the game reads the input after each change
+    while (s_NextPortChange < s_PortLabelConfig.changes.size() &&
+           s_PortLabelConfig.changes[s_NextPortChange].record < GetPifReplayFrameIndex())
+    {
+        const KrecPortChange& change = s_PortLabelConfig.changes[s_NextPortChange++];
+        s_PortNames[static_cast<size_t>(change.slot - 1)] = change.name;
+    }
+
     const int slotIndex = reserveFreeSlot();
     if (slotIndex < 0)
     {
@@ -614,6 +647,7 @@ void FrameCaptureCallback(unsigned int)
     }
 
     s_SlotFrames[slotIndex] = s_SubmittedFrames;
+    s_SlotPortNames[slotIndex] = s_PortNames;
     if (!queueFilledSlot(slotIndex))
     {
         s_Emulator->stop();

@@ -1109,6 +1109,7 @@ void PanelLayout::reset()
     rebuild();
     restoreBrowseSplit();
     finishChange();
+    emit layoutReset();
 }
 
 // Once the new arrangement is laid out: keep it, and let the room window refit.

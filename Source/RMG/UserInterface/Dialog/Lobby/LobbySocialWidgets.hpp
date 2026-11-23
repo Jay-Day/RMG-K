@@ -91,8 +91,8 @@ public:
     void refreshTab(int index);
 
 signals:
-    // A right click on a tab with a face. A middle click on one asks to close it
-    // (tabCloseRequested).
+    // A right click on a tab. A middle click on one with a face asks to close
+    // it (tabCloseRequested).
     void tabMenuRequested(int index, const QPoint& globalPos);
 
 protected:
