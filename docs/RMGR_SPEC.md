@@ -1,8 +1,8 @@
 # RMG-K Replay File Format (`.rmgr`) — Specification
 
-**Status:** format version `5`. This is the first stable version of the format.
+**Status:** format version `6`. This is the first stable version of the format.
 
-Versions before `5` were used only for prototyping and are not covered by this spec.
+Versions before `6` were used only for prototyping and are not covered by this spec.
 
 ## 1. Overview
 
@@ -28,7 +28,7 @@ The design is modeled on [Slippi's `.slp` format](https://github.com/project-sli
 ## 2. Design goals
 
 - **Complete per-frame state, kept compact.** Every frame records the game state itself (position, damage, stocks, action state, …), so a reader can use it without reimplementing game logic. For example, each fighter's current damage is recorded on every frame, rather than recording hits and expecting the reader to add them up and reset when the player loses a stock. Compression keeps files small despite that redundancy: payloads are plain fixed-size layouts, and space is saved by compressing the stream, not by bit-packing or delta-encoding.
-- **Robust versioning.** The container format and the game-specific data it records can both change without breaking compatibility. Every event is a 1-byte command code followed by a payload whose size the first event declares (`EventPayloads`), so a parser can skip events and trailing fields it doesn't know (§6). Each game's memory-layout schema is versioned separately from the container (§3.2).
+- **Robust versioning.** The container format and the game-specific data it records can both change without breaking compatibility. Every event is a 1-byte command code followed by a payload whose size the first event declares (`EventPayloads`), so a parser can skip events and trailing fields it doesn't know (§6). Each game family's event definitions are versioned separately from the container, and the header names the program that wrote the file and its version (§3.2).
 - **Game-agnostic, with game families.** Core events are recorded for any N64 title. A game family (§2.1) groups a game's regional variants and mods under one shared set of extension events, so a reader that supports the family reads every build in it.
 
 **Non-goals:**
@@ -49,12 +49,12 @@ A file *additionally* contains a **game-family extension** event set when `FileH
 
 | Aspect | .slp | .rmgr | Why |
 | --- | --- | --- | --- |
-| Container | UBJSON object: raw event bytes, then a metadata element (startAt, lastFrame, players, playedOn, consoleNick) | Fixed 108-byte binary header, then the event stream; no metadata block | Identity and timestamp are readable without parsing or decompressing the stream |
+| Container | UBJSON object: raw event bytes, then a metadata element (startAt, lastFrame, players, playedOn, consoleNick) | Fixed 136-byte binary header, then the event stream; no metadata block | Identity and timestamp are readable without parsing or decompressing the stream |
 | Writing | Streamed during the game; the raw length stays 0 while writing, and the file can be read live | Buffered in memory, written once at match end | No seek-and-patch step, and the whole stream can be compressed. Cost: no live reading, and a crash leaves no file |
 | Compression | None | Event stream deflate-compressed as one block | Per-frame data is highly redundant |
 | Byte order | Big-endian | Little-endian | Matches the host platforms; structs are written as-is |
 | Scope | Melee only | Any N64 title: core events always, game-family extension events when the game is recognized | One format across N64 games |
-| Versioning | One major.minor.build version in Game Start covers every field | Container version in the header, plus a recorderSchemaVersion per goodName | Memory layouts differ by ROM build, so each build's schema evolves on its own |
+| Versioning | One major.minor.build version in Game Start covers every field | A container version, a version per game family's extension spec, and the writer's name and version | The container, a family's game data and the writer change independently, so each gets its own field |
 | Event codes | 0x35–0x41; Event Payloads begins with its own byte size (3n+1) | 0x01–0x09; Event Payloads begins with an entry count | Arbitrary; no practical difference. A count byte allows up to 255 event types; a 3n+1 size byte caps the list at 84 |
 | Per-frame events | Frame Start, Pre-Frame, Post-Frame, Item Update, Frame Bookend | InputFrame (core); StateFrame, ItemUpdate, StageHazardUpdate (smash64); no frame start or end markers | Inputs are game-agnostic; state belongs to the game family |
 | RNG seed | In Game Start, every Frame Start and every Pre-Frame | Once, at match start, in MatchSettings | There is currently no reason to store the seed on every frame |
@@ -70,7 +70,7 @@ A file *additionally* contains a **game-family extension** event set when `FileH
 
 ```
 +----------------+----------------------------------------+
-| File Header    | 108 bytes, fixed, uncompressed          |
+| File Header    | 136 bytes, fixed, uncompressed          |
 +----------------+----------------------------------------+
 | Event Stream   | deflate-compressed block, decompresses  |
 | (compressed)   | to the sequence of events described in  |
@@ -80,31 +80,31 @@ A file *additionally* contains a **game-family extension** event set when `FileH
 
 There is no footer, no trailing metadata block, and no UBJSON/JSON wrapper of any kind. The header is followed immediately by exactly `compressedLength` bytes of deflate-compressed data — nothing before it, nothing after it, no framing around the compressed block itself.
 
-### 3.1 File header (108 bytes)
+### 3.1 File header (136 bytes)
 
 | Offset | Size | Type | Field | Notes |
 | --: | --: | --- | --- | --- |
 | 0x00 | 4 | `char[4]` | `magic` | Always the ASCII bytes `R`, `M`, `G`, `R` (no NUL). |
-| 0x04 | 1 | `u8` | `version` | Format version. `5` for everything described here — starts past `1` rather than at it; see the note at the top of this document for why. |
-| 0x05 | 3 | `u8[3]` | `reserved` | Always zero. Reserved for future header fields. |
+| 0x04 | 1 | `u8` | `version` | Container format version. `6` for everything described here. |
+| 0x05 | 2 | `u16` | `familyVersion` | Version of the `gameFamily` extension spec this file follows, e.g. `1` for the `smash64` events in §5. `0` when `gameFamily` is empty. See §3.2. |
+| 0x07 | 1 | `u8` | `reserved` | Always zero. Reserved for future header fields. |
 | 0x08 | 16 | `char[16]` | `gameFamily` | NUL-padded ASCII identifier for which game-family extension event set (§5) applies, e.g. `"smash64"`. **All-zero** (empty) if the loaded ROM's game family isn't recognized by this recorder — the file is still a fully valid core-only recording in that case, just with no extension events. Truncated if longer than 16 bytes (no defined family name is expected to need that much room). |
 | 0x18 | 64 | `char[64]` | `goodName` | The recorded ROM's `GoodName` (mupen64plus-core's ROM database identity string), UTF-8, NUL-padded — not necessarily NUL-terminated if it fills the field. Truncated if longer than 64 bytes. All-zero if the ROM database has no identity for the loaded ROM. |
-| 0x58 | 4 | `u32` | `recorderSchemaVersion` | This recorder's revision of its own understanding of `goodName`'s memory layout — see §3.2. `0` when `gameFamily` is empty (no extension schema applies to an unrecognized game). |
-| 0x5C | 8 | `u64` | `recordedAtEpochMillis` | Wall-clock time the recording started, **milliseconds** since the Unix epoch (UTC) — from `std::chrono::system_clock`. Independent of the filename's timestamp (§3.3), though the recorder writes the same instant to both (truncated to whole seconds there). |
-| 0x64 | 4 | `u32` | `uncompressedLength` | Byte length of the event stream *after* decompression. Lets a reader preallocate its decompression output buffer instead of growing it dynamically. |
-| 0x68 | 4 | `u32` | `compressedLength` | Byte length of the deflate-compressed block immediately following the header — i.e. `header_size (108) + compressedLength` is the total file size. Always correct on disk: because the whole match is buffered before anything is written, there is no "0 until finalized" convention, and no truncated-but-valid file is possible — see §2's buffering trade-off. |
+| 0x58 | 32 | `char[32]` | `clientName` | Name and version of the program that wrote the file, UTF-8, NUL-padded — not necessarily NUL-terminated if it fills the field. For example `RMG-K v0.9.16` for a release, or `RMG-K vdev-2310-a1b2c3d4` for a development build (commit count and commit hash). See §3.2. |
+| 0x78 | 8 | `u64` | `recordedAtEpochMillis` | Wall-clock time the recording started, **milliseconds** since the Unix epoch (UTC) — from `std::chrono::system_clock`. Independent of the filename's timestamp (§3.3), though the recorder writes the same instant to both (truncated to whole seconds there). |
+| 0x80 | 4 | `u32` | `uncompressedLength` | Byte length of the event stream *after* decompression. Lets a reader preallocate its decompression output buffer instead of growing it dynamically. |
+| 0x84 | 4 | `u32` | `compressedLength` | Byte length of the deflate-compressed block immediately following the header — i.e. `header_size (136) + compressedLength` is the total file size. Always correct on disk: because the whole match is buffered before anything is written, there is no "0 until finalized" convention, and no truncated-but-valid file is possible — see §2's buffering trade-off. |
 
-### 3.2 `goodName`, `gameFamily`, and `recorderSchemaVersion` — three independent axes
+### 3.2 `gameFamily`, `familyVersion`, `goodName` and `clientName`
 
-Three fields, three different questions, and conflating any two of them is the mistake to avoid:
+Four header fields describe what produced a file. Each answers a different question:
 
-- **`gameFamily`** identifies *which extension event definitions apply* — a coarse, slow-growing identifier. Empty means "core events only, no extension layer, whatever this ROM is isn't recognized."
-- **`goodName`** identifies *which exact ROM build* produced the file — a unique identity within a family, not the family itself. `SmashRemix2.0.1` and a hypothetical `SmashRemix2.0.2` are different `goodName`s, both under `gameFamily = "smash64"`, even though they're the "same" mod, because their memory layouts can differ build to build.
-- **`recorderSchemaVersion`** identifies *which revision of this recorder's interpretation* of that specific `goodName`'s memory layout produced the file. It's bumped whenever that interpretation changes in a way that affects recorded output — which includes but isn't limited to adding a new field. A fix to an *existing* field's offset (silently changing recorded *values* without changing any event's declared byte size) needs a bump too, since the per-event `EventPayloads` declared-size mechanism (§6) has no way to signal that on its own.
+- **`gameFamily`** says *which extension event definitions apply*. It changes rarely. Empty means core events only: the loaded ROM isn't recognized.
+- **`familyVersion`** says *which version of that family's extension spec* the file follows. It is bumped whenever the family's event definitions change, for example when a new event type or a new trailing field is added to the `smash64` events. Every build in a family shares one numbering, so `smash64` version 2 means the same events for every `goodName`. Every build writes the full layout for its family version. When a field doesn't exist in a particular ROM (vanilla SSB64 has none of Smash Remix's gameplay settings, for example), the writer stores `0` there, and `goodName` tells a reader whether that `0` is a real value. `0` when `gameFamily` is empty.
+- **`goodName`** says *which exact ROM build* produced the file. `SmashRemix2.0.1` and a hypothetical `SmashRemix2.0.2` are different `goodName`s under the same `gameFamily`, because their memory layouts can differ. It never changes for a given ROM.
+- **`clientName`** says *which program and version wrote the file*, such as `RMG-K v0.9.16`. When a writer bug is fixed (for example, a field read from the wrong memory offset), readers can use `clientName` to tell affected files from fixed ones. A fix like that changes no event definition, so it doesn't bump `familyVersion`.
 
-`recorderSchemaVersion` is its own counter **per `goodName`**, not global and not per-`gameFamily`: `SmashRemix2.0.1` schema `3` and `SmashRemix2.0.2` schema `1` are unrelated numbering spaces, each starting fresh at `1` for that `goodName`'s first supported revision. This is deliberately how one shared `gameFamily` accommodates ROM builds with different field sets — e.g. Smash Remix's extra settings (teams, handicap, CPU level, item frequency, a wider character-ID range) that a hypothetical vanilla-SSB64 recorder wouldn't have are just later-schema field-appends on the shared `smash64` extension events. A vanilla-only reader simply never advances far enough in schema version to know about Remix-only trailing fields, and the per-file `EventPayloads` declared size means it never misreads them either.
-
-A reader that only knows how to interpret one specific `(gameFamily, goodName, recorderSchemaVersion)` combination should check all three explicitly before trusting an extension event's semantics, rather than assuming every file it can open was produced by the same recorder revision it was built against. Core events need none of this — they're valid to read regardless of `gameFamily`/`goodName`.
+A reader should check `gameFamily` and `familyVersion` before trusting an extension event's meaning, and can use `goodName` and `clientName` to apply build-specific rules or work around known writer bugs. Core events need none of this: they're valid to read regardless of these fields.
 
 ### 3.3 Filename convention
 
@@ -118,11 +118,11 @@ For this headless export path, `recordedAtEpochMillis` is derived from the sourc
 
 ### 3.4 Compression
 
-Everything after the 108-byte header is one deflate-compressed block, covering the entire event stream — `EventPayloads` through the final `MatchEnd`/`MatchResult`. Compressed at the highest available deflate level; this only costs CPU time once, at match end, not per frame, since the recorder buffers events in memory during the match rather than compressing incrementally.
+Everything after the 136-byte header is one deflate-compressed block, covering the entire event stream — `EventPayloads` through the final `MatchEnd`/`MatchResult`. Compressed at the highest available deflate level; this only costs CPU time once, at match end, not per frame, since the recorder buffers events in memory during the match rather than compressing incrementally.
 
-The header itself is **not** compressed — `magic`, `version`, `gameFamily`, `goodName`, and the timestamp fields are readable by any tool without decompressing anything, which matters for a file browser or library UI that wants to list many recordings' identity/timestamp without paying the cost of decompressing each one's (much larger) event stream.
+The header itself is **not** compressed — `magic`, `version`, `gameFamily`, `familyVersion`, `clientName`, `goodName`, and the timestamp fields are readable by any tool without decompressing anything, which matters for a file browser or library UI that wants to list many recordings' identity/timestamp without paying the cost of decompressing each one's (much larger) event stream.
 
-A reader decompresses exactly `compressedLength` bytes starting at file offset `108` (`0x6C`) and should get back exactly `uncompressedLength` bytes of event-stream data to parse as described below. There is no partial-file/truncated-recording case to handle for the event stream itself: because the whole match is buffered before any of this is written, a `.rmgr` file on disk is either the complete, valid output of a match that reached `MatchEnd`, or the file doesn't exist at all.
+A reader decompresses exactly `compressedLength` bytes starting at file offset `136` (`0x88`) and should get back exactly `uncompressedLength` bytes of event-stream data to parse as described below. There is no partial-file/truncated-recording case to handle for the event stream itself: because the whole match is buffered before any of this is written, a `.rmgr` file on disk is either the complete, valid output of a match that reached `MatchEnd`, or the file doesn't exist at all.
 
 ## 4. Core events
 
@@ -172,7 +172,7 @@ Final per-port results (e.g. Smash's stocks-remaining placements) are not a univ
 
 ## 5. `smash64` game-family extension events
 
-Present only when `FileHeader.gameFamily == "smash64"`. Covers Smash Remix today; the field set is written to also accommodate a hypothetical vanilla SSB64 recorder via `recorderSchemaVersion`-scoped field-appends — none of that is implemented yet, but the layering doesn't assume Remix specifically.
+Present only when `FileHeader.gameFamily == "smash64"`. Covers Smash Remix today; the events below are `smash64` family version `1`.
 
 ### 5.0 Event Payloads — code `0x01`
 
@@ -190,7 +190,7 @@ Each entry:
 | +0x00 | 1 | `u8` | `code` | The event command code this entry describes. |
 | +0x01 | 2 | `u16` | `size` | That event's payload size, in bytes. |
 
-A file with `gameFamily` empty declares only the three core codes (`MatchStart`, `InputFrame`, `MatchEnd`). A `smash64` file declares those three plus the five below. **A parser must always read an event's size from that file's own `EventPayloads` event, never hardcode it, and must always read `count` itself rather than assuming a fixed number of entries** — this is exactly why a reader that doesn't recognize a `gameFamily` (or an older reader facing a newer schema's appended fields) can still parse the rest of a file correctly.
+A file with `gameFamily` empty declares only the three core codes (`MatchStart`, `InputFrame`, `MatchEnd`). A `smash64` file declares those three plus the five below. **A parser must always read an event's size from that file's own `EventPayloads` event, never hardcode it, and must always read `count` itself rather than assuming a fixed number of entries** — this is exactly why a reader that doesn't recognize a `gameFamily` (or an older reader facing a newer family version's appended fields) can still parse the rest of a file correctly.
 
 ### 5.1 Match Settings — code `0x08`
 
@@ -391,7 +391,7 @@ Payload size: **33 bytes**.
 
 (From `dWPSamusChargeShotWeaponAttributes[]`, `wpsamuschargeshot.c`, same for US and JP builds.)
 
-Deliberately not captured (not yet mapped in memory): velocity, damage/knockback dealt, owner/attacker port, and any per-object timer/expiration. A future schema version can append any of these as trailing fields once mapped, without breaking this version's readers.
+Deliberately not captured (not yet mapped in memory): velocity, damage/knockback dealt, owner/attacker port, and any per-object timer/expiration. A future family version can append any of these as trailing fields once mapped, without breaking this version's readers.
 
 ### 5.4 Stage Hazard Update — code `0x07`
 
@@ -421,7 +421,9 @@ Two independent mechanisms:
 - **Field additions to an existing event:** always append new fields to the *end* of that event's payload, never insert in the middle. An old parser — which learned the event's size from that file's own `EventPayloads` event, which will correctly declare the *old*, smaller size for an old file — simply never reads the new trailing bytes. A new parser reading an old file sees the old, smaller declared size and correctly knows not to read fields that were never written.
 - **New event types:** an old parser encountering a command code it doesn't recognize looks up its declared size in `EventPayloads` and skips exactly that many bytes, then continues from the next event.
 
-`FileHeader.version` (currently `5`) is reserved for a breaking change to the header or the overall framing itself (e.g. the header layout, or the buffered/compressed structure) — not for anything the two mechanisms above already cover, and not for tracking which game/ROM produced a file or how that recorder's understanding of it has evolved either — that's `gameFamily`/`goodName`/`recorderSchemaVersion` (§3.2), a deliberately separate axis from the container format itself.
+`FileHeader.version` (currently `6`) is reserved for a breaking change to the header or the overall framing itself (e.g. the header layout, or the buffered/compressed structure) — not for anything the two mechanisms above already cover, and not for tracking which game/ROM produced a file or how that recorder's understanding of it has evolved either — that's `familyVersion`, `goodName` and `clientName` (§3.2).
+
+Within a game family, every change to the event definitions, whether a new event type or a new trailing field, bumps `familyVersion`. Fields added after a family's version `1` are marked in the layout tables with the version that added them.
 
 ## 7. Byte order and encoding
 
@@ -431,7 +433,7 @@ Every event payload has a fixed size, with no padding and no bitfields: the layo
 
 Floats are IEEE-754 single precision (32-bit), stored as the exact bit pattern the game itself holds in memory — reinterpret the 4 bytes as a `float`/`f32`, don't scale or convert.
 
-Strings (`playerNames` in `MatchStart`, `goodName`/`gameFamily` in the header) are fixed-width byte arrays, NUL-padded, **not necessarily NUL-terminated** if the value fills the full field width — always read up to the declared field width and trim trailing NULs, never scan for a terminator past the field boundary.
+Strings (`playerNames` in `MatchStart`, `goodName`/`gameFamily`/`clientName` in the header) are fixed-width byte arrays, NUL-padded, **not necessarily NUL-terminated** if the value fills the full field width — always read up to the declared field width and trim trailing NULs, never scan for a terminator past the field boundary.
 
 ## 8. Reference tables
 
