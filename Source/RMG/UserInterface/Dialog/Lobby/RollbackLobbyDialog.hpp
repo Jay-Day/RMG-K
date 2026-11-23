@@ -76,6 +76,7 @@ class PortCard;
 class PrivateChats;
 class RoomsColumn;
 class RoomWindow;
+class SignalBars;
 class Spinner;
 class StageScrim;
 class StatePill;
@@ -254,11 +255,6 @@ private slots:
     // by m_pingProbeTimer's interval.
     void onPingProbeTick();
 
-    // Measure one peer because the user selected a row showing their ping.
-    // Lobby rows show the region estimate until this lands; room seats are
-    // measured continuously by onPingProbeTick regardless.
-    void probeOnDemand(quint64 userId);
-
     // Punch progress for a seated peer, so a slow or failing NAT punch is
     // visible in the room rather than looking like a stalled Start button.
     void onIcePeerConnectionChanged(quint64 userId, bool connected, bool failed);
@@ -275,6 +271,9 @@ private slots:
     void refreshSeatLink(quint64 userId);
     void setSeatLinkStatus(quint64 userId, const QString& text, LobbyTheme::Role role);
     void onPingMeasured(quint64 userId, int rttMs);
+    void onPingMeasurementExpired(quint64 userId);
+    // A join's ping check (see onRoomJoinRequested) is over.
+    void onPingCheckFinished(quint64 roomId, int pingMs, bool measured);
 
 private:
     void buildUi();
@@ -649,8 +648,6 @@ private:
     QString      m_rosterSubmittedName; // sent to the server, not answered yet
     int          m_rosterSeatsShown = 1; // the room list was last drawn for this many
     QList<QTreeWidgetItem*> m_playerGroups; // one heading per state
-    // Last on-demand probe per user id, for probeOnDemand's throttle.
-    QHash<quint64, qint64> m_lastOnDemandProbe;
     // Peers we've already posted an "couldn't reach" notice about, so the 3s
     // seat refresh doesn't repeat it every tick. Cleared on a measurement.
     QSet<quint64> m_probeFailureAnnounced;
@@ -756,6 +753,7 @@ private:
     QWidget*        m_ticketValueBoxes[2] = {};
     QLabel*         m_ticketValues[2] = {};
     QLabel*         m_ticketCaptions[2] = {};
+    SignalBars*     m_ticketBars   = nullptr; // a challenge's ping, beside its value
     LobbyButton*    m_ticketAction = nullptr;
     LobbyButton*    m_ticketLeave  = nullptr;
 
@@ -933,6 +931,31 @@ private:
     QString  m_lastRoomName;
     QString  m_serverUrl;
     quint64  m_currentRoomId = 0;
+
+    // A join waiting on its ping check: the room takes players within a ping,
+    // and there's no measurement to its host yet. roomId 0 when none.
+    struct PendingPingCheck
+    {
+        quint64 roomId = 0;
+        quint64 hostId = 0;
+        QString password;
+        QString roomName;
+        QString hostName;
+        int maxPing = 0;
+    };
+    PendingPingCheck m_pingCheck;
+    void cancelPendingPingCheck();
+    // ROOM_JOIN with the host's measured ping (-1: none, so the estimate goes
+    // as unmeasured).
+    void sendRoomJoin(quint64 roomId, const QString& password, quint64 hostId, int measuredPingMs);
+    // The last ROOM_JOIN, so a double-click doesn't send a second.
+    quint64  m_joinSentRoomId = 0;
+    qint64   m_joinSentMs = 0;
+    // Ping for a challenge's other player: measured (once the lobby's ping
+    // check lands) or the region estimate. -1 when neither.
+    int      challengePingMs(const LobbyClient::Challenge& challenge, bool outgoing, bool* estimate) const;
+    // Repaints what shows this user's ping outside the room's seats.
+    void     refreshPingViews(quint64 userId);
 
     QString m_currentRoomGame;
     QString m_currentRoomMd5;

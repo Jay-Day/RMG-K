@@ -736,6 +736,9 @@ void RollbackLobbyDialog::onChallengeIncoming(const LobbyClient::Challenge& chal
         return;
     m_incomingChallenges.append(challenge);
     expireChallengeLater(challenge.id, challenge.expiresAtMs);
+    // Only one this PC shows gets measured: an ignored sender never gets an
+    // ICE connection to it.
+    m_client->measureChallengePing(challenge);
     showNextChallenge();
     alertFrom(challenge.fromUserId);
     // Shown only if a game is running: someone watching can't see the lobby behind it.
@@ -760,13 +763,7 @@ void RollbackLobbyDialog::showNextChallenge()
     {
         view.fromCountry = from->anonymous ? QString() : from->country;
         view.fromConnection = from->connection;
-        view.fromPingMs = m_client->measuredPingMs(challenge.fromUserId);
-        view.fromPingEstimate = view.fromPingMs < 0;
-        if (view.fromPingEstimate)
-        {
-            const int estimate = LobbyRegions::estimatedRttMs(m_client->selfRegion(), from->region);
-            view.fromPingMs = estimate > 0 ? estimate : -1;
-        }
+        view.fromPingMs = challengePingMs(challenge, false, &view.fromPingEstimate);
     }
 
     view.toName = challenge.toUsername;
@@ -826,6 +823,22 @@ void RollbackLobbyDialog::showNextChallenge()
     m_challengeCard->raise();
 }
 
+int RollbackLobbyDialog::challengePingMs(const LobbyClient::Challenge& challenge, bool outgoing, bool* estimate) const
+{
+    // The lobby's ping check measures under the id this PC knows them by.
+    const quint64 other = outgoing ? challenge.toUserId : challenge.fromUserId;
+    const quint64 pingId = challenge.pingPeerUserId != 0 ? challenge.pingPeerUserId : other;
+    const int measured = m_client->measuredPingMs(pingId);
+    *estimate = measured < 0;
+    if (measured >= 0)
+        return measured;
+    const auto user = m_client->users().constFind(other);
+    if (user == m_client->users().constEnd())
+        return -1;
+    const int guess = LobbyRegions::estimatedRttMs(m_client->selfRegion(), user->region);
+    return guess > 0 ? guess : -1;
+}
+
 void RollbackLobbyDialog::answerChallenge(bool accept)
 {
     if (m_incomingChallenges.isEmpty())
@@ -834,6 +847,7 @@ void RollbackLobbyDialog::answerChallenge(bool accept)
     if (accept)
     {
         stopWatchingForRoom();
+        cancelPendingPingCheck();
         m_acceptedChallengeId = challenge.id;
         m_acceptedChallengeFrom = challenge.fromUsername;
         m_acceptedChallengeInvite = challenge.invite;

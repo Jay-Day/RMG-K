@@ -892,6 +892,11 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
     connect(m_client, &LobbyClient::roomPingMeasurementsChanged,
             this, &RollbackLobbyDialog::onRoomPingMeasurementsChanged);
     connect(m_client, &LobbyClient::pingProbeMeasured,    this, &RollbackLobbyDialog::onPingMeasured);
+    connect(m_client, &LobbyClient::pingMeasurementExpired, this, &RollbackLobbyDialog::onPingMeasurementExpired);
+    // Queued: it can end in a message box, which mustn't run inside the
+    // client's ICE polling.
+    connect(m_client, &LobbyClient::pingCheckFinished,    this, &RollbackLobbyDialog::onPingCheckFinished,
+            Qt::QueuedConnection);
     connect(m_client, &LobbyClient::pingProbeRetrying,    this, &RollbackLobbyDialog::onPingProbeRetrying);
     connect(m_client, &LobbyClient::pingProbeFailed,      this, &RollbackLobbyDialog::onPingProbeFailed);
     connect(m_client, &LobbyClient::pingProbeSoftFailed,  this, &RollbackLobbyDialog::onPingProbeSoftFailed);
@@ -1289,6 +1294,9 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
     m_ticketValues[1] = second.value;
     m_ticketCaptions[1] = second.caption;
     ticketLay->addWidget(first.box);
+    m_ticketBars = new SignalBars(ticket);
+    m_ticketBars->hide();
+    ticketLay->addWidget(m_ticketBars, 0, Qt::AlignVCenter);
     ticketLay->addWidget(second.box);
 
     m_ticketLeave = new LobbyButton(tr("Leave Room"), LobbyButton::Kind::Danger, ticket);
@@ -1345,9 +1353,6 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_roomsColumn->setMinimumWidth(220);
     connect(m_roomsColumn, &RoomsColumn::joinRequested, this, &RollbackLobbyDialog::onRoomJoinRequested);
     connect(m_roomsColumn, &RoomsColumn::returnRequested, this, &RollbackLobbyDialog::switchToInRoomView);
-    // Selecting a room measures the host on demand, so the ping can be an
-    // estimate until someone actually cares about that room.
-    connect(m_roomsColumn, &RoomsColumn::hostProbeRequested, this, &RollbackLobbyDialog::probeOnDemand);
     connect(m_roomsColumn, &RoomsColumn::contextMenuRequested, this, &RollbackLobbyDialog::showAdminRoomMenu);
     connect(m_roomsColumn, &RoomsColumn::playerMenuRequested, this, &RollbackLobbyDialog::showPlayerMenuForName);
     m_browseSplitter->addWidget(m_roomsColumn);
@@ -2545,12 +2550,6 @@ QWidget* RollbackLobbyDialog::buildPlayersColumn()
         m_playerGroups.append(group);
     }
 
-    // Selecting a player measures them on demand and refreshes their tooltip.
-    connect(m_playersTree, &QTreeWidget::itemClicked, this,
-            [this](QTreeWidgetItem* item, int) {
-                if (item && !item->data(0, kGroupRole).toBool())
-                    probeOnDemand(item->data(0, Qt::UserRole).toULongLong());
-            });
     // Click in the empty area below the rows to clear the selection (in
     // eventFilter — there's no built-in property for it).
     m_playersTree->viewport()->installEventFilter(this);
@@ -3177,6 +3176,9 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         }
         clearPlayerRows();
         m_quickMatchActive = false;
+        // The client dropped its side of a ping check with the connection.
+        m_pingCheck = PendingPingCheck{};
+        m_joinSentRoomId = 0;
         resetSocialState();
 
         if (m_chatViewLobby) m_chatViewLobby->clear();
@@ -3342,6 +3344,7 @@ void RollbackLobbyDialog::refreshPlayBar()
     };
 
     m_ticketLeave->setVisible(m_currentRoomId != 0);
+    m_ticketBars->setVisible(false);
     if (m_currentRoomId != 0)
     {
         QString name = tr("Your room");
@@ -3363,13 +3366,38 @@ void RollbackLobbyDialog::refreshPlayBar()
         m_ticketAction->setKind(LobbyButton::Kind::Primary);
         m_ticketAction->setIconName(QStringLiteral("arrow-right-line"));
     }
+    else if (m_pingCheck.roomId != 0)
+    {
+        // Not blocking anything: the join goes ahead (or is turned away) once
+        // the ping lands, and Cancel drops it.
+        setTicket(tr("Measuring ping…"), t.warn, tr("Your connection to %1").arg(m_pingCheck.hostName),
+                  m_pingCheck.roomName.isEmpty() ? QString() : QStringLiteral(" · ") + m_pingCheck.roomName);
+        setValues(tr("≤%1 ms").arg(m_pingCheck.maxPing), tr("room limit"), QString(), QString());
+        m_ticketBadge->setIconAndColors(QString(), t.warn, t.warnTint);
+        m_ticketBadge->setVisible(true);
+        m_ticketSpinner->setColors(t.warnTint, t.warn);
+        m_ticketSpinner->setVisible(true);
+        m_ticketAction->setText(tr("Cancel"));
+        m_ticketAction->setKind(LobbyButton::Kind::Secondary);
+        m_ticketAction->setIconName(QStringLiteral("close-line"));
+    }
     else if (m_outgoingChallenge.id != 0)
     {
         setTicket(tr("Challenge sent"), t.accentInk, tr("Waiting for %1").arg(m_outgoingChallenge.toUsername),
                   m_outgoingChallenge.romName.isEmpty() ? QString()
                       : QStringLiteral(" · ") + m_outgoingChallenge.romName);
         const qint64 left = m_outgoingChallenge.expiresAtMs - QDateTime::currentMSecsSinceEpoch();
-        setValues(QString::number(std::max<qint64>(0, (left + 999) / 1000)), tr("seconds"), QString(), QString());
+        // Their ping, measured once the lobby's ping check lands, estimated till then.
+        bool estimate = true;
+        const int pingMs = challengePingMs(m_outgoingChallenge, true, &estimate);
+        setValues(QString::number(std::max<qint64>(0, (left + 999) / 1000)), tr("seconds"),
+                  pingMs < 0 ? QString() : QString(estimate ? "~%1 ms" : "%1 ms").arg(pingMs),
+                  estimate ? tr("est. ping") : tr("ping"));
+        if (pingMs >= 0)
+        {
+            m_ticketBars->setPing(pingMs, estimate);
+            m_ticketBars->setVisible(true);
+        }
         m_ticketBadge->setIconAndColors(QString(), t.accentInk, t.accentTint);
         m_ticketBadge->setVisible(true);
         m_ticketSpinner->setColors(t.accentTint, t.accentInk);
@@ -3442,6 +3470,10 @@ void RollbackLobbyDialog::onPlayBarActionClicked()
     if (m_currentRoomId != 0)
     {
         switchToInRoomView();
+    }
+    else if (m_pingCheck.roomId != 0)
+    {
+        cancelPendingPingCheck();
     }
     else if (m_outgoingChallenge.id != 0)
     {
@@ -4032,7 +4064,8 @@ void RollbackLobbyDialog::onRoomListChanged()
 
         // Your ping to the host — the real measurement once one exists, the
         // region estimate until then — so a room can be judged before joining.
-        // Nothing is probed in the background; selecting the row measures it.
+        // Nothing is probed in the background; joining a room with a ping
+        // limit measures it first.
         if (r.hostId != 0 && r.hostId != m_client->selfUserId())
         {
             room.pingMs = m_client->measuredPingMs(r.hostId);
@@ -4048,8 +4081,10 @@ void RollbackLobbyDialog::onRoomListChanged()
         }
         if (!room.mine && room.wiredOnly && selfWireless)
             room.refusal = RoomRowView::Refusal::WiredOnly;
-        else if (!room.mine && room.maxPing > 0 && room.pingMs > room.maxPing)
+        // Only a measurement turns a room away; an estimate can be far off.
+        else if (!room.mine && room.maxPing > 0 && room.pingMeasured && room.pingMs > room.maxPing)
             room.refusal = RoomRowView::Refusal::PingTooHigh;
+        room.measuring = m_pingCheck.roomId == r.id;
         rooms.append(room);
     }
 
@@ -4228,6 +4263,7 @@ void RollbackLobbyDialog::onCreateRoomClicked()
         m_createRoomDialog->activateWindow();
         return;
     }
+    cancelPendingPingCheck();
     // The room's game is whatever is selected in the lobby's shared picker — the
     // same source Quick Match uses. Require a real pick before opening the form.
     const QVariantMap romData = selectedBrowseRom();
@@ -4289,6 +4325,7 @@ void RollbackLobbyDialog::onRoomCreated(quint64 roomId)
 
 void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
 {
+    m_joinSentRoomId = 0;
     m_createdRoomMd5.clear();
     QString roomName;
     auto it = m_client->rooms().constFind(roomId);
@@ -4302,6 +4339,7 @@ void RollbackLobbyDialog::onRoomJoinOk(quint64 roomId)
 
 void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
 {
+    m_joinSentRoomId = 0;
     QString human = reason;
     if (reason == "wrong_password")    human = tr("Wrong password.");
     else if (reason == "full")         human = tr("Room is full.");
@@ -4330,6 +4368,8 @@ void RollbackLobbyDialog::onRoomJoinFailed(const QString& reason)
 
 void RollbackLobbyDialog::enterRoom(quint64 roomId, const QString& greetingChatLine)
 {
+    // In a room, by whatever way: a join still measuring the ping is moot.
+    cancelPendingPingCheck();
     m_currentRoomId = roomId;
     m_liveReplayPreferencePublished = false;
 
@@ -4428,9 +4468,18 @@ void RollbackLobbyDialog::onRoomJoinRequested(quint64 roomId)
         return;
     }
 
+    // This room's join is already on its way (a double-click, a second click
+    // while its ping is measured): don't start another.
+    constexpr qint64 kJoinPendingMs = 5'000;
+    if (roomId == m_pingCheck.roomId ||
+        (roomId == m_joinSentRoomId && QDateTime::currentMSecsSinceEpoch() - m_joinSentMs < kJoinPendingMs))
+        return;
+
     auto it = m_client->rooms().constFind(roomId);
     if (it == m_client->rooms().constEnd()) return;
-    const auto& summary = it.value();
+    // A copy: the password prompt below runs an event loop, and a room list
+    // arriving under it replaces the client's rooms.
+    const LobbyClient::LobbyRoomSummary summary = it.value();
 
     if ((summary.state == "in_game" || summary.state == "starting") && !summary.lateJoin)
     {
@@ -4460,28 +4509,24 @@ void RollbackLobbyDialog::onRoomJoinRequested(quint64 roomId)
     }
 
     // The room's limits, checked here so nobody types a password for nothing;
-    // the server checks them again. Ping is measured if it can be, otherwise
-    // estimated from regions, like the room list shows it.
-    int pingMs = summary.hostId != 0 ? m_client->measuredPingMs(summary.hostId) : -1;
-    if (pingMs < 0 && summary.hostId != 0)
-    {
-        const auto host = m_client->users().constFind(summary.hostId);
-        if (host != m_client->users().constEnd())
-            pingMs = LobbyRegions::estimatedRttMs(m_client->selfRegion(), host->region);
-    }
+    // the server checks them again. Only a measured ping turns a join away:
+    // the region estimate can be far off.
+    const int measuredPing = summary.hostId != 0 ? m_client->measuredPingMs(summary.hostId) : -1;
     if (summary.wiredOnly && isWireless(m_client->selfConnection()))
     {
         QMessageBox::information(this, tr("Wired only"),
             tr("\"%1\" doesn't take players on Wi-Fi. Connect with a cable to join it.").arg(summary.name));
         return;
     }
-    if (summary.maxPing > 0 && pingMs > summary.maxPing)
+    if (summary.maxPing > 0 && measuredPing > summary.maxPing)
     {
         QMessageBox::information(this, tr("Too far"),
-            tr("\"%1\" takes players within %2 ms of the host. Your ping to them is about %3 ms.")
-                .arg(summary.name).arg(summary.maxPing).arg(pingMs));
+            tr("\"%1\" takes players within %2 ms of the host. Your ping to them is %3 ms.")
+                .arg(summary.name).arg(summary.maxPing).arg(measuredPing));
         return;
     }
+    // Another room's ping check is moot once this one is asked for.
+    cancelPendingPingCheck();
 
     QString password;
     if (summary.hasPassword)
@@ -4491,8 +4536,78 @@ void RollbackLobbyDialog::onRoomJoinRequested(quint64 roomId)
             QString(tr("Enter password for \"%1\":")).arg(summary.name),
             QLineEdit::Password, QString(), &ok);
         if (!ok) return;
+        // The prompt ran an event loop: the connection or the room may be gone.
+        if (m_client->state() != LobbyClient::ConnectionState::Connected || m_currentRoomId != 0 ||
+            m_pingCheck.roomId != 0)
+            return;
     }
-    m_client->joinRoom(roomId, password, std::max(0, pingMs));
+
+    // A ping limit and no measurement: the lobby lets this PC measure the host
+    // first (after the password, which it checks), so the limit is held to a
+    // real number. Without a limit the room's own connection measures it.
+    if (summary.maxPing > 0 && measuredPing < 0 && m_client->pingCheckSupported() &&
+        m_client->startPingCheck(roomId, password, summary.hostId, summary.maxPing))
+    {
+        m_pingCheck.roomId = roomId;
+        m_pingCheck.hostId = summary.hostId;
+        m_pingCheck.password = password;
+        m_pingCheck.roomName = summary.name;
+        m_pingCheck.hostName = summary.hostName;
+        m_pingCheck.maxPing = summary.maxPing;
+        refreshPlayBar();
+        onRoomListChanged();
+        return;
+    }
+    sendRoomJoin(roomId, password, summary.hostId, measuredPing);
+}
+
+void RollbackLobbyDialog::sendRoomJoin(quint64 roomId, const QString& password, quint64 hostId, int measuredPingMs)
+{
+    int pingMs = measuredPingMs;
+    if (pingMs < 0)
+    {
+        // Sent as an estimate, which never turns the join away.
+        pingMs = 0;
+        const auto host = m_client->users().constFind(hostId);
+        if (hostId != 0 && host != m_client->users().constEnd())
+            pingMs = LobbyRegions::estimatedRttMs(m_client->selfRegion(), host->region);
+    }
+    m_client->joinRoom(roomId, password, pingMs, measuredPingMs >= 0);
+    m_joinSentRoomId = roomId;
+    m_joinSentMs = QDateTime::currentMSecsSinceEpoch();
+}
+
+void RollbackLobbyDialog::cancelPendingPingCheck()
+{
+    if (m_pingCheck.roomId == 0)
+        return;
+    m_client->cancelPingCheck();
+    m_pingCheck = PendingPingCheck{};
+    refreshPlayBar();
+    onRoomListChanged();
+}
+
+void RollbackLobbyDialog::onPingCheckFinished(quint64 roomId, int pingMs, bool measured)
+{
+    if (m_pingCheck.roomId == 0 || roomId != m_pingCheck.roomId)
+        return;
+    const PendingPingCheck check = m_pingCheck;
+    m_pingCheck = PendingPingCheck{};
+    refreshPlayBar();
+    onRoomListChanged();
+    if (m_client->state() != LobbyClient::ConnectionState::Connected || m_currentRoomId != 0)
+        return;
+
+    if (measured && pingMs > check.maxPing)
+    {
+        QMessageBox::information(this, tr("Too far"),
+            tr("\"%1\" takes players within %2 ms of the host. Your ping to them is %3 ms.")
+                .arg(check.roomName).arg(check.maxPing).arg(pingMs));
+        return;
+    }
+    // Measured and within the limit, or not measured at all (the check was
+    // refused or ran out of time): the lobby takes an unmeasured join.
+    sendRoomJoin(roomId, check.password, check.hostId, measured ? pingMs : -1);
 }
 
 void RollbackLobbyDialog::onMatchWatchRequested(quint64 roomId)
@@ -6226,33 +6341,11 @@ void RollbackLobbyDialog::onPingProbeTick()
         }
     }
 
-    // Everyone outside the room is measured on demand — see probeOnDemand.
-    // The old slow round-robin probed a few lobby users per tick so a hover
-    // might find a real number, but in a busy lobby most rows still showed the
-    // region estimate and the whole lobby traded probe traffic continuously to
-    // populate values nobody looked at.
-}
-
-// Measure a specific peer because the user asked to see their ping, then let
-// onPingMeasured repaint whatever row is showing it. Throttled per user: the
-// server drops requests over its own flood budget, and a double-click or a
-// click-drag across rows would otherwise burn that budget on one peer and
-// starve the seat refresh that Start gating depends on.
-void RollbackLobbyDialog::probeOnDemand(quint64 userId)
-{
-    if (!m_client || userId == 0 || userId == m_client->selfUserId())
-        return;
-    if (m_client->state() != LobbyClient::ConnectionState::Connected)
-        return;
-
-    constexpr qint64 kOnDemandProbeCooldownMs = 3'000;
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const auto it = m_lastOnDemandProbe.constFind(userId);
-    if (it != m_lastOnDemandProbe.constEnd() && now - it.value() < kOnDemandProbeCooldownMs)
-        return;
-    m_lastOnDemandProbe[userId] = now;
-
-    m_client->requestPingProbe(userId);
+    // Everyone outside the room shows the region estimate until the moment
+    // of agreement: a challenge, or a join to a room with a ping limit, lets
+    // the two PCs measure each other (LobbyClient's ping checks). The old
+    // slow round-robin had the whole lobby trading probe traffic continuously
+    // to populate values nobody looked at.
 }
 
 // Back to what the seat is known to have: its ping, or its connection attempt.
@@ -6399,6 +6492,25 @@ void RollbackLobbyDialog::onPingMeasured(quint64 userId, int rttMs)
 
     // A peer's first ping may be what unblocks the host's Start button.
     refreshStartButton();
+
+    refreshPingViews(userId);
+}
+
+void RollbackLobbyDialog::onPingMeasurementExpired(quint64 userId)
+{
+    // Back to the region estimate wherever it showed.
+    refreshPingViews(userId);
+}
+
+void RollbackLobbyDialog::refreshPingViews(quint64 userId)
+{
+    // A challenge's ping on the play bar or on the card.
+    if (m_outgoingChallenge.id != 0 &&
+        (m_outgoingChallenge.pingPeerUserId == userId || m_outgoingChallenge.toUserId == userId))
+        refreshPlayBar();
+    if (!m_incomingChallenges.isEmpty() &&
+        (m_incomingChallenges.first().pingPeerUserId == userId || m_incomingChallenges.first().fromUserId == userId))
+        showNextChallenge();
 
     // Refresh the lobby rows so the hover tooltip shows the fresh measurement:
     // this user's, and any others seated on the same connection.
@@ -7312,6 +7424,7 @@ void RollbackLobbyDialog::onQuickMatchClicked()
             onQuickMatchRefused(QStringLiteral("local_players"));
             return;
         }
+        cancelPendingPingCheck();
 
         const QVariantMap romData = selectedBrowseRom();
         const QString romName = romData.value("name").toString();

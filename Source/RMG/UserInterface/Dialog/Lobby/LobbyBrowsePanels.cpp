@@ -1615,11 +1615,16 @@ public:
             ? QStringLiteral("lock-line") : QString();
         m_join->setIconName(joinIcon);
         m_hoverJoin->setIconName(joinIcon);
-        m_join->setEnabled(view.mine || (!blocked && !full));
+        m_join->setEnabled(view.mine || (!blocked && !full && !view.measuring));
         if (view.mine)
         {
             m_join->setText(tr("Return"));
             m_join->setToolTip(tr("Back to your room."));
+        }
+        else if (view.measuring && !blocked && !full)
+        {
+            m_join->setText(tr("Measuring…"));
+            m_join->setToolTip(tr("Measuring your ping to the host before joining. You can cancel it in the bar above."));
         }
         else if (!view.hasRom)
         {
@@ -2146,12 +2151,7 @@ void RoomsColumn::rebuild()
             connect(row, &RoomRow::returnRequested, this, &RoomsColumn::returnRequested);
             connect(row, &RoomRow::contextMenuRequested, this, &RoomsColumn::contextMenuRequested);
             connect(row, &RoomRow::playerMenuRequested, this, &RoomsColumn::playerMenuRequested);
-            const auto select = [this](quint64 roomId) {
-                selectRow(roomId);
-                const auto it = m_rows.constFind(roomId);
-                if (it != m_rows.constEnd())
-                    emit hostProbeRequested(it.value()->view().hostId);
-            };
+            const auto select = [this](quint64 roomId) { selectRow(roomId); };
             connect(row, &RoomRow::clicked, this, select);
             // The minimal list opens one row at a time, like the Live list, and
             // only from the row's chevron.
