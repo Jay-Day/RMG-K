@@ -221,8 +221,9 @@ protected:
 
 private:
     QSvgRenderer* m_renderer = nullptr;
-    // On the dark theme the charcoal outline and slopes would melt into the
-    // marquee, so that theme has its own drawing with lighter ones.
+    // The dark theme's drawing. It is the same as the light one for now (the
+    // orange logo reads on the dark marquee as is), but stays its own file so
+    // the dark theme can get its own colors again.
     QSvgRenderer* m_darkRenderer = nullptr;
 };
 
