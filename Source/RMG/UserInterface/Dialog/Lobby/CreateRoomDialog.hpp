@@ -75,6 +75,15 @@ public:
     // render identical game names (keeps the Create Room pre-select in sync).
     static QString displayGameName(const QString& goodName, const QString& filePath);
 
+    // The QSettings("RMG-K", "n02") group holding what was chosen for the
+    // last room made for this game: this form's choices, and the ones made in
+    // the room itself (late join, save data, game options).
+    static QString romSettingsGroup(const QString& romMd5);
+
+    // The lobby accepts once the server made the room: the choices are
+    // remembered then, not when the room couldn't be made.
+    void accept() override;
+
 signals:
     // Emitted when user clicks Create with valid input. The dialog stays
     // open in a "Creating..." state until either showCreateFailure() is

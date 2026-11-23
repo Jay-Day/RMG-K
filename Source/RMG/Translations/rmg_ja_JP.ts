@@ -2443,24 +2443,16 @@ Room setting — only the host may change this value.</source>
             <translation>Ping: %1 ms</translation>
         </message>
         <message>
-            <source>Ping: ~%1 ms (estimate — click to measure)</source>
-            <translation>Ping: ~%1 ms（推定値 — クリックして測定）</translation>
-        </message>
-        <message>
-            <source>Ping: click to measure</source>
-            <translation>Ping: クリックして測定</translation>
+            <source>Ping: ~%1 ms (estimate)</source>
+            <translation>Ping: ~%1 ms（推定値）</translation>
         </message>
         <message>
             <source>Your measured ping to the host</source>
             <translation>ホストへの実測Ping</translation>
         </message>
         <message>
-            <source>Estimated from regions — click the row to measure</source>
-            <translation>地域からの推定値 — 行をクリックして測定</translation>
-        </message>
-        <message>
-            <source>Click the row to measure your ping to the host</source>
-            <translation>行をクリックしてホストへのPingを測定</translation>
+            <source>Estimated from regions</source>
+            <translation>地域からの推定値</translation>
         </message>
         <message>
             <source>Frames of input delay added before sending to peer.
@@ -4987,12 +4979,8 @@ A local replay is saved only if Save replay is on.</source>
             <translation>ホストまでの測定済みPing</translation>
         </message>
         <message>
-            <source>Estimated from regions — click the row to measure</source>
-            <translation>地域からの推定値 — 行をクリックして測定</translation>
-        </message>
-        <message>
-            <source>Click the row to measure your ping to the host</source>
-            <translation>行をクリックしてホストまでのPingを測定</translation>
+            <source>Estimated from regions</source>
+            <translation>地域からの推定値</translation>
         </message>
         <message>
             <source>Return</source>
@@ -5975,8 +5963,8 @@ A local replay is saved only if Save replay is on.</source>
         <translation>「%1」はWi-Fiのプレイヤーを受け付けていません。参加するには有線で接続してください。</translation>
     </message>
     <message>
-        <source>&quot;%1&quot; takes players within %2 ms of the host. Your ping to them is about %3 ms.</source>
-        <translation>「%1」はホストへのPingが%2 ms以下のプレイヤーのみ参加できます。あなたのPingは約%3 msです。</translation>
+        <source>&quot;%1&quot; takes players within %2 ms of the host. Your ping to them is %3 ms.</source>
+        <translation>「%1」はホストへのPingが%2 ms以下のプレイヤーのみ参加できます。あなたのPingは%3 msです。</translation>
     </message>
     <message>
         <source>Changing your name reconnects you, so you&apos;ll leave your room.</source>
@@ -6136,6 +6124,14 @@ A local replay is saved only if Save replay is on.</source>
     <message>
         <source>Show details</source>
         <translation>詳細を表示</translation>
+    </message>
+    <message>
+        <source>Measuring…</source>
+        <translation>測定中…</translation>
+    </message>
+    <message>
+        <source>Measuring your ping to the host before joining. You can cancel it in the bar above.</source>
+        <translation>参加する前にホストへのPingを測定しています。上のバーでキャンセルできます。</translation>
     </message>
 </context>
 <context>
@@ -6625,6 +6621,30 @@ A local replay is saved only if Save replay is on.</source>
         <message>
             <source>Your game is starting in the game window.</source>
             <translation>ゲームウィンドウでゲームを起動しています。</translation>
+        </message>
+        <message>
+            <source>Measuring ping…</source>
+            <translation>Pingを測定中…</translation>
+        </message>
+        <message>
+            <source>Your connection to %1</source>
+            <translation>%1との接続</translation>
+        </message>
+        <message>
+            <source>≤%1 ms</source>
+            <translation>%1 ms以下</translation>
+        </message>
+        <message>
+            <source>room limit</source>
+            <translation>ルームの上限</translation>
+        </message>
+        <message>
+            <source>ping</source>
+            <translation>Ping</translation>
+        </message>
+        <message>
+            <source>est. ping</source>
+            <translation>推定Ping</translation>
         </message>
     </context>
 </TS>

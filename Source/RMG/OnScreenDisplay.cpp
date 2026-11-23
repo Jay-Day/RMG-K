@@ -106,6 +106,7 @@ static std::string l_InputPrompt;
 static bool        l_KailleraPortLabelsEnabled = false;
 static int         l_KailleraPortLabelPlayerCount = 0;
 static std::array<std::string, 4> l_KailleraPortLabelPlayerNames;
+static bool        l_KailleraPortLabelsNamed = false; // a port of this game has had a name
 static constexpr std::array<float, 4> l_KailleraPortLabelCenterOffset720p = { 19.0f, 0.0f, -19.0f, -70.0f };
 // Big centered banner (e.g. "Stream is buffering...") drawn over everything while
 // a spectator fast-forwards toward a broadcast's live edge. Empty = hidden.
@@ -515,6 +516,15 @@ static void OnScreenDisplayRenderKailleraPortLabels(void)
 
     for (int i = 0; i < playerCount; ++i)
     {
+        // In a game with names, a port without one is an empty seat: one a
+        // late join match keeps for a player who hasn't joined yet, a gap
+        // between seated players, or a player who dropped. It gets no label,
+        // as if the port weren't there, until someone takes it. Only a game
+        // that never had names (an old KRC0 replay, say) shows P1, P2...
+        if (l_KailleraPortLabelsNamed && l_KailleraPortLabelPlayerNames[static_cast<size_t>(i)].empty())
+        {
+            continue;
+        }
         std::string label = OnScreenDisplayNormalizePortLabelName(l_KailleraPortLabelPlayerNames[static_cast<size_t>(i)], i);
         const float maxTextWidth = std::max(0.0f, portWidth - (8.0f * baseScale));
         float activeFontScale = fontScale;
@@ -940,6 +950,7 @@ void OnScreenDisplayShutdown(void)
         std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
         l_KailleraPortLabelPlayerCount = 0;
         l_KailleraPortLabelPlayerNames = {};
+        l_KailleraPortLabelsNamed = false;
         l_CenterMessage.clear();
     }
     {
@@ -1166,6 +1177,12 @@ void OnScreenDisplaySetInputPrompt(std::string message)
     l_InputPrompt = std::move(message);
 }
 
+static bool OnScreenDisplayAnyPortNamed(const std::array<std::string, 4>& playerNames)
+{
+    return std::any_of(playerNames.begin(), playerNames.end(),
+                       [](const std::string& name) { return !name.empty(); });
+}
+
 void OnScreenDisplaySetKailleraPortLabels(int playerCount, const std::array<std::string, 4>& playerNames)
 {
     for (const std::string& name : playerNames)
@@ -1175,6 +1192,7 @@ void OnScreenDisplaySetKailleraPortLabels(int playerCount, const std::array<std:
     std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_KailleraPortLabelPlayerCount = std::clamp(playerCount, 0, 4);
     l_KailleraPortLabelPlayerNames = playerNames;
+    l_KailleraPortLabelsNamed = OnScreenDisplayAnyPortNamed(playerNames);
 }
 
 void OnScreenDisplaySetKailleraPortLabelNames(const std::array<std::string, 4>& playerNames)
@@ -1185,6 +1203,7 @@ void OnScreenDisplaySetKailleraPortLabelNames(const std::array<std::string, 4>& 
     }
     std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_KailleraPortLabelPlayerNames = playerNames;
+    l_KailleraPortLabelsNamed = l_KailleraPortLabelsNamed || OnScreenDisplayAnyPortNamed(playerNames);
 }
 
 void OnScreenDisplayClearKailleraPortLabels(void)
@@ -1192,6 +1211,7 @@ void OnScreenDisplayClearKailleraPortLabels(void)
     std::lock_guard<std::mutex> lock(l_KailleraOverlayMutex);
     l_KailleraPortLabelPlayerCount = 0;
     l_KailleraPortLabelPlayerNames = {};
+    l_KailleraPortLabelsNamed = false;
 }
 
 void OnScreenDisplaySetCenterMessage(const std::string& message)

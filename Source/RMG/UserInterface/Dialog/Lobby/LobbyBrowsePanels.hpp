@@ -79,6 +79,7 @@ struct RoomRowView
     bool wiredOnly = false;
     enum class Refusal { None, WiredOnly, PingTooHigh };
     Refusal refusal = Refusal::None;
+    bool measuring = false;   // joining waits on a ping check to the host
     // The host's game options, named for this client, and what they do.
     QStringList gameOptions;
     QString gameOptionsTip;
@@ -177,8 +178,6 @@ public:
 signals:
     void joinRequested(quint64 roomId);
     void returnRequested();
-    // A row was clicked; the dialog measures the ping to its host.
-    void hostProbeRequested(quint64 hostId);
     void contextMenuRequested(quint64 roomId, const QPoint& globalPos);
     // A right-click on a host's name in a row.
     void playerMenuRequested(const QString& name, const QPoint& globalPos);

@@ -272,6 +272,7 @@ bool PrivateChats::open(quint64 localId, quint64 remoteId)
     const int tab = tabOf(*it);
     m_tabs->showTab(tab, true);
     m_tabs->setCurrentIndex(tab);
+    emit tabsChanged();
     return true;
 }
 
@@ -282,9 +283,12 @@ void PrivateChats::noteMessage(quint64 localId, quint64 remoteId, qint64 timeMs,
         return;
     it->conversation.lastMs = timeMs;
     const int tab = tabOf(*it);
+    const bool shown = m_tabs->isTabVisible(tab);
     m_tabs->showTab(tab, true);
     if (incoming && m_tabs->currentIndex() != tab)
         setUnread(*it, it->conversation.unread + 1);
+    if (!shown)
+        emit tabsChanged();
 }
 
 void PrivateChats::close(int tab)
@@ -307,6 +311,7 @@ void PrivateChats::close(int tab)
     }
     m_tabs->showTab(tab, false);
     setUnread(*entry, 0);
+    emit tabsChanged();
 }
 
 void PrivateChats::clear()
@@ -330,6 +335,7 @@ void PrivateChats::clear()
     m_entries.clear();
     m_keyOfPage.clear();
     emit currentChanged();
+    emit tabsChanged();
 }
 
 const PrivateConversation* PrivateChats::conversationAt(int tab) const

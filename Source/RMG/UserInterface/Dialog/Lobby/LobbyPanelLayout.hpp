@@ -86,6 +86,8 @@ public:
 signals:
     // A panel moved or the layout was reset; it has its new place by now.
     void arrangementChanged();
+    // Reset layout: what the panels keep of their own layout goes back too.
+    void layoutReset();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

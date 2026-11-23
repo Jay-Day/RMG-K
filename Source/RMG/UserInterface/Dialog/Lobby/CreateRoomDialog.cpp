@@ -345,12 +345,22 @@ void CreateRoomDialog::onCreateClicked()
     m_maxPing    = m_maxPingCombo->currentData().toInt();
     m_wiredOnly  = m_wiredOnlyButton->isChecked();
 
-    saveDefaults();
     setFormEnabled(false);
     m_statusLabel->setText(tr("Creating room..."));
     m_statusLabel->show();
     adjustSize();
     emit createRequested();
+}
+
+void CreateRoomDialog::accept()
+{
+    saveDefaults();
+    QDialog::accept();
+}
+
+QString CreateRoomDialog::romSettingsGroup(const QString& romMd5)
+{
+    return QStringLiteral("Lobby/CreateRoom/%1").arg(romMd5.toUpper());
 }
 
 void CreateRoomDialog::showCreateFailure(const QString& reason)
@@ -398,6 +408,22 @@ void CreateRoomDialog::loadDefaults()
     (s.value("WiredOnly", false).toBool() ? m_wiredOnlyButton : m_anyConnectionButton)->setChecked(true);
     s.endGroup();
     m_liveReplaySwitch->setChecked(s.value("RollbackLobby/LiveReplayEnabled", true).toBool());
+
+    // The last room made for this game, where there was one, goes before the
+    // last room made for any game.
+    if (m_romMd5.isEmpty())
+        return;
+    s.beginGroup(romSettingsGroup(m_romMd5));
+    if (auto* button = m_playersGroup->button(s.value("MaxPlayers").toInt()))
+        button->setChecked(true);
+    const int romMaxPing = m_maxPingCombo->findData(s.value("MaxPing", -1).toInt());
+    if (romMaxPing >= 0)
+        m_maxPingCombo->setCurrentIndex(romMaxPing);
+    if (s.contains("WiredOnly"))
+        (s.value("WiredOnly").toBool() ? m_wiredOnlyButton : m_anyConnectionButton)->setChecked(true);
+    if (s.contains("LiveReplay"))
+        m_liveReplaySwitch->setChecked(s.value("LiveReplay").toBool());
+    s.endGroup();
 }
 
 void CreateRoomDialog::saveDefaults()
@@ -412,6 +438,14 @@ void CreateRoomDialog::saveDefaults()
     s.endGroup();
     // The room view publishes this preference when the new room arrives.
     s.setValue("RollbackLobby/LiveReplayEnabled", m_liveReplaySwitch->isChecked());
+
+    // And for this game's next room. The room view adds what's chosen there.
+    s.beginGroup(romSettingsGroup(m_romMd5));
+    s.setValue("MaxPlayers", m_maxPlayers);
+    s.setValue("MaxPing", m_maxPing);
+    s.setValue("WiredOnly", m_wiredOnly);
+    s.setValue("LiveReplay", m_liveReplaySwitch->isChecked());
+    s.endGroup();
 }
 
 #endif // NETPLAY

@@ -93,7 +93,10 @@ class LobbyIce
         const std::vector<LobbyIceTurnServer>& turnServers = {});
     static CORE_EXPORT void reset();
 
-    static CORE_EXPORT bool add_peer(std::uint64_t peerUserId);
+    // probeOnly: an agent for a ping check outside the room mesh. It carries
+    // the Ping channel and nothing else, so a match can never run over it.
+    // Asking for a mesh agent where a probe-only one exists replaces it.
+    static CORE_EXPORT bool add_peer(std::uint64_t peerUserId, bool probeOnly = false);
     static CORE_EXPORT void remove_peer(std::uint64_t peerUserId);
     static CORE_EXPORT bool has_peer(std::uint64_t peerUserId);
     static CORE_EXPORT LobbyIcePeerState peer_state(std::uint64_t peerUserId);

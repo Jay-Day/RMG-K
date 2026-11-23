@@ -22,6 +22,8 @@
 #include <RMG-Core/NetplaySave.hpp>
 #include <RMG-Core/GameOptions.hpp>
 
+#include "LobbyPingTracker.hpp"
+
 #include <optional>
 
 class QWebSocket;
@@ -174,6 +176,10 @@ public:
         QString roomName;
         int roomPlayers = 0;
         int roomMaxPlayers = 0;
+        // The other PC's ping is measured under this id while the challenge is
+        // open (the one this PC knows them by); 0 when the lobby set up no
+        // ping check.
+        quint64 pingPeerUserId = 0;
     };
 
     explicit LobbyClient(QObject* parent = nullptr);
@@ -235,6 +241,10 @@ public:
                        const QString& note, bool liveReplay);
     void cancelChallenge(quint64 challengeId);
     void respondToChallenge(quint64 challengeId, bool accept);
+    // Measure the sender's ping while an incoming challenge is shown. Left to
+    // the dialog, which drops challenges it won't show (ignored, Do not
+    // disturb): those never get an ICE connection to this PC.
+    void measureChallengePing(const Challenge& challenge);
     // Which of this client's games a player also has; answered by sharedGamesReceived.
     void requestSharedGames(quint64 toUserId);
     // This PC takes no challenges. Kept across reconnects and sent in HELLO.
@@ -253,9 +263,22 @@ public:
     void createRoom(const QString& name, const QString& romName, const QString& romMd5,
                     const QString& romRegion, int maxPlayers, int delay, int prediction,
                     int pacing, const QString& password = QString(), int maxPing = 0, bool wiredOnly = false);
-    // pingMs is this client's ping to the host (measured, or estimated), for a
-    // room with a maximum ping; 0 when unknown.
-    void joinRoom(quint64 roomId, const QString& password = QString(), int pingMs = 0);
+    // pingMs is this client's ping to the host for a room with a maximum ping,
+    // and pingMeasured whether it was measured (a measured 0 ms is a real
+    // 0 ms); unmeasured, 0 means unknown. An estimate
+    // never turns a join away: a server without ping checks compares pingMs
+    // as sent, so it only gets a measured one.
+    void joinRoom(quint64 roomId, const QString& password = QString(), int pingMs = 0,
+                  bool pingMeasured = false);
+
+    // Ping checks: the lobby lets two PCs measure each other over a probe-only
+    // ICE agent at the moment they agree to play (a challenge, or a join to a
+    // room with a maximum ping). Off with servers that don't offer them.
+    bool pingCheckSupported() const { return m_pingCheckSupported; }
+    // Measure the ping to a room's host before joining it. pingCheckFinished
+    // follows unless cancelled: measured, or not (refused, timed out).
+    bool startPingCheck(quint64 roomId, const QString& password, quint64 hostId, int maxPingMs);
+    void cancelPingCheck();
     void leaveRoom();
     void startRoom();
     void updateRoomLiveReplay(bool enabled);
@@ -300,14 +323,18 @@ public:
     void requestPingProbe(quint64 targetUserId);
 
     // Most recent measured round-trip to this peer in milliseconds, or -1 if
-    // no PROBE_REPLY has been received from them. Updated whenever a probe
-    // we sent comes back.
+    // there is none worth showing: a measurement counts while an ICE
+    // connection to them is up, or for two minutes after it was taken.
     int measuredPingMs(quint64 userId) const;
 
     // Worst measured RTT across every unordered pair in `roomUserIds`.
     // Host-local paths come from our probes; non-host paths are reported to
     // the host over ICE. `complete` is true only when every pair is known.
     int worstRoomPingMs(const QList<quint64>& roomUserIds, bool* complete = nullptr) const;
+    // The ping between two seated players as this client knows it: its own
+    // measurement when it's one of them, else what was reported to the host
+    // (only the host hears those). 0 for two seats on one PC, -1 if unknown.
+    int pairPingMs(quint64 first, quint64 second) const;
 
     // True when every remote in this match has negotiated a direct ICE path.
     // error describes unsupported clients or the first incomplete peer.
@@ -447,6 +474,10 @@ signals:
 
     void pingProbeReply(quint64 targetUserId, const QString& endpoint);
     void pingProbeMeasured(quint64 targetUserId, int rttMs);
+    // A measurement stopped counting (see measuredPingMs): show the estimate.
+    void pingMeasurementExpired(quint64 userId);
+    // A startPingCheck ended: pingMs to the host when measured, else -1.
+    void pingCheckFinished(quint64 roomId, int pingMs, bool measured);
     // Emitted whenever libjuice advances a peer's ICE state. `connected` is
     // true only while a validated direct candidate pair is usable; `failed`
     // distinguishes an exhausted ICE attempt from one still in progress.
@@ -535,7 +566,7 @@ private:
     // Specific message handlers
     void handleHelloOk(const QJsonObject& data);
     void handleHelloFail(const QJsonObject& data);
-    void handleHeartbeatAck(const QJsonObject& data);
+    void handleHeartbeatAck(const QString& envelopeId);
     void handlePresenceFull(const QJsonObject& data);
     void handlePresenceDelta(const QJsonObject& data);
     void handleRoomList(const QJsonObject& data);
@@ -565,7 +596,28 @@ private:
                         const QString& reason, bool notifyPeer);
     void flushIceEvents();
     void sendIcePing(quint64 userId, quint64 nonce);
+    // Starts an ICE ping series to a connected peer; false if one is in flight.
+    bool startIcePingSeries(quint64 peerId);
+    // Keeps a measurement under sampleId and announces it.
+    void recordPingSample(quint64 sampleId, int rttMs, bool fromProbe);
+    void checkMeasurementExpiry();
     void sendRoomPingReport(quint64 targetUserId, int rttMs);
+
+    // Probe-only ICE agents for ping checks (see pingCheckSupported). Keyed by
+    // the id signals go to; never room members, never a match's transport.
+    void handlePingCheckReply(const QJsonObject& data, const QString& envelopeId);
+    void handlePingCheckIncoming(const QJsonObject& data);
+    void handlePingCheckEnd(const QJsonObject& data);
+    void handleProbeIceSignal(const QJsonObject& data);
+    // active: this PC pings them (a join check's host only answers).
+    void startProbePeer(quint64 peerId, quint64 displayId, qint64 expiresInMs,
+                        quint64 challengeId, bool active, const QString& reason);
+    void removeProbePeer(quint64 peerId, const QString& reason);
+    // The room mesh is taking this user (or their connection) over.
+    void dropProbePeerForMesh(quint64 userId);
+    bool restartProbePeer(quint64 peerId, quint32 generation, const QString& reason, bool notifyPeer);
+    void serviceProbePeers();
+    void finishPingCheck(int pingMs, bool measured, const QString& reason);
     // Start a probe series to `endpoint`. Shared by the reply and incoming
     // paths. No-op if a probe to that peer is already in flight.
     void sendProbeTo(quint64 userId, const QString& endpoint);
@@ -645,6 +697,7 @@ private:
     int m_matchSeats = 0;
 
     bool m_socialSupported = false;
+    bool m_pingCheckSupported = false;
     bool m_spectatorChatSupported = false;
     bool m_challengeSettingsSupported = false;
     bool m_challengesOff = false;
@@ -751,11 +804,21 @@ private:
     qint64  m_lastActivityMs = 0;
     bool    m_reportedAway   = false;
 
+    // The lobby round trip, HEARTBEAT to HEARTBEAT_ACK (matched by envelope
+    // id), smoothed, and sent as the next HEARTBEAT's pingToServer. 0 until
+    // the first ACK.
+    QHash<QString, qint64> m_heartbeatSentMs; // monotonic
+    quint32 m_heartbeatSeq = 0;
+    int     m_serverRttMs = 0;
+
     QHash<quint64, LobbyUser> m_users;
     QHash<quint64, LobbyRoomSummary> m_rooms;
 
-    // In-flight direct ICE ping state, keyed by per-request nonce. Each entry maps
-    // a sent probe back to the target user and the wall-clock send time so
+    // ICE ping series in flight, one per peer, every attempt under its own nonce.
+    LobbyPing::ProbeSeries m_iceProbes;
+
+    // Legacy UDP-anchor probes in flight, keyed by nonce. Each entry maps a
+    // sent probe back to the target user and the wall-clock send time so
     // we can compute RTT when PROBE_REPLY comes back.
     struct ProbeInFlight
     {
@@ -808,10 +871,50 @@ private:
     // without this they'd all log as REPLY_UNMATCHED and bury the real ones.
     QSet<quint64> m_recentlyMatchedNonces;
 
-    // Last measured round-trip per peer (userId → ms). Survives between
-    // measurements so the UI has a value to render even when the next probe
-    // is still in flight.
-    QHash<quint64, int> m_measuredPing;
+    // Last measured round-trip per peer. Survives between measurements so the
+    // UI has a value to render while the next probe is in flight; when it
+    // stops counting is measuredPingMs's business.
+    struct MeasuredPing
+    {
+        int ms = 0;
+        qint64 atMs = 0;              // monotonic
+        bool fromProbe = false;       // over a ping check's agent, not the room's
+        bool expiryAnnounced = false; // pingMeasurementExpired went out
+    };
+    QHash<quint64, MeasuredPing> m_measuredPing;
+    qint64 m_nextExpiryCheckMs = 0;
+
+    struct ProbePeer
+    {
+        quint64 displayId = 0;  // whose ping its samples are: the id this PC knows them by
+        qint64 expiresAtMs = 0; // monotonic
+        quint32 generation = 0; // its own numbering, apart from the mesh's
+        int restarts = 0;
+        int lastState = -1;
+        bool active = true;     // this PC pings them
+        int seriesStarted = 0;
+        qint64 nextProbeMs = 0; // 0 until connected
+        QSet<quint64> challengeIds; // open challenges keeping it
+    };
+    QHash<quint64, ProbePeer> m_probePeers;
+    // The last generation of a probe agent per peer, kept after it goes: the
+    // other PC may still hold its side (the lobby reuses a pair's grant), so
+    // a new agent starts one past it and their side rebuilds on its signals.
+    QHash<quint64, quint32> m_probeGenerations;
+
+    // The join's ping check (startPingCheck); roomId 0 when there's none.
+    struct PingCheck
+    {
+        quint64 roomId = 0;
+        quint64 hostId = 0;
+        quint64 peerId = 0;     // from PING_CHECK_REPLY
+        int maxPingMs = 0;
+        QString requestId;
+        qint64 deadlineMs = 0;  // monotonic
+        QList<int> samples;
+    };
+    PingCheck m_pingCheck;
+    quint32 m_pingCheckSeq = 0;
 };
 
 } // namespace Dialog

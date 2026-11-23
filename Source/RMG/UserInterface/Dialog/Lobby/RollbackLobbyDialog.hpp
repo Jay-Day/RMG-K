@@ -76,6 +76,7 @@ class PortCard;
 class PrivateChats;
 class RoomsColumn;
 class RoomWindow;
+class SignalBars;
 class Spinner;
 class StageScrim;
 class StatePill;
@@ -254,11 +255,6 @@ private slots:
     // by m_pingProbeTimer's interval.
     void onPingProbeTick();
 
-    // Measure one peer because the user selected a row showing their ping.
-    // Lobby rows show the region estimate until this lands; room seats are
-    // measured continuously by onPingProbeTick regardless.
-    void probeOnDemand(quint64 userId);
-
     // Punch progress for a seated peer, so a slow or failing NAT punch is
     // visible in the room rather than looking like a stalled Start button.
     void onIcePeerConnectionChanged(quint64 userId, bool connected, bool failed);
@@ -275,6 +271,9 @@ private slots:
     void refreshSeatLink(quint64 userId);
     void setSeatLinkStatus(quint64 userId, const QString& text, LobbyTheme::Role role);
     void onPingMeasured(quint64 userId, int rttMs);
+    void onPingMeasurementExpired(quint64 userId);
+    // A join's ping check (see onRoomJoinRequested) is over.
+    void onPingCheckFinished(quint64 roomId, int pingMs, bool measured);
 
 private:
     void buildUi();
@@ -406,8 +405,22 @@ private:
     QString chatMessageHtml(const QString& time, quint64 userId, const QString& who, const QString& bodyHtml,
                             bool fromAdmin, bool mine = false, bool fromPlayer = false) const;
     void    refreshChatInput();
+    // A channel's message box (Lobby, Room or Spectators): what it says, and
+    // whether it takes a message.
+    void    refreshChannelCompose(QLineEdit* input, int tab, bool connected);
     void    setChatUnread(int tab, int count);
     void    setRoomChatVisible(bool visible);
+
+    // Split chat (see the section in the .cpp): a pane under the tabs holding
+    // one channel, with its own message box.
+    void    setChatTabAvailable(int tab, bool available);
+    void    setChatSplit(bool on);
+    void    refreshChatSplit();
+    // The tab the focused message box sends to, and whether a tab's lines are
+    // on screen (selected above, or in the pane below).
+    int     activeChatTab() const;
+    bool    chatTabShown(int tab) const;
+    ChatView* chatViewFor(int tab) const;
 
     // Parse and execute a chat slash command (/login, /kick, /mute, /timeout,
     // /ban, /unban, /unmute, /modlist, /modhelp). Returns true if text was a
@@ -445,6 +458,13 @@ private:
     // Both stay editable while this client plays the match; the running
     // session follows the live values handed to rmgk_gekko.
     int     worstLocalPeerPingMs() const;
+    // What Auto would pick for the seated player userId: from their worst
+    // ping to a player on another PC, as this client knows the pings. -1 when
+    // a ping it needs isn't known (with partial, only some of them).
+    int     suggestedDelayFor(quint64 userId, int* worstPing, QString* worstName, bool partial) const;
+    // The line under your delay saying what Auto would pick for this match,
+    // and every seat's Delay tooltip.
+    void    refreshDelaySuggestions();
     void    applyLocalFrameDelay(bool force);
     void    applyRoomPrediction(bool force);
     bool    inLiveMatch() const;
@@ -486,6 +506,7 @@ private:
         quint64  peerId    = 0;           // the connection they play through, 0 when empty
         int      slot      = 0;           // 1-4, drives the per-player accent color
         int      frameDelay = -1;          // published local input delay
+        bool     delayAuto = false;          // ...and whether Auto picked it
         int      iceAttempt = 1;            // current ICE generation, one-based
         int      iceMaxAttempts = 20;
     };
@@ -564,6 +585,12 @@ private:
     // The chat line naming the game options the match just synced plays with.
     void announceMatchGameOptions(const QString& channel, const QString& romMd5);
 
+    // A room made through Create Room: its host's choices in it are remembered
+    // for its game (CreateRoomDialog::romSettingsGroup), and the next room made
+    // for the game starts with them.
+    void rememberRoomChoices(const QVariantMap& choices);
+    void restoreRoomChoices();
+
     LobbyClient* m_client = nullptr;
 
     bool    m_connectPromptOpen = false;
@@ -621,8 +648,6 @@ private:
     QString      m_rosterSubmittedName; // sent to the server, not answered yet
     int          m_rosterSeatsShown = 1; // the room list was last drawn for this many
     QList<QTreeWidgetItem*> m_playerGroups; // one heading per state
-    // Last on-demand probe per user id, for probeOnDemand's throttle.
-    QHash<quint64, qint64> m_lastOnDemandProbe;
     // Peers we've already posted an "couldn't reach" notice about, so the 3s
     // seat refresh doesn't repeat it every tick. Cleared on a measurement.
     QSet<quint64> m_probeFailureAnnounced;
@@ -639,7 +664,8 @@ private:
     ToggleSwitch* m_spectatorOverlayToggle = nullptr;
     ChatTabBar*  m_chatTabs      = nullptr; // Lobby | Room | Spectators | a tab per private conversation
     QStackedWidget* m_chatStack  = nullptr; // one view per tab
-    QLineEdit*   m_chatInput     = nullptr; // sends to the selected tab
+    QLineEdit*   m_chatTopInput  = nullptr; // sends to the selected tab
+    QLineEdit*   m_chatInput     = nullptr; // the message box in use: the tabs' or the split pane's
     QWidget*     m_chatCard      = nullptr;
     StatusTag*   m_composeAs     = nullptr; // who on this PC a private reply is from
     // Room only shows while seated, Spectators only while watching. Private
@@ -651,6 +677,20 @@ private:
     QList<int>   m_pendingMentions[kChatTabCount];
     MentionPopup* m_mentionPopup = nullptr;
     QPushButton* m_mentionJump   = nullptr;
+    int          m_mentionJumpTab = -1; // the tab the jump button scrolls
+    // Split chat.
+    bool         m_chatTabAvailable[kChatTabCount] = { true, false, false }; // the channel exists now
+    bool         m_chatSplitOn    = false; // the player wants it
+    int          m_chatSplitTab   = -1;    // the channel in the pane below, -1 while not split
+    QSplitter*   m_chatSplit      = nullptr;
+    QWidget*     m_chatSplitPane  = nullptr;
+    ChatTabBar*  m_chatSplitTabs  = nullptr; // one tab: the channel below
+    QVBoxLayout* m_chatSplitPage  = nullptr; // where its page goes
+    QWidget*     m_chatSplitCompose = nullptr;
+    QLineEdit*   m_chatSplitInput = nullptr;
+    QWidget*     m_chatTopCompose = nullptr;
+    IconButton*  m_chatSplitButton = nullptr;
+    QWidget*     m_chatStandIn[kChatTabCount] = {}; // holds a moved page's place in the stack
     PrivateChats* m_privateChats = nullptr;
     quint64      m_lastPmLocal   = 0; // who /r answers: this PC's side...
     quint64      m_lastPmRemote  = 0; // ...and theirs
@@ -713,6 +753,7 @@ private:
     QWidget*        m_ticketValueBoxes[2] = {};
     QLabel*         m_ticketValues[2] = {};
     QLabel*         m_ticketCaptions[2] = {};
+    SignalBars*     m_ticketBars   = nullptr; // a challenge's ping, beside its value
     LobbyButton*    m_ticketAction = nullptr;
     LobbyButton*    m_ticketLeave  = nullptr;
 
@@ -729,6 +770,7 @@ private:
     // host-editable. Both stay editable during this client's own match.
     FrameStepper* m_delayStepper      = nullptr;
     ToggleSwitch* m_delayAutoCheck    = nullptr;
+    QLabel*       m_delaySuggestion   = nullptr;
     FrameStepper* m_predictionStepper = nullptr;
     QLabel*       m_predictionHint    = nullptr;
     IconLabel*    m_predictionLock    = nullptr;
@@ -880,11 +922,40 @@ private:
     QHash<quint64, QTreeWidgetItem*> m_userItems;
 
     class CreateRoomDialog* m_createRoomDialog = nullptr;
+    // The game of the room this client made through Create Room, while in it,
+    // and whether that room got its remembered choices yet.
+    QString m_createdRoomMd5;
+    bool    m_createdRoomRestored = false;
 
     QString  m_username;
     QString  m_lastRoomName;
     QString  m_serverUrl;
     quint64  m_currentRoomId = 0;
+
+    // A join waiting on its ping check: the room takes players within a ping,
+    // and there's no measurement to its host yet. roomId 0 when none.
+    struct PendingPingCheck
+    {
+        quint64 roomId = 0;
+        quint64 hostId = 0;
+        QString password;
+        QString roomName;
+        QString hostName;
+        int maxPing = 0;
+    };
+    PendingPingCheck m_pingCheck;
+    void cancelPendingPingCheck();
+    // ROOM_JOIN with the host's measured ping (-1: none, so the estimate goes
+    // as unmeasured).
+    void sendRoomJoin(quint64 roomId, const QString& password, quint64 hostId, int measuredPingMs);
+    // The last ROOM_JOIN, so a double-click doesn't send a second.
+    quint64  m_joinSentRoomId = 0;
+    qint64   m_joinSentMs = 0;
+    // Ping for a challenge's other player: measured (once the lobby's ping
+    // check lands) or the region estimate. -1 when neither.
+    int      challengePingMs(const LobbyClient::Challenge& challenge, bool outgoing, bool* estimate) const;
+    // Repaints what shows this user's ping outside the room's seats.
+    void     refreshPingViews(quint64 userId);
 
     QString m_currentRoomGame;
     QString m_currentRoomMd5;

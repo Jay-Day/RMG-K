@@ -28,6 +28,7 @@ struct Peer
     std::mutex agentMutex;
     std::atomic<LobbyIcePeerState> state{LobbyIcePeerState::Disconnected};
     std::atomic<bool> active{true};
+    bool probeOnly = false; // set before the agent exists, never changed
     std::mutex pingMutex;
     std::map<std::uint64_t, std::uint64_t> pingSentAtUs;
     bool hasRemoteDescription = false;
@@ -203,6 +204,8 @@ void on_recv(juice_agent_t* agent, const char* data, size_t size, void* userPtr)
     {
         return;
     }
+    if (peer->probeOnly && channel != LobbyIceChannel::Ping)
+        return;
 
     // Ping payload: request/reply byte plus nonce. Echo requests directly from
     // libjuice's receive callback so the 25 ms Qt queue-poll interval is not
@@ -401,8 +404,16 @@ void LobbyIce::reset()
     }
 }
 
-bool LobbyIce::add_peer(std::uint64_t peerUserId)
+bool LobbyIce::add_peer(std::uint64_t peerUserId, bool probeOnly)
 {
+    // A probe-only agent never becomes the room's: its credentials and remote
+    // description belong to the ping check, so the mesh starts over.
+    if (const auto existing = find_peer(peerUserId);
+        existing != nullptr && existing->probeOnly && !probeOnly)
+    {
+        remove_peer(peerUserId);
+    }
+
     std::string stunHost;
     std::uint16_t stunPort = 0;
     bool useUpperPortRange = false;
@@ -410,6 +421,7 @@ bool LobbyIce::add_peer(std::uint64_t peerUserId)
     std::vector<PendingRemoteSignal> pending;
     auto peer = std::make_shared<Peer>();
     peer->userId = peerUserId;
+    peer->probeOnly = probeOnly;
 
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -418,9 +430,10 @@ bool LobbyIce::add_peer(std::uint64_t peerUserId)
         {
             return false;
         }
-        if (g_peers.find(peerUserId) != g_peers.end())
+        if (const auto it = g_peers.find(peerUserId); it != g_peers.end())
         {
-            return true;
+            // A mesh agent is never turned into a probe-only one.
+            return it->second->probeOnly == probeOnly;
         }
         useUpperPortRange = g_nextPeerUsesUpperPortRange[peerUserId];
         g_nextPeerUsesUpperPortRange[peerUserId] = !useUpperPortRange;
@@ -602,7 +615,8 @@ bool LobbyIce::send(std::uint64_t peerUserId, LobbyIceChannel channel,
 {
     const auto peer = find_peer(peerUserId);
     if (peer == nullptr || !peer_connected(peerUserId) ||
-        (data == nullptr && size != 0) || size > 4000)
+        (data == nullptr && size != 0) || size > 4000 ||
+        (peer->probeOnly && channel != LobbyIceChannel::Ping))
     {
         return false;
     }

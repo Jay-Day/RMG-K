@@ -29,6 +29,15 @@ struct KrecChatLine
     std::string message;
 };
 
+// A port change (0x14 record), in effect from input record `record` on: a
+// player who drops leaves the port empty, and a late joiner taking it names it.
+struct KrecPortChange
+{
+    int record = 0;
+    int slot = 0; // 1-4
+    std::string name; // empty when the port was left
+};
+
 struct KrecData
 {
     KrecHeader header;
@@ -41,6 +50,7 @@ struct KrecData
     // serialized section), empty when none.
     std::string gameOptions;
     std::vector<KrecChatLine> chat;
+    std::vector<KrecPortChange> portChanges;
 };
 
 bool ParseKrecFile(const std::filesystem::path& path, KrecData& outData, std::string* errorMessage);

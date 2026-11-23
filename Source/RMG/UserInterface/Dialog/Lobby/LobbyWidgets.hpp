@@ -11,6 +11,9 @@
 #include <QToolButton>
 #include <QWidget>
 
+#include <functional>
+
+class QHBoxLayout;
 class QLabel;
 class QSvgRenderer;
 class QTimer;
@@ -233,6 +236,10 @@ public:
     // A slow on-air breathe. It only ticks while the dot is on screen, so a
     // pulsing LED in a hidden or minimized window costs nothing.
     void setPulsing(bool pulsing);
+    // Where the dot's middle goes, top to bottom in its own coordinates, asked
+    // each time it paints, so it can sit level with text beside it. Without
+    // one it's the widget's middle.
+    void setCenterY(std::function<qreal()> centerY);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -243,6 +250,7 @@ private:
     QColor m_color;
     QTimer* m_pulse = nullptr;
     int m_pulseStep = 0;
+    std::function<qreal()> m_centerY;
 };
 
 class Spinner : public QWidget
@@ -605,14 +613,23 @@ public:
     int slotNumber() const { return m_slot; }
     bool isOpen() const { return m_open; }
 
+    // What the Delay stat says on hover: how the delay was picked, and what
+    // Auto would pick.
+    void setDelayTip(const QString& tip);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     class Portrait;
     class StatBox;
+    class NameLabel;
 
     void refreshBottom();
+    // The name keeps its line while the badges fit beside it; otherwise they
+    // go on the line under it, and the name wraps if it needs more than one.
+    void refreshNameLayout();
     // What the connection state shows above the stats. A member waiting to join
     // isn't in the match yet, so there's no connection to report on.
     void refreshConnecting();
@@ -637,7 +654,9 @@ private:
 
     QWidget* m_playerPage = nullptr;
     Portrait* m_portrait = nullptr;
-    ElidedLabel* m_name = nullptr;
+    NameLabel* m_name = nullptr;
+    QHBoxLayout* m_nameRow = nullptr;
+    QHBoxLayout* m_badgeRow = nullptr;
     StatusTag* m_youTag = nullptr;
     CountryFlag* m_flag = nullptr;
     ConnectionGlyph* m_connectionIcon = nullptr;

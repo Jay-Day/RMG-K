@@ -398,8 +398,8 @@ protected:
 };
 
 // One match as a compact row: the game, who's playing, for how long and to how
-// many. A click opens the rest: the room, each player's country and
-// connection, and when it started.
+// many. A click opens the rest (in the minimal list, only the chevron): the
+// room, each player's country and connection, and when it started.
 class LiveMatchRow : public LiveMatchBase
 {
     Q_OBJECT
@@ -516,6 +516,21 @@ public:
         m_compactGame->setFont(LobbyTheme::uiFont(11));
         m_compactGame->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         gameLine->addWidget(m_compactGame, 1);
+        // The pointer's Watch or Join goes here, before the seats, so the text
+        // under it elides and nothing else on the line moves. As tall as the
+        // chevron, so the row keeps its height.
+        m_hoverJoin = new LobbyButton(tr("Join"), LobbyButton::Kind::Secondary, m_compactGameBox);
+        m_hoverJoin->setObjectName("MatchHoverJoinButton");
+        m_hoverJoin->setToolTip(m_join->toolTip());
+        m_hoverWatch = new LobbyButton(tr("Watch"), LobbyButton::Kind::Secondary, m_compactGameBox);
+        m_hoverWatch->setObjectName("MatchHoverWatchButton");
+        for (LobbyButton* button : {m_hoverJoin, m_hoverWatch})
+        {
+            button->setButtonSize(LobbyButton::Size::Compact);
+            button->setFixedHeight(22);
+            button->setVisible(false);
+            gameLine->addWidget(button);
+        }
         m_compactSeats = new ElidedLabel(Role::Ok, m_compactGameBox);
         m_compactSeats->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
         m_compactSeats->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
@@ -592,6 +607,8 @@ public:
 
         connect(m_watch, &QPushButton::clicked, this, [this]() { onWatchClicked(); });
         connect(m_join, &QPushButton::clicked, this, [this]() { emit joinRequested(m_view.roomId); });
+        connect(m_hoverWatch, &QPushButton::clicked, m_watch, &QPushButton::click);
+        connect(m_hoverJoin, &QPushButton::clicked, m_join, &QPushButton::click);
         connect(m_more, &QToolButton::clicked, this, [this]() { emit toggled(m_view.roomId); });
         connect(m_compactMore, &QToolButton::clicked, this, [this]() { emit toggled(m_view.roomId); });
     }
@@ -678,7 +695,12 @@ public:
         m_compactViewers->setRole(view.viewers > 0 ? Role::Muted : Role::Faint);
         m_compactMeta->setToolTip(m_viewerBox->toolTip());
 
+        m_hoverWatch->setText(m_watch->text());
+        m_hoverWatch->setIconName(m_view.watching ? QStringLiteral("stop-fill") : QStringLiteral("eye-line"));
+        m_hoverWatch->setToolTip(m_watch->toolTip());
+
         refreshColumns();
+        refreshHover();
     }
 
     void updateDuration() override
@@ -744,9 +766,10 @@ protected:
         }
     }
 
+    // The minimal list opens a row only from its chevron.
     void mousePressEvent(QMouseEvent* event) override
     {
-        if (event->button() == Qt::LeftButton)
+        if (event->button() == Qt::LeftButton && !m_minimal)
             emit toggled(m_view.roomId);
     }
 
@@ -754,6 +777,18 @@ protected:
     {
         LiveMatchBase::resizeEvent(event);
         refreshColumns();
+    }
+
+    void enterEvent(QEnterEvent* event) override
+    {
+        LiveMatchBase::enterEvent(event);
+        refreshHover();
+    }
+
+    void leaveEvent(QEvent* event) override
+    {
+        LiveMatchBase::leaveEvent(event);
+        refreshHover();
     }
 
 private:
@@ -789,6 +824,18 @@ private:
         m_full->setVisible(!compact);
         m_compact->setVisible(compact);
         layout()->setContentsMargins(kListMargin, compact ? 4 : 8, kListMargin - 4, compact ? 4 : 8);
+        refreshHover();
+    }
+
+    // The minimal line's one button while the pointer is over it: Watch when
+    // the match can be watched, as a double-click would, else Join when it has
+    // a seat to take, else none. The opened row shows both.
+    void refreshHover()
+    {
+        const bool hovered = m_minimal && !m_expanded && underMouse();
+        const bool watch = !m_watch->isHidden() && m_watch->isEnabled();
+        m_hoverWatch->setVisible(hovered && watch);
+        m_hoverJoin->setVisible(hovered && !watch && canJoin());
     }
 
     bool m_expanded = false;
@@ -818,6 +865,8 @@ private:
     PlayersLine* m_compactPlayers = nullptr;
     QWidget* m_compactGameBox = nullptr;
     ElidedLabel* m_compactGame = nullptr;
+    LobbyButton* m_hoverJoin = nullptr;
+    LobbyButton* m_hoverWatch = nullptr;
     ElidedLabel* m_compactSeats = nullptr;
     QWidget* m_compactMeta = nullptr;
     QLabel* m_compactTime = nullptr;
@@ -1335,7 +1384,7 @@ public:
         setAttribute(Qt::WA_Hover);
         setFixedHeight(kFullHeight);
 
-        // The whole row; in the minimal list, what a click opens.
+        // The whole row; in the minimal list, what its chevron opens.
         auto* pages = new QVBoxLayout(this);
         pages->setContentsMargins(0, 0, 0, 0);
         pages->setSpacing(0);
@@ -1421,31 +1470,57 @@ public:
                 emit joinRequested(m_view.roomId);
         });
 
-        // The minimal line: the room, its game, its seats and your ping.
+        // The minimal line: the room, its host, its game, its seats and your ping.
         m_compact = new QWidget(this);
         auto* compact = new QHBoxLayout(m_compact);
         compact->setContentsMargins(12, 0, 10, 0);
         compact->setSpacing(6);
         // The lock and the in-game tag go in the name's column, so the game's lines up.
-        auto* nameBox = new QWidget(m_compact);
-        nameBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        auto* nameLine = new QHBoxLayout(nameBox);
+        m_compactNameBox = new QWidget(m_compact);
+        m_compactNameBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* nameLine = new QHBoxLayout(m_compactNameBox);
         nameLine->setContentsMargins(0, 0, 0, 0);
         nameLine->setSpacing(5);
-        m_compactLock = new IconLabel(QStringLiteral("lock-fill"), Role::Muted, 12, nameBox);
+        m_compactLock = new IconLabel(QStringLiteral("lock-fill"), Role::Muted, 12, m_compactNameBox);
         nameLine->addWidget(m_compactLock);
-        m_compactInGame = new StatusTag(StatusTag::Kind::Red, nameBox);
+        m_compactInGame = new StatusTag(StatusTag::Kind::Red, m_compactNameBox);
         m_compactInGame->setTag(StatusTag::Kind::Red, tr("In game"));
         nameLine->addWidget(m_compactInGame);
-        m_compactName = new ElidedLabel(Role::Ink, nameBox);
+        m_compactName = new ElidedLabel(Role::Ink, m_compactNameBox);
         m_compactName->setFont(LobbyTheme::uiFont(12, QFont::DemiBold));
         m_compactName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         nameLine->addWidget(m_compactName, 1);
-        compact->addWidget(nameBox, 3);
-        m_compactGame = new ElidedLabel(Role::Muted, m_compact);
+        compact->addWidget(m_compactNameBox, 3);
+        // Who hosts it, flag and name as the whole row has them.
+        m_compactHostBox = new QWidget(m_compact);
+        m_compactHostBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* hostLine = new QHBoxLayout(m_compactHostBox);
+        hostLine->setContentsMargins(0, 0, 0, 0);
+        hostLine->setSpacing(5);
+        m_compactFlag = new CountryFlag(m_compactHostBox);
+        hostLine->addWidget(m_compactFlag);
+        m_compactHost = new ElidedLabel(Role::Ink2, m_compactHostBox);
+        m_compactHost->setFont(LobbyTheme::uiFont(11));
+        m_compactHost->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        hostLine->addWidget(m_compactHost, 1);
+        compact->addWidget(m_compactHostBox, 2);
+        // The game, then the pointer's Join, which goes at the end of whichever
+        // of these columns is the last one showing (refreshCompactColumns).
+        m_compactGameBox = new QWidget(m_compact);
+        m_compactGameBox->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* gameLine = new QHBoxLayout(m_compactGameBox);
+        gameLine->setContentsMargins(0, 0, 0, 0);
+        gameLine->setSpacing(6);
+        m_compactGame = new ElidedLabel(Role::Muted, m_compactGameBox);
         m_compactGame->setFont(LobbyTheme::uiFont(11));
         m_compactGame->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        compact->addWidget(m_compactGame, 2);
+        gameLine->addWidget(m_compactGame, 1);
+        m_hoverJoin = new LobbyButton(tr("Join"), LobbyButton::Kind::Secondary, m_compactGameBox);
+        m_hoverJoin->setObjectName("RoomHoverJoinButton");
+        m_hoverJoin->setButtonSize(LobbyButton::Size::Compact);
+        m_hoverJoin->setVisible(false);
+        gameLine->addWidget(m_hoverJoin);
+        compact->addWidget(m_compactGameBox, 2);
         m_compactSeats = new QLabel(m_compact);
         m_compactSeats->setFont(LobbyTheme::uiFont(11));
         m_compactSeats->setProperty("role", "muted");
@@ -1465,8 +1540,10 @@ public:
         pages->addWidget(m_compact);
         m_compact->setVisible(false);
 
-        connect(m_more, &QToolButton::clicked, this, [this]() { emit clicked(m_view.roomId); });
-        connect(m_less, &QToolButton::clicked, this, [this]() { emit clicked(m_view.roomId); });
+        // Only these open and close the row: a click on the row just selects it.
+        connect(m_more, &QToolButton::clicked, this, [this]() { emit expandToggled(m_view.roomId); });
+        connect(m_less, &QToolButton::clicked, this, [this]() { emit expandToggled(m_view.roomId); });
+        connect(m_hoverJoin, &QPushButton::clicked, m_join, &QPushButton::click);
     }
 
     void apply(const RoomRowView& view)
@@ -1501,8 +1578,8 @@ public:
             : QStringLiteral("—"));
         const QString pingTip =
             view.pingMeasured ? tr("Your measured ping to the host")
-            : view.pingMs >= 0 ? tr("Estimated from regions — click the row to measure")
-                               : tr("Click the row to measure your ping to the host");
+            : view.pingMs >= 0 ? tr("Estimated from regions")
+                               : QString();
         m_bars->setToolTip(pingTip);
         m_ping->setToolTip(pingTip);
 
@@ -1510,6 +1587,10 @@ public:
         m_compactInGame->setVisible(view.inGame);
         m_compactName->setText(view.name);
         m_compactName->setToolTip(view.name);
+        m_compactFlag->setCountry(view.hostCountry);
+        m_compactHost->setText(view.host);
+        m_compactHost->setToolTip(view.host);
+        m_compactHost->setProperty("playerName", view.host);
         m_compactGame->setText(view.game);
         m_compactGame->setToolTip(view.game);
         m_compactSeats->setText(m_seats->text());
@@ -1527,15 +1608,23 @@ public:
         m_name->setRole(view.mine ? Role::Accent : view.hasRom ? Role::Ink : Role::Muted);
         m_game->setRole(view.hasRom ? Role::Muted : Role::Faint);
         m_compactName->setRole(view.mine ? Role::Accent : view.hasRom ? Role::Ink : Role::Muted);
+        m_compactHost->setRole(view.hasRom ? Role::Ink2 : Role::Muted);
         m_compactGame->setRole(view.hasRom ? Role::Muted : Role::Faint);
         m_join->setDashed(!view.mine && blocked);
-        m_join->setIconName(view.hasPassword && !view.mine && !blocked && !full
-            ? QStringLiteral("lock-line") : QString());
-        m_join->setEnabled(view.mine || (!blocked && !full));
+        const QString joinIcon = view.hasPassword && !view.mine && !blocked && !full
+            ? QStringLiteral("lock-line") : QString();
+        m_join->setIconName(joinIcon);
+        m_hoverJoin->setIconName(joinIcon);
+        m_join->setEnabled(view.mine || (!blocked && !full && !view.measuring));
         if (view.mine)
         {
             m_join->setText(tr("Return"));
             m_join->setToolTip(tr("Back to your room."));
+        }
+        else if (view.measuring && !blocked && !full)
+        {
+            m_join->setText(tr("Measuring…"));
+            m_join->setToolTip(tr("Measuring your ping to the host before joining. You can cancel it in the bar above."));
         }
         else if (!view.hasRom)
         {
@@ -1574,7 +1663,10 @@ public:
                 ? tr("Match in progress. Join, and the host can add you to the game.")
                 : QString());
         }
+        m_hoverJoin->setText(m_join->text());
+        m_hoverJoin->setToolTip(m_join->toolTip());
         refreshSelection();
+        refreshHover();
         update();
     }
 
@@ -1608,6 +1700,8 @@ signals:
     void joinRequested(quint64 roomId);
     void returnRequested();
     void clicked(quint64 roomId);
+    // The minimal list's chevrons: open or close this row.
+    void expandToggled(quint64 roomId);
     void contextMenuRequested(quint64 roomId, const QPoint& globalPos);
     void playerMenuRequested(const QString& name, const QPoint& globalPos);
 
@@ -1642,8 +1736,19 @@ protected:
     void resizeEvent(QResizeEvent* event) override
     {
         QFrame::resizeEvent(event);
-        // A narrow minimal line keeps the room's name and lets the game's go.
-        m_compactGame->setVisible(width() >= 420);
+        refreshCompactColumns();
+    }
+
+    void enterEvent(QEnterEvent* event) override
+    {
+        QFrame::enterEvent(event);
+        refreshHover();
+    }
+
+    void leaveEvent(QEvent* event) override
+    {
+        QFrame::leaveEvent(event);
+        refreshHover();
     }
 
     void mouseDoubleClickEvent(QMouseEvent* event) override
@@ -1671,7 +1776,9 @@ private:
 
     void refreshSelection()
     {
-        m_join->setKind(m_selected ? LobbyButton::Kind::Primary : LobbyButton::Kind::Secondary);
+        const LobbyButton::Kind kind = m_selected ? LobbyButton::Kind::Primary : LobbyButton::Kind::Secondary;
+        m_join->setKind(kind);
+        m_hoverJoin->setKind(kind);
     }
 
     void refreshDensity()
@@ -1681,6 +1788,34 @@ private:
         m_full->setVisible(!compact);
         m_less->setVisible(m_minimal && !compact);
         setFixedHeight(compact ? kCompactHeight : kFullHeight);
+        refreshHover();
+    }
+
+    // The minimal line's Join while the pointer is over it, when there's a seat
+    // to take or a room to go back to; a row you can't join shows none.
+    void refreshHover()
+    {
+        m_hoverJoin->setVisible(m_minimal && !m_expanded && underMouse() && m_join->isEnabled());
+    }
+
+    // A narrower minimal line lets the game's name go first, then the host's,
+    // and keeps the room's. The pointer's Join sits at the end of the last
+    // column showing, just before the seats, so the text under it elides and
+    // nothing on the line moves.
+    void refreshCompactColumns()
+    {
+        m_compactGameBox->setVisible(width() >= 520);
+        m_compactHostBox->setVisible(width() >= 340);
+        QWidget* column = !m_compactGameBox->isHidden() ? m_compactGameBox
+                        : !m_compactHostBox->isHidden() ? m_compactHostBox
+                                                        : m_compactNameBox;
+        if (m_hoverJoin->parentWidget() == column)
+            return;
+        const bool shown = !m_hoverJoin->isHidden();
+        m_hoverJoin->parentWidget()->layout()->removeWidget(m_hoverJoin);
+        m_hoverJoin->setParent(column);
+        static_cast<QBoxLayout*>(column->layout())->addWidget(m_hoverJoin);
+        m_hoverJoin->setVisible(shown);
     }
 
     RoomRowView m_view;
@@ -1692,7 +1827,13 @@ private:
     IconLabel* m_compactLock = nullptr;
     StatusTag* m_compactInGame = nullptr;
     ElidedLabel* m_compactName = nullptr;
+    QWidget* m_compactNameBox = nullptr;
+    QWidget* m_compactHostBox = nullptr;
+    CountryFlag* m_compactFlag = nullptr;
+    ElidedLabel* m_compactHost = nullptr;
+    QWidget* m_compactGameBox = nullptr;
     ElidedLabel* m_compactGame = nullptr;
+    LobbyButton* m_hoverJoin = nullptr;
     QLabel* m_compactSeats = nullptr;
     SignalBars* m_compactBars = nullptr;
     QLabel* m_compactPing = nullptr;
@@ -2010,18 +2151,15 @@ void RoomsColumn::rebuild()
             connect(row, &RoomRow::returnRequested, this, &RoomsColumn::returnRequested);
             connect(row, &RoomRow::contextMenuRequested, this, &RoomsColumn::contextMenuRequested);
             connect(row, &RoomRow::playerMenuRequested, this, &RoomsColumn::playerMenuRequested);
-            connect(row, &RoomRow::clicked, this, [this](quint64 roomId) {
-                selectRow(roomId);
-                // The minimal list opens one row at a time, like the Live list.
-                if (m_minimal)
-                {
-                    m_expandedRoomId = m_expandedRoomId == roomId ? 0 : roomId;
-                    for (auto* other : m_rows)
-                        other->setExpanded(other->view().roomId == m_expandedRoomId);
-                }
-                const auto it = m_rows.constFind(roomId);
-                if (it != m_rows.constEnd())
-                    emit hostProbeRequested(it.value()->view().hostId);
+            const auto select = [this](quint64 roomId) { selectRow(roomId); };
+            connect(row, &RoomRow::clicked, this, select);
+            // The minimal list opens one row at a time, like the Live list, and
+            // only from the row's chevron.
+            connect(row, &RoomRow::expandToggled, this, [this, select](quint64 roomId) {
+                select(roomId);
+                m_expandedRoomId = m_expandedRoomId == roomId ? 0 : roomId;
+                for (auto* other : m_rows)
+                    other->setExpanded(other->view().roomId == m_expandedRoomId);
             });
         }
         row->apply(room);

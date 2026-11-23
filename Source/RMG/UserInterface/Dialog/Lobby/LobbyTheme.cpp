@@ -536,14 +536,16 @@ QString styleSheet()
         QLabel#NoRomLabel { color: @muted; border: 1px dashed @line2; border-radius: 6px; padding: 3px 8px; }
 
         QFrame#ChatTabRow { background: transparent; border: none; border-bottom: 1px solid @line; }
-        QTabBar#ChatTabs { background: transparent; qproperty-drawBase: 0; }
+        /* The split chat's lower pane: its tab row is ruled off from the pane above too. */
+        QFrame#ChatSplitRow { background: transparent; border: none; border-top: 1px solid @line; border-bottom: 1px solid @line; }
+        QTabBar#ChatTabs, QTabBar#ChatSplitTabs { background: transparent; qproperty-drawBase: 0; }
         /* 2px of the height on top: the display font's capitals sit high in their line. */
-        QTabBar#ChatTabs::tab {
+        QTabBar#ChatTabs::tab, QTabBar#ChatSplitTabs::tab {
             height: 24px; padding: 2px 10px 0 10px; margin-right: 2px; color: @muted; background: transparent;
             border: 1px solid transparent; border-top-left-radius: 7px; border-top-right-radius: 7px;
         }
         QTabBar#ChatTabs::tab:hover { color: @ink2; }
-        QTabBar#ChatTabs::tab:selected {
+        QTabBar#ChatTabs::tab:selected, QTabBar#ChatSplitTabs::tab:selected {
             color: @ink; background: @panel; border-color: @line; border-bottom-color: @panel;
             border-top: 2px solid @accent;
         }

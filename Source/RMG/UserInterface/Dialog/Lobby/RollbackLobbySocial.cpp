@@ -19,6 +19,9 @@
 #include "LobbySocialWidgets.hpp"
 #include "LobbyTheme.hpp"
 #include "LobbyWidgets.hpp"
+#include "OnScreenDisplay.hpp"
+
+#include <RMG-Core/Settings.hpp>
 
 #include <QAction>
 #include <QActionGroup>
@@ -158,10 +161,8 @@ void RollbackLobbyDialog::connectSocialSignals()
         appendChatSystemLine(CHANNEL_LOBBY, tr("You've signed out of moderation."));
     });
     connect(m_mentionJump, &QPushButton::clicked, this, [this]() {
-        const int tab = m_chatTabs->currentIndex();
-        ChatView* view = tab == kChatTabLobby ? m_chatViewLobby
-            : tab == kChatTabRoom ? m_chatViewRoom
-            : tab == kChatTabSpectators ? m_chatViewSpectate : nullptr;
+        const int tab = m_mentionJumpTab;
+        ChatView* view = chatViewFor(tab);
         if (!view || m_pendingMentions[tab].isEmpty())
             return;
         view->setTextCursor(QTextCursor(view->document()->findBlockByNumber(m_pendingMentions[tab].first())));
@@ -215,6 +216,13 @@ void RollbackLobbyDialog::resetSocialState()
 
 bool RollbackLobbyDialog::socialEventFilter(QObject* watched, QEvent* event)
 {
+    // The message box with focus is the one mentions and Send work on.
+    if ((watched == m_chatTopInput || watched == m_chatSplitInput) && event->type() == QEvent::FocusIn &&
+        watched != m_chatInput)
+    {
+        m_mentionPopup->hide();
+        m_chatInput = static_cast<QLineEdit*>(watched);
+    }
     if (watched == m_stage && event->type() == QEvent::Resize)
         layoutStage();
     else if (watched == m_chatCard && event->type() == QEvent::Resize)
@@ -518,6 +526,52 @@ void RollbackLobbyDialog::showUserMenu()
                 this, &RollbackLobbyDialog::showIgnoredPlayers);
     }
 
+    // A few of the settings, here as well as in Settings: the same stored
+    // values under the same names, taking effect the way they do there.
+    menu.addSeparator();
+    const auto addSetting = [&](const char* objectName, const QString& text, const QString& tip, SettingsID id,
+                                bool enabled, bool reloadOsd) {
+        auto* row = new QWidget(&menu);
+        auto* rowLay = new QHBoxLayout(row);
+        rowLay->setContentsMargins(11, 4, 11, 4);
+        auto* toggle = new ToggleSwitch(text, row);
+        toggle->setObjectName(QString::fromLatin1(objectName));
+        toggle->setToolTip(tip);
+        toggle->setChecked(CoreSettingsGetBoolValue(id));
+        toggle->setEnabled(enabled);
+        connect(toggle, &QCheckBox::toggled, this, [id, reloadOsd](bool on) {
+            CoreSettingsSetValue(id, on);
+            CoreSettingsSave();
+            if (reloadOsd)
+                OnScreenDisplayLoadSettings();
+        });
+        rowLay->addWidget(toggle);
+        menu.addLiveWidget(row);
+    };
+    const char* const settingsContext = "UserInterface::Dialog::SettingsDialog";
+    addSetting("HideLocationSwitch", QCoreApplication::translate(settingsContext, "Hide my location from other players"),
+               QCoreApplication::translate(settingsContext,
+                   "Your row in the netplay lobby shows no country flag, and no country in its\n"
+                   "hover tooltip, for everyone on the server. Region-based ping estimates still\n"
+                   "work. Players you actually play with still exchange connection addresses —\n"
+                   "this hides the flag, not your traffic. Applies the next time you connect."),
+               SettingsID::Rollback_HideLocation, true, false);
+    addSetting("RememberInputDelaySwitch", QCoreApplication::translate(settingsContext, "Remember my last input delay"),
+               QCoreApplication::translate(settingsContext,
+                   "Reuse your last frame delay choice when hosting or joining a rollback lobby room,\n"
+                   "including Quick Match. Choosing Auto remembers Auto instead of its calculated value.\n"
+                   "When disabled, each new room starts on Auto. Applies the next time you enter a room."),
+               SettingsID::Rollback_RememberInputDelay, true, false);
+    // On the settings page these two sit with the on-screen display, and are
+    // off limits while it's off.
+    const bool osd = CoreSettingsGetBoolValue(SettingsID::GUI_OnScreenDisplayEnabled);
+    addSetting("PortLabelsSwitch", QCoreApplication::translate("SettingsDialog", "Show Kaillera port labels"), QString(),
+               SettingsID::GUI_OnScreenDisplayKailleraPortLabels, osd, true);
+    addSetting("ViewerCountSwitch", QCoreApplication::translate("SettingsDialog", "Show live replay viewer count"),
+               QCoreApplication::translate("SettingsDialog",
+                   "Show the live replay viewer count in the top-left corner while playing or watching a match."),
+               SettingsID::GUI_OnScreenDisplayLiveReplayStatus, osd, true);
+
     // How the lobby looks on this PC. Picking one leaves the menu open, so the
     // change shows straight away.
     menu.addHeading(QStringLiteral("palette-line"), tr("Theme"), false);
@@ -555,6 +609,8 @@ void RollbackLobbyDialog::showUserMenu()
         m_liveGallery->setMinimal(on);
         m_roomsColumn->setMinimal(on);
     });
+    QAction* split = menu.addCheckItem(QStringLiteral("layout-row-line"), tr("Split chat"), m_chatSplitOn);
+    connect(split, &QAction::toggled, this, [this](bool on) { setChatSplit(on); });
     menu.addSeparator();
     m_panelLayout->addMenuItems(menu);
 
@@ -680,6 +736,9 @@ void RollbackLobbyDialog::onChallengeIncoming(const LobbyClient::Challenge& chal
         return;
     m_incomingChallenges.append(challenge);
     expireChallengeLater(challenge.id, challenge.expiresAtMs);
+    // Only one this PC shows gets measured: an ignored sender never gets an
+    // ICE connection to it.
+    m_client->measureChallengePing(challenge);
     showNextChallenge();
     alertFrom(challenge.fromUserId);
     // Shown only if a game is running: someone watching can't see the lobby behind it.
@@ -704,13 +763,7 @@ void RollbackLobbyDialog::showNextChallenge()
     {
         view.fromCountry = from->anonymous ? QString() : from->country;
         view.fromConnection = from->connection;
-        view.fromPingMs = m_client->measuredPingMs(challenge.fromUserId);
-        view.fromPingEstimate = view.fromPingMs < 0;
-        if (view.fromPingEstimate)
-        {
-            const int estimate = LobbyRegions::estimatedRttMs(m_client->selfRegion(), from->region);
-            view.fromPingMs = estimate > 0 ? estimate : -1;
-        }
+        view.fromPingMs = challengePingMs(challenge, false, &view.fromPingEstimate);
     }
 
     view.toName = challenge.toUsername;
@@ -770,6 +823,22 @@ void RollbackLobbyDialog::showNextChallenge()
     m_challengeCard->raise();
 }
 
+int RollbackLobbyDialog::challengePingMs(const LobbyClient::Challenge& challenge, bool outgoing, bool* estimate) const
+{
+    // The lobby's ping check measures under the id this PC knows them by.
+    const quint64 other = outgoing ? challenge.toUserId : challenge.fromUserId;
+    const quint64 pingId = challenge.pingPeerUserId != 0 ? challenge.pingPeerUserId : other;
+    const int measured = m_client->measuredPingMs(pingId);
+    *estimate = measured < 0;
+    if (measured >= 0)
+        return measured;
+    const auto user = m_client->users().constFind(other);
+    if (user == m_client->users().constEnd())
+        return -1;
+    const int guess = LobbyRegions::estimatedRttMs(m_client->selfRegion(), user->region);
+    return guess > 0 ? guess : -1;
+}
+
 void RollbackLobbyDialog::answerChallenge(bool accept)
 {
     if (m_incomingChallenges.isEmpty())
@@ -778,6 +847,7 @@ void RollbackLobbyDialog::answerChallenge(bool accept)
     if (accept)
     {
         stopWatchingForRoom();
+        cancelPendingPingCheck();
         m_acceptedChallengeId = challenge.id;
         m_acceptedChallengeFrom = challenge.fromUsername;
         m_acceptedChallengeInvite = challenge.invite;
@@ -985,7 +1055,7 @@ void RollbackLobbyDialog::openPrivateMessage(quint64 userId)
     m_privateChats->conversation(local, lobbyUserName(local), userId, found->username, local == m_client->selfUserId());
     refreshPrivateMessageStatus(userId);
     m_privateChats->open(local, userId);
-    m_chatInput->setFocus();
+    m_chatTopInput->setFocus();
 }
 
 bool RollbackLobbyDialog::canMessage(const LobbyClient::LobbyUser& user) const
@@ -1104,7 +1174,7 @@ void RollbackLobbyDialog::refreshPlayerSpectatorChat()
         m_playerChatMatchId = m_currentMatchId;
         m_chatViewSpectate->clear();
         m_pendingMentions[kChatTabSpectators].clear();
-        m_chatTabs->showTab(kChatTabSpectators, true);
+        setChatTabAvailable(kChatTabSpectators, true);
         refreshSpectatorTab();
         appendChatSystemLine(CHANNEL_SPECTATE, tr("Spectators' comments show up here, and they can see your replies."),
                              QStringLiteral("eye-line"));
@@ -1144,6 +1214,13 @@ void RollbackLobbyDialog::refreshSpectatorTab()
         ? tr("Everyone watching your match. They can see your replies.")
         : shared ? tr("Everyone watching this match, and its players.")
                  : tr("Everyone watching this match. The players can't see it."));
+    // The split chat's pane below names it the same way.
+    if (m_chatSplitTab == kChatTabSpectators)
+    {
+        m_chatSplitTabs->setTabText(0, m_chatTabs->tabText(kChatTabSpectators));
+        m_chatSplitTabs->setTabIcon(0, m_chatTabs->tabIcon(kChatTabSpectators));
+        m_chatSplitTabs->setTabToolTip(0, m_chatTabs->tabToolTip(kChatTabSpectators));
+    }
 }
 
 void RollbackLobbyDialog::showSpectatorCommentOverGame(const LobbyClient::ChatMessage& msg)
@@ -1240,7 +1317,7 @@ void RollbackLobbyDialog::noteMention(const QString& channel, const LobbyClient:
         : channel == QLatin1String(CHANNEL_SPECTATE) ? kChatTabSpectators : kChatTabLobby;
     ChatView* view = tab == kChatTabRoom ? m_chatViewRoom : tab == kChatTabSpectators ? m_chatViewSpectate : m_chatViewLobby;
 
-    if (tab != m_chatTabs->currentIndex())
+    if (!chatTabShown(tab))
     {
         if (m_chatTabs->isTabVisible(tab))
         {
@@ -1267,11 +1344,23 @@ void RollbackLobbyDialog::noteMention(const QString& channel, const LobbyClient:
 
 void RollbackLobbyDialog::startMention(const QString& name)
 {
-    // A mention belongs in a channel people are reading, so not a private conversation.
-    if (m_privateChats->conversationAt(m_chatTabs->currentIndex()))
-        m_chatTabs->setCurrentIndex(m_currentRoomId != 0 ? kChatTabRoom : kChatTabLobby);
-    m_chatInput->insert(QStringLiteral("@%1 ").arg(name));
-    m_chatInput->setFocus();
+    // A mention belongs in a channel people are reading, so not a private
+    // conversation: the split chat's pane below holds one, else a tab does.
+    QLineEdit* input = m_chatInput;
+    if (m_privateChats->conversationAt(activeChatTab()))
+    {
+        if (m_chatSplitTab >= 0)
+        {
+            input = m_chatSplitInput;
+        }
+        else
+        {
+            m_chatTabs->setCurrentIndex(m_currentRoomId != 0 ? kChatTabRoom : kChatTabLobby);
+            input = m_chatTopInput;
+        }
+    }
+    input->insert(QStringLiteral("@%1 ").arg(name));
+    input->setFocus();
 }
 
 void RollbackLobbyDialog::refreshMentionPopup()
@@ -1289,14 +1378,14 @@ void RollbackLobbyDialog::refreshMentionPopup()
     // "/w " at the start of the box completes a name the same way.
     const bool whisper = !mention && start == 3 && text.startsWith(QLatin1String("/w "));
     if (!(mention || whisper) ||
-        (m_privateChats->conversationAt(m_chatTabs->currentIndex()) && !whisper))
+        (m_privateChats->conversationAt(activeChatTab()) && !whisper))
     {
         m_mentionPopup->hide();
         return;
     }
 
     const QString typed = text.mid(start, cursor - start);
-    const bool inRoomTab = m_chatTabs->currentIndex() == kChatTabRoom;
+    const bool inRoomTab = activeChatTab() == kChatTabRoom;
     QList<MentionCandidate> seated;
     QList<MentionCandidate> others;
     for (const auto& user : m_client->users())
@@ -1365,25 +1454,27 @@ void RollbackLobbyDialog::refreshMentionJump()
 {
     if (!m_mentionJump || !m_chatTabs)
         return;
-    const int tab = m_chatTabs->currentIndex();
-    ChatView* view = tab == kChatTabLobby ? m_chatViewLobby
-        : tab == kChatTabRoom ? m_chatViewRoom
-        : tab == kChatTabSpectators ? m_chatViewSpectate : nullptr;
-    if (!view)
+    // The selected tab's, else the split chat's pane below.
+    m_mentionJumpTab = -1;
+    for (const int tab : {m_chatTabs->currentIndex(), m_chatSplitTab})
+    {
+        ChatView* view = chatViewFor(tab);
+        if (!view)
+            continue;
+        QList<int>& pending = m_pendingMentions[tab];
+        pending.removeIf([view](int blockNumber) {
+            const QTextCursor cursor(view->document()->findBlockByNumber(blockNumber));
+            return view->cursorRect(cursor).top() < view->viewport()->height();
+        });
+        if (!pending.isEmpty() && m_mentionJumpTab < 0)
+            m_mentionJumpTab = tab;
+    }
+    if (m_mentionJumpTab < 0)
     {
         m_mentionJump->hide();
         return;
     }
-    QList<int>& pending = m_pendingMentions[tab];
-    pending.removeIf([view](int blockNumber) {
-        const QTextCursor cursor(view->document()->findBlockByNumber(blockNumber));
-        return view->cursorRect(cursor).top() < view->viewport()->height();
-    });
-    if (pending.isEmpty())
-    {
-        m_mentionJump->hide();
-        return;
-    }
+    const QList<int>& pending = m_pendingMentions[m_mentionJumpTab];
     m_mentionJump->setText(pending.size() == 1 ? tr("@ 1 mention below ↓") : tr("@ %1 mentions below ↓").arg(pending.size()));
     m_mentionJump->adjustSize();
     positionChatOverlays();
@@ -1395,15 +1486,19 @@ void RollbackLobbyDialog::positionChatOverlays()
 {
     if (!m_chatCard || !m_chatInput)
         return;
-    // Both sit just above the message box.
-    const int composeTop = m_chatInput->parentWidget()->mapTo(m_chatCard, QPoint(0, 0)).y();
+    // Both sit just above a message box: the names above the one in use, the
+    // jump above the one under its chat.
+    const auto topOf = [this](QWidget* compose) { return compose->mapTo(m_chatCard, QPoint(0, 0)).y(); };
     if (m_mentionPopup)
     {
         const int height = m_mentionPopup->sizeHint().height();
-        m_mentionPopup->setGeometry(8, composeTop - 5 - height, m_chatCard->width() - 16, height);
+        m_mentionPopup->setGeometry(8, topOf(m_chatInput->parentWidget()) - 5 - height, m_chatCard->width() - 16, height);
     }
     if (m_mentionJump)
-        m_mentionJump->move((m_chatCard->width() - m_mentionJump->width()) / 2, composeTop - 6 - m_mentionJump->height());
+    {
+        QWidget* compose = m_mentionJumpTab >= 0 && m_mentionJumpTab == m_chatSplitTab ? m_chatSplitCompose : m_chatTopCompose;
+        m_mentionJump->move((m_chatCard->width() - m_mentionJump->width()) / 2, topOf(compose) - 6 - m_mentionJump->height());
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
