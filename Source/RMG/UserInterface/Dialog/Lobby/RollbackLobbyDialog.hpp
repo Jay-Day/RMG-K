@@ -61,6 +61,7 @@ class DropPanel;
 class ElidedLabel;
 class FrameStepper;
 class GameBadge;
+class GameSettingsDialog;
 class IconBadge;
 class IconButton;
 class IconLabel;
@@ -574,16 +575,50 @@ private:
     bool writeMatchSave(const QString& file, QString* error = nullptr);
 
     // Game options (host-only room option): ROM patches from the packs in
-    // Data/GameOptions, one switch each in the Session column. Hidden on
-    // servers without them and in quick match.
+    // Data/GameOptions, picked as a preset from the Session column's Game
+    // Settings list or one by one in its Custom view. Hidden on servers
+    // without them, in quick match, and for games without a pack.
     void updateGameOptionControls();
-    void onGameOptionToggled(const QString& id, bool checked);
+    void onGameSettingsPicked(int index);
+    void openGameSettings();
+    // Host: makes these options the room's, with the preset they make up (a
+    // pack's, else one of the host's saved sets, savedHint first), after
+    // checking them against the ROM. False, with why, when they can't be.
+    // remember: the host picked them, so the game's next room starts with them.
+    bool publishGameOptions(const QStringList& ids, QString* error, const QString& savedHint = QString(),
+                            bool remember = true);
+    // The room's preset is a set its host saved, not one of the packs'.
+    bool roomPresetIsHostsSavedSet() const;
+    // Whether this PC's ROM for the game takes these options, by the packs' rules too.
+    bool checkGameOptionsOnRom(const QString& romMd5, const QStringList& ids, QString* error) const;
+    // Host: a saved set was made, renamed or deleted; a room using one hears
+    // its new name, or that it's custom now.
+    void onSavedGameSettingsChanged();
+    // Host: the server didn't take the saved set's name it was sent (its
+    // moderation filter), so the options go again as custom.
+    void onGameOptionsResyncTimeout();
+    // How many options the room can have on: this client's limit, or an older
+    // server's.
+    int gameOptionsLimit() const;
     // An option's name in this client's language when its own pack for the
     // game knows the id, else the host's label. Tips add the pack's description.
     QStringList gameOptionLabels(const QString& romMd5, const QList<LobbyClient::LobbyGameOption>& options) const;
-    QString gameOptionsTip(const QString& romMd5, const QList<LobbyClient::LobbyGameOption>& options) const;
-    // The chat line naming the game options the match just synced plays with.
-    void announceMatchGameOptions(const QString& channel, const QString& romMd5);
+    QString gameOptionsTip(const QString& romMd5, const QList<LobbyClient::LobbyGameOption>& options,
+                           const LobbyClient::LobbyGameOption& preset) const;
+    // The preset a set of options makes up, in this client's language when its
+    // packs have it: the room's word for it, else this client's packs' match
+    // for the set (a server from before presets). Empty for custom options.
+    QString gameOptionsPresetName(const QString& romMd5, const QList<LobbyClient::LobbyGameOption>& options,
+                                  const LobbyClient::LobbyGameOption& preset) const;
+    // What a room's or match's game settings are called, for a tag or the
+    // Game settings list: the preset, the one option, or "Custom (n)". Empty
+    // with none on.
+    QString gameOptionsTag(const QString& romMd5, const QList<LobbyClient::LobbyGameOption>& options,
+                           const LobbyClient::LobbyGameOption& preset) const;
+    // The preset's name, or the options' names: what a sentence about the
+    // room's game settings names.
+    QString gameOptionsNames(const QString& romMd5, const QList<LobbyClient::LobbyGameOption>& options,
+                             const LobbyClient::LobbyGameOption& preset) const;
 
     // A room made through Create Room: its host's choices in it are remembered
     // for its game (CreateRoomDialog::romSettingsGroup), and the next room made
@@ -815,12 +850,24 @@ private:
     LobbyButton*  m_saveDataSaveAsBtn = nullptr;   // everyone, from match start
     ToggleSwitch* m_saveDataKeepCheck = nullptr;   // keep the Save As file updated
 
-    // Host-only room option: game options, one switch per option shown
-    // (property "gameOptionId"), after the session switches in this grid.
-    QGridLayout*         m_sessionSwitches = nullptr;
-    QList<ToggleSwitch*> m_gameOptionChecks;
-    // Puts the switches back to what the room has when the server ignores a change.
+    // Host-only room option: game settings, under the session switches. The
+    // list holds Default, the packs' presets and Custom; the button opens the
+    // options one by one (Customize for the host, View for everyone else).
+    QWidget*             m_gameSettingsRow = nullptr;
+    QComboBox*           m_gameSettingsCombo = nullptr;
+    LobbyButton*         m_gameSettingsButton = nullptr;
+    // Open while the host edits, or anyone looks: a view follows the room.
+    QPointer<GameSettingsDialog> m_gameSettingsDialog;
+    // Puts the list back to what the room has when the server ignores a change.
     QTimer*              m_gameOptionsResync = nullptr;
+    // The change last sent, while its ROOM_STATE hasn't come: a saved set's
+    // name that doesn't come back was refused. Refused names go as custom
+    // for the rest of the session.
+    QStringList          m_sentGameOptions;
+    LobbyClient::LobbyGameOption m_sentGameOptionsPreset;
+    QSet<QString>        m_refusedSavedNames;
+    // Holds back a pick from the list until the host stops on one.
+    QTimer*              m_gameSettingsPick = nullptr;
 
     // When checked, the room host streams replay bytes so others can spectate,
     // independently of whether a local .krec file is saved. On the emulation thread,
@@ -1024,7 +1071,6 @@ private:
     // player's client can.
     bool m_roomHasLateJoinOption = false;
     bool m_roomLateJoinEnabled = false;
-    bool m_lateJoinEnabledSeen = false;   // this room's first ROOM_STATE arrived
     // In a match with nobody else in it yet.
     bool m_playingAlone = false;
     int autoFrameDelay() const;
@@ -1034,7 +1080,6 @@ private:
     // From ROOM_STATE "saveData": present when the room has the option.
     bool m_roomHasSaveDataOption = false;
     bool m_roomSaveDataEnabled = false;
-    bool m_saveDataSeen = false;
     QString m_roomSaveDataLabel;
     QStringList m_roomSaveDataKinds;
     int m_roomSaveDataBytes = 0;
@@ -1048,12 +1093,14 @@ private:
     // start resolves them against the ROM and puts them in the manifest.
     std::vector<std::string> m_hostGameOptionIds;
     // From ROOM_STATE: the room takes game options ("gameOptionsOffered"),
-    // the ones on for the next match or the running one, and which seated
-    // members' clients can play with them.
+    // up to how many, the ones on for the next match or the running one and
+    // the preset they make up, and how many options each seated member's
+    // client can play with (members missing can't play with any).
     bool m_roomGameOptionsOffered = false;
-    bool m_gameOptionsSeen = false;
+    int m_roomGameOptionsMax = CoreGameOptionsLegacyMaxOptions;
     QList<LobbyClient::LobbyGameOption> m_roomGameOptions;
-    QSet<quint64> m_gameOptionsCapableUsers;
+    LobbyClient::LobbyGameOption m_roomGameOptionsPreset;
+    QHash<quint64, int> m_gameOptionsUserMax;
     // Host: the room hears about a continued save once it's waiting again
     // (the server takes no save data changes while the match is in game).
     bool m_publishSaveChoiceWhenWaiting = false;

@@ -2967,10 +2967,6 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>✕  クイックマッチをキャンセル</translation>
         </message>
         <message>
-            <source>Live Replay on — others can watch this match.</source>
-            <translation>ライブリプレイを有効にしました — 他のユーザーがこの対戦を視聴できます。</translation>
-        </message>
-        <message>
             <source>Connecting to live replay…</source>
             <translation>ライブリプレイに接続中…</translation>
         </message>
@@ -2997,26 +2993,6 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         <message>
             <source>Match #%1 starting with %2 player(s)</source>
             <translation>対戦 #%1 を%2人で開始します</translation>
-        </message>
-        <message>
-            <source>Your frame delay: %1 (auto, from %2 ms ping) · prediction %3</source>
-            <translation>自分のフレーム遅延: %1（自動、%2 msのPingから算出）· 予測 %3</translation>
-        </message>
-        <message>
-            <source>Your frame delay: %1 (auto) · prediction %2</source>
-            <translation>自分のフレーム遅延: %1（自動）· 予測 %2</translation>
-        </message>
-        <message>
-            <source>Your frame delay: %1 · prediction %2</source>
-            <translation>自分のフレーム遅延: %1 · 予測 %2</translation>
-        </message>
-        <message>
-            <source>Your frame delay is now %1 f.</source>
-            <translation>自分のフレーム遅延を%1フレームに変更しました。</translation>
-        </message>
-        <message>
-            <source>Prediction is now %1 f.</source>
-            <translation>予測が%1フレームに変更されました。</translation>
         </message>
         <message>
             <source>Match start failed: you don't have the ROM for %1.</source>
@@ -3365,18 +3341,6 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>開始後の参加を許可</translation>
         </message>
         <message>
-            <source>Late join is off.</source>
-            <translation>途中参加をオフにしました。</translation>
-        </message>
-        <message>
-            <source>The host turned on late join.</source>
-            <translation>ホストが途中参加をオンにしました。</translation>
-        </message>
-        <message>
-            <source>The host turned off late join.</source>
-            <translation>ホストが途中参加をオフにしました。</translation>
-        </message>
-        <message>
             <source>You joined while a game is running, so you won't get a replay of this one.</source>
             <translation>ゲーム中に参加したため、このゲームのリプレイは保存されません。</translation>
         </message>
@@ -3395,10 +3359,6 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         <message>
             <source>Let players join while a game is running. You add them with Add to Game.</source>
             <translation>ゲーム中でもプレイヤーが参加できるようにします。参加したプレイヤーは「ゲームに追加」で追加します。</translation>
-        </message>
-        <message>
-            <source>Late join is on.</source>
-            <translation>途中参加がオンです。</translation>
         </message>
         <message>
             <source>Need at least 2 players to start. To start alone, turn on Allow joins after start.</source>
@@ -3451,38 +3411,6 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         <message>
             <source>Keep updated</source>
             <translation>自動更新</translation>
-        </message>
-        <message>
-            <source>Save data is off. The next match starts from a blank save.</source>
-            <translation>セーブデータをオフにしました。次の対戦は空のセーブから始まります。</translation>
-        </message>
-        <message>
-            <source>The host turned off save data. The next match starts from a blank save.</source>
-            <translation>ホストがセーブデータをオフにしました。次の対戦は空のセーブから始まります。</translation>
-        </message>
-        <message>
-            <source>The next match starts from your save: %1.</source>
-            <translation>次の対戦はあなたのセーブから始まります：%1。</translation>
-        </message>
-        <message>
-            <source>This room uses save data. Matches start from the host's save: %1.</source>
-            <translation>このルームはセーブデータを使います。対戦はホストのセーブから始まります：%1。</translation>
-        </message>
-        <message>
-            <source>The host picked save data: %1. The next match starts from it.</source>
-            <translation>ホストがセーブデータを選びました：%1。次の対戦はこのセーブから始まります。</translation>
-        </message>
-        <message>
-            <source>Save data is on. The next match starts from a blank save.</source>
-            <translation>セーブデータをオンにしました。次の対戦は空のセーブから始まります。</translation>
-        </message>
-        <message>
-            <source>This room uses save data. The next match starts from a blank save.</source>
-            <translation>このルームはセーブデータを使います。次の対戦は空のセーブから始まります。</translation>
-        </message>
-        <message>
-            <source>The host picked a blank save. The next match starts from it.</source>
-            <translation>ホストが空のセーブを選びました。次の対戦はこのセーブから始まります。</translation>
         </message>
         <message>
             <source>Blank save</source>
@@ -6543,48 +6471,8 @@ A local replay is saved only if Save replay is on.</source>
     <context>
         <name>UserInterface::Dialog::RollbackLobbyDialog</name>
         <message>
-            <source>%1 is on in this room.</source>
-            <translation>このルームでは「%1」がオンです。</translation>
-        </message>
-        <message>
-            <source>%1 is on.</source>
-            <translation>「%1」をオンにしました。</translation>
-        </message>
-        <message>
-            <source>The host turned on %1.</source>
-            <translation>ホストが「%1」をオンにしました。</translation>
-        </message>
-        <message>
-            <source>%1 is off.</source>
-            <translation>「%1」をオフにしました。</translation>
-        </message>
-        <message>
-            <source>The host turned off %1.</source>
-            <translation>ホストが「%1」をオフにしました。</translation>
-        </message>
-        <message>
-            <source>The host has %1 turned off.</source>
-            <translation>ホストは「%1」をオフにしています。</translation>
-        </message>
-        <message>
-            <source>Game options can't be changed during a match.</source>
-            <translation>対戦中はゲームオプションを変更できません。</translation>
-        </message>
-        <message>
             <source>Every player's game is changed for the match, and so is its replay.</source>
             <translation>対戦中は全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。</translation>
-        </message>
-        <message>
-            <source>Game Options</source>
-            <translation>ゲームオプション</translation>
-        </message>
-        <message>
-            <source>Couldn't turn on %1.</source>
-            <translation>「%1」をオンにできませんでした。</translation>
-        </message>
-        <message>
-            <source>This match is played with %1.</source>
-            <translation>この対戦は「%1」で行われます。</translation>
         </message>
         <message>
             <source>This room uses %1, which %2 can't play with yet. They need a newer RMG-K, or turn %1 off.</source>
@@ -6645,6 +6533,402 @@ A local replay is saved only if Save replay is on.</source>
         <message>
             <source>est. ping</source>
             <translation>推定Ping</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::GameSettingsDialog</name>
+        <message>
+            <source>Game Settings</source>
+            <translation>ゲーム設定</translation>
+        </message>
+        <message>
+            <source>Every player's game is changed this way for the next match, and so is its replay. Pick a preset from the Game Settings list, or turn options on here one by one.</source>
+            <translation>次の対戦では全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。「ゲーム設定」のリストからプリセットを選ぶか、ここでオプションを1つずつオンにしてください。</translation>
+        </message>
+        <message>
+            <source>What the host turned on for the next match. Every player's game is changed this way, and so is its replay.</source>
+            <translation>ホストが次の対戦でオンにしている設定です。全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。</translation>
+        </message>
+        <message>
+            <source>Other</source>
+            <comment>game options without a group</comment>
+            <translation>その他</translation>
+        </message>
+        <message>
+            <source>Not in your game options packs</source>
+            <translation>あなたのゲームオプションパックにないもの</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>Apply</source>
+            <translation>適用</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>閉じる</translation>
+        </message>
+        <message>
+            <source>Turning this on also turns on %1.</source>
+            <translation>オンにすると「%1」もオンになります。</translation>
+        </message>
+        <message>
+            <source>Needs %1.</source>
+            <translation>「%1」が必要です。</translation>
+        </message>
+        <message>
+            <source>Turning this off also turns off %1.</source>
+            <translation>オフにすると「%1」もオフになります。</translation>
+        </message>
+        <message>
+            <source>Needed by %1.</source>
+            <translation>「%1」に必要です。</translation>
+        </message>
+        <message>
+            <source>Turning this on turns off %1.</source>
+            <translation>オンにすると「%1」はオフになります。</translation>
+        </message>
+        <message>
+            <source>Can't be on with %1.</source>
+            <translation>「%1」と同時にはオンにできません。</translation>
+        </message>
+        <message>
+            <source>At most %1 game options can be on at once.</source>
+            <translation>同時にオンにできるゲームオプションは%1個までです。</translation>
+        </message>
+        <message>
+            <source>Turned on %1 too, for %2.</source>
+            <translation>「%2」のために「%1」もオンにしました。</translation>
+        </message>
+        <message>
+            <source>Turned off %1, which can't be on with %2.</source>
+            <translation>「%2」と同時にオンにできない「%1」をオフにしました。</translation>
+        </message>
+        <message>
+            <source>Turned off %1 too, which needs %2.</source>
+            <translation>「%2」が必要な「%1」もオフにしました。</translation>
+        </message>
+        <message>
+            <source>%1 of %2 on</source>
+            <translation>%2個中%1個がオン</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n on</source>
+            <translation>
+                <numerusform>%n個がオン</numerusform>
+            </translation>
+        </message>
+        <message>
+            <source>Default: the game plays unchanged.</source>
+            <translation>既定: ゲームは変更されません。</translation>
+        </message>
+        <message>
+            <source>Same as the %1 preset.</source>
+            <translation>プリセット「%1」と同じです。</translation>
+        </message>
+        <message>
+            <source>Custom: not one of the presets.</source>
+            <translation>カスタム: どのプリセットとも違います。</translation>
+        </message>
+        <message>
+            <source>It has more than %1 options on.</source>
+            <translation>オンのオプションが%1個を超えています。</translation>
+        </message>
+        <message>
+            <source>%1 needs %2, which is off.</source>
+            <translation>「%1」には「%2」が必要ですが、オフになっています。</translation>
+        </message>
+        <message>
+            <source>%1 and %2 can't be on together.</source>
+            <translation>「%1」と「%2」は同時にオンにできません。</translation>
+        </message>
+        <message>
+            <source>None of its options are in your game options packs any more.</source>
+            <translation>どのオプションも、もうあなたのゲームオプションパックにありません。</translation>
+        </message>
+        <message>
+            <source>Give these settings a name.</source>
+            <translation>この設定に名前を付けてください。</translation>
+        </message>
+        <message>
+            <source>A name can be up to %1 characters long.</source>
+            <translation>名前は%1文字までです。</translation>
+        </message>
+        <message>
+            <source>A name can't have line breaks or other control characters.</source>
+            <translation>名前に改行などの制御文字は使えません。</translation>
+        </message>
+        <message>
+            <source>Default</source>
+            <translation>既定</translation>
+        </message>
+        <message>
+            <source>Custom</source>
+            <translation>カスタム</translation>
+        </message>
+        <message>
+            <source>&quot;%1&quot; is already one of the Game settings list's entries.</source>
+            <translation>「%1」は「ゲーム設定」のリストにすでにある名前です。</translation>
+        </message>
+        <message>
+            <source>This lobby server takes at most %1 game options.</source>
+            <translation>このロビーサーバーで使えるゲームオプションは%1個までです。</translation>
+        </message>
+        <message>
+            <source>The game plays unchanged.</source>
+            <translation>ゲームは変更されません。</translation>
+        </message>
+        <message>
+            <source>Can't be used: %1</source>
+            <translation>使えません: %1</translation>
+        </message>
+        <message>
+            <source>Your saved settings: %1</source>
+            <translation>保存した設定: %1</translation>
+        </message>
+        <message>
+            <source>Custom (%1)</source>
+            <comment>game settings that aren't a preset, with how many options are on</comment>
+            <translation>カスタム（%1）</translation>
+        </message>
+        <message>
+            <source>Custom...</source>
+            <translation>カスタム...</translation>
+        </message>
+        <message>
+            <source>Turn the game's options on and off one by one.</source>
+            <translation>ゲームのオプションを1つずつオン・オフします。</translation>
+        </message>
+        <message>
+            <source>Same as your saved &quot;%1&quot;.</source>
+            <translation>保存した「%1」と同じです。</translation>
+        </message>
+        <message>
+            <source>Custom: not one of the presets or your saved settings.</source>
+            <translation>カスタム: どのプリセットとも、保存した設定とも違います。</translation>
+        </message>
+        <message>
+            <source>Save these settings under a name of your own, to pick them from the Game settings list next time.</source>
+            <translation>この設定に名前を付けて保存すると、次からは「ゲーム設定」のリストから選べます。</translation>
+        </message>
+        <message>
+            <source>Turn some options on to save them.</source>
+            <translation>保存するには、オプションをオンにしてください。</translation>
+        </message>
+        <message>
+            <source>These are the %1 preset's settings.</source>
+            <translation>これはプリセット「%1」の設定です。</translation>
+        </message>
+        <message>
+            <source>These are saved as &quot;%1&quot;.</source>
+            <translation>この設定は「%1」として保存済みです。</translation>
+        </message>
+        <message>
+            <source>The host's own settings, saved as &quot;%1&quot;.</source>
+            <translation>ホストが「%1」として保存した設定です。</translation>
+        </message>
+        <message>
+            <source>Your saved settings</source>
+            <translation>保存した設定</translation>
+        </message>
+        <message>
+            <source>Save as</source>
+            <translation>名前を付けて保存</translation>
+        </message>
+        <message>
+            <source>A name, like Friday rules</source>
+            <translation>名前（例: 金曜ルール）</translation>
+        </message>
+        <message>
+            <source>Name for these settings</source>
+            <translation>この設定の名前</translation>
+        </message>
+        <message>
+            <source>Save</source>
+            <translation>保存</translation>
+        </message>
+        <message>
+            <source>Save as...</source>
+            <translation>名前を付けて保存...</translation>
+        </message>
+        <message>
+            <source>New name for %1</source>
+            <translation>「%1」の新しい名前</translation>
+        </message>
+        <message>
+            <source>Delete &quot;%1&quot;?</source>
+            <translation>「%1」を削除しますか？</translation>
+        </message>
+        <message>
+            <source>Delete</source>
+            <translation>削除</translation>
+        </message>
+        <message>
+            <source>Delete %1</source>
+            <translation>「%1」を削除</translation>
+        </message>
+        <message>
+            <source>Keep</source>
+            <translation>残す</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n options</source>
+            <translation>
+                <numerusform>%n個のオプション</numerusform>
+            </translation>
+        </message>
+        <message>
+            <source>Load</source>
+            <translation>読み込む</translation>
+        </message>
+        <message>
+            <source>Load %1</source>
+            <translation>「%1」を読み込む</translation>
+        </message>
+        <message>
+            <source>Turn these options on here.</source>
+            <translation>ここでこのオプションをオンにします。</translation>
+        </message>
+        <message>
+            <source>Rename</source>
+            <translation>名前を変更</translation>
+        </message>
+        <message>
+            <source>Rename %1</source>
+            <translation>「%1」の名前を変更</translation>
+        </message>
+        <message>
+            <source>You already have settings saved as &quot;%1&quot;. Replace them with these?</source>
+            <translation>「%1」という設定はすでに保存されています。この設定で置き換えますか？</translation>
+        </message>
+        <message>
+            <source>You can keep up to %1 saved settings for a game. Delete one to save another.</source>
+            <translation>1つのゲームに保存できる設定は%1個までです。新しく保存するには、どれかを削除してください。</translation>
+        </message>
+        <message>
+            <source>Replace</source>
+            <translation>置き換え</translation>
+        </message>
+        <message>
+            <source>Replaced &quot;%1&quot; with these settings.</source>
+            <translation>「%1」をこの設定で置き換えました。</translation>
+        </message>
+        <message>
+            <source>Saved as &quot;%1&quot;. It's in the Game settings list now.</source>
+            <translation>「%1」として保存しました。「ゲーム設定」のリストから選べます。</translation>
+        </message>
+        <message>
+            <source>You already have settings saved as &quot;%1&quot;.</source>
+            <translation>「%1」という設定はすでに保存されています。</translation>
+        </message>
+        <message>
+            <source>Renamed &quot;%1&quot; to &quot;%2&quot;.</source>
+            <translation>「%1」の名前を「%2」に変更しました。</translation>
+        </message>
+        <message>
+            <source>Deleted &quot;%1&quot;.</source>
+            <translation>「%1」を削除しました。</translation>
+        </message>
+        <message>
+            <source>Turned on what's saved as &quot;%1&quot;.</source>
+            <translation>「%1」として保存した設定をオンにしました。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>Game settings</source>
+            <translation>ゲーム設定</translation>
+        </message>
+        <message>
+            <source>Customize...</source>
+            <translation>カスタマイズ...</translation>
+        </message>
+        <message>
+            <source>Custom game settings:</source>
+            <translation>カスタムのゲーム設定:</translation>
+        </message>
+        <message>
+            <source>Custom (%1)</source>
+            <comment>game settings that aren't a preset, with how many options are on</comment>
+            <translation>カスタム（%1）</translation>
+        </message>
+        <message>
+            <source>The game plays unchanged.</source>
+            <translation>ゲームは変更されません。</translation>
+        </message>
+        <message>
+            <source>This lobby server takes at most %1 game options.</source>
+            <translation>このロビーサーバーで使えるゲームオプションは%1個までです。</translation>
+        </message>
+        <message>
+            <source>Turn the game's options on and off one by one.</source>
+            <translation>ゲームのオプションを1つずつオン・オフします。</translation>
+        </message>
+        <message>
+            <source>The host picks the game settings.</source>
+            <translation>ゲーム設定はホストが選びます。</translation>
+        </message>
+        <message>
+            <source>Game settings can't be changed during a match.</source>
+            <translation>対戦中はゲーム設定を変更できません。</translation>
+        </message>
+        <message>
+            <source>View...</source>
+            <translation>表示...</translation>
+        </message>
+        <message>
+            <source>See which of the game's options are on.</source>
+            <translation>どのオプションがオンになっているかを見ます。</translation>
+        </message>
+        <message>
+            <source>Game Settings</source>
+            <translation>ゲーム設定</translation>
+        </message>
+        <message>
+            <source>Couldn't use %1.</source>
+            <translation>「%1」を使えませんでした。</translation>
+        </message>
+        <message>
+            <source>This lobby server takes at most %1.</source>
+            <translation>このロビーサーバーでは%1個までです。</translation>
+        </message>
+        <message>
+            <source>Game settings can't be changed now.</source>
+            <translation>今はゲーム設定を変更できません。</translation>
+        </message>
+        <message>
+            <source>This room has %1 game options on, but %2 can play with at most %3. They need a newer RMG-K, or turn some off.</source>
+            <translation>このルームではゲームオプションが%1個オンですが、%2は%3個までしか対応していません。新しいRMG-Kに更新してもらうか、いくつかオフにしてください。</translation>
+        </message>
+        <message>
+            <source>%1 can't play with %2 game options</source>
+            <translation>%1は%2個のゲームオプションに対応していません</translation>
+        </message>
+        <message>
+            <source>They can play with at most %1. They need a newer RMG-K, or turn some off.</source>
+            <translation>対応しているのは%1個までです。新しいRMG-Kに更新してもらうか、いくつかオフにしてください。</translation>
+        </message>
+        <message>
+            <source>%1: the host's own saved settings</source>
+            <translation>%1: ホストが保存した設定</translation>
+        </message>
+        <message>
+            <source>The lobby server didn't take the name &quot;%1&quot;, so other players see these settings as custom.</source>
+            <translation>ロビーサーバーが「%1」という名前を受け付けなかったため、ほかのプレイヤーにはカスタムの設定として表示されます。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::CreateRoomDialog</name>
+        <message>
+            <source>Game settings</source>
+            <translation>ゲーム設定</translation>
+        </message>
+        <message>
+            <source>Every player's game is changed for the match, and so is its replay. Custom... turns options on one by one, and saves them under a name.</source>
+            <translation>対戦中は全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。「カスタム...」でオプションを1つずつオンにして、名前を付けて保存できます。</translation>
         </message>
     </context>
 </TS>
