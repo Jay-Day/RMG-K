@@ -301,6 +301,7 @@ void ConfigDialog::_init(bool reInit, bool blockCustomSettings)
 	ui->fbInfoEnableCheckBox->toggle();
 	ui->fbInfoEnableCheckBox->setChecked(config.frameBufferEmulation.fbInfoDisabled == 0);
 
+	ui->fbTransitionsCheckBox->setChecked(config.frameBufferEmulation.enableForTransitions != 0);
 	ui->frameBufferCheckBox->toggle();
 	const bool fbEmulationEnabled = config.frameBufferEmulation.enable != 0;
 	ui->frameBufferCheckBox->setChecked(fbEmulationEnabled);
@@ -648,6 +649,7 @@ void ConfigDialog::accept(bool justSave) {
 	config.graphics2D.enableNativeResTexrects = ui->nativeRes2DComboBox->currentIndex();
 
 	config.frameBufferEmulation.enable = ui->frameBufferCheckBox->isChecked() ? 1 : 0;
+	config.frameBufferEmulation.enableForTransitions = ui->fbTransitionsCheckBox->isChecked() ? 1 : 0;
 
 	config.frameBufferEmulation.bufferSwapMode = ui->frameBufferSwapComboBox->currentIndex();
 	config.frameBufferEmulation.copyToRDRAM = ui->copyColorBufferComboBox->currentIndex();

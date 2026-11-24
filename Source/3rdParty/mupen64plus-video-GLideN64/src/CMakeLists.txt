@@ -54,6 +54,7 @@ set(GLideN64_SOURCES
   DisplayLoadProgress.cpp
   FrameBuffer.cpp
   FrameBufferInfo.cpp
+  FrameBufferTransitions.cpp
   GBI.cpp
   gDP.cpp
   GLideN64.cpp

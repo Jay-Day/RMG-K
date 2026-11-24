@@ -15,6 +15,7 @@
 #include "DebugDump.h"
 #include "osal_keys.h"
 #include "DisplayWindow.h"
+#include "FrameBufferTransitions.h"
 #include "TextureFilterHandler.h"
 #include "GLideNHQ/TxFilterExport.h"
 #include <Graphics/Context.h>
@@ -272,6 +273,8 @@ void VI_UpdateScreen()
 	if (config.frameBufferEmulation.enable) {
 
 		FrameBuffer * pBuffer = frameBufferList().findBuffer(*REG.VI_ORIGIN & 0xffffff);
+		if (FBTransitions_KeepPicture(pBuffer != nullptr))
+			return;
 		if (pBuffer == nullptr) {
 			gDP.changed |= CHANGED_CPU_FB_WRITE;
 		} else if (!FBInfo::fbInfo.isSupported() &&
