@@ -2739,7 +2739,6 @@ void RollbackLobbyDialog::refreshSameGameFilter()
         const QString name = m_browseRomCombo->currentText();
         m_pickerName->setText(name);
         m_pickerName->setRole(rom.isEmpty() ? Role::Muted : Role::Ink);
-        m_browseRomCombo->setToolTip(name);
         m_pickerTile->setGame(name, coverPathForMd5(rom.value("md5").toString()));
     }
     if (!m_liveGallery || !m_roomsColumn)
