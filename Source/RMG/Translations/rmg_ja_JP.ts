@@ -6835,6 +6835,34 @@ A local replay is saved only if Save replay is on.</source>
             <source>Turned on what's saved as &quot;%1&quot;.</source>
             <translation>「%1」として保存した設定をオンにしました。</translation>
         </message>
+        <message>
+            <source>Save these settings under a name of your own, to pick them from the Game settings list when you host.</source>
+            <translation>この設定に名前を付けて保存すると、ホストになったときに「ゲーム設定」のリストから選べます。</translation>
+        </message>
+        <message>
+            <source>Your game options packs don't have %1, so these settings can't be saved here.</source>
+            <translation>あなたのゲームオプションパックには「%1」がないため、この設定はここでは保存できません。</translation>
+        </message>
+        <message>
+            <source>No options are on, so there's nothing to save.</source>
+            <translation>オンになっているオプションがないため、保存するものがありません。</translation>
+        </message>
+        <message>
+            <source>Your game options packs don't allow these settings: %1</source>
+            <translation>あなたのゲームオプションパックでは、この設定は使えません: %1</translation>
+        </message>
+        <message>
+            <source>You already have these saved as &quot;%1&quot;.</source>
+            <translation>この設定は「%1」としてすでに保存されています。</translation>
+        </message>
+        <message>
+            <source>The host changed the game settings while you were naming them, so nothing was saved.</source>
+            <translation>名前を入力している間にホストがゲーム設定を変更したため、保存しませんでした。</translation>
+        </message>
+        <message>
+            <source>Saved as &quot;%1&quot;. It's in your Game settings list when you host.</source>
+            <translation>「%1」として保存しました。ホストになったときに「ゲーム設定」のリストから選べます。</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::RollbackLobbyDialog</name>

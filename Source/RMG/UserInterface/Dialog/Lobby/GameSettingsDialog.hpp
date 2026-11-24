@@ -156,7 +156,8 @@ struct GameSettingsCatalog
 
 // The host's list of a game's options, one switch each under the pack's
 // group headings, with what each does and what it turns on or off with it.
-// Read-only, it shows a guest (or the host during a match) exactly what's on.
+// Read-only, it shows a guest (or the host during a match) exactly what's on,
+// and lets them save it as their own.
 class GameSettingsDialog : public QDialog
 {
     Q_OBJECT
@@ -171,14 +172,17 @@ class GameSettingsDialog : public QDialog
     void setLimitNote(const QString& note);
     // Read-only: what the room has now, including options this client's
     // packs don't know (shown with the host's label). savedByHost: the preset
-    // is the host's own saved set, not one of the packs'.
+    // is the host's own saved set, not one of the packs'. Called again as the
+    // room changes; a name being typed for the old settings is dropped.
     void showRoomOptions(const QList<LobbyClient::LobbyGameOption>& on, const QString& presetLabel,
                          bool savedByHost = false);
     // Checks the set on Apply; on failure the reason shows and the dialog
     // stays open.
     void setApplyCheck(std::function<bool(const QStringList& ids, QString& error)> check);
     // Editable: lets the host save the switches under a name, and load,
-    // rename or delete the game's saved sets.
+    // rename or delete the game's saved sets. Read-only: only Save as, which
+    // copies the room's set into this client's own saved sets, named like
+    // the host's saved set when it is one.
     void enableSavedSets(const QString& romMd5);
 
     // The options picked, in pack order.
@@ -212,8 +216,9 @@ class GameSettingsDialog : public QDialog
     void openSaveBar();
     void closeSaveBar();
     void checkSaveName();
-    // Why the switches can't be saved as they are (none on, or already in
-    // the list); empty when they can.
+    // Why the switches can't be saved as they are (none on, already in the
+    // list, or read-only: options this client's packs don't have); empty
+    // when they can.
     QString saveBlocker() const;
     void saveAs();
     void renameSaved(const QString& id, const QString& text, QLabel* error);
@@ -244,6 +249,17 @@ class GameSettingsDialog : public QDialog
     QLabel* m_error = nullptr;
     QString m_limitNote;
     LobbyButton* m_applyButton = nullptr;
+    // Apply, or Close in the read-only view: what Enter presses otherwise.
+    LobbyButton* m_mainButton = nullptr;
+
+    // Read-only: what showRoomOptions was last given. Every option id in the
+    // room's order, the labels of those this client's packs don't have, and
+    // the room's preset name.
+    bool m_roomShown = false;
+    QStringList m_roomIds;
+    QStringList m_otherLabels;
+    QString m_roomPresetLabel;
+    bool m_roomSavedByHost = false;
 
     QString m_romMd5;
     QList<SavedGameSettings> m_saved;

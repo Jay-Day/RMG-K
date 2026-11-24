@@ -704,6 +704,7 @@ GameSettingsDialog::GameSettingsDialog(const QString& gameName, GameSettingsCata
         footer->addWidget(m_applyButton);
         connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
         connect(m_applyButton, &QPushButton::clicked, this, &GameSettingsDialog::apply);
+        m_mainButton = m_applyButton;
     }
     else
     {
@@ -713,6 +714,7 @@ GameSettingsDialog::GameSettingsDialog(const QString& gameName, GameSettingsCata
         close->setDefault(true);
         footer->addWidget(close);
         connect(close, &QPushButton::clicked, this, &QDialog::accept);
+        m_mainButton = close;
     }
     root->addLayout(footer);
 
@@ -928,12 +930,7 @@ void GameSettingsDialog::refresh()
     }
 
     // Options on that the packs don't know count too (read-only view only).
-    int otherCount = 0;
-    if (m_otherSection)
-    {
-        for (int i = 0; i < m_otherSection->count(); ++i)
-            otherCount += qobject_cast<ToggleSwitch*>(m_otherSection->itemAt(i)->widget()) ? 1 : 0;
-    }
+    const int otherCount = int(m_otherLabels.size());
     const int count = int(m_on.size()) + otherCount;
     m_count->setText(m_editable ? tr("%1 of %2 on").arg(count).arg(m_limit) : tr("%n on", nullptr, count));
     m_count->setToolTip(m_limitNote);
@@ -947,6 +944,11 @@ void GameSettingsDialog::refresh()
         matches = tr("Same as the %1 preset.").arg(QString::fromStdString(preset->Label));
     else if (saved)
         matches = tr("Same as your saved \"%1\".").arg(saved->Name);
+    // Read-only: the host's name for it, their own saved set's or a preset
+    // this client's packs don't have.
+    else if (!m_editable && !m_roomPresetLabel.isEmpty())
+        matches = m_roomSavedByHost ? tr("The host's own settings, saved as \"%1\".").arg(m_roomPresetLabel)
+                                    : tr("Same as the %1 preset.").arg(m_roomPresetLabel);
     else
         matches = m_saveAsButton ? tr("Custom: not one of the presets or your saved settings.")
                                  : tr("Custom: not one of the presets.");
@@ -959,9 +961,11 @@ void GameSettingsDialog::refresh()
     {
         const QString why = saveBlocker();
         m_saveAsButton->setEnabled(why.isEmpty());
-        m_saveAsButton->setToolTip(why.isEmpty() ? tr("Save these settings under a name of your own, to pick them "
-                                                      "from the Game settings list next time.")
-                                                 : why);
+        m_saveAsButton->setToolTip(!why.isEmpty() ? why
+                                   : m_editable ? tr("Save these settings under a name of your own, to pick them "
+                                                     "from the Game settings list next time.")
+                                                : tr("Save these settings under a name of your own, to pick them "
+                                                     "from the Game settings list when you host."));
         if (!m_saveBar->isHidden())
             checkSaveName();
     }
@@ -969,12 +973,26 @@ void GameSettingsDialog::refresh()
 
 QString GameSettingsDialog::saveBlocker() const
 {
+    if (!m_editable)
+    {
+        // The room's set as it is: a part of it would be other rules.
+        if (!m_otherLabels.isEmpty())
+            return tr("Your game options packs don't have %1, so these settings can't be saved here.")
+                .arg(joinLabels(m_otherLabels));
+        if (m_on.isEmpty())
+            return tr("No options are on, so there's nothing to save.");
+        // Packs that differ from the host's may not allow the set.
+        const QString problem = m_catalog.problemWith(m_on);
+        if (!problem.isEmpty())
+            return tr("Your game options packs don't allow these settings: %1").arg(problem);
+    }
     if (m_on.isEmpty())
         return tr("Turn some options on to save them.");
     if (const CoreGameOptionPresetInfo* preset = m_catalog.presetFor(m_on))
         return tr("These are the %1 preset's settings.").arg(QString::fromStdString(preset->Label));
     if (const SavedGameSettings* saved = savedMatching(m_on))
-        return tr("These are saved as \"%1\".").arg(saved->Name);
+        return m_editable ? tr("These are saved as \"%1\".").arg(saved->Name)
+                          : tr("You already have these saved as \"%1\".").arg(saved->Name);
     return QString();
 }
 
@@ -993,15 +1011,41 @@ void GameSettingsDialog::setLimitNote(const QString& note)
 void GameSettingsDialog::showRoomOptions(const QList<LobbyClient::LobbyGameOption>& on, const QString& presetLabel,
                                          bool savedByHost)
 {
-    QStringList known;
+    QStringList ids, known, otherLabels;
     QList<LobbyClient::LobbyGameOption> unknown;
     for (const LobbyClient::LobbyGameOption& option : on)
     {
+        ids << option.id;
         if (m_catalog.option(option.id))
+        {
             known << option.id;
+        }
         else
+        {
             unknown << option;
+            otherLabels << option.label;
+        }
     }
+    // The room's list is sent again for every room update; only a change
+    // matters here.
+    if (m_roomShown && ids == m_roomIds && otherLabels == m_otherLabels && presetLabel == m_roomPresetLabel &&
+        savedByHost == m_roomSavedByHost)
+        return;
+    if (m_roomShown && m_saveBar)
+    {
+        // A name typed for the old settings isn't one for the new ones.
+        const bool naming = !m_saveBar->isHidden();
+        closeSaveBar();
+        m_note->setText(tr("The host changed the game settings while you were naming them, so nothing was saved."));
+        m_note->setVisible(naming);
+        // Saved sets made elsewhere since count too.
+        m_saved = m_catalog.savedSets(m_romMd5);
+    }
+    m_roomShown = true;
+    m_roomIds = ids;
+    m_otherLabels = otherLabels;
+    m_roomPresetLabel = presetLabel;
+    m_roomSavedByHost = savedByHost;
     m_on = m_catalog.ordered(known);
 
     while (m_otherSection->count() > 1)
@@ -1024,14 +1068,8 @@ void GameSettingsDialog::showRoomOptions(const QList<LobbyClient::LobbyGameOptio
         m_otherSection->addWidget(otherSwitch);
     }
     m_otherBox->setVisible(!unknown.isEmpty());
+    // The status line names the host's saved set or preset (refresh).
     refresh();
-
-    // A set the host saved under a name of their own isn't one of the presets.
-    if (savedByHost && !presetLabel.isEmpty() && !on.isEmpty())
-        m_matches->setText(tr("The host's own settings, saved as \"%1\".").arg(presetLabel));
-    // The host's own name for it, when this client's packs don't have the preset.
-    else if (!presetLabel.isEmpty() && !on.isEmpty() && !m_catalog.presetFor(m_on))
-        m_matches->setText(tr("Same as the %1 preset.").arg(presetLabel));
 }
 
 void GameSettingsDialog::setApplyCheck(std::function<bool(const QStringList&, QString&)> check)
@@ -1082,22 +1120,26 @@ LobbyButton* rowButton(const QString& text, LobbyButton::Kind kind, const char* 
 
 void GameSettingsDialog::enableSavedSets(const QString& romMd5)
 {
-    if (!m_editable || romMd5.isEmpty() || m_saveAsButton)
+    if (romMd5.isEmpty() || m_saveAsButton)
         return;
     m_romMd5 = romMd5;
     m_saved = m_catalog.savedSets(romMd5);
 
-    // The saved sets come first, above the pack's groups.
-    m_savedBox = new QWidget(m_sections->parentWidget());
-    m_savedBox->setObjectName("SavedSettingsSection");
-    auto* savedLay = new QVBoxLayout(m_savedBox);
-    savedLay->setContentsMargins(0, 0, 0, 0);
-    savedLay->setSpacing(6);
-    savedLay->addWidget(headingLabel(tr("Your saved settings"), m_savedBox));
-    m_savedRows = new QVBoxLayout;
-    m_savedRows->setSpacing(4);
-    savedLay->addLayout(m_savedRows);
-    m_sections->insertWidget(0, m_savedBox);
+    // The saved sets come first, above the pack's groups. Only the host gets
+    // them: loading one would change the room.
+    if (m_editable)
+    {
+        m_savedBox = new QWidget(m_sections->parentWidget());
+        m_savedBox->setObjectName("SavedSettingsSection");
+        auto* savedLay = new QVBoxLayout(m_savedBox);
+        savedLay->setContentsMargins(0, 0, 0, 0);
+        savedLay->setSpacing(6);
+        savedLay->addWidget(headingLabel(tr("Your saved settings"), m_savedBox));
+        m_savedRows = new QVBoxLayout;
+        m_savedRows->setSpacing(4);
+        savedLay->addLayout(m_savedRows);
+        m_sections->insertWidget(0, m_savedBox);
+    }
 
     // Save as: a name field under the switches' status, not a dialog of its own.
     m_saveBar = new QWidget(this);
@@ -1277,7 +1319,7 @@ void GameSettingsDialog::rebuildSavedSection()
     }
     if (!m_savedEditId.isEmpty() && !GameSettingsCatalog::findSaved(m_saved, m_savedEditId))
         m_savedEditId.clear();
-    setEnterButton(enter ? enter : !m_saveBar->isHidden() ? m_saveConfirm : m_applyButton);
+    setEnterButton(enter ? enter : !m_saveBar->isHidden() ? m_saveConfirm : m_mainButton);
 }
 
 void GameSettingsDialog::openSaveBar()
@@ -1290,10 +1332,23 @@ void GameSettingsDialog::openSaveBar()
         rebuildSavedSection();
     }
     m_saveBar->setVisible(true);
-    m_saveName->clear();
+    if (m_editable)
+    {
+        m_saveName->clear();
+    }
+    else
+    {
+        m_note->setVisible(false);
+        // Saved sets made elsewhere since count too.
+        m_saved = m_catalog.savedSets(m_romMd5);
+        refresh();
+        // The host's name for their saved set, to keep or type over.
+        m_saveName->setText(m_roomSavedByHost ? m_roomPresetLabel : QString());
+    }
     checkSaveName();
     setEnterButton(m_saveConfirm);
     m_saveName->setFocus();
+    m_saveName->selectAll();
 }
 
 void GameSettingsDialog::closeSaveBar()
@@ -1302,7 +1357,7 @@ void GameSettingsDialog::closeSaveBar()
         return;
     m_saveBar->setVisible(false);
     m_saveName->clear();
-    setEnterButton(m_applyButton);
+    setEnterButton(m_mainButton);
 }
 
 void GameSettingsDialog::checkSaveName()
@@ -1380,11 +1435,13 @@ void GameSettingsDialog::saveAs()
     }
     else
     {
+        // A new id of this client's own, also for a copy of the host's saved set.
         m_saved.append({ GameSettingsCatalog::newSavedId(m_saved), name, m_on, QString() });
     }
     closeSaveBar();
     storeSaved(existing >= 0 ? tr("Replaced \"%1\" with these settings.").arg(name)
-                             : tr("Saved as \"%1\". It's in the Game settings list now.").arg(name));
+               : m_editable  ? tr("Saved as \"%1\". It's in the Game settings list now.").arg(name)
+                             : tr("Saved as \"%1\". It's in your Game settings list when you host.").arg(name));
 }
 
 void GameSettingsDialog::renameSaved(const QString& id, const QString& text, QLabel* error)

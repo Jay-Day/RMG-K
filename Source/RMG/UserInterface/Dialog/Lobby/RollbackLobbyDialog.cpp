@@ -5861,11 +5861,10 @@ void RollbackLobbyDialog::openGameSettings()
         dialog->showRoomOptions(m_roomGameOptions,
             gameOptionsPresetName(m_currentRoomMd5, m_roomGameOptions, m_roomGameOptionsPreset),
             roomPresetIsHostsSavedSet());
-    else
-    {
-        dialog->enableSavedSets(m_currentRoomMd5);
-        connect(dialog, &GameSettingsDialog::savedSetsChanged, this, &RollbackLobbyDialog::onSavedGameSettingsChanged);
-    }
+    // The host saves and manages their sets; anyone else can save the room's
+    // set into their own, to host with it later.
+    dialog->enableSavedSets(m_currentRoomMd5);
+    connect(dialog, &GameSettingsDialog::savedSetsChanged, this, &RollbackLobbyDialog::onSavedGameSettingsChanged);
     dialog->setApplyCheck([this](const QStringList& ids, QString& error) {
         // The room may have moved on while the view was open.
         if (m_currentRoomId == 0 || !m_client || m_currentRoomHostId != m_client->selfUserId() ||
