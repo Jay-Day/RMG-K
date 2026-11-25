@@ -17,6 +17,11 @@ endif(PORTABLE_INSTALL)
 
 if (RMGK_TEST_BUILD)
     add_definitions(-DRMGK_TEST_BUILD)
+    option(RMGK_USE_PRODUCTION_LOBBY "Use the production lobby in this development build" OFF)
+    if (NOT RMGK_USE_PRODUCTION_LOBBY)
+        set_property(SOURCE UserInterface/Dialog/Lobby/LobbyConnectDialog.cpp
+            APPEND PROPERTY COMPILE_DEFINITIONS RMGK_USE_TEST_LOBBY)
+    endif()
 endif(RMGK_TEST_BUILD)
 
 if (UPDATER)

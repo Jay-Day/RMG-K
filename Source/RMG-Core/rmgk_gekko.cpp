@@ -3288,14 +3288,17 @@ int rollback_execute_begin_frame(void* userData)
         process_pending_disconnects();
 
         int count = 0;
-        const auto updateSessionTime = timingEnabled
+        const bool measureWork = g_LobbyTiming.decisionStart != std::chrono::steady_clock::time_point{};
+        const auto updateSessionTime = (timingEnabled || measureWork)
             ? std::chrono::steady_clock::now()
             : std::chrono::steady_clock::time_point{};
         GekkoGameEvent** events;
         if (offerWindow)
         {
             events = gekko_update_session_with_input_wait(g_GekkoSession, &count, wait_for_remote_input, &window);
-            g_LobbyTiming.decisionStart += std::chrono::microseconds{window.waitedUs};
+            // A fully stalled poll is accounted for as a whole below.
+            if (count != 0)
+                g_LobbyTiming.decisionStart += std::chrono::microseconds{window.waitedUs};
             offerWindow = false; // Prediction-limit retries get no extra wait.
         }
         else
@@ -3726,9 +3729,15 @@ int rollback_execute_begin_frame(void* userData)
             std::chrono::microseconds{kGekkoWaitSleepUs},
             std::chrono::microseconds{kGekkoWaitSleepUs});
 
+        const auto retryEnd = std::chrono::steady_clock::now();
+        if (measureWork)
+        {
+            // An empty poll and its retry wait are network stall time. If we
+            // restored or replayed frames, keep that work and exclude only the wait.
+            g_LobbyTiming.decisionStart += retryEnd - (count == 0 ? updateSessionTime : traceWaitBegin);
+        }
         const long long traceWaitUs =
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - traceWaitBegin).count();
+            std::chrono::duration_cast<std::chrono::microseconds>(retryEnd - traceWaitBegin).count();
         lag_meter_waited(traceWaitUs);
 
         summaryWaitUs += traceWaitUs;

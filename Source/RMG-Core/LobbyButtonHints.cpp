@@ -5,8 +5,8 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -14,6 +14,7 @@
 #include <sstream>
 #include <system_error>
 #include <thread>
+#include <utility>
 
 namespace
 {
@@ -103,6 +104,11 @@ unsigned int stickRangeHelped = 0, stickRangeHurt = 0;
 // USB reads must keep their cadence even when ICE is busy. Coalesce unsent
 // hints and let a separate sender take any transport locks.
 std::mutex outgoingMutex;
+// The plugin treats the ticket as opaque. Reserve its low 20 bits for a
+// button sample so a single atomic operation can publish to the correct arm.
+constexpr std::uint64_t ticketStep = 1ULL << 20;
+constexpr std::uint64_t sampleMask = ticketStep - 1;
+std::atomic<std::uint64_t> buttonSample{0};
 std::uint64_t ticket = 0;
 Destination outgoing;
 int targetFrame = 0;
@@ -117,7 +123,7 @@ struct PendingHint
     Hint hint;
 };
 PendingHint pending;
-std::condition_variable_any ready;
+std::atomic_flag ready{};
 std::jthread sender;
 
 void put(unsigned char* dest, std::uint64_t value, int bytes)
@@ -152,13 +158,33 @@ void send(const Destination& dest, int frame, const Hint& hint)
         reinterpret_cast<const char*>(wire.data()), hint.axes ? wire.size() : kLobbyButtonHintSize);
 }
 
+void wakeSender()
+{
+    ready.test_and_set();
+    ready.notify_one();
+}
+
+// Under outgoingMutex, drain the previous ticket before retiring its frame
+// and destination. The dispatcher also drains here without changing tickets.
+void takeButtonsAndArm(std::uint64_t nextTicket)
+{
+    const auto previous = buttonSample.exchange(nextTicket);
+    const auto revision = static_cast<unsigned int>((previous & sampleMask) >> 16);
+    if (revision)
+        pending = {outgoing, targetFrame, {revision, static_cast<std::uint32_t>(previous & 0xffffu) << 16, 0}};
+}
+
 void publish(std::uint64_t sampleTicket, unsigned int buttons, unsigned int revision)
 {
-    std::unique_lock lock(outgoingMutex, std::try_to_lock);
-    if (!lock || ticket != sampleTicket || !outgoing.peer) return;
-    pending = {outgoing, targetFrame, {revision, buttons << 16, 0}};
-    lock.unlock();
-    ready.notify_one();
+    if (!revision || revision > maxRevisions) return;
+    const auto value = sampleTicket | (revision << 16) | (buttons & 0xffffu);
+    auto previous = buttonSample.load();
+    while ((previous & ~sampleMask) == sampleTicket) {
+        if (buttonSample.compare_exchange_strong(previous, value)) {
+            wakeSender();
+            return;
+        }
+    }
 }
 
 void onPadSample(std::uint64_t sampleTicket, std::uint32_t pad)
@@ -179,19 +205,23 @@ void onPadSample(std::uint64_t sampleTicket, std::uint32_t pad)
     ++sampled.revision;
     pending = {outgoing, targetFrame, sampled};
     lock.unlock();
-    ready.notify_one();
+    wakeSender();
 }
 
 void dispatch(std::stop_token stop)
 {
-    std::unique_lock lock(outgoingMutex);
-    while (ready.wait(lock, stop, [] { return pending.dest.peer != 0; })) {
+    std::stop_callback stopWake(stop, wakeSender);
+    for (;;) {
+        ready.wait(false);
+        ready.clear();
         if (stop.stop_requested()) return;
-        const auto hint = pending;
-        pending = {};
-        lock.unlock();
-        send(hint.dest, hint.frame, hint.hint);
-        lock.lock();
+        PendingHint hint;
+        {
+            std::lock_guard lock(outgoingMutex);
+            takeButtonsAndArm(ticket);
+            hint = std::exchange(pending, {});
+        }
+        if (hint.dest.peer) send(hint.dest, hint.frame, hint.hint);
     }
 }
 }
@@ -215,7 +245,8 @@ void LobbyButtonHints::reset(std::uint64_t match, int epoch, std::uint64_t peer)
     helped = hurt = bothWrong = packetsReceived = 0;
     stickRangeHelped = stickRangeHurt = 0;
     std::lock_guard<std::mutex> lock(outgoingMutex);
-    ++ticket;
+    ticket += ticketStep;
+    buttonSample.store(ticket);
     outgoing = {};
     pending = {};
 }
@@ -277,7 +308,9 @@ void LobbyButtonHints::arm(int currentFrame, int delay, std::uint32_t input, boo
     std::uint64_t sampleTicket;
     {
         std::lock_guard<std::mutex> lock(outgoingMutex);
-        sampleTicket = ++ticket;
+        ticket += ticketStep;
+        sampleTicket = ticket;
+        takeButtonsAndArm(sampleTicket);
         outgoing = session;
         targetFrame = currentFrame + 1 + delay;
         if (useStick) {
