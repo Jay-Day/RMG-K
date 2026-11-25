@@ -75,6 +75,7 @@ struct Destination
 };
 
 Destination session;
+ArmInputPadSamples armInputSamples = nullptr;
 RaphnetArmHint armPlugin = nullptr;
 RaphnetArmPadSamples armPadSamples = nullptr;
 bool peerSupportsHints = false;
@@ -115,6 +116,7 @@ int targetFrame = 0;
 // The official sample starts each ticket. Only the adapter callback updates it
 // afterwards, under outgoingMutex. Each revision stands on its own after loss.
 StickAxis xAxis{}, yAxis{};
+bool sampleStick = false;
 Hint sampled;
 struct PendingHint
 {
@@ -193,8 +195,8 @@ void onPadSample(std::uint64_t sampleTicket, std::uint32_t pad)
     if (!lock || ticket != sampleTicket || !outgoing.peer || sampled.revision >= maxRevisions) return;
     const bool buttonsChanged = (sampled.pad >> 16) != (pad >> 16);
     const int x = stickValue(pad, 8), y = stickValue(pad, 0);
-    const bool xChanged = xAxis.observe(x, dashRange);
-    const bool yChanged = yAxis.observe(y, verticalStickRange);
+    const bool xChanged = sampleStick && xAxis.observe(x, dashRange);
+    const bool yChanged = sampleStick && yAxis.observe(y, verticalStickRange);
     if (!buttonsChanged && !xChanged && !yChanged) return;
     // Reserve the last two revisions for digital input on a noisy stick.
     if (!buttonsChanged && sampled.revision >= maxRevisions - 2) return;
@@ -233,6 +235,7 @@ void LobbyButtonHints::reset(std::uint64_t match, int epoch, std::uint64_t peer)
     session = {match, match && !(enabled && std::strcmp(enabled, "0") == 0) ? peer : 0,
                static_cast<unsigned int>(epoch)};
     armPlugin = session.peer ? CoreGetRaphnetArmHint() : nullptr;
+    armInputSamples = session.peer ? CoreGetInputArmPadSamples() : nullptr;
     const char* stickEnabled = std::getenv("RMGK_SMASH_STICK_HINTS");
     localSmash = session.peer && !(stickEnabled && std::strcmp(stickEnabled, "0") == 0) && isSmashRom();
     armPadSamples = localSmash ? CoreGetRaphnetArmPadSamples() : nullptr;
@@ -276,13 +279,14 @@ void LobbyButtonHints::receive(int currentFrame)
         const auto buttons = static_cast<std::uint32_t>(get(data + 17, 2));
         if (!frame && !revision && !extended) {
             peerSmash = (buttons & smashStickCapability) != 0;
-            if (!peerSupportsHints && (armPlugin || armPadSamples)) {
+            if (!peerSupportsHints && (armInputSamples || armPlugin || armPadSamples)) {
                 try {
                     sender = std::jthread(dispatch);
                 } catch (const std::system_error&) {
                     // Receiving still works if a sender thread cannot be started.
                     armPlugin = nullptr;
                     armPadSamples = nullptr;
+                    armInputSamples = nullptr;
                 }
             }
             peerSupportsHints = true;
@@ -301,10 +305,10 @@ void LobbyButtonHints::receive(int currentFrame)
     }
 }
 
-void LobbyButtonHints::arm(int currentFrame, int delay, std::uint32_t input, bool liveInput)
+void LobbyButtonHints::arm(int currentFrame, int delay, std::uint32_t input, bool liveInput, int control)
 {
-    const bool useStick = peerSmash && armPadSamples;
-    if ((!armPlugin && !useStick) || !peerSupportsHints) return;
+    const bool useStick = localSmash && peerSmash && (armInputSamples || armPadSamples);
+    if ((!armInputSamples && !armPlugin && !useStick) || !peerSupportsHints) return;
     std::uint64_t sampleTicket;
     {
         std::lock_guard<std::mutex> lock(outgoingMutex);
@@ -313,7 +317,8 @@ void LobbyButtonHints::arm(int currentFrame, int delay, std::uint32_t input, boo
         takeButtonsAndArm(sampleTicket);
         outgoing = session;
         targetFrame = currentFrame + 1 + delay;
-        if (useStick) {
+        if (armInputSamples || useStick) {
+            sampleStick = useStick;
             const int x = stickValue(input, 8), y = stickValue(input, 0);
             xAxis = {x, x};
             yAxis = {y, y};
@@ -321,7 +326,8 @@ void LobbyButtonHints::arm(int currentFrame, int delay, std::uint32_t input, boo
         }
     }
     if (liveInput && currentFrame > 0) {
-        if (useStick) armPadSamples(sampleTicket, onPadSample);
+        if (armInputSamples) armInputSamples(control, sampleTicket, onPadSample);
+        else if (useStick) armPadSamples(sampleTicket, onPadSample);
         else armPlugin(sampleTicket, input >> 16, publish);
     }
 }

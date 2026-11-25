@@ -16,6 +16,7 @@
 #include <RMG-Core/m64p/api/m64p_types.h>
 
 #include <RMG-Core/Settings.hpp>
+#include <RMG-Core/Plugins.hpp>
 #include <libusb.h>
 
 #include "Adapter.hpp"
@@ -91,6 +92,15 @@ static std::array<bool, NUM_CONTROLLERS> l_PortEnabled;
 // -1 means no controller mapped to this Control slot.
 static std::array<int, NUM_CONTROLLERS> l_ControlToPort = {-1, -1, -1, -1};
 
+struct HintRequest
+{
+    int control;
+    std::uint64_t ticket;
+    InputPadSample publish;
+    std::chrono::steady_clock::time_point expires;
+};
+static HintRequest l_Hint{}; // protected by l_ControllerStateMutex
+
 // Config polling flag (true when config dialog started the poll thread)
 static bool l_ConfigPollingStarted = false;
 
@@ -144,9 +154,9 @@ static void usb_quit(void)
 
 static void gca_reset_state(void)
 {
-    l_ControllerStateMutex.lock();
+    std::lock_guard lock(l_ControllerStateMutex);
     l_ControllerState = {0};
-    l_ControllerStateMutex.unlock();
+    l_Hint = {};
 }
 
 // Read the active config descriptor and pick the interrupt IN/OUT endpoint
@@ -302,6 +312,32 @@ static void gca_quit(void)
     }
 }
 
+static BUTTONS map_controller(const GameCubeAdapterControllerState& state, const SettingsProfile& settings);
+
+static void accept_report(const std::array<GameCubeAdapterControllerState, NUM_CONTROLLERS>& state)
+{
+    HintRequest hint;
+    BUTTONS keys;
+    {
+        std::lock_guard lock(l_ControllerStateMutex);
+        l_ControllerState = state;
+        if (!l_Hint.publish) return;
+        if (std::chrono::steady_clock::now() >= l_Hint.expires) {
+            l_Hint = {};
+            return;
+        }
+        hint = l_Hint;
+        const int port = l_ControlToPort[hint.control];
+        if (port < 0) return;
+        keys = map_controller(state[port], l_Settings[hint.control]);
+    }
+    // Same byte order as rollback_sample_input_value, including signed axes.
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&keys.Value);
+    const std::uint32_t pad = (std::uint32_t(bytes[0]) << 24) | (std::uint32_t(bytes[1]) << 16)
+        | (std::uint32_t(bytes[2]) << 8) | bytes[3];
+    hint.publish(hint.ticket, pad);
+}
+
 static void gca_poll_thread(void)
 {
     uint8_t readBuf[37] = {0};
@@ -349,9 +385,7 @@ static void gca_poll_thread(void)
             state[i].RightTrigger = readBuf[offset + 9];
         }
 
-        l_ControllerStateMutex.lock();
-        l_ControllerState = state;
-        l_ControllerStateMutex.unlock();
+        accept_report(state);
 
         l_PolledState.store(true, std::memory_order_relaxed);
 
@@ -368,7 +402,7 @@ static void load_settings(void)
     l_PortEnabled[3] = CoreSettingsGetBoolValue(SettingsID::GCAInput_Port4Enabled);
     for (int player = 0; player < NUM_CONTROLLERS; ++player)
     {
-        auto& settings = l_Settings[player];
+        SettingsProfile settings;
         settings.DeadzoneValue = static_cast<double>(ReadGameCubePlayerInt(SettingsID::GCAInput_Deadzone, player)) / 100.0;
         settings.SensitivityValue = GCASensitivityPercentToScale(ReadGameCubePlayerInt(SettingsID::GCAInput_Sensitivity, player));
         settings.CButtonTreshold = static_cast<double>(ReadGameCubePlayerInt(SettingsID::GCAInput_CButtonTreshold, player)) / 100.0;
@@ -393,6 +427,8 @@ static void load_settings(void)
         settings.Mapping.CRight  = static_cast<GCInput>(ReadGameCubePlayerInt(SettingsID::GCAInput_Map_CRight, player));
 
         ApplyGCTriggerModes(settings.Mapping, settings.LeftTriggerAnalog, settings.RightTriggerAnalog);
+        std::lock_guard lock(l_ControllerStateMutex);
+        l_Settings[player] = settings;
     }
 }
 
@@ -557,33 +593,22 @@ EXPORT void CALL ControllerCommand(int Control, unsigned char* Command)
 {
 }
 
-EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
+extern "C" EXPORT void CALL InputArmPadSamples(int control, std::uint64_t ticket, InputPadSample publish)
 {
-    if (Control < 0 || Control >= NUM_CONTROLLERS)
-    {
-        Keys->Value = 0;
-        return;
-    }
+    std::lock_guard lock(l_ControllerStateMutex);
+    l_Hint = {};
+    if (control >= 0 && control < NUM_CONTROLLERS && publish)
+        l_Hint = {control, ticket, publish, std::chrono::steady_clock::now() + std::chrono::milliseconds(16)};
+}
 
-    // Use the port mapping to translate Control index to physical port
-    int port = l_ControlToPort[Control];
-    if (port < 0)
-    {
-        Keys->Value = 0;
-        return;
-    }
-
-    l_ControllerStateMutex.lock();
-    GameCubeAdapterControllerState state = l_ControllerState[port];
-    l_ControllerStateMutex.unlock();
-
+static BUTTONS map_controller(const GameCubeAdapterControllerState& state, const SettingsProfile& settings)
+{
+    BUTTONS keys{};
     if (!state.Status)
     {
-        Keys->Value = 0;
-        return;
+        return keys;
     }
 
-    const auto& settings = l_Settings[Control];
     const GCButtonMapping& map = settings.Mapping;
     const double trigT = settings.TriggerTreshold;
     const double cT = settings.CButtonTreshold;
@@ -593,20 +618,20 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
             settings.LeftTriggerAnalog, settings.RightTriggerAnalog);
     };
 
-    Keys->A_BUTTON     = inputActive(map.A);
-    Keys->B_BUTTON     = inputActive(map.B);
-    Keys->START_BUTTON = inputActive(map.Start);
-    Keys->Z_TRIG       = inputActive(map.Z) || (map.Z2 != GCInput::None && inputActive(map.Z2));
-    Keys->L_TRIG       = inputActive(map.L);
-    Keys->R_TRIG       = inputActive(map.R);
-    Keys->U_DPAD       = inputActive(map.DpadUp);
-    Keys->D_DPAD       = inputActive(map.DpadDown);
-    Keys->L_DPAD       = inputActive(map.DpadLeft);
-    Keys->R_DPAD       = inputActive(map.DpadRight);
-    Keys->U_CBUTTON    = inputActive(map.CUp);
-    Keys->D_CBUTTON    = inputActive(map.CDown);
-    Keys->L_CBUTTON    = inputActive(map.CLeft);
-    Keys->R_CBUTTON    = inputActive(map.CRight);
+    keys.A_BUTTON     = inputActive(map.A);
+    keys.B_BUTTON     = inputActive(map.B);
+    keys.START_BUTTON = inputActive(map.Start);
+    keys.Z_TRIG       = inputActive(map.Z) || (map.Z2 != GCInput::None && inputActive(map.Z2));
+    keys.L_TRIG       = inputActive(map.L);
+    keys.R_TRIG       = inputActive(map.R);
+    keys.U_DPAD       = inputActive(map.DpadUp);
+    keys.D_DPAD       = inputActive(map.DpadDown);
+    keys.L_DPAD       = inputActive(map.DpadLeft);
+    keys.R_DPAD       = inputActive(map.DpadRight);
+    keys.U_CBUTTON    = inputActive(map.CUp);
+    keys.D_CBUTTON    = inputActive(map.CDown);
+    keys.L_CBUTTON    = inputActive(map.CLeft);
+    keys.R_CBUTTON    = inputActive(map.CRight);
 
     // Analog stick (not remappable)
     const int8_t x = static_cast<int8_t>(state.LeftStickX + 128);
@@ -616,8 +641,16 @@ EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
     const double inputY = static_cast<double>(y) / static_cast<double>(INT8_MAX);
     const double n64Max = GCA_N64_AXIS_PEAK * settings.SensitivityValue;
 
-    Keys->X_AXIS = scale_axis(inputX, settings.DeadzoneValue, n64Max);
-    Keys->Y_AXIS = scale_axis(inputY, settings.DeadzoneValue, n64Max);
+    keys.X_AXIS = scale_axis(inputX, settings.DeadzoneValue, n64Max);
+    keys.Y_AXIS = scale_axis(inputY, settings.DeadzoneValue, n64Max);
+    return keys;
+}
+
+EXPORT void CALL GetKeys(int Control, BUTTONS* Keys)
+{
+    std::lock_guard lock(l_ControllerStateMutex);
+    const int port = Control >= 0 && Control < NUM_CONTROLLERS ? l_ControlToPort[Control] : -1;
+    *Keys = port >= 0 ? map_controller(l_ControllerState[port], l_Settings[Control]) : BUTTONS{};
 }
 
 EXPORT void CALL InitiateControllers(CONTROL_INFO ControlInfo)

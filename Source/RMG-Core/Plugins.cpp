@@ -629,7 +629,13 @@ CORE_EXPORT bool CorePluginsShutdown(void)
     return ret == M64ERR_SUCCESS;
 }
 
-// The UI reads a core-owned atomic, never a possibly unloading plugin handle.
+ArmInputPadSamples CoreGetInputArmPadSamples()
+{
+    auto& plugin = get_plugin(CorePluginType::Input);
+    return plugin.IsHooked() ? std::bit_cast<ArmInputPadSamples>(
+        CoreGetLibrarySymbol(plugin.GetHandle(), "InputArmPadSamples")) : nullptr;
+}
+
 RaphnetArmHint CoreGetRaphnetArmHint()
 {
     auto& plugin = get_plugin(CorePluginType::Input);
@@ -644,6 +650,7 @@ RaphnetArmPadSamples CoreGetRaphnetArmPadSamples()
         CoreGetLibrarySymbol(plugin.GetHandle(), "RaphnetArmPadSamples")) : nullptr;
 }
 
+// The UI reads a core-owned atomic, never a possibly unloading plugin handle.
 CORE_EXPORT int CoreGetRaphnetHealth(void)
 {
     return l_RaphnetHealth.load();

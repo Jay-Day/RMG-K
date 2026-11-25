@@ -2201,7 +2201,7 @@ bool submit_local_input()
             if (g_GekkoUsingIceAdapter && player == g_GekkoLocalPlayer) {
                 const bool liveInput = g_GekkoLocalDelay == g_GekkoTargetLocalDelay &&
                     g_GekkoClientReplayMode != ClientInputReplayMode::Playing && !g_GekkoDebugInputProvider;
-                LobbyButtonHints::arm(gekko_current_frame(g_GekkoSession), g_GekkoLocalDelay, input, liveInput);
+                LobbyButtonHints::arm(gekko_current_frame(g_GekkoSession), g_GekkoLocalDelay, input, liveInput, controller);
             }
 #endif
         }
