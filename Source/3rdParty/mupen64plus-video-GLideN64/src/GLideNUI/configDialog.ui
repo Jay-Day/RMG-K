@@ -1858,6 +1858,16 @@
              </widget>
             </item>
             <item>
+             <widget class="QCheckBox" name="fbTransitionsCheckBox">
+              <property name="toolTip">
+               <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Without frame buffer emulation, the transition from the end of a match to the results screen in Super Smash Bros. (U) and Smash Remix shows black instead of the last picture of the match.&lt;/p&gt;&lt;p&gt;With this checked, frame buffer emulation turns on by itself shortly after GAME SET and off again when the results screen starts, so the matches keep the lower display delay of having it off. This has no effect while frame buffer emulation is checked.&lt;/p&gt;&lt;p&gt;[Recommended: &lt;span style=&quot; font-style:italic;&quot;&gt;Checked&lt;/span&gt;]&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+              </property>
+              <property name="text">
+               <string>When unchecked, still emulate it for the Smash 64 results screen</string>
+              </property>
+             </widget>
+            </item>
+            <item>
              <spacer name="verticalSpacer_6">
               <property name="orientation">
                <enum>Qt::Orientation::Vertical</enum>
@@ -3974,6 +3984,22 @@ The font's full name can be found in Settings&gt;Personalization&gt;Fonts</strin
     <hint type="destinationlabel">
      <x>112</x>
      <y>143</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>frameBufferCheckBox</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>fbTransitionsCheckBox</receiver>
+   <slot>setDisabled(bool)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>100</x>
+     <y>41</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>100</x>
+     <y>120</y>
     </hint>
    </hints>
   </connection>

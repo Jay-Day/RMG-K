@@ -18,6 +18,7 @@
 #include "Config.h"
 #include "TextureFilterHandler.h"
 #include "DisplayWindow.h"
+#include "FrameBufferTransitions.h"
 
 using namespace std;
 
@@ -225,6 +226,8 @@ void RSP_ProcessDList()
 		RSP.infloop = false;
 		RSP.halt = false;
 	} else {
+		FBTransitions_Update(s_skipHiddenRendering);
+
 		if (*REG.VI_ORIGIN != VI.lastOrigin) {
 			VI_UpdateSize();
 			dwnd().updateScale();
@@ -479,6 +482,11 @@ void RSP_Init()
 	else if (strstr(RSP.romname, (const char *)"PAPER MARIO") ||
 		strstr(RSP.romname, (const char *)"MARIO STORY"))
 		config.generalEmulation.hacks |= hack_paper_mario_subscreen;
+	// RMG-K: FrameBufferTransitions.cpp reads the RAM of Super Smash Bros. (U) and
+	// of Smash Remix, which is built on it (PAL builds too). Other regions differ.
+	else if (strstr(RSP.romname, (const char *)"SMASH REMIX") != nullptr ||
+		(strstr(RSP.romname, (const char *)"SMASH BROTHERS") != nullptr && HEADER[0x3E ^ 3] == 'E'))
+		config.generalEmulation.hacks |= hack_SmashTransitions;
 
 	api().FindPluginPath(RSP.pluginpath);
 

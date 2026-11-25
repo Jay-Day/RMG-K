@@ -151,6 +151,9 @@ struct Config
 		// Depth buffer copy. For Reshade.
 		u32 copyDepthToMainDepthBuffer;
 
+		// RMG-K: with emulation off, turn it on for the game transitions that need it
+		u32 enableForTransitions;
+
 		// Overscan
 		u32 enableOverscan;
 		struct {
@@ -283,6 +286,7 @@ struct Config
 #define hack_TonyHawk				(1<<21) //Hack for Tony Hawk blend mode.
 #define hack_WCWNitro				(1<<22) //Hack for WCW Nitro backgrounds.
 #define hack_fbTextureOffset		(1<<23) //Hack to offset Conker's shadow in CBFD and Bob-ombs in Mario Tennis.
+#define hack_SmashTransitions		(1<<24) //RMG-K: frame buffer emulation for Smash 64's results screen transition, see FrameBufferTransitions.cpp
 
 extern Config config;
 
