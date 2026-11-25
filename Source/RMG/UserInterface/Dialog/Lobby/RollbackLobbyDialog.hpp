@@ -307,7 +307,6 @@ private:
     // Create Room. Empty map when nothing valid is selected.
     QVariantMap selectedBrowseRom() const;
     void refreshSameGameFilter();
-    void refreshPickerInfo();
     // The local cover art for a game in the library, or empty. Cached per MD5.
     QString coverPathForMd5(const QString& md5);
 
@@ -745,7 +744,6 @@ private:
     QStackedWidget* m_playBarStack = nullptr; // game picker / ticket
     CartridgeTile*  m_pickerTile   = nullptr;
     ElidedLabel*    m_pickerName   = nullptr;
-    QLabel*         m_pickerInfo   = nullptr;
     IconBadge*      m_ticketBadge  = nullptr;
     Spinner*        m_ticketSpinner = nullptr;
     QLabel*         m_ticketTitle  = nullptr;

@@ -1092,6 +1092,10 @@ LiveGallery::LiveGallery(QWidget* parent)
     head->addWidget(m_sortCombo);
     root->addWidget(header);
 
+    auto* rule = new QFrame(this);
+    rule->setObjectName("FieldRule");
+    root->addWidget(rule);
+
     m_scroll = new QScrollArea(this);
     m_scroll->setObjectName("LiveScroll");
     m_scroll->setFrameShape(QFrame::NoFrame);

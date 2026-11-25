@@ -588,11 +588,12 @@ QString styleSheet()
         QFrame#RomPicker:focus { border-color: @accent; }
         QComboBox#BrowseRomCombo { border-radius: 9px; padding: 0; }
         QComboBox#BrowseRomCombo:hover:enabled { background-color: @panel; border-color: @accent; }
-        QComboBox#BrowseRomCombo::drop-down { width: 28px; }
+        QComboBox#BrowseRomCombo::drop-down { width: 32px; }
+        QComboBox#BrowseRomCombo::down-arrow { width: 20px; height: 20px; }
         QFrame#BrowseGamePopup QListView {
             background: transparent; border: none; outline: 0;
         }
-        QFrame#BrowseGamePopup QListView::item { padding: 6px 9px; border-radius: 6px; color: @ink2; }
+        QFrame#BrowseGamePopup QListView::item { padding: 2px 9px; border-radius: 6px; color: @ink2; }
         QFrame#BrowseGamePopup QListView::item:hover { background-color: @raise; color: @ink; }
         QFrame#BrowseGamePopup QListView::item:selected { background-color: @accentTint; color: @ink; }
 

@@ -600,6 +600,7 @@ namespace
             m_popup->setWindowFlags(Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
             m_popup->setObjectName("BrowseGamePopup");
             m_popup->setAttribute(Qt::WA_TranslucentBackground);
+            m_popup->setMouseTracking(true);
             m_popup->setFont(LobbyTheme::uiFont(12));
             auto* layout = new QVBoxLayout(m_popup);
             layout->setContentsMargins(7, 7, 7, 7);
@@ -668,6 +669,8 @@ namespace
                                  std::clamp(y, available.top(), available.bottom() + 1 - popupHeight),
                                  popupWidth, popupHeight);
             m_popup->show();
+            m_popup->setCursor(rect().contains(mapFromGlobal(QCursor::pos()))
+                ? Qt::PointingHandCursor : Qt::ArrowCursor);
             m_results->scrollTo(m_results->currentIndex());
             m_search->setFocus(Qt::PopupFocusReason);
         }
@@ -681,11 +684,22 @@ namespace
         }
 
     protected:
+        void mousePressEvent(QMouseEvent* event) override
+        {
+            if (event->button() == Qt::LeftButton && m_popup->isVisible())
+            {
+                hidePopup();
+                event->accept();
+                return;
+            }
+            QComboBox::mousePressEvent(event);
+        }
+
         void paintEvent(QPaintEvent*) override
         {
             QStyleOptionComboBox option;
             initStyleOption(&option);
-            // The art, title and room counts are laid out inside the selector.
+            // The art and title are laid out inside the selector.
             option.currentText.clear();
             QPainter painter(this);
             style()->drawComplexControl(QStyle::CC_ComboBox, &option, &painter, this);
@@ -693,8 +707,30 @@ namespace
 
         bool eventFilter(QObject* watched, QEvent* event) override
         {
-            if (watched == m_popup && event->type() == QEvent::Hide)
-                QComboBox::hidePopup();
+            if (watched == m_popup)
+            {
+                if (event->type() == QEvent::Hide)
+                    QComboBox::hidePopup();
+                else if (event->type() == QEvent::MouseMove)
+                {
+                    const auto* mouse = static_cast<QMouseEvent*>(event);
+                    m_popup->setCursor(rect().contains(mapFromGlobal(mouse->globalPosition().toPoint()))
+                        ? Qt::PointingHandCursor : Qt::ArrowCursor);
+                }
+                else if (event->type() == QEvent::MouseButtonPress ||
+                         event->type() == QEvent::MouseButtonDblClick)
+                {
+                    const auto* mouse = static_cast<QMouseEvent*>(event);
+                    if (mouse->button() == Qt::LeftButton &&
+                        rect().contains(mapFromGlobal(mouse->globalPosition().toPoint())))
+                    {
+                        // Qt otherwise replays the outside press on the picker and opens it again.
+                        m_popup->setAttribute(Qt::WA_NoMouseReplay);
+                        hidePopup();
+                        return true;
+                    }
+                }
+            }
 
             if (watched == m_search && event->type() == QEvent::KeyPress)
             {
@@ -1197,20 +1233,17 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
     picker->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     picker->setFixedHeight(44);
     auto* pickerLay = new QHBoxLayout(picker);
-    pickerLay->setContentsMargins(7, 0, 28, 0);
+    pickerLay->setContentsMargins(7, 0, 32, 0);
     pickerLay->setSpacing(10);
     m_pickerTile = new CartridgeTile(CartridgeTile::Size::Small, picker);
     transparentForMouse(m_pickerTile);
     pickerLay->addWidget(m_pickerTile);
 
-    auto* pickerText = new QVBoxLayout;
-    pickerText->setAlignment(Qt::AlignVCenter);
-    pickerText->setSpacing(1);
     m_pickerName = new ElidedLabel(Role::Ink, picker);
     m_pickerName->setFont(LobbyTheme::uiFont(13, QFont::Bold));
     m_pickerName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     transparentForMouse(m_pickerName);
-    pickerText->addWidget(m_pickerName);
+    pickerLay->addWidget(m_pickerName, 1);
     // Remember the last game picked here — Create Room and Quick Match both key
     // off this combo, so persisting on selection (not just on Create) means the
     // choice survives across sessions however the user proceeds. populateBrowseRoms
@@ -1226,14 +1259,6 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
                 s.endGroup();
                 refreshSameGameFilter();
             });
-    m_pickerInfo = new QLabel(picker);
-    m_pickerInfo->setFont(LobbyTheme::uiFont(11));
-    m_pickerInfo->setTextFormat(Qt::RichText);
-    m_pickerInfo->setProperty("role", "muted");
-    m_pickerInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    transparentForMouse(m_pickerInfo);
-    pickerText->addWidget(m_pickerInfo);
-    pickerLay->addLayout(pickerText, 1);
     idleLay->addWidget(picker, 1);
 
     m_quickMatchBtn = new LobbyButton(tr("Quick Match"), LobbyButton::Kind::Primary, idle);
@@ -2714,7 +2739,6 @@ void RollbackLobbyDialog::refreshSameGameFilter()
         const QString name = m_browseRomCombo->currentText();
         m_pickerName->setText(name);
         m_pickerName->setRole(rom.isEmpty() ? Role::Muted : Role::Ink);
-        m_browseRomCombo->setToolTip(name);
         m_pickerTile->setGame(name, coverPathForMd5(rom.value("md5").toString()));
     }
     if (!m_liveGallery || !m_roomsColumn)
@@ -3498,39 +3522,6 @@ void RollbackLobbyDialog::onPlayBarActionClicked()
     }
 }
 
-// How much is going on for the game selected in the picker.
-void RollbackLobbyDialog::refreshPickerInfo()
-{
-    if (!m_pickerInfo || !m_client)
-        return;
-    const QVariantMap rom = selectedBrowseRom();
-    // Colored here, not by the stylesheet: inside the combo box the label takes
-    // the app's text color, which is white when the app is dark and the lobby light.
-    const QString muted = LobbyTheme::tokens().muted.name();
-    if (rom.isEmpty() || m_client->state() != LobbyClient::ConnectionState::Connected)
-    {
-        m_pickerInfo->setText(rom.isEmpty() && !m_roms.isEmpty()
-            ? QString("<span style='color:%1;'>%2</span>").arg(muted, tr("Pick a game from your library").toHtmlEscaped())
-            : QString());
-        return;
-    }
-    const QString md5 = rom.value("md5").toString();
-    int rooms = 0;
-    int live = 0;
-    for (const auto& room : m_client->rooms())
-    {
-        if (!md5.isEmpty() && md5.compare(room.romMd5, Qt::CaseInsensitive) != 0)
-            continue;
-        if (room.state == QLatin1String("in_game"))
-            ++live;
-        else
-            ++rooms;
-    }
-    const QString strong = LobbyTheme::tokens().ink2.name();
-    m_pickerInfo->setText(QString("<span style='color:%6;'><b style='color:%1;'>%2</b> %3 · <b style='color:%1;'>%4</b> %5</span>")
-        .arg(strong).arg(rooms).arg(rooms == 1 ? tr("room") : tr("rooms")).arg(live).arg(tr("live")).arg(muted));
-}
-
 void RollbackLobbyDialog::updateServerMeta()
 {
     if (!m_serverMeta) return;
@@ -4090,7 +4081,6 @@ void RollbackLobbyDialog::onRoomListChanged()
 
     m_liveGallery->setMatches(matches);
     m_roomsColumn->setRooms(rooms);
-    refreshPickerInfo();
     updateServerMeta();
     refreshPlayBar();   // seat counts may have changed in our own room
 }
