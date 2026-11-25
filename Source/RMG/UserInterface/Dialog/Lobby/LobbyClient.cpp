@@ -983,6 +983,9 @@ void LobbyClient::onWsConnected()
     data["spectatorChat"] = true;
     data["saveData"] = true;
     data["gameOptions"] = true;
+    // A room with more options than older clients take keeps them out of its
+    // matches (CoreGameOptionsLegacyMaxOptions).
+    data["gameOptionsMax"] = CoreGameOptionsMaxOptions;
     data["pingCheck"] = true;
     if (m_challengesOff)
         data["noChallenges"] = true;
@@ -1301,6 +1304,7 @@ void LobbyClient::handleRoomList(const QJsonObject& data)
         r.maxPing      = qMax(0, o.value("maxPing").toInt());
         r.wiredOnly    = o.value("wiredOnly").toBool();
         r.gameOptions  = parseGameOptions(o.value("gameOptions"));
+        r.gameOptionsPreset = parseGameOptionsPreset(o.value("gameOptionsPreset"));
         for (const auto& n : o.value("playerNames").toArray())
             r.playerNames << n.toString();
         m_rooms.insert(r.id, r);
@@ -4501,7 +4505,7 @@ void LobbyClient::updateRoomSaveData(bool enabled, const QString& label, const Q
     sendEnvelope("ROOM_UPDATE_SAVE_DATA", d);
 }
 
-void LobbyClient::updateRoomGameOptions(const QList<LobbyGameOption>& options)
+void LobbyClient::updateRoomGameOptions(const QList<LobbyGameOption>& options, const LobbyGameOption& preset)
 {
     QJsonArray list;
     for (const LobbyGameOption& option : options)
@@ -4513,6 +4517,14 @@ void LobbyClient::updateRoomGameOptions(const QList<LobbyGameOption>& options)
     }
     QJsonObject d;
     d["options"] = list;
+    // Servers from before presets ignore it; the room just shows the options.
+    if (!preset.id.isEmpty() && !options.isEmpty())
+    {
+        QJsonObject p;
+        p["id"] = preset.id;
+        p["label"] = preset.label;
+        d["preset"] = p;
+    }
     sendEnvelope("ROOM_UPDATE_GAME_OPTIONS", d);
 }
 
@@ -4527,6 +4539,15 @@ QList<LobbyClient::LobbyGameOption> LobbyClient::parseGameOptions(const QJsonVal
             options.append(option);
     }
     return options;
+}
+
+LobbyClient::LobbyGameOption LobbyClient::parseGameOptionsPreset(const QJsonValue& value)
+{
+    const QJsonObject o = value.toObject();
+    LobbyGameOption preset{ o.value("id").toString(), o.value("label").toString() };
+    if (preset.id.isEmpty() || preset.label.isEmpty())
+        return {};
+    return preset;
 }
 
 void LobbyClient::updateLocalFrameDelay(int delay, bool delayAuto)

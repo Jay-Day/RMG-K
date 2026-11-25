@@ -1,4 +1,5 @@
-// Smash Remix 2.0.1: "Vanilla only" game option
+// Smash Remix 2.0.1: "Vanilla CSS" game option (id vanilla-css; it was
+// called "Vanilla only", id vanilla-only, before presets)
 //
 // Limits character selection to the original 12 fighters (ids 0x00-0x0B:
 // Mario, Fox, DK, Samus, Luigi, Link, Yoshi, Captain Falcon, Kirby, Pikachu,
@@ -10,7 +11,7 @@
 // non-original character, on every select screen. Part 2 (edits 9-29) brings
 // back the original VS select screen.
 //
-// This file is the source of the "vanilla-only" patches in
+// This file is the source of the "vanilla-css" patches in
 // ../smash-remix-2.0.1.json. To check or regenerate them, assemble it over a
 // copy of the ROM with the bass v14 that ships with Remix
 // (smashremixprivate/assembler/bass.exe):

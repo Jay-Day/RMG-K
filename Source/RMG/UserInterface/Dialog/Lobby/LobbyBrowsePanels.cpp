@@ -77,16 +77,15 @@ namespace
         return note;
     }
 
-    // A room's or match's game options, on a tag beside it: they decide what
-    // can be played, so they show before anyone joins or watches. The first
-    // one's name, and how many more; the tip names them all.
-    void applyGameOptionsTag(StatusTag* tag, const QStringList& labels, const QString& tip)
+    // A room's or match's game settings, on a tag beside it: they decide what
+    // can be played, so they show before anyone joins or watches. The preset's
+    // name, the one option's, or "Custom (n)"; the tip names every option.
+    void applyGameOptionsTag(StatusTag* tag, const QString& text, const QString& tip)
     {
-        tag->setVisible(!labels.isEmpty());
-        if (labels.isEmpty())
+        tag->setVisible(!text.isEmpty());
+        if (text.isEmpty())
             return;
-        tag->setTag(StatusTag::Kind::Amber, labels.size() > 1
-            ? QStringLiteral("%1 +%2").arg(labels.first()).arg(labels.size() - 1) : labels.first());
+        tag->setTag(StatusTag::Kind::Amber, text);
         tag->setToolTip(tip);
     }
 } // namespace

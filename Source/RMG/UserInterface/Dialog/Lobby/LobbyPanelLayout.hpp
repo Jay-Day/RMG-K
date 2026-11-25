@@ -64,7 +64,8 @@ public:
     // Builds the saved arrangement, or today's when there's none or it can't be used.
     void restore();
     void save();
-    // Today's arrangement and sizes; Live and Open rooms keep their direction.
+    // Today's arrangement, sizes and order of Live and Open rooms; they keep
+    // their direction.
     void reset();
 
     // The account menu's "Side by side" / "Vertical": Live and Open rooms
@@ -157,7 +158,8 @@ private:
     QPointer<QWidget> m_players;
     QPointer<QWidget> m_chat;
     // Open rooms first (left of or above Live), for side by side and stacked.
-    bool m_roomsFirst[2] = { false, false };
+    // Until the player moves them: Live on the left, Open rooms on top.
+    bool m_roomsFirst[2] = { false, true };
 
     bool m_rebuilding = false;
     bool m_filtering = false;

@@ -580,6 +580,12 @@ QString styleSheet()
         QComboBox::drop-down { border: none; width: 16px; }
         QComboBox::down-arrow { image: url(@chevron); width: 12px; height: 12px; }
 
+        /* Guests (and the host mid-match) read the room's game settings here:
+           a choice only the host can change, not a faded control. */
+        QComboBox#GameSettingsCombo:disabled { color: @ink2; background-color: @tint; }
+        QComboBox#GameSettingsCombo::drop-down:disabled { width: 0; }
+        QComboBox#GameSettingsCombo::down-arrow:disabled { image: none; width: 0; height: 0; }
+
         QComboBox#ChallengeRomCombo { background: transparent; border: none; padding: 0; color: @ink; }
         QComboBox#ChallengeRomCombo::drop-down { width: 0; border: none; }
         QComboBox#ChallengeRomCombo::down-arrow { image: none; width: 0; height: 0; }

@@ -1,6 +1,6 @@
 /*
  * Netplay game options: per-game choices a rollback match's host can turn on
- * (say, "Vanilla only" for Smash Remix). Each is a set of ROM patches that
+ * (say, "Vanilla CSS" for Smash Remix). Each is a set of ROM patches that
  * every player, late joiner, live viewer and replay applies to the game before
  * it boots. Packs of them are JSON files in Data/GameOptions, keyed by ROM
  * MD5; only the host needs one, since the resolved patches travel with the
@@ -16,7 +16,11 @@
 #include <vector>
 
 // What one match may carry. Received manifests are held to the same limits.
-constexpr int CoreGameOptionsMaxOptions = 8;
+constexpr int CoreGameOptionsMaxOptions = 16;
+// Clients from before presets refuse a manifest or replay with more options
+// than this, so a match only carries more when every client in it takes them
+// (the lobby's HELLO gameOptionsMax).
+constexpr int CoreGameOptionsLegacyMaxOptions = 8;
 constexpr int CoreGameOptionMaxPatches = 256;
 constexpr size_t CoreGameOptionsMaxPatchBytes = 64 * 1024;
 constexpr size_t CoreGameOptionMaxIdLength = 32;
@@ -78,6 +82,39 @@ struct CoreGameOptionInfo
     // The pack it's from, and the pack's name for the game.
     std::string PackId;
     std::string Game;
+    // The id of the group it's listed under (CoreGetGameOptionGroups), or
+    // empty for none.
+    std::string Group;
+    // Options that must be on with it, and options that can't be on with it,
+    // by id. Both only name options offered for the same ROM. Conflicts go
+    // both ways: an option lists the ones that name it too.
+    std::vector<std::string> Requires;
+    std::vector<std::string> Conflicts;
+};
+
+// A heading a pack sorts its options under ("Characters", "Stages").
+struct CoreGameOptionGroupInfo
+{
+    std::string Id;
+    // In the language asked for when the pack has it, else English.
+    std::string Label;
+    std::string EnglishLabel;
+};
+
+// A named set of a pack's options ("1v1 Vanilla").
+struct CoreGameOptionPresetInfo
+{
+    // [a-z0-9-], 1 to 32 characters, like an option id.
+    std::string Id;
+    // In the language asked for when the pack has it, else English.
+    std::string Label;
+    std::string Description;
+    std::string EnglishLabel;
+    std::string EnglishDescription;
+    // The ids of the options it turns on, in pack order: at least one, and a
+    // set CoreResolveGameOptions takes.
+    std::vector<std::string> Options;
+    std::string PackId;
 };
 
 // Reads the game options packs again: <shared data>/GameOptions/*.json, then
@@ -91,11 +128,20 @@ void CoreReloadGameOptionPacks(void);
 // UI thread.
 std::vector<CoreGameOptionInfo> CoreGetGameOptions(const std::string& romMd5, const std::string& language = std::string());
 
+// The groups the packs list this ROM's options under, in pack order. An
+// option whose Group isn't among them has none. UI thread.
+std::vector<CoreGameOptionGroupInfo> CoreGetGameOptionGroups(const std::string& romMd5, const std::string& language = std::string());
+
+// The presets the packs offer for this ROM, in pack order. Each names only
+// options CoreGetGameOptions offers, and no two have the same options. UI thread.
+std::vector<CoreGameOptionPresetInfo> CoreGetGameOptionPresets(const std::string& romMd5, const std::string& language = std::string());
+
 // Resolves the chosen option ids into what a match carries, checking every
 // patch against the ROM file at rom (any format the emulator opens). Fails,
 // with CoreGetError() saying why, for an id the ROM isn't offered, an option
-// whose bytes don't match this ROM, or options that change the same bytes.
-// No ids resolve to no options. UI thread.
+// whose bytes don't match this ROM, options that change the same bytes or
+// conflict, or an option without one it requires. No ids resolve to no
+// options. UI thread.
 bool CoreResolveGameOptions(const std::filesystem::path& rom, const std::string& romMd5,
                             const std::vector<std::string>& ids, CoreNetplayGameOptions& options);
 

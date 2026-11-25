@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <sstream>
 #include <string_view>
@@ -37,14 +38,38 @@ constexpr uint64_t kMaxRomBytes = 0x0FC00000;
 constexpr std::uintmax_t kMaxPackFileBytes = 4 * 1024 * 1024;
 constexpr int kMaxJsonDepth = 32;
 
+// language code -> (label, description), either may be empty
+using Translations = std::map<std::string, std::pair<std::string, std::string>>;
+
 struct LoadedOption
 {
     std::string Id;
     std::string Label;
     std::string Description;
-    // language code -> (label, description), either may be empty
-    std::map<std::string, std::pair<std::string, std::string>> Translations;
+    Translations Text;
     std::vector<CoreGameOptionPatch> Patches;
+    std::string Group;
+    // Ids of other options in the same pack. Conflicts are made symmetric
+    // when the pack loads.
+    std::vector<std::string> Requires;
+    std::vector<std::string> Conflicts;
+};
+
+struct LoadedGroup
+{
+    std::string Id;
+    std::string Label;
+    Translations Text;
+};
+
+struct LoadedPreset
+{
+    std::string Id;
+    std::string Label;
+    std::string Description;
+    Translations Text;
+    // In pack order.
+    std::vector<std::string> Options;
 };
 
 struct LoadedPack
@@ -53,6 +78,8 @@ struct LoadedPack
     std::string Game;
     std::vector<std::string> RomMd5; // upper case
     std::vector<LoadedOption> Options;
+    std::vector<LoadedGroup> Groups;
+    std::vector<LoadedPreset> Presets;
     std::filesystem::path File;
 };
 
@@ -671,6 +698,83 @@ static void log_pack(const std::filesystem::path& file, const std::string& messa
         "Game options: " + file.filename().string() + ": " + message);
 }
 
+// An entry's "translations": { "ja": { "label": ..., "description": ... } }.
+// Bad entries are left out; the English text stands in for them.
+static void parse_translations(const JsonValue& json, Translations& out)
+{
+    const JsonValue* translations = json.find("translations");
+    if (translations == nullptr || translations->type != JsonValue::Type::Object)
+    {
+        return;
+    }
+    for (const auto& [language, entry] : translations->object)
+    {
+        if (entry.type != JsonValue::Type::Object || language.empty())
+        {
+            continue;
+        }
+        const std::string* translatedLabel = string_member(entry, "label");
+        const std::string* translatedDescription = string_member(entry, "description");
+        std::pair<std::string, std::string> text;
+        if (translatedLabel != nullptr && valid_label(*translatedLabel))
+        {
+            text.first = *translatedLabel;
+        }
+        if (translatedDescription != nullptr)
+        {
+            text.second = *translatedDescription;
+        }
+        out[CoreLowerString(language)] = std::move(text);
+    }
+}
+
+// The translation for language ("ja_JP" falls back to "ja"), if there is one.
+static const std::pair<std::string, std::string>* find_translation(const Translations& text, const std::string& language)
+{
+    const std::string exact = CoreLowerString(language);
+    if (exact.empty())
+    {
+        return nullptr;
+    }
+    auto translation = text.find(exact);
+    if (translation == text.end())
+    {
+        translation = text.find(exact.substr(0, exact.find_first_of("_-")));
+    }
+    return translation != text.end() ? &translation->second : nullptr;
+}
+
+// "requires" or "conflicts": option ids. Anything that can't be an id is
+// logged and left out; whether the ids name options is checked later.
+static std::vector<std::string> parse_id_list(const JsonValue& json, std::string_view key, const std::string& optionId,
+                                              const std::filesystem::path& file)
+{
+    std::vector<std::string> ids;
+    const JsonValue* list = json.find(key);
+    if (list == nullptr)
+    {
+        return ids;
+    }
+    if (list->type != JsonValue::Type::Array)
+    {
+        log_pack(file, "option \"" + optionId + "\": " + std::string(key) + " isn't a list, ignored");
+        return ids;
+    }
+    for (const JsonValue& entry : list->array)
+    {
+        if (entry.type != JsonValue::Type::String || !valid_option_id(entry.text))
+        {
+            log_pack(file, "option \"" + optionId + "\": ignored a " + std::string(key) + " entry that isn't an option id");
+            continue;
+        }
+        if (std::find(ids.begin(), ids.end(), entry.text) == ids.end())
+        {
+            ids.push_back(entry.text);
+        }
+    }
+    return ids;
+}
+
 static bool parse_option(const JsonValue& json, LoadedOption& option, std::string& error)
 {
     if (json.type != JsonValue::Type::Object)
@@ -698,30 +802,7 @@ static bool parse_option(const JsonValue& json, LoadedOption& option, std::strin
     {
         option.Description = *description;
     }
-
-    if (const JsonValue* translations = json.find("translations");
-        translations != nullptr && translations->type == JsonValue::Type::Object)
-    {
-        for (const auto& [language, entry] : translations->object)
-        {
-            if (entry.type != JsonValue::Type::Object || language.empty())
-            {
-                continue;
-            }
-            const std::string* translatedLabel = string_member(entry, "label");
-            const std::string* translatedDescription = string_member(entry, "description");
-            std::pair<std::string, std::string> text;
-            if (translatedLabel != nullptr && valid_label(*translatedLabel))
-            {
-                text.first = *translatedLabel;
-            }
-            if (translatedDescription != nullptr)
-            {
-                text.second = *translatedDescription;
-            }
-            option.Translations[CoreLowerString(language)] = std::move(text);
-        }
-    }
+    parse_translations(json, option.Text);
 
     const JsonValue* patches = json.find("patches");
     if (patches == nullptr || patches->type != JsonValue::Type::Array || patches->array.empty())
@@ -801,6 +882,290 @@ static bool parse_option(const JsonValue& json, LoadedOption& option, std::strin
     return true;
 }
 
+static bool contains(const std::vector<std::string>& ids, const std::string& id)
+{
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+static bool options_overlap(const LoadedOption& a, const LoadedOption& b)
+{
+    for (const CoreGameOptionPatch& patchA : a.Patches)
+    {
+        for (const CoreGameOptionPatch& patchB : b.Patches)
+        {
+            if (patches_overlap(patchA, patchB))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool options_conflict(const LoadedOption& a, const LoadedOption& b)
+{
+    return contains(a.Conflicts, b.Id) || contains(b.Conflicts, a.Id);
+}
+
+// The rules for options that are on together: at most CoreGameOptionsMaxOptions
+// of them and 64 KiB of changes in all, everything each one requires on too,
+// and no two that conflict or change the same bytes. labels names options
+// that aren't in set, for the message. The error is a sentence for the host.
+static bool check_option_set(const std::vector<const LoadedOption*>& set,
+                             const std::vector<const LoadedOption*>& labels, std::string& error)
+{
+    const auto labelOf = [&](const std::string& id) {
+        for (const LoadedOption* option : labels)
+        {
+            if (option->Id == id)
+                return option->Label;
+        }
+        return id;
+    };
+
+    if (set.size() > size_t(CoreGameOptionsMaxOptions))
+    {
+        error = "At most " + std::to_string(CoreGameOptionsMaxOptions) + " game options can be on at once.";
+        return false;
+    }
+    size_t totalBytes = 0;
+    for (size_t i = 0; i < set.size(); i++)
+    {
+        const LoadedOption& option = *set[i];
+        for (const std::string& required : option.Requires)
+        {
+            const bool on = std::any_of(set.begin(), set.end(),
+                [&required](const LoadedOption* other) { return other->Id == required; });
+            if (!on)
+            {
+                error = "\"" + option.Label + "\" needs \"" + labelOf(required) + "\" on too.";
+                return false;
+            }
+        }
+        for (size_t j = 0; j < i; j++)
+        {
+            const LoadedOption& other = *set[j];
+            if (options_conflict(option, other))
+            {
+                error = "\"" + other.Label + "\" and \"" + option.Label + "\" can't be on together.";
+                return false;
+            }
+            if (options_overlap(option, other))
+            {
+                error = "\"" + other.Label + "\" and \"" + option.Label +
+                    "\" change the same part of the game, so they can't be on together.";
+                return false;
+            }
+        }
+        for (const CoreGameOptionPatch& patch : option.Patches)
+        {
+            totalBytes += patch.Bytes.size();
+        }
+    }
+    if (totalBytes > CoreGameOptionsMaxPatchBytes)
+    {
+        error = "Together these game options change more than 64 KiB of the game.";
+        return false;
+    }
+    return true;
+}
+
+static bool parse_group(const JsonValue& json, LoadedGroup& group, std::string& error)
+{
+    const std::string* id = json.type == JsonValue::Type::Object ? string_member(json, "id") : nullptr;
+    const std::string* label = json.type == JsonValue::Type::Object ? string_member(json, "label") : nullptr;
+    if (id == nullptr || !valid_option_id(*id))
+    {
+        error = "a group has no valid id ([a-z0-9-], up to 32)";
+        return false;
+    }
+    if (label == nullptr || !valid_label(*label))
+    {
+        error = "group \"" + *id + "\" has no valid label";
+        return false;
+    }
+    group.Id = *id;
+    group.Label = *label;
+    parse_translations(json, group.Text);
+    return true;
+}
+
+// The options' groups, requires and conflicts, once every option is parsed.
+// options is the file's whole list, usable entries or not.
+static void link_options(const JsonValue& options, LoadedPack& pack)
+{
+    std::vector<std::string> declared;
+    for (const JsonValue& entry : options.array)
+    {
+        if (const std::string* id = string_member(entry, "id"))
+            declared.push_back(*id);
+    }
+    const auto loaded = [&pack](const std::string& id) -> LoadedOption* {
+        for (LoadedOption& option : pack.Options)
+        {
+            if (option.Id == id)
+                return &option;
+        }
+        return nullptr;
+    };
+
+    for (LoadedOption& option : pack.Options)
+    {
+        const bool knownGroup = std::any_of(pack.Groups.begin(), pack.Groups.end(),
+            [&option](const LoadedGroup& group) { return group.Id == option.Group; });
+        if (!option.Group.empty() && !knownGroup)
+        {
+            log_pack(pack.File, "option \"" + option.Id + "\" names group \"" + option.Group + "\", which the pack doesn't list");
+            option.Group.clear();
+        }
+        for (std::vector<std::string>* list : { &option.Requires, &option.Conflicts })
+        {
+            const std::string what = list == &option.Requires ? "requires" : "conflicts";
+            list->erase(std::remove_if(list->begin(), list->end(), [&](const std::string& id) {
+                if (id == option.Id || !contains(declared, id))
+                {
+                    log_pack(pack.File, "option \"" + option.Id + "\": ignored " + what + " \"" + id + "\" (" +
+                        (id == option.Id ? std::string("itself") : std::string("no such option")) + ")");
+                    return true;
+                }
+                // A skipped option can't be on, so there's nothing to conflict with.
+                return list == &option.Conflicts && loaded(id) == nullptr;
+            }), list->end());
+        }
+    }
+
+    // Options that change the same bytes can't be on together, declared or not.
+    for (size_t i = 0; i < pack.Options.size(); i++)
+    {
+        for (size_t j = 0; j < i; j++)
+        {
+            LoadedOption& a = pack.Options[i];
+            LoadedOption& b = pack.Options[j];
+            if (!options_conflict(a, b) && options_overlap(a, b))
+            {
+                log_pack(pack.File, "options \"" + b.Id + "\" and \"" + a.Id +
+                    "\" change the same bytes but don't list each other in conflicts; treating them as conflicting");
+                a.Conflicts.push_back(b.Id);
+            }
+        }
+    }
+
+    // An option that needs one that was skipped, or needs two that conflict,
+    // can never be on. Dropping it can strand others, so repeat until stable.
+    for (bool dropped = true; dropped;)
+    {
+        dropped = false;
+        for (auto it = pack.Options.begin(); it != pack.Options.end(); ++it)
+        {
+            std::vector<const LoadedOption*> needed = { &*it };
+            std::string reason;
+            for (size_t k = 0; k < needed.size() && reason.empty(); k++)
+            {
+                for (const std::string& id : needed[k]->Requires)
+                {
+                    const LoadedOption* required = loaded(id);
+                    if (required == nullptr)
+                    {
+                        reason = "it needs \"" + id + "\", which was skipped";
+                        break;
+                    }
+                    if (std::find(needed.begin(), needed.end(), required) == needed.end())
+                        needed.push_back(required);
+                }
+            }
+            for (size_t a = 0; a < needed.size() && reason.empty(); a++)
+            {
+                for (size_t b = 0; b < a && reason.empty(); b++)
+                {
+                    if (options_conflict(*needed[a], *needed[b]))
+                        reason = "it needs \"" + needed[a]->Id + "\" and \"" + needed[b]->Id + "\" on together, which conflict";
+                }
+            }
+            if (!reason.empty())
+            {
+                log_pack(pack.File, "skipped option \"" + it->Id + "\": " + reason);
+                pack.Options.erase(it);
+                dropped = true;
+                break;
+            }
+        }
+    }
+
+    // Conflicts go both ways.
+    for (LoadedOption& option : pack.Options)
+    {
+        for (const std::string& id : option.Conflicts)
+        {
+            LoadedOption* other = loaded(id);
+            if (other != nullptr && !contains(other->Conflicts, option.Id))
+                other->Conflicts.push_back(option.Id);
+        }
+    }
+}
+
+static bool parse_preset(const JsonValue& json, const LoadedPack& pack, LoadedPreset& preset, std::string& error)
+{
+    const std::string* id = json.type == JsonValue::Type::Object ? string_member(json, "id") : nullptr;
+    if (id == nullptr || !valid_option_id(*id))
+    {
+        error = "a preset has no valid id ([a-z0-9-], up to 32)";
+        return false;
+    }
+    preset.Id = *id;
+    const std::string* label = string_member(json, "label");
+    if (label == nullptr || !valid_label(*label))
+    {
+        error = "preset \"" + preset.Id + "\" has no valid label";
+        return false;
+    }
+    preset.Label = *label;
+    if (const std::string* description = string_member(json, "description"))
+        preset.Description = *description;
+    parse_translations(json, preset.Text);
+
+    const JsonValue* options = json.find("options");
+    if (options == nullptr || options->type != JsonValue::Type::Array || options->array.empty())
+    {
+        error = "preset \"" + preset.Id + "\" turns no options on (the unchanged game needs no preset)";
+        return false;
+    }
+    std::vector<std::string> ids;
+    for (const JsonValue& entry : options->array)
+    {
+        const bool known = entry.type == JsonValue::Type::String &&
+            std::any_of(pack.Options.begin(), pack.Options.end(),
+                [&entry](const LoadedOption& option) { return option.Id == entry.text; });
+        if (!known)
+        {
+            error = "preset \"" + preset.Id + "\" names \"" +
+                (entry.type == JsonValue::Type::String ? entry.text : std::string("?")) +
+                "\", which isn't a usable option of this pack";
+            return false;
+        }
+        if (!contains(ids, entry.text))
+            ids.push_back(entry.text);
+    }
+
+    std::vector<const LoadedOption*> set;
+    std::vector<const LoadedOption*> all;
+    for (const LoadedOption& option : pack.Options)
+    {
+        all.push_back(&option);
+        if (contains(ids, option.Id))
+        {
+            set.push_back(&option);
+            preset.Options.push_back(option.Id);
+        }
+    }
+    std::string why;
+    if (!check_option_set(set, all, why))
+    {
+        error = "preset \"" + preset.Id + "\" can't be used: " + why;
+        return false;
+    }
+    return true;
+}
+
 static bool parse_pack(const std::string& text, LoadedPack& pack, std::string& error)
 {
     JsonValue root;
@@ -858,6 +1223,35 @@ static bool parse_pack(const std::string& text, LoadedPack& pack, std::string& e
         return false;
     }
 
+    if (const JsonValue* groups = root.find("groups"); groups != nullptr)
+    {
+        if (groups->type != JsonValue::Type::Array)
+        {
+            log_pack(pack.File, "groups isn't a list, ignored");
+        }
+        else
+        {
+            for (const JsonValue& entry : groups->array)
+            {
+                LoadedGroup group;
+                std::string groupError;
+                if (!parse_group(entry, group, groupError))
+                {
+                    log_pack(pack.File, "skipped a group: " + groupError);
+                    continue;
+                }
+                const bool duplicate = std::any_of(pack.Groups.begin(), pack.Groups.end(),
+                    [&group](const LoadedGroup& other) { return other.Id == group.Id; });
+                if (duplicate)
+                {
+                    log_pack(pack.File, "skipped a second group \"" + group.Id + "\"");
+                    continue;
+                }
+                pack.Groups.push_back(std::move(group));
+            }
+        }
+    }
+
     const JsonValue* options = root.find("options");
     if (options == nullptr || options->type != JsonValue::Type::Array)
     {
@@ -880,12 +1274,54 @@ static bool parse_pack(const std::string& text, LoadedPack& pack, std::string& e
             log_pack(pack.File, "skipped a second option \"" + option.Id + "\"");
             continue;
         }
+        if (const JsonValue* group = entry.find("group"); group != nullptr)
+        {
+            if (group->type == JsonValue::Type::String && valid_option_id(group->text))
+                option.Group = group->text;
+            else
+                log_pack(pack.File, "option \"" + option.Id + "\": group isn't a group id, ignored");
+        }
+        option.Requires = parse_id_list(entry, "requires", option.Id, pack.File);
+        option.Conflicts = parse_id_list(entry, "conflicts", option.Id, pack.File);
         pack.Options.push_back(std::move(option));
     }
+    link_options(*options, pack);
     if (pack.Options.empty())
     {
         error = "has no usable options";
         return false;
+    }
+
+    if (const JsonValue* presets = root.find("presets"); presets != nullptr)
+    {
+        if (presets->type != JsonValue::Type::Array)
+        {
+            log_pack(pack.File, "presets isn't a list, ignored");
+        }
+        else
+        {
+            for (const JsonValue& entry : presets->array)
+            {
+                LoadedPreset preset;
+                std::string presetError;
+                if (!parse_preset(entry, pack, preset, presetError))
+                {
+                    log_pack(pack.File, "skipped a preset: " + presetError);
+                    continue;
+                }
+                const auto same = std::find_if(pack.Presets.begin(), pack.Presets.end(), [&preset](const LoadedPreset& other) {
+                    return other.Id == preset.Id || other.Options == preset.Options;
+                });
+                if (same != pack.Presets.end())
+                {
+                    log_pack(pack.File, "skipped preset \"" + preset.Id + "\": " +
+                        (same->Id == preset.Id ? std::string("a second preset with that id")
+                                               : "it turns on the same options as \"" + same->Id + "\""));
+                    continue;
+                }
+                pack.Presets.push_back(std::move(preset));
+            }
+        }
     }
     return true;
 }
@@ -950,7 +1386,8 @@ static void load_packs_from(const std::filesystem::path& directory, std::vector<
         else
         {
             CoreAddCallbackMessage(CoreDebugMessageType::Info,
-                "Game options: loaded \"" + pack.Id + "\" (" + std::to_string(pack.Options.size()) + " options)");
+                "Game options: loaded \"" + pack.Id + "\" (" + std::to_string(pack.Options.size()) + " options, " +
+                std::to_string(pack.Presets.size()) + " presets)");
             packs.push_back(std::move(pack));
         }
     }
@@ -1140,10 +1577,11 @@ CORE_EXPORT std::vector<CoreGameOptionInfo> CoreGetGameOptions(const std::string
     std::vector<CoreGameOptionInfo> infos;
     ensure_packs_loaded();
 
-    // "ja_JP" falls back to "ja"
-    const std::string exact = CoreLowerString(language);
-    const std::string base = exact.substr(0, exact.find_first_of("_-"));
-    for (const auto& [pack, option] : offered_options(romMd5))
+    const auto offered = offered_options(romMd5);
+    const auto isOffered = [&offered](const std::string& id) {
+        return std::any_of(offered.begin(), offered.end(), [&id](const auto& entry) { return entry.second->Id == id; });
+    };
+    for (const auto& [pack, option] : offered)
     {
         CoreGameOptionInfo info;
         info.Id = option->Id;
@@ -1153,20 +1591,102 @@ CORE_EXPORT std::vector<CoreGameOptionInfo> CoreGetGameOptions(const std::string
         info.Description = option->Description;
         info.PackId = pack->Id;
         info.Game = pack->Game;
+        info.Group = option->Group;
+        std::copy_if(option->Requires.begin(), option->Requires.end(), std::back_inserter(info.Requires), isOffered);
+        std::copy_if(option->Conflicts.begin(), option->Conflicts.end(), std::back_inserter(info.Conflicts), isOffered);
 
-        auto translation = option->Translations.find(exact);
-        if (translation == option->Translations.end() && !base.empty())
+        if (const auto* translation = find_translation(option->Text, language))
         {
-            translation = option->Translations.find(base);
-        }
-        if (!exact.empty() && translation != option->Translations.end())
-        {
-            if (!translation->second.first.empty())
-                info.Label = translation->second.first;
-            if (!translation->second.second.empty())
-                info.Description = translation->second.second;
+            if (!translation->first.empty())
+                info.Label = translation->first;
+            if (!translation->second.empty())
+                info.Description = translation->second;
         }
         infos.push_back(std::move(info));
+    }
+    return infos;
+}
+
+CORE_EXPORT std::vector<CoreGameOptionGroupInfo> CoreGetGameOptionGroups(const std::string& romMd5, const std::string& language)
+{
+    std::vector<CoreGameOptionGroupInfo> infos;
+    ensure_packs_loaded();
+
+    const std::string md5 = upper_md5(romMd5);
+    for (const LoadedPack& pack : l_Packs)
+    {
+        if (!contains(pack.RomMd5, md5))
+        {
+            continue;
+        }
+        for (const LoadedGroup& group : pack.Groups)
+        {
+            const bool taken = std::any_of(infos.begin(), infos.end(),
+                [&group](const CoreGameOptionGroupInfo& info) { return info.Id == group.Id; });
+            if (taken)
+            {
+                continue;
+            }
+            CoreGameOptionGroupInfo info;
+            info.Id = group.Id;
+            info.EnglishLabel = group.Label;
+            info.Label = group.Label;
+            if (const auto* translation = find_translation(group.Text, language);
+                translation != nullptr && !translation->first.empty())
+            {
+                info.Label = translation->first;
+            }
+            infos.push_back(std::move(info));
+        }
+    }
+    return infos;
+}
+
+CORE_EXPORT std::vector<CoreGameOptionPresetInfo> CoreGetGameOptionPresets(const std::string& romMd5, const std::string& language)
+{
+    std::vector<CoreGameOptionPresetInfo> infos;
+    ensure_packs_loaded();
+
+    const auto offered = offered_options(romMd5);
+    const std::string md5 = upper_md5(romMd5);
+    for (const LoadedPack& pack : l_Packs)
+    {
+        if (!contains(pack.RomMd5, md5))
+        {
+            continue;
+        }
+        for (const LoadedPreset& preset : pack.Presets)
+        {
+            // Its options as this pack has them: another pack that came first
+            // may offer an option of the same id that does something else.
+            const bool ownOptions = std::all_of(preset.Options.begin(), preset.Options.end(), [&](const std::string& id) {
+                return std::any_of(offered.begin(), offered.end(),
+                    [&](const auto& entry) { return entry.first == &pack && entry.second->Id == id; });
+            });
+            const bool taken = std::any_of(infos.begin(), infos.end(), [&preset](const CoreGameOptionPresetInfo& info) {
+                return info.Id == preset.Id || info.Options == preset.Options;
+            });
+            if (!ownOptions || taken)
+            {
+                continue;
+            }
+            CoreGameOptionPresetInfo info;
+            info.Id = preset.Id;
+            info.EnglishLabel = preset.Label;
+            info.EnglishDescription = preset.Description;
+            info.Label = preset.Label;
+            info.Description = preset.Description;
+            info.Options = preset.Options;
+            info.PackId = pack.Id;
+            if (const auto* translation = find_translation(preset.Text, language))
+            {
+                if (!translation->first.empty())
+                    info.Label = translation->first;
+                if (!translation->second.empty())
+                    info.Description = translation->second;
+            }
+            infos.push_back(std::move(info));
+        }
     }
     return infos;
 }
@@ -1193,39 +1713,30 @@ CORE_EXPORT bool CoreResolveGameOptions(const std::filesystem::path& rom, const 
             return false;
         }
     }
+    std::vector<const LoadedOption*> chosen;
+    std::vector<const LoadedOption*> all;
     for (const auto& [pack, option] : offered)
     {
+        all.push_back(option);
         if (std::find(ids.begin(), ids.end(), option->Id) != ids.end())
         {
+            chosen.push_back(option);
             options.Options.push_back({ option->Id, option->Label, option->Patches });
         }
     }
 
     std::string error;
+    if (!check_option_set(chosen, all, error))
+    {
+        options = {};
+        CoreSetError(error);
+        return false;
+    }
     if (!check_limits(options, error))
     {
         options = {};
         CoreSetError("These game options can't be used together: " + error);
         return false;
-    }
-    for (size_t i = 0; i < options.Options.size(); i++)
-    {
-        for (size_t j = 0; j < i; j++)
-        {
-            for (const CoreGameOptionPatch& a : options.Options[i].Patches)
-            {
-                for (const CoreGameOptionPatch& b : options.Options[j].Patches)
-                {
-                    if (patches_overlap(a, b))
-                    {
-                        CoreSetError("\"" + options.Options[j].Label + "\" and \"" + options.Options[i].Label +
-                            "\" change the same part of the game, so they can't be on together.");
-                        options = {};
-                        return false;
-                    }
-                }
-            }
-        }
     }
 
     std::vector<char> image;

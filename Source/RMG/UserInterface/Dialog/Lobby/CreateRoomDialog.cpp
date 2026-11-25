@@ -8,6 +8,7 @@
 
 #include "CreateRoomDialog.hpp"
 
+#include "GameSettingsDialog.hpp"
 #include "LobbyWidgets.hpp"
 
 #include <QButtonGroup>
@@ -21,6 +22,8 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QPainter>
+#include <QSignalBlocker>
+#include <QTimer>
 
 #include <algorithm>
 
@@ -49,8 +52,14 @@ CreateRoomDialog::CreateRoomDialog(const QString& defaultUsername, const QString
 
 void CreateRoomDialog::setCoverPath(const QString& coverPath)
 {
+    m_coverPath = coverPath;
     if (m_tile)
         m_tile->setGame(m_romName, coverPath);
+}
+
+void CreateRoomDialog::setGameOptionsCheck(std::function<bool(const QStringList&, QString&)> check)
+{
+    m_gameOptionsCheck = std::move(check);
 }
 
 void CreateRoomDialog::setMinimumPlayers(int players)
@@ -235,6 +244,33 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     limits->addLayout(wifiBox, 1);
     body->addLayout(limits);
 
+    // What the game options packs offer for this game: a preset, a set saved
+    // under a name, or one made in the Custom view. The room starts with it;
+    // the room's own list changes it later.
+    const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
+    if (!catalog.isEmpty())
+    {
+        auto* settingsBox = new QVBoxLayout;
+        settingsBox->setSpacing(6);
+        settingsBox->addWidget(makeFieldLabel(tr("Game settings")));
+        m_gameSettingsCombo = new QComboBox(this);
+        m_gameSettingsCombo->setObjectName("CreateGameSettingsCombo");
+        m_gameSettingsCombo->setMinimumHeight(34);
+        m_gameSettingsCombo->setAccessibleName(tr("Game settings"));
+        m_gameSettingsCombo->setToolTip(tr("Every player's game is changed for the match, and so is its replay. "
+                                           "Custom... turns options on one by one, and saves them under a name."));
+        settingsBox->addWidget(m_gameSettingsCombo);
+        body->addLayout(settingsBox);
+        fillGameSettings(GameSettingsChoice());
+        // Arrow keys on the closed list pass Custom... on the way: only the
+        // entry they stop on opens it.
+        m_gameSettingsPick = new QTimer(this);
+        m_gameSettingsPick->setSingleShot(true);
+        m_gameSettingsPick->setInterval(400);
+        connect(m_gameSettingsPick, &QTimer::timeout, this, &CreateRoomDialog::openCustomGameSettings);
+        connect(m_gameSettingsCombo, QOverload<int>::of(&QComboBox::activated), this, &CreateRoomDialog::onGameSettingsPicked);
+    }
+
     m_liveReplaySwitch = new ToggleSwitch(tr("Allow spectators"), this);
     m_liveReplaySwitch->setObjectName("LiveReplaySwitch");
     body->addWidget(m_liveReplaySwitch);
@@ -386,6 +422,8 @@ void CreateRoomDialog::setFormEnabled(bool enabled)
     m_anyConnectionButton->setEnabled(enabled);
     m_wiredOnlyButton->setEnabled(enabled);
     m_liveReplaySwitch->setEnabled(enabled);
+    if (m_gameSettingsCombo)
+        m_gameSettingsCombo->setEnabled(enabled);
     m_passwordEdit->setEnabled(enabled && m_passwordButton->isChecked());
     m_createButton->setEnabled(enabled);
 }
@@ -423,7 +461,98 @@ void CreateRoomDialog::loadDefaults()
         (s.value("WiredOnly").toBool() ? m_wiredOnlyButton : m_anyConnectionButton)->setChecked(true);
     if (s.contains("LiveReplay"))
         m_liveReplaySwitch->setChecked(s.value("LiveReplay").toBool());
+
+    // The last room's game settings: Default with none remembered, a preset
+    // by id, a saved set by id (Default once it's deleted), or its own set.
+    if (m_gameSettingsCombo)
+    {
+        const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
+        const GameSettingsChoice choice = catalog.rememberedChoice(s, catalog.savedSets(m_romMd5));
+        if (choice.Type == GameSettingsChoice::Kind::Custom)
+            m_customGameOptions = choice.Options;
+        fillGameSettings(choice);
+    }
     s.endGroup();
+}
+
+void CreateRoomDialog::fillGameSettings(const GameSettingsChoice& current)
+{
+    if (!m_gameSettingsCombo)
+        return;
+    const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
+    int index = 0;
+    // The server's own limit isn't known before the room exists; the room
+    // checks the set again against it.
+    GameSettingsCatalog::fillList(m_gameSettingsCombo, catalog.listItems(catalog.savedSets(m_romMd5), current,
+                                                                         CoreGameOptionsMaxOptions, &index));
+    const QSignalBlocker blocker(m_gameSettingsCombo);
+    m_gameSettingsCombo->setCurrentIndex(index);
+    m_gameSettingsData = current.data();
+}
+
+GameSettingsChoice CreateRoomDialog::gameSettingsChoice() const
+{
+    if (!m_gameSettingsCombo)
+        return {};
+    const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
+    const QList<SavedGameSettings> saved = catalog.savedSets(m_romMd5);
+    // A deleted saved set is Default; a custom set saved since is that set.
+    const GameSettingsChoice choice = catalog.choiceFromData(m_gameSettingsData, saved, m_customGameOptions);
+    return catalog.choiceFor(choice.Options, saved,
+                             choice.Type == GameSettingsChoice::Kind::Saved ? choice.Id : QString());
+}
+
+void CreateRoomDialog::onGameSettingsPicked()
+{
+    if (m_customGameSettingsOpen)
+        return;
+    const QString data = m_gameSettingsCombo->currentData().toString();
+    if (data == QLatin1String("custom"))
+    {
+        m_gameSettingsPick->start();
+        return;
+    }
+    m_gameSettingsPick->stop();
+    m_gameSettingsData = data;
+    fillGameSettings(gameSettingsChoice());
+}
+
+void CreateRoomDialog::openCustomGameSettings()
+{
+    if (m_customGameSettingsOpen || m_gameSettingsCombo->currentData().toString() != QLatin1String("custom"))
+        return;
+    GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
+    if (catalog.isEmpty())
+        return;
+    // It starts from what was picked before: a preset, a saved set or the custom set.
+    const QStringList start = gameSettingsChoice().Options;
+    auto* dialog = new GameSettingsDialog(m_romName, std::move(catalog), start, true, CoreGameOptionsMaxOptions, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setCoverPath(m_coverPath);
+    dialog->enableSavedSets(m_romMd5);
+    if (m_gameOptionsCheck)
+        dialog->setApplyCheck(m_gameOptionsCheck);
+    m_customGameSettingsOpen = true;
+    // The list follows saved sets made, renamed or deleted while it's open.
+    connect(dialog, &GameSettingsDialog::savedSetsChanged, this, [this]() {
+        fillGameSettings(gameSettingsChoice());
+        const QSignalBlocker blocker(m_gameSettingsCombo);
+        m_gameSettingsCombo->setCurrentIndex(m_gameSettingsCombo->findData(QStringLiteral("custom")));
+    });
+    connect(dialog, &QDialog::finished, this, [this, dialog](int result) {
+        m_customGameSettingsOpen = false;
+        if (result == QDialog::Accepted)
+        {
+            const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
+            const GameSettingsChoice choice = catalog.choiceFor(dialog->chosen(), catalog.savedSets(m_romMd5));
+            if (choice.Type == GameSettingsChoice::Kind::Custom)
+                m_customGameOptions = choice.Options;
+            m_gameSettingsData = choice.data();
+        }
+        // Cancel goes back to what was picked before.
+        fillGameSettings(gameSettingsChoice());
+    });
+    dialog->open();
 }
 
 void CreateRoomDialog::saveDefaults()
@@ -445,6 +574,14 @@ void CreateRoomDialog::saveDefaults()
     s.setValue("MaxPing", m_maxPing);
     s.setValue("WiredOnly", m_wiredOnly);
     s.setValue("LiveReplay", m_liveReplaySwitch->isChecked());
+    // The room view applies these once the server says the room takes game
+    // options (RollbackLobbyDialog::restoreRoomChoices).
+    if (m_gameSettingsCombo)
+    {
+        const QVariantMap values = gameSettingsChoice().settingsValues();
+        for (auto it = values.cbegin(); it != values.cend(); ++it)
+            s.setValue(it.key(), it.value());
+    }
     s.endGroup();
 }
 
