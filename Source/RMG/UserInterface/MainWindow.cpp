@@ -3211,7 +3211,6 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_Settings_Settings, &QAction::triggered, this, &MainWindow::on_Action_Settings_Settings);
     connect(this->action_Settings_Plugins, &QAction::triggered, this, &MainWindow::on_Action_Settings_Plugins);
     connect(this->action_Toolbar_Input, &QAction::triggered, this, &MainWindow::on_Action_Settings_Input);
-    connect(this->action_Toolbar_Playback, &QAction::triggered, this, &MainWindow::on_Action_Playback);
 
     connect(this->action_View_Toolbar, &QAction::toggled, this, &MainWindow::on_Action_View_Toolbar);
     connect(this->action_View_StatusBar, &QAction::toggled, this, &MainWindow::on_Action_View_StatusBar);
@@ -3224,6 +3223,7 @@ void MainWindow::connectActionSignals(void)
     connect(this->action_View_Log, &QAction::triggered, this, &MainWindow::on_Action_View_Log);
     connect(this->action_View_Search, &QAction::triggered, this, &MainWindow::on_Action_View_Search);
 
+    connect(this->action_Netplay_Replays, &QAction::triggered, this, &MainWindow::on_Action_Playback);
     // Menu-bar Netplay: legacy (delay) server + peer-to-peer open the launcher
     // straight to their tab; rollback lobby is the streamlined entry.
     connect(this->action_Netplay_BrowseSessions, &QAction::triggered, this, &MainWindow::on_Action_Netplay_LegacyServer);
@@ -4646,6 +4646,7 @@ void MainWindow::on_Action_Settings_Settings(void)
     }
 
     Dialog::SettingsDialog dialog(this);
+    dialog.SetControllerConfigAction(this->action_Toolbar_Input);
     const int result = dialog.exec();
 
     if (result == QDialog::Accepted)
@@ -4687,6 +4688,7 @@ void MainWindow::on_Action_Settings_Plugins(void)
     }
 
     Dialog::SettingsDialog dialog(this);
+    dialog.SetControllerConfigAction(this->action_Toolbar_Input);
     dialog.ShowPluginsTab();
     const int result = dialog.exec();
 
@@ -6136,6 +6138,7 @@ void MainWindow::on_RomBrowser_EditGameSettings(QString file)
     }
 
     Dialog::SettingsDialog dialog(this, file);
+    dialog.SetControllerConfigAction(this->action_Toolbar_Input);
     dialog.ShowGameTab();
     const int result = dialog.exec();
 

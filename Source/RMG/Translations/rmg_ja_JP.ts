@@ -101,7 +101,7 @@
         </message>
         <message>
             <source>Use exclusive fullscreen instead of borderless</source>
-            <translation>指定したモニター・解像度・リフレッシュレートで全画面表示する</translation>
+            <translation>ボーダーレスではなく排他全画面を使う</translation>
         </message>
         <message>
             <source>This fullscreen mode is beta and does not support toggling fullscreen or OSD messages.</source>
@@ -469,7 +469,7 @@
         </message>
         <message>
             <source>Cached Interpreter</source>
-            <translation>キャッシュ付きインタープリター</translation>
+            <translation>キャッシュ型インタプリタ</translation>
         </message>
         <message>
             <source>Dynamic Recompiler</source>
@@ -632,8 +632,8 @@
             <translation>P2Pホストポート</translation>
         </message>
         <message>
-            <source>Recording</source>
-            <translation>録画</translation>
+            <source>Replays</source>
+            <translation>リプレイ</translation>
         </message>
         <message>
             <source>Enable recording by default</source>
@@ -644,12 +644,16 @@
             <translation>録画フォルダー</translation>
         </message>
         <message>
-            <source>Disable default recording above folder size cap</source>
-            <translation>フォルダー容量の上限を超えたらデフォルト録画を無効にする</translation>
+            <source>Disable auto-recording above</source>
+            <translation>容量超過時は自動録画しない</translation>
         </message>
         <message>
-            <source>Cap size</source>
-            <translation>容量上限</translation>
+            <source>Recording folder size cap</source>
+            <translation>録画フォルダーの容量上限</translation>
+        </message>
+        <message>
+            <source>Start games in fullscreen</source>
+            <translation>ゲームを全画面で起動する</translation>
         </message>
         <message>
             <source>Notifications</source>
@@ -1212,6 +1216,202 @@ Try connecting the adapter to a different USB port, preferably directly on your 
     </context>
     <context>
         <name>UserInterface::Dialog::SettingsDialog</name>
+        <message>
+            <source>Advanced</source>
+            <translation>詳細設定</translation>
+        </message>
+        <message>
+            <source>Application</source>
+            <translation>アプリケーション</translation>
+        </message>
+        <message>
+            <source>Application log</source>
+            <translation>アプリケーションログ</translation>
+        </message>
+        <message>
+            <source>Controller Config</source>
+            <translation>コントローラー設定</translation>
+        </message>
+        <message>
+            <source>Detailed logging can affect performance.</source>
+            <translation>詳細ログを有効にすると、動作が遅くなることがあります。</translation>
+        </message>
+        <message>
+            <source>Diagnostics</source>
+            <translation>診断</translation>
+        </message>
+        <message>
+            <source>Display</source>
+            <translation>表示</translation>
+        </message>
+        <message>
+            <source>Emulation core</source>
+            <translation>エミュレーションコア</translation>
+        </message>
+        <message>
+            <source>Emulation freeze diagnostics</source>
+            <translation>エミュレーションのフリーズ診断</translation>
+        </message>
+        <message>
+            <source>Find a setting</source>
+            <translation>設定を検索</translation>
+        </message>
+        <message>
+            <source>Find a setting…</source>
+            <translation>設定を検索…</translation>
+        </message>
+        <message>
+            <source>Frame pacing traces</source>
+            <translation>フレーム間隔を記録する</translation>
+        </message>
+        <message>
+            <source>Game emulation</source>
+            <translation>ゲーム別コア</translation>
+        </message>
+        <message>
+            <source>Game plugins</source>
+            <translation>ゲーム別プラグイン</translation>
+        </message>
+        <message>
+            <source>Game settings</source>
+            <translation>ゲーム設定</translation>
+        </message>
+        <message>
+            <source>Games &amp; saves</source>
+            <translation>ゲームとセーブ</translation>
+        </message>
+        <message>
+            <source>Hide my country in the lobby</source>
+            <translation>ロビーで自分の国を非表示にする</translation>
+        </message>
+        <message>
+            <source>Hides your country flag and name after reconnecting. Players in your game still exchange IP addresses.</source>
+            <translation>再接続後に国旗と国名を非表示にします。対戦相手との IP アドレスの交換は引き続き行われます。</translation>
+        </message>
+        <message>
+            <source>In-game overlay</source>
+            <translation>ゲーム内オーバーレイ</translation>
+        </message>
+        <message>
+            <source>Kaillera</source>
+            <translation>Kaillera</translation>
+        </message>
+        <message>
+            <source>Legacy</source>
+            <translation>旧機能</translation>
+        </message>
+        <message>
+            <source>Lobby connection diagnostics</source>
+            <translation>ロビー接続の診断</translation>
+        </message>
+        <message>
+            <source>Log netplay stalls</source>
+            <translation>ネットプレイの一時停止を記録する</translation>
+        </message>
+        <message>
+            <source>Logs EEPROM, rollback and frame state. Enable on every player before reproducing a freeze.</source>
+            <translation>EEPROM、ロールバック、フレームの状態を記録します。フリーズを再現する前に、全プレイヤーが有効にしてください。</translation>
+        </message>
+        <message>
+            <source>Logs connection setup and peer pings, including IP addresses. Applies on your next lobby connection.</source>
+            <translation>接続の確立と対戦相手の Ping を、IP アドレスとともに記録します。次回のロビー接続から適用されます。</translation>
+        </message>
+        <message>
+            <source>Netplay</source>
+            <translation>ネットプレイ</translation>
+        </message>
+        <message>
+            <source>No matching settings</source>
+            <translation>一致する設定がありません</translation>
+        </message>
+        <message>
+            <source>Open netplay on startup</source>
+            <translation>起動時にネットプレイを開く</translation>
+        </message>
+        <message>
+            <source>Overlay</source>
+            <translation>オーバーレイ</translation>
+        </message>
+        <message>
+            <source>Plugins</source>
+            <translation>プラグイン</translation>
+        </message>
+        <message>
+            <source>ROM search</source>
+            <translation>ROM の検索</translation>
+        </message>
+        <message>
+            <source>Record matches by default</source>
+            <translation>対戦を自動で録画する</translation>
+        </message>
+        <message>
+            <source>Records per-player network stats during freezes only.</source>
+            <translation>フリーズ中のみ、プレイヤーごとのネットワーク統計を記録します。</translation>
+        </message>
+        <message>
+            <source>Remember my last input delay when joining a room</source>
+            <translation>入室時に前回の入力遅延を使う</translation>
+        </message>
+        <message>
+            <source>Replay folder</source>
+            <translation>リプレイの保存先</translation>
+        </message>
+        <message>
+            <source>Reset page</source>
+            <translation>このページをリセット</translation>
+        </message>
+        <message>
+            <source>Restore defaults for this page.</source>
+            <translation>このページの設定を既定値に戻します。</translation>
+        </message>
+        <message>
+            <source>Save</source>
+            <translation>保存</translation>
+        </message>
+        <message>
+            <source>Save files</source>
+            <translation>セーブファイル</translation>
+        </message>
+        <message>
+            <source>Settings categories</source>
+            <translation>設定カテゴリ</translation>
+        </message>
+        <message>
+            <source>Shortcuts</source>
+            <translation>ショートカット</translation>
+        </message>
+        <message>
+            <source>Show chat on-screen</source>
+            <translation>チャットを画面に表示する</translation>
+        </message>
+        <message>
+            <source>Show player labels</source>
+            <translation>プレイヤー名を表示する</translation>
+        </message>
+        <message>
+            <source>This game</source>
+            <translation>このゲーム</translation>
+        </message>
+        <message>
+            <source>Verbose Glide input</source>
+            <translation>Glide 入力の詳細ログ</translation>
+        </message>
+        <message>
+            <source>Verbose PIF input</source>
+            <translation>PIF 入力の詳細ログ</translation>
+        </message>
+        <message>
+            <source>Verbose rollback stats</source>
+            <translation>ロールバックの詳細統計</translation>
+        </message>
+        <message>
+            <source>Window</source>
+            <translation>ウィンドウ</translation>
+        </message>
+        <message>
+            <source>Writes pacing CSV files when the session ends.</source>
+            <translation>セッション終了時に、フレーム間隔を CSV ファイルに出力します。</translation>
+        </message>
         <message>
             <source>Select Screenshot Directory</source>
             <translation>スクリーンショット保存先を選択</translation>
