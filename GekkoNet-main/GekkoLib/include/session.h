@@ -17,6 +17,7 @@ struct GekkoSession {
     virtual void SetLocalDelay(i32 player, u8 delay) = 0;
     virtual bool SetPredictionWindow(u8 window) = 0;
     virtual void SetRunahead(u8 runahead) = 0;
+    virtual void SetInputPredictor(i32, GekkoInputPredictor, GekkoInputObserver) {}
     virtual void SetNetAdapter(GekkoNetAdapter* adapter) = 0;
     virtual i32 AddActor(GekkoPlayerType type, GekkoNetAddress* addr) = 0;
     virtual void AddLocalInput(i32 player, void* input) = 0;
@@ -25,6 +26,9 @@ struct GekkoSession {
     virtual f32 FramesAhead() = 0;
     virtual void NetworkStats(i32 player, GekkoNetworkStats* stats) = 0;
     virtual void NetworkPoll() = 0;
+    virtual GekkoGameEvent** UpdateSessionWithInputWait(i32* count, GekkoInputWait, void*) {
+        return UpdateSession(count);
+    }
     virtual void DisconnectPlayer(i32 handle) = 0;
     virtual void SetDisconnectTimeout(u32 timeout_ms) = 0;
     // Only game sessions advance frames of their own; see gekkonet.h.
@@ -49,6 +53,10 @@ namespace Gekko {
 
         void SetRunahead(u8 runahead) override;
 
+        void SetInputPredictor(i32 player, GekkoInputPredictor predictor, GekkoInputObserver observer) override {
+            _sync.SetInputPredictor(player, predictor, observer);
+        }
+
         void SetNetAdapter(GekkoNetAdapter* adapter) override;
 
         i32 AddActor(GekkoPlayerType type, GekkoNetAddress* addr) override;
@@ -65,6 +73,8 @@ namespace Gekko {
 
         void NetworkPoll() override;
 
+        GekkoGameEvent** UpdateSessionWithInputWait(i32* count, GekkoInputWait wait, void* context) override;
+
         void DisconnectPlayer(i32 handle) override;
 
         void SetDisconnectTimeout(u32 timeout_ms) override;
@@ -79,6 +89,8 @@ namespace Gekko {
 
 	private:
 		void Poll();
+
+        bool MissingRemoteInput();
 
 		bool AllActorsValid();
 

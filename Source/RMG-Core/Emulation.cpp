@@ -153,12 +153,13 @@ static bool parse_gekko_address(const std::string& address, std::string& remoteA
 // 3-/4-player rollback sessions can wire each remote actor to a distinct peer.
 // Format: LOBBY|<delay>|<prediction>|<slot>,<ip>,<port>|<slot>,<ip>,<port>...
 static bool parse_lobby_address(const std::string& address, int& frameDelay, int& predictionWindow,
-    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch, std::vector<LobbyLocalSeat>& extraLocals)
+    std::vector<LobbyRemotePeer>& remotes, int& seats, int& joinEpoch, std::vector<LobbyLocalSeat>& extraLocals, uint64_t& matchId)
 {
     remotes.clear();
     seats = 0;
     joinEpoch = -1;
     extraLocals.clear();
+    matchId = 0;
 
     constexpr const char* prefix = "LOBBY|";
     if (address.rfind(prefix, 0) != 0)
@@ -213,6 +214,10 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
             const std::string key = tok.substr(0, equals);
             try
             {
+                if (key == "match") {
+                    matchId = std::stoull(tok.substr(equals + 1));
+                    continue;
+                }
                 if (key == "local")
                 {
                     const size_t colon = tok.find(':', equals);
@@ -1206,8 +1211,9 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             std::vector<LobbyRemotePeer> remotes;
             int seats = 0;
             int joinEpoch = -1;
+            uint64_t matchId = 0;
             std::vector<LobbyLocalSeat> extraLocals;
-            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch, extraLocals))
+            if (!parse_lobby_address(address, frameDelay, predictionWindow, remotes, seats, joinEpoch, extraLocals, matchId))
             {
                 CoreSetError("CoreStartEmulation: invalid Lobby session parameters");
                 m64p_ret = M64ERR_INPUT_INVALID;
@@ -1244,7 +1250,7 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
                     totalSeats, static_cast<int>(sizeof(uint32_t)),
                     player, static_cast<unsigned short>(port),
                     remotes.data(), static_cast<int>(remotes.size()),
-                    frameDelay, predictionWindow, joinEpoch, extraLocals);
+                    frameDelay, predictionWindow, joinEpoch, extraLocals, matchId);
                 if (!netplay_ret)
                 {
                     if (CoreGetError().empty())

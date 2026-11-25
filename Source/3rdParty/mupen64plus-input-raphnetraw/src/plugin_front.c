@@ -187,6 +187,17 @@ EXPORT void CALL RaphnetSetHealthCallback(void (*callback)(int))
     pb_setHealthCallback(callback);
 }
 
+/* Rollback's official pad always comes from emulator port zero in a 1v1. */
+EXPORT void CALL RaphnetArmButtonHint(uint64_t ticket, unsigned int buttons, pb_hint_callback publish)
+{
+    pb_armButtonHint(EMU_2_ADAP_PORT(0), ticket, buttons, publish, NULL);
+}
+
+EXPORT void CALL RaphnetArmPadSamples(uint64_t ticket, pb_pad_sample_callback sample)
+{
+    pb_armButtonHint(EMU_2_ADAP_PORT(0), ticket, 0, NULL, sample);
+}
+
 EXPORT void CALL RaphnetEndSession(void)
 {
     pb_romClosed();

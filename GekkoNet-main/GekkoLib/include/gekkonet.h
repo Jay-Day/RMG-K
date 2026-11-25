@@ -55,6 +55,13 @@ extern "C" {
 // The only case the user needs to create memory is when slotting in their own GekkoNetAdapter
 typedef struct GekkoSession GekkoSession;
 
+// May refine a newly generated prediction in place. Called on the session thread.
+// last_real is the latest authoritative frame. The buffer has config.input_size bytes.
+typedef void (*GekkoInputPredictor)(int frame, int last_real, unsigned char* prediction);
+typedef void (*GekkoInputObserver)(int frame, const unsigned char* actual);
+GEKKONET_API void gekko_set_input_predictor(GekkoSession* session, int player,
+    GekkoInputPredictor predictor, GekkoInputObserver observer);
+
 typedef enum GekkoSessionType {
     GekkoGameSession, // session for an active player.
     GekkoStressSession, // session to test your local simulation for state desyncs.
@@ -214,6 +221,13 @@ GEKKONET_API void gekko_set_runahead(GekkoSession* session, unsigned char runahe
 GEKKONET_API void gekko_add_local_input(GekkoSession* session, int player, void* input);
 
 GEKKONET_API GekkoGameEvent** gekko_update_session(GekkoSession* session, int* count);
+
+// After sending local inputs, a game session may give missing remote inputs
+// more time before prediction. Return true to poll again, false to proceed.
+// The caller owns the absolute deadline for this update.
+typedef bool (*GekkoInputWait)(void* context);
+GEKKONET_API GekkoGameEvent** gekko_update_session_with_input_wait(GekkoSession* session,
+    int* count, GekkoInputWait wait, void* context);
 
 GEKKONET_API GekkoSessionEvent** gekko_session_events(GekkoSession* session, int* count);
 

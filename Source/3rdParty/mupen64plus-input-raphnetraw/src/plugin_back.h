@@ -2,6 +2,7 @@
 #define _plugin_back_h__
 
 #include "polling_mode.h"
+#include <stdint.h>
 
 /* Those match mupen64plus levels */
 #define PB_MSG_ERROR	1
@@ -19,6 +20,10 @@ void pb_pauseMonitoring(int pause);
 void pb_setHealthCallback(void (*callback)(int));
 int pb_usesRawData(int control);
 int pb_getKeys(int Control, unsigned int *Keys);
+typedef void (*pb_hint_callback)(uint64_t ticket, unsigned int buttons, unsigned int revision);
+typedef void (*pb_pad_sample_callback)(uint64_t ticket, uint32_t pad);
+void pb_armButtonHint(int channel, uint64_t ticket, unsigned int buttons, pb_hint_callback publish,
+                      pb_pad_sample_callback sample);
 int pb_readController(int Control, unsigned char *Command);
 int pb_controllerCommand(int Control, unsigned char *Command);
 int pb_romOpen(void);

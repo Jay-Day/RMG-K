@@ -77,6 +77,7 @@ struct ChannelLoad
 std::array<ChannelLoad, 256> g_channelLoad;
 constexpr std::size_t CHANNEL_QUEUE_PACKET_CAP = 4096;
 constexpr std::size_t CHANNEL_QUEUE_BYTE_CAP = 2 * 1024 * 1024;
+std::deque<QueuedPacket> g_buttonHints;
 std::atomic<bool> g_diagnosticsEnabled{false};
 std::vector<LobbyIceDiagnostic> g_diagnostics;
 std::size_t g_diagnosticsDropped = 0;
@@ -200,7 +201,8 @@ void on_recv(juice_agent_t* agent, const char* data, size_t size, void* userPtr)
         channelByte >= static_cast<std::uint8_t>(LobbyIceChannel::GekkoEpochFirst) &&
         channelByte <= static_cast<std::uint8_t>(LobbyIceChannel::GekkoEpochLast);
     if (channel != LobbyIceChannel::Ping && channel != LobbyIceChannel::Prematch &&
-        channel != LobbyIceChannel::Gekko && channel != LobbyIceChannel::LagStats && !gekkoEpoch)
+        channel != LobbyIceChannel::Gekko && channel != LobbyIceChannel::LagStats &&
+        channel != LobbyIceChannel::ButtonHint && !gekkoEpoch)
     {
         return;
     }
@@ -221,6 +223,10 @@ void on_recv(juice_agent_t* agent, const char* data, size_t size, void* userPtr)
         // fallback and normal retry machinery.
     }
 
+    if (channel == LobbyIceChannel::ButtonHint && size != 1 + kLobbyButtonHintSize &&
+        size != 1 + kLobbyStickHintSize)
+        return;
+
     QueuedPacket packet;
     packet.peerUserId = peer->userId;
     packet.channel = channel;
@@ -238,6 +244,14 @@ void on_recv(juice_agent_t* agent, const char* data, size_t size, void* userPtr)
         }
     }
     std::lock_guard<std::mutex> lock(g_mutex);
+    if (channel == LobbyIceChannel::ButtonHint)
+    {
+        packet.data.assign(data + 1, data + size);
+        if (g_buttonHints.size() >= 64)
+            g_buttonHints.pop_front();
+        g_buttonHints.push_back(std::move(packet));
+        return;
+    }
     ChannelLoad& load = g_channelLoad[channelByte];
     if (load.packets >= CHANNEL_QUEUE_PACKET_CAP || load.bytes + (size - 1) > CHANNEL_QUEUE_BYTE_CAP)
         return;
@@ -388,6 +402,7 @@ void LobbyIce::reset()
         g_localSignals.clear();
         g_packets.clear();
         g_channelLoad.fill(ChannelLoad{});
+        g_buttonHints.clear();
         g_localUserId = 0;
         g_stunHost.clear();
         g_stunPort = 0;
@@ -532,6 +547,9 @@ void LobbyIce::remove_peer(std::uint64_t peerUserId)
         std::erase_if(g_localSignals, [peerUserId](const LobbyIceSignal& signal) {
             return signal.peerUserId == peerUserId;
         });
+        std::erase_if(g_buttonHints, [peerUserId](const QueuedPacket& packet) {
+            return packet.peerUserId == peerUserId;
+        });
         std::erase_if(g_packets, [peerUserId](const QueuedPacket& packet) {
             return packet.peerUserId == peerUserId;
         });
@@ -659,12 +677,13 @@ std::vector<LobbyIcePacket> LobbyIce::take_packets(LobbyIceChannel channel)
 {
     std::vector<LobbyIcePacket> out;
     std::lock_guard<std::mutex> lock(g_mutex);
-    for (auto it = g_packets.begin(); it != g_packets.end();)
+    auto& packets = channel == LobbyIceChannel::ButtonHint ? g_buttonHints : g_packets;
+    for (auto it = packets.begin(); it != packets.end();)
     {
         if (it->channel == channel)
         {
             out.push_back({it->peerUserId, it->roundTripUs, std::move(it->data)});
-            it = g_packets.erase(it);
+            it = packets.erase(it);
         }
         else
         {

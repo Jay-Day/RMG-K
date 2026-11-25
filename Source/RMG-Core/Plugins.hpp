@@ -10,6 +10,7 @@
 #ifndef CORE_PLUGINS_HPP
 #define CORE_PLUGINS_HPP
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -102,6 +103,16 @@ bool CorePluginsApplyNetplayMode(bool synced);
 
 // -1: unavailable, 0: no valid response, 1: normal/checking, 2: slow USB.
 int CoreGetRaphnetHealth(void);
+using RaphnetHintCallback = void (*)(std::uint64_t, unsigned int, unsigned int);
+using RaphnetArmHint = void (*)(std::uint64_t, unsigned int, RaphnetHintCallback);
+RaphnetArmHint CoreGetRaphnetArmHint();
+// Pad samples use rollback input order (two button bytes, signed X, signed Y).
+using InputPadSample = void (*)(std::uint64_t, std::uint32_t);
+using ArmInputPadSamples = void (*)(int control, std::uint64_t ticket, InputPadSample);
+ArmInputPadSamples CoreGetInputArmPadSamples();
+using RaphnetPadSample = InputPadSample;
+using RaphnetArmPadSamples = void (*)(std::uint64_t, RaphnetPadSample);
+RaphnetArmPadSamples CoreGetRaphnetArmPadSamples();
 void CorePauseRaphnetMonitoring(bool pause);
 
 #endif // CORE_PLUGINS_HPP

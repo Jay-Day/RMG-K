@@ -173,11 +173,21 @@ void Gekko::GameSession::AddLocalInput(i32 player, void* input)
 
 GekkoGameEvent** Gekko::GameSession::UpdateSession(i32* count)
 {
+    return UpdateSessionWithInputWait(count, nullptr, nullptr);
+}
+
+GekkoGameEvent** Gekko::GameSession::UpdateSessionWithInputWait(i32* count, GekkoInputWait wait, void* context)
+{
     // reset session events
     _msg.session_events.Reset();
 
     // connection Handling
     Poll();
+    // Poll has already sent the newly submitted official inputs. Keep any
+    // connection events from subsequent polls in this same update.
+    while (wait && MissingRemoteInput() && wait(context)) {
+        Poll();
+    }
 
     // clear GameEvents
     _game_events.Clear();
@@ -281,6 +291,21 @@ void Gekko::GameSession::NetworkStats(i32 player, GekkoNetworkStats* stats)
 void Gekko::GameSession::NetworkPoll()
 {
     Poll();
+}
+
+bool Gekko::GameSession::MissingRemoteInput()
+{
+    const Frame frame = _sync.GetCurrentFrame();
+    if (!_started || !_host || frame <= 0 || IsLockstepActive() ||
+        (_advance_limit != GameInput::NULL_FRAME && frame >= _advance_limit) ||
+        _sync.GetMinIncorrectFrame() != GameInput::NULL_FRAME) {
+        return false;
+    }
+    for (const auto& peer : _msg.remotes) {
+        if (peer->GetStatus() == Connected && _sync.GetLastReceivedFrom(peer->handle) < frame)
+            return true;
+    }
+    return false;
 }
 
 void Gekko::GameSession::HandleSavingConfirmedFrame()
