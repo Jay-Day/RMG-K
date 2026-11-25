@@ -114,7 +114,7 @@ static raphnet_polling_mode g_polling_mode = RAPHNET_POLLING_AUTOMATIC; /* chang
 static int64_t g_last_probe[MAX_CHANNELS];
 static int64_t g_last_reopen[MAX_ADAPTERS];
 static atomic_int g_transport_failed[MAX_ADAPTERS];
-static atomic_int g_health_status; /* 0: no response, 1: checking/normal, 2: slow */
+static atomic_int g_health_status;
 static void (*g_health_callback)(int) = NULL; /* set only with worker stopped */
 static atomic_int g_getKeys_polling = 0;
 /* Keep the cached worker from repeatedly reacquiring the USB lock while an
@@ -457,8 +457,8 @@ static void pb_publishHealth(void)
         if (sample_time && now - sample_time < 1000000) {
             // Report measured trouble, not a precautionary choice when a
             // bounded pre-game check did not produce enough evidence.
-            int channel_status = g_health[i].cached ? 2 : 1;
-            if (channel_status > status) status = channel_status;
+            if (g_health[i].cached) status |= RAPHNET_HEALTH_AUTO_CACHED;
+            if (g_health[i].latency_warning) status |= RAPHNET_HEALTH_LATENCY_WARNING;
         }
     }
     if (atomic_exchange(&g_health_status, status) != status && g_health_callback)

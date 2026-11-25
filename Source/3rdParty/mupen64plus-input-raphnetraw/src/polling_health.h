@@ -4,19 +4,32 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Sustained polls of 4 ms or longer trigger caching and the slow-connection warning.
- * Recover below the entry threshold to avoid overlapping decisions. */
+/* Automatic caching uses sustained slow polls and a lower recovery threshold. */
 #define RAPHNET_SLOW_POLL_US 4000
 #define RAPHNET_FAST_POLL_US (RAPHNET_SLOW_POLL_US / 2)
+#define RAPHNET_WARNING_POLL_US 6000
+
+/* Flags reported by RaphnetSetHealthCallback. */
+enum {
+    RAPHNET_HEALTH_AUTO_CACHED = 1 << 0,
+    RAPHNET_HEALTH_LATENCY_WARNING = 1 << 1
+};
+
+static inline int raphnet_average_exceeds_warning_cutoff(int64_t total_us, int samples)
+{
+    return samples > 0 && total_us > (int64_t)RAPHNET_WARNING_POLL_US * samples;
+}
 
 /* Shared by the worker and raw input path under the USB lock. Times are monotonic.
  * A missing controller supplies no evidence about USB latency. Separate entry and
  * recovery thresholds, and a longer recovery period, prevent mode oscillation. */
 typedef struct {
     int cached;
+    int latency_warning;
     int samples;
     int slow_samples;
     int fast_samples;
+    int64_t total_us;
     int64_t started_us;
     int64_t last_valid_us;
     int64_t assessed_us;
@@ -25,6 +38,7 @@ typedef struct {
 static inline void raphnet_health_break_window(raphnet_polling_health *health)
 {
     health->samples = health->slow_samples = health->fast_samples = 0;
+    health->total_us = 0;
     health->started_us = 0;
 }
 
@@ -40,18 +54,20 @@ static inline void raphnet_health_observe(raphnet_polling_health *health,
     health->last_valid_us = now_us;
     if (health->samples == 0) health->started_us = now_us;
     ++health->samples;
+    health->total_us += elapsed_us;
     if (elapsed_us >= RAPHNET_SLOW_POLL_US) ++health->slow_samples;
     if (elapsed_us <= RAPHNET_FAST_POLL_US) ++health->fast_samples;
 
     if (!health->cached && health->samples >= 120 && now_us - health->started_us >= 2000000) {
-        health->assessed_us = now_us;
         if (health->slow_samples * 5 >= health->samples * 4) health->cached = 1;
-        raphnet_health_break_window(health);
     } else if (health->cached && health->samples >= 500 && now_us - health->started_us >= 10000000) {
-        health->assessed_us = now_us;
         if (health->fast_samples * 10 >= health->samples * 9) health->cached = 0;
-        raphnet_health_break_window(health);
+    } else {
+        return;
     }
+    health->assessed_us = now_us;
+    health->latency_warning = raphnet_average_exceeds_warning_cutoff(health->total_us, health->samples);
+    raphnet_health_break_window(health);
 }
 
 /* Cache only the standard four-byte input response. Status, reset, and pak

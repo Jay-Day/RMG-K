@@ -4,8 +4,7 @@
 #include <cstdint>
 #include <3rdParty/mupen64plus-input-raphnetraw/src/polling_health.h>
 
-// Preview measurements drive a notice only, using the plugin's sustained-latency
-// thresholds. The input plugin remains responsible for pre-game mode selection.
+// Preview measurements supply latency warnings and an estimate of Automatic mode.
 struct RaphnetPollingHealth
 {
     static constexpr int WindowSize = 120;
@@ -13,15 +12,16 @@ struct RaphnetPollingHealth
     std::int64_t totalUs = 0;
     std::int64_t maximumUs = 0;
     raphnet_polling_health connection = {};
+    bool initialLatencyWarning = false;
 
     void reset() { *this = {}; }
 
     // An empty port is not evidence that a previously slow connection recovered.
     void missingResponse() { raphnet_health_break_window(&connection); }
 
-    bool averageExceedsCutoff() const
+    bool shouldWarn() const
     {
-        return samples > 0 && totalUs >= static_cast<std::int64_t>(RAPHNET_SLOW_POLL_US) * samples;
+        return samples == 0 ? initialLatencyWarning : raphnet_average_exceeds_warning_cutoff(totalUs, samples);
     }
 
     void observe(std::int64_t elapsedUs, std::int64_t nowUs)
