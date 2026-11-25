@@ -34,11 +34,13 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <time.h>
 #include "polling_health.h"
+#include "direct_hint_timing.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -109,6 +111,24 @@ static atomic_int g_cached_mode[MAX_CHANNELS];
 static atomic_llong g_sample_time[MAX_CHANNELS];
 static raphnet_polling_health g_health[MAX_CHANNELS]; /* protected by g_io_mutex */
 static atomic_int g_rom_active;
+/* One direct hint source per 1v1 session. The USB lock protects the timing
+ * history and statistics. The worker can inspect its deadlines before trying
+ * the lock, then validates them again immediately before starting a probe. */
+static atomic_int g_direct_hint_channel = -1;
+static struct direct_read_history g_direct_history[MAX_CHANNELS];
+static struct direct_probe_stats g_direct_stats;
+static atomic_llong g_direct_deadline_us[MAX_CHANNELS];
+static atomic_llong g_direct_retry_us;
+/* The foreground must never wait for the sampling worker to arm an optional hint. */
+static atomic_flag g_hint_lock = ATOMIC_FLAG_INIT;
+static struct button_hint_request {
+    int channel;
+    uint64_t ticket;
+    unsigned int buttons;
+    int64_t armed_us;
+    pb_hint_callback publish;
+    pb_pad_sample_callback sample;
+} g_hint_request;
 static int g_monitor_paused;
 static raphnet_polling_mode g_polling_mode = RAPHNET_POLLING_AUTOMATIC; /* changed with worker stopped */
 static int64_t g_last_probe[MAX_CHANNELS];
@@ -182,12 +202,20 @@ int pb_shutdown(void)
 	return 0;
 }
 
-/**
- * \return The number of channels available.
- */
+static void pb_resetDirectHintTiming(void)
+{
+    atomic_store(&g_direct_hint_channel, -1);
+    memset(g_direct_history, 0, sizeof(g_direct_history));
+    memset(&g_direct_stats, 0, sizeof(g_direct_stats));
+    for (int i = 0; i < MAX_CHANNELS; ++i) atomic_store(&g_direct_deadline_us[i], 0);
+    atomic_store(&g_direct_retry_us, 0);
+}
+
+/** Return the number of channels available. */
 int pb_scanControllers(int pollingMode)
 {
     pb_stopGetKeysPolling();
+    pb_resetDirectHintTiming();
     g_polling_mode = raphnet_polling_mode_from_int(pollingMode);
     // Run before controller initialization and rollback setup, with no worker
     // competing for USB. Reuse recent idle results where possible.
@@ -332,6 +360,15 @@ int pb_usesRawData(int control)
     return control >= 0 && control < g_n_channels && !atomic_load(&g_cached_mode[control]);
 }
 
+void pb_armButtonHint(int channel, uint64_t ticket, unsigned int buttons, pb_hint_callback publish,
+                      pb_pad_sample_callback sample)
+{
+    if (atomic_flag_test_and_set(&g_hint_lock)) return;
+    atomic_store(&g_direct_hint_channel, (publish || sample) && pb_usesRawData(channel) ? channel : -1);
+    g_hint_request = (struct button_hint_request){channel, ticket, buttons, pb_nowUs(), publish, sample};
+    atomic_flag_clear(&g_hint_lock);
+}
+
 int pb_romOpen(void)
 {
     atomic_store(&g_rom_active, 1);
@@ -342,6 +379,8 @@ int pb_romOpen(void)
 int pb_romClosed(void)
 {
     pb_stopGetKeysPolling();
+    pb_armButtonHint(-1, 0, 0, NULL, NULL);
+    pb_resetDirectHintTiming();
     atomic_store(&g_rom_active, 0);
     pb_startGetKeysPolling();
     return 0;
@@ -415,6 +454,15 @@ static void pb_mutexLockIo(void)
 #endif
 }
 
+static int pb_tryLockIo(void)
+{
+#if defined(_WIN32)
+    return TryEnterCriticalSection(&g_io_mutex) != 0;
+#else
+    return pthread_mutex_trylock(&g_io_mutex) == 0;
+#endif
+}
+
 static void pb_mutexUnlockIo(void)
 {
 #if defined(_WIN32)
@@ -476,7 +524,47 @@ static void pb_recordSample(int control, int valid, unsigned int keys, int64_t e
     atomic_store(&g_sample_time[control], valid ? now : 0);
 }
 
-static int pb_pollGetKeysOnce(int control, unsigned int *keys)
+static void pb_recordOfficialRead(int control, int valid, int64_t requested, int64_t end)
+{
+    if (control != atomic_load(&g_direct_hint_channel)) return;
+    const int64_t elapsed = end - requested;
+    if (!g_direct_stats.official_reads) g_direct_stats.first_official_us = requested;
+    g_direct_stats.last_official_us = end;
+    ++g_direct_stats.official_reads;
+    if (elapsed > RAPHNET_FAST_POLL_US) ++g_direct_stats.official_over_2ms;
+    if (elapsed > g_direct_stats.max_official_us) g_direct_stats.max_official_us = elapsed;
+    const int64_t deadline = direct_hint_deadline(&g_direct_history[control], valid, requested, end);
+    if (deadline >= end + DIRECT_HINT_EARLIEST_US) ++g_direct_stats.qualified_reads;
+    atomic_store(&g_direct_deadline_us[control], deadline);
+}
+
+/* A game request descheduled before touching the lock is not evidence of
+ * contention. Only attribute overlap after an actual failed try-lock. */
+static int64_t pb_lockGameIo(void)
+{
+    if (atomic_load(&g_direct_hint_channel) < 0) {
+        pb_mutexLockIo();
+        return pb_nowUs();
+    }
+    const int64_t requested = pb_nowUs();
+    if (pb_tryLockIo()) return pb_nowUs();
+    pb_mutexLockIo();
+    const int64_t acquired = pb_nowUs();
+    direct_hint_game_wait(&g_direct_stats, requested, acquired);
+    atomic_store(&g_direct_retry_us, g_direct_stats.next_probe_us);
+    return acquired;
+}
+
+static int pb_probeFits(int control, int64_t armed, int64_t now)
+{
+    const int64_t sample = atomic_load(&g_sample_time[control]);
+    return control == atomic_load(&g_direct_hint_channel) && sample > 0 && armed >= sample &&
+        now - armed >= DIRECT_HINT_EARLIEST_US && now - armed <= DIRECT_HINT_LATEST_US &&
+        now <= atomic_load(&g_direct_deadline_us[control]) &&
+        now >= atomic_load(&g_direct_retry_us);
+}
+
+static int pb_pollGetKeys(int control, unsigned int *keys, int64_t probe_armed_us, int64_t requested_us)
 {
     unsigned char command[7] = {1, 4, 1, 0, 0, 0, 0};
     struct blockio_op bio = {0};
@@ -490,8 +578,20 @@ static int pb_pollGetKeysOnce(int control, unsigned int *keys)
     bio.tx_data = command + 2;
     bio.rx_data = command + 3;
 
-    pb_mutexLockIo();
-    const int64_t start = pb_nowUs();
+    int64_t start;
+    if (requested_us) {
+        start = pb_lockGameIo();
+    } else if (probe_armed_us) {
+        if (!pb_tryLockIo()) return 0;
+        start = pb_nowUs();
+        if (atomic_load(&g_game_io_pending) || !pb_probeFits(control, probe_armed_us, start)) {
+            pb_mutexUnlockIo();
+            return 0;
+        }
+    } else {
+        pb_mutexLockIo();
+        start = pb_nowUs();
+    }
     if (channel->adapter->handle) {
         const int res = gcn64lib_blockIO(channel->adapter->handle, &bio, 1);
         atomic_store(&g_transport_failed[channel->adapter - g_adapters], res != 0);
@@ -502,9 +602,19 @@ static int pb_pollGetKeysOnce(int control, unsigned int *keys)
         *keys = (unsigned int)command[3] | ((unsigned int)command[4] << 8) |
             ((unsigned int)command[5] << 16) | ((unsigned int)command[6] << 24);
     }
+    if (requested_us) pb_recordOfficialRead(control, valid, requested_us, end);
+    if (probe_armed_us) {
+        direct_hint_finished(&g_direct_stats, valid, start, end);
+        atomic_store(&g_direct_retry_us, g_direct_stats.next_probe_us);
+    }
     pb_recordSample(control, valid, *keys, end - start, end);
     pb_mutexUnlockIo();
     return valid;
+}
+
+static int pb_pollGetKeysOnce(int control, unsigned int *keys)
+{
+    return pb_pollGetKeys(control, keys, 0, 0);
 }
 
 static void pb_checkBeforeGame(void)
@@ -587,11 +697,33 @@ static int pb_idleNeedsRescan(void)
 static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
 {
     int64_t last_scan = 0;
+    uint64_t ticket = 0;
+    unsigned int last_buttons = 0, revision = 0;
+    int direct_probed = 0;
+    /* Direct qualification is automatic. The override supplies an otherwise
+     * identical control run for hardware timing comparisons. */
+    const char *direct_option = getenv("RMGK_RAPHNET_DIRECT_HINTS");
+    const int allow_direct_hints = !direct_option || strcmp(direct_option, "0") != 0;
+#if defined(_WIN32)
+    HANDLE hint_timer = NULL;
+#endif
     (void)unused;
     while (atomic_load(&g_getKeys_polling)) {
         int polled = 0;
         const int active = atomic_load(&g_rom_active);
         const int64_t now = pb_nowUs();
+        struct button_hint_request hint = {0};
+        if (active && !atomic_flag_test_and_set(&g_hint_lock)) {
+            hint = g_hint_request;
+            atomic_flag_clear(&g_hint_lock);
+        }
+        const int armed = hint.publish || hint.sample;
+        if (armed && hint.ticket != ticket) {
+            ticket = hint.ticket;
+            last_buttons = hint.buttons;
+            revision = 0;
+            direct_probed = 0;
+        }
         if (!active && now - last_scan >= 2000000) {
             if (pb_idleNeedsRescan()) pb_scanControllersInternal();
             last_scan = now;
@@ -604,19 +736,73 @@ static PB_THREAD_RETURN pb_getKeysPollingThread(void *unused)
             /* During a game, only the selected cached channels need a worker.
              * Detection and recovery decisions are reserved for idle time. */
             const int valid = atomic_load(&g_sample_time[i]) != 0;
-            if (active && !atomic_load(&g_cached_mode[i])) continue;
+            const int64_t age = now - hint.armed_us;
+            const int eligible = active && armed && hint.channel == i &&
+                valid && age >= 0 && age < 15000;
+            const int direct = active && !atomic_load(&g_cached_mode[i]);
+            if (direct) {
+                /* One extra transaction on healthy direct adapters, early enough to
+                 * leave most of the VI for the next official poll. Cached channels
+                 * share their existing reads, even when USB takes 4-6 ms or longer. */
+                if (!allow_direct_hints || !eligible || direct_probed || !pb_probeFits(i, hint.armed_us, now))
+                    continue;
+                direct_probed = 1;
+            }
             const int64_t interval = !valid ? 250000 : (active ? 0 : 8000);
             if (now - g_last_probe[i] < interval) continue;
             g_last_probe[i] = now;
             unsigned int keys;
-            pb_pollGetKeysOnce(i, &keys);
+            const int ok = pb_pollGetKeys(i, &keys, direct ? hint.armed_us : 0, 0);
+            if (eligible && ok && revision < 8 && pb_nowUs() - hint.armed_us < 16000) {
+                /* Same two button bytes, in the core's N64 wire order. */
+                const unsigned int buttons = ((keys & 255) << 8) | ((keys >> 8) & 255);
+                if (hint.sample) {
+                    /* Same four bytes as rollback_sample_input_value: buttons, X, Y. */
+                    const uint32_t pad = (buttons << 16) | (((keys >> 16) & 255u) << 8) | (keys >> 24);
+                    hint.sample(ticket, pad);
+                } else if (buttons != last_buttons) {
+                    last_buttons = buttons;
+                    hint.publish(ticket, buttons, ++revision);
+                }
+            }
             polled = 1;
         }
         if (!active) pb_reopenDisconnectedAdapters(now);
         pb_publishHealth();
+#if defined(_WIN32)
+        /* Sleep(2) can take a full Windows timer tick, missing the entire
+         * direct-probe window. Use a worker-local timer only during a match
+         * with an active request; never change the system timer resolution. */
+        if (allow_direct_hints && !polled && active && armed && now - hint.armed_us < 30000 &&
+            hint.channel >= 0 && hint.channel < g_n_channels &&
+            !atomic_load(&g_cached_mode[hint.channel]) && now >= atomic_load(&g_direct_retry_us) &&
+            atomic_load(&g_direct_deadline_us[hint.channel]) != 0) {
+            if (!hint_timer)
+                hint_timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                                    TIMER_MODIFY_STATE | SYNCHRONIZE);
+            LARGE_INTEGER due;
+            due.QuadPart = -20000; /* relative 2 ms, in 100 ns units */
+            if (hint_timer && SetWaitableTimer(hint_timer, &due, 0, NULL, NULL, FALSE)) {
+                WaitForSingleObject(hint_timer, INFINITE);
+                continue;
+            }
+        }
+#endif
         pb_sleepMs(polled && active ? 0 : 2);
     }
+    if (atomic_load(&g_direct_hint_channel) >= 0) {
+        pb_mutexLockIo();
+        const struct direct_probe_stats stats = g_direct_stats;
+        pb_mutexUnlockIo();
+        DebugMessage(PB_MSG_INFO, "Raphnet direct hints: mode=%s official_reads=%u official_over_2ms=%u official_max_us=%lld "
+            "qualified_reads=%u probes=%u incidents=%u slow=%u failed=%u overlaps=%u max_overlap_us=%lld elapsed_s=%.1f",
+            allow_direct_hints ? "auto" : "off", stats.official_reads, stats.official_over_2ms,
+            (long long)stats.max_official_us, stats.qualified_reads, stats.probes, stats.incidents, stats.slow,
+            stats.failed, stats.overlaps, (long long)stats.max_overlap_us,
+            (double)(stats.last_official_us - stats.first_official_us) / 1000000.0);
+    }
 #if defined(_WIN32)
+    if (hint_timer) CloseHandle(hint_timer);
     return 0;
 #else
     return NULL;
@@ -747,7 +933,7 @@ int pb_getKeys(int control, unsigned int *keys)
     if (!keys || control < 0 || control >= g_n_channels) return 0;
     if (!atomic_load(&g_cached_mode[control])) {
         atomic_fetch_add(&g_game_io_pending, 1);
-        const int valid = pb_pollGetKeysOnce(control, keys);
+        const int valid = pb_pollGetKeys(control, keys, 0, pb_nowUs());
         atomic_fetch_sub(&g_game_io_pending, 1);
         return valid;
     }
@@ -789,8 +975,9 @@ static int pb_performIo(void)
 		timing(1, NULL);
 #endif
         atomic_fetch_add(&g_game_io_pending, 1);
-		pb_mutexLockIo();
-        const int64_t start = pb_nowUs();
+        /* Raw game traffic can contend with a probe too. The official
+         * rollback sample is counted separately on the GetKeys path. */
+        const int64_t start = pb_lockGameIo();
         res = adap->handle ? gcn64lib_blockIO(adap->handle, biops, adap->n_ops) : -1;
         const int64_t end = pb_nowUs();
         atomic_store(&g_transport_failed[adap - g_adapters], res != 0);

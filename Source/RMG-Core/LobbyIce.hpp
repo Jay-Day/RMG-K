@@ -25,9 +25,15 @@ enum class LobbyIceChannel : std::uint8_t
     // Each player's lag report, sent to the others once a second during a
     // match. Older clients drop the channel, so they just show no report.
     LagStats = 4,
+    ButtonHint = 5,
     GekkoEpochFirst = 0x10,
     GekkoEpochLast = 0x1f,
 };
+
+// Match (8), epoch (4), target frame (4), revision (1), N64 buttons (2).
+constexpr std::size_t kLobbyButtonHintSize = 19;
+// A negotiated Smash stick hint appends an axis mask and the sampled X and Y.
+constexpr std::size_t kLobbyStickHintSize = kLobbyButtonHintSize + 3;
 
 // The channel rollback session `epoch` of a match runs on.
 inline LobbyIceChannel lobby_ice_gekko_channel(int epoch)

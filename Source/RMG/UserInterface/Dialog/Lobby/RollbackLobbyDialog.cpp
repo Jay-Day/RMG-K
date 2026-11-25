@@ -8455,6 +8455,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     }
     // A match open to late joiners emulates every seat the room has, so a
     // newcomer takes over an idle controller instead of changing the machine.
+    remotePeers << QString("match=%1").arg(matchId);
     if (m_client->matchSeats() > 0)
         remotePeers << QString("seats=%1").arg(m_client->matchSeats());
     remotePeers << localSeats;
@@ -8840,7 +8841,8 @@ void RollbackLobbyDialog::launchAsLateJoiner()
         else if (peer.userId != selfId)
             remotePeers << QString("local=%1:%2").arg(peer.slot).arg(m_client->localPlayerController(peer.userId));
     }
-    remotePeers << QString("seats=%1").arg(m_lateJoin.seats)
+    remotePeers << QString("match=%1").arg(m_lateJoin.matchId)
+                << QString("seats=%1").arg(m_lateJoin.seats)
                 << QString("join=%1").arg(m_lateJoin.epoch);
     warnAboutLocalControllers();
 

@@ -27,8 +27,8 @@ namespace
 {
     // Lobby servers hosted on Vultr. Update here when DNS is set up (e.g.
     // ws://lobby.rmgk.net:8080/ws). The dialog no longer exposes server
-    // choice — tagged releases connect to prod, everything else to test.
-#ifdef RMGK_TEST_BUILD
+    // choice. Development builds use test unless configured for production.
+#ifdef RMGK_USE_TEST_LOBBY
     constexpr const char* kDefaultLobbyUrl = "ws://64.177.116.159:8080/ws";
 #else
     constexpr const char* kDefaultLobbyUrl = "ws://216.128.157.98:8080/ws";

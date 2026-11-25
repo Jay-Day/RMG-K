@@ -60,6 +60,8 @@ void Gekko::InputBuffer::AddInput(Frame frame, u8* input)
         return;
     }
 
+    if (observer)
+        observer(frame, input);
     const Frame idx = frame % _buff_size;
     if (_input_prediction_window > 0 && _first_predicted_input == frame) {
         if (!_inputs[idx]->IsEqualTo(input)) {
@@ -76,7 +78,10 @@ void Gekko::InputBuffer::AddInput(Frame frame, u8* input)
                 const Frame diff = _last_predicted_input - _first_predicted_input;
                 for (Frame i = 0; i <= diff; i++) {
                     const Frame pred_frame = _first_predicted_input + i;
-                    _inputs[pred_frame % _buff_size]->Init(pred_frame, input, _input_size);
+                    auto& slot = _inputs[pred_frame % _buff_size];
+                    slot->Init(pred_frame, input, _input_size);
+                    if (predictor && i > 0)
+                        predictor(pred_frame, frame, slot->input.get());
                 }
 
                 // move along this frame since the previous is verified now.
@@ -237,7 +242,9 @@ std::unique_ptr<Gekko::GameInput> Gekko::InputBuffer::GetInput(Frame frame, bool
                 inp->Init(_inputs[frame % _buff_size].get());
 
             } else if (!_running_ahead && CanPredictInput() && HandleInputPrediction(frame)) {
-                // generate new prediction
+                // Store exactly the prediction we simulate for later verification.
+                if (predictor)
+                    predictor(frame, _last_received_input, _inputs[frame % _buff_size]->input.get());
 				inp->Init(_inputs[frame % _buff_size].get());
 
             } else if (_running_ahead) {
