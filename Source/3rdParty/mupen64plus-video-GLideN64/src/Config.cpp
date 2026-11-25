@@ -86,6 +86,7 @@ void Config::resetToDefaults()
 	frameBufferEmulation.fbInfoReadColorChunk = 0;
 	frameBufferEmulation.fbInfoReadDepthChunk = 1;
 	frameBufferEmulation.copyDepthToMainDepthBuffer = 0;
+	frameBufferEmulation.enableForTransitions = 1;
 #ifndef MUPENPLUSAPI
 	frameBufferEmulation.fbInfoDisabled = 0;
 #else

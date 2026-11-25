@@ -91,6 +91,10 @@ public:
     };
     // The "gameOptions" array of ROOM_STATE or a ROOM_LIST entry.
     static QList<LobbyGameOption> parseGameOptions(const QJsonValue& value);
+    // Their "gameOptionsPreset": the preset those options make up, the same
+    // shape as an option; empty id for none (custom options, or a server from
+    // before presets).
+    static LobbyGameOption parseGameOptionsPreset(const QJsonValue& value);
 
     struct LobbyRoomSummary
     {
@@ -115,8 +119,10 @@ public:
         // whether a PC on Wi-Fi is turned away.
         int maxPing = 0;
         bool wiredOnly = false;
-        // The host's game options for the next match, or the running one's.
+        // The host's game options for the next match, or the running one's,
+        // and the preset they make up (empty id for none).
         QList<LobbyGameOption> gameOptions;
+        LobbyGameOption gameOptionsPreset;
     };
 
     struct LobbyMatchPeer
@@ -296,9 +302,10 @@ public:
                             const QStringList& kinds = QStringList(), int bytes = 0,
                             const QString& hash = QString());
     // Host-only, waiting room: the game options of the next match, replacing
-    // the room's list (empty turns them off). The server refuses a bad list
-    // without a reply; ROOM_STATE says what the room has.
-    void updateRoomGameOptions(const QList<LobbyGameOption>& options);
+    // the room's list (empty turns them off), and the preset they make up
+    // (empty id for none). The server refuses a bad list without a reply;
+    // ROOM_STATE says what the room has.
+    void updateRoomGameOptions(const QList<LobbyGameOption>& options, const LobbyGameOption& preset = {});
     // Host: the save the next pre-match manifest carries; nullopt starts blank.
     void setPrematchSaveData(std::optional<CoreNetplaySaveData> data) { m_prematchSaveData = std::move(data); }
     // Host: the game options the next pre-match manifest carries, resolved

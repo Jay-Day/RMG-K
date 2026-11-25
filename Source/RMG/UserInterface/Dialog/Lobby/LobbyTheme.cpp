@@ -580,6 +580,12 @@ QString styleSheet()
         QComboBox::drop-down { border: none; width: 16px; }
         QComboBox::down-arrow { image: url(@chevron); width: 12px; height: 12px; }
 
+        /* Guests (and the host mid-match) read the room's game settings here:
+           a choice only the host can change, not a faded control. */
+        QComboBox#GameSettingsCombo:disabled { color: @ink2; background-color: @tint; }
+        QComboBox#GameSettingsCombo::drop-down:disabled { width: 0; }
+        QComboBox#GameSettingsCombo::down-arrow:disabled { image: none; width: 0; height: 0; }
+
         QComboBox#ChallengeRomCombo { background: transparent; border: none; padding: 0; color: @ink; }
         QComboBox#ChallengeRomCombo::drop-down { width: 0; border: none; }
         QComboBox#ChallengeRomCombo::down-arrow { image: none; width: 0; height: 0; }
@@ -588,11 +594,12 @@ QString styleSheet()
         QFrame#RomPicker:focus { border-color: @accent; }
         QComboBox#BrowseRomCombo { border-radius: 9px; padding: 0; }
         QComboBox#BrowseRomCombo:hover:enabled { background-color: @panel; border-color: @accent; }
-        QComboBox#BrowseRomCombo::drop-down { width: 28px; }
+        QComboBox#BrowseRomCombo::drop-down { width: 32px; }
+        QComboBox#BrowseRomCombo::down-arrow { width: 20px; height: 20px; }
         QFrame#BrowseGamePopup QListView {
             background: transparent; border: none; outline: 0;
         }
-        QFrame#BrowseGamePopup QListView::item { padding: 6px 9px; border-radius: 6px; color: @ink2; }
+        QFrame#BrowseGamePopup QListView::item { padding: 2px 9px; border-radius: 6px; color: @ink2; }
         QFrame#BrowseGamePopup QListView::item:hover { background-color: @raise; color: @ink; }
         QFrame#BrowseGamePopup QListView::item:selected { background-color: @accentTint; color: @ink; }
 

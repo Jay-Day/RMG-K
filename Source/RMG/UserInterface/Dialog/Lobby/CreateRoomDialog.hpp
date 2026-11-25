@@ -12,12 +12,16 @@
 #include <QDialog>
 #include <QList>
 #include <QString>
+#include <QStringList>
+
+#include <functional>
 
 class QButtonGroup;
 class QComboBox;
 class QLineEdit;
 class QPushButton;
 class QLabel;
+class QTimer;
 
 namespace UserInterface
 {
@@ -27,6 +31,7 @@ namespace Dialog
 class CartridgeTile;
 class LobbyButton;
 class ToggleSwitch;
+struct GameSettingsChoice;
 
 // Modal form for creating a lobby room. Returns the chosen settings to the
 // caller via accessors; caller is responsible for sending the protocol message.
@@ -64,6 +69,9 @@ public:
 
     // The selected game's cover art, for the dialog's header tile.
     void setCoverPath(const QString& coverPath);
+    // Checks a set of game options against this PC's ROM when the Custom
+    // view applies it (false, with why, when the ROM can't take it).
+    void setGameOptionsCheck(std::function<bool(const QStringList& ids, QString& error)> check);
     // Rule out rooms too small for everyone on this PC.
     void setMinimumPlayers(int players);
 
@@ -77,7 +85,11 @@ public:
 
     // The QSettings("RMG-K", "n02") group holding what was chosen for the
     // last room made for this game: this form's choices, and the ones made in
-    // the room itself (late join, save data, game options).
+    // the room itself (late join, save data, game settings). Game settings
+    // are "GameSettings" (default, preset, saved or custom),
+    // "GameSettingsPreset" (the preset's id), "GameSettingsSaved" (the saved
+    // set's id) and "GameOptions" (the option ids); the game's saved sets are
+    // "SavedGameSettings" (SavedGameSettings).
     static QString romSettingsGroup(const QString& romMd5);
 
     // The lobby accepts once the server made the room: the choices are
@@ -100,6 +112,12 @@ private:
     void loadDefaults();
     void saveDefaults();
     void setFormEnabled(bool enabled);
+    // Game settings: the list's entries around the choice made, the choice
+    // (the entry picked before Custom... opened the Custom view), and that view.
+    void fillGameSettings(const GameSettingsChoice& current);
+    GameSettingsChoice gameSettingsChoice() const;
+    void onGameSettingsPicked();
+    void openCustomGameSettings();
 
     // UI — local delay and prediction live in the room view.
     QLineEdit*   m_nameEdit       = nullptr;
@@ -113,6 +131,16 @@ private:
     QPushButton* m_anyConnectionButton = nullptr;
     QPushButton* m_wiredOnlyButton = nullptr;
     ToggleSwitch* m_liveReplaySwitch = nullptr;
+    // Default, the game options packs' presets, the host's saved sets and
+    // Custom...; null for a game without a pack. The choice is its entry's
+    // data; a custom set's options are kept apart.
+    QComboBox*   m_gameSettingsCombo = nullptr;
+    QString      m_gameSettingsData;
+    QStringList  m_customGameOptions;
+    QTimer*      m_gameSettingsPick = nullptr;
+    bool         m_customGameSettingsOpen = false;
+    QString      m_coverPath;
+    std::function<bool(const QStringList&, QString&)> m_gameOptionsCheck;
     LobbyButton* m_createButton   = nullptr;
     LobbyButton* m_cancelButton   = nullptr;
     QLabel*      m_statusLabel    = nullptr;

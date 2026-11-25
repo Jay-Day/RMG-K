@@ -1114,7 +1114,7 @@ void KailleraPlaybackDialog::populatePlaybackList()
         m_playbackTable->insertRow(row);
         m_playbackTable->setItem(row, 0, new QTableWidgetItem(dateStr));
         m_playbackTable->setItem(row, 1, new QTableWidgetItem(playersStr));
-        // A match played with game options names them: "Smash Remix 2.0.1 (Vanilla only)".
+        // A match played with game options names them: "Smash Remix 2.0.1 (Vanilla CSS)".
         QString gameStr = QString::fromUtf8(gameName);
         if (!gameOptionLabels.isEmpty())
             gameStr = QStringLiteral("%1 (%2)").arg(gameStr, gameOptionLabels.join(QStringLiteral(", ")));

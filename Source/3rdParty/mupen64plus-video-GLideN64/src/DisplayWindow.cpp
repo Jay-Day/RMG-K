@@ -9,6 +9,7 @@
 #include "DisplayWindow.h"
 #include "PluginAPI.h"
 #include "FrameBuffer.h"
+#include "FrameBufferTransitions.h"
 #include "Combiner.h"
 
 bool DisplayWindow::start()
@@ -36,6 +37,7 @@ bool DisplayWindow::start()
 
 void DisplayWindow::stop()
 {
+	FBTransitions_Reset();
 	m_drawer._destroyData();
 	gfxContext.destroy();
 	_stop();

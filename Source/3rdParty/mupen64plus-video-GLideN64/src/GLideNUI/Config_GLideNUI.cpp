@@ -3,6 +3,7 @@
 #include "../RSP.h"
 #include "../PluginAPI.h"
 #include "../GLideNUI/GLideNUI.h"
+#include "../FrameBufferTransitions.h"
 #include <DisplayWindow.h>
 
 
@@ -31,6 +32,7 @@ void Config_DoConfig(void* parent)
 	if (config.generalEmulation.enableCustomSettings != 0)
 		LoadCustomRomSettings(strIniFolderPath, strSharedIniFolderPath, RSP.romname);
 	config.validate();
+	FBTransitions_SettingsReloaded();
 	if (bRestart)
 		dwnd().restart();
 	ConfigOpen = false;

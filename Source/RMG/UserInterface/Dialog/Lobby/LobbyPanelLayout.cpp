@@ -89,6 +89,9 @@ namespace
 
     const char* const kPanelNames[] = { "stage", "players", "chat", "live", "rooms" };
     const char* const kDefaultShape = "h(stage,v(players,chat))";
+    // Whether Open rooms come first until the player moves them, side by side
+    // and stacked: Live on the left, and Open rooms on top.
+    constexpr bool kDefaultRoomsFirst[2] = { false, true };
 
     bool holds(const Node* node, int panel)
     {
@@ -545,8 +548,8 @@ namespace
             return nullptr;
         normalize(tree.get());
         const QJsonObject first = object.value(QStringLiteral("roomsFirst")).toObject();
-        roomsFirst[0] = first.value(QStringLiteral("side")).toBool(false);
-        roomsFirst[1] = first.value(QStringLiteral("stacked")).toBool(false);
+        roomsFirst[0] = first.value(QStringLiteral("side")).toBool(kDefaultRoomsFirst[0]);
+        roomsFirst[1] = first.value(QStringLiteral("stacked")).toBool(kDefaultRoomsFirst[1]);
         return tree;
     }
 
@@ -860,13 +863,14 @@ QString PanelLayout::panelTitle(int panel) const
 void PanelLayout::restore()
 {
     QSettings settings("RMG-K", "n02");
-    bool roomsFirst[2] = { false, false };
+    bool roomsFirst[2] = { kDefaultRoomsFirst[0], kDefaultRoomsFirst[1] };
     NodePtr tree = parseLayout(settings.value(kLayoutSetting).toString(), roomsFirst);
     const bool saved = tree != nullptr;
     if (!saved)
     {
         tree = defaultTree(window()->width());
-        roomsFirst[0] = roomsFirst[1] = false;
+        roomsFirst[0] = kDefaultRoomsFirst[0];
+        roomsFirst[1] = kDefaultRoomsFirst[1];
     }
     m_root = std::move(tree);
     m_roomsFirst[0] = roomsFirst[0];
@@ -1077,7 +1081,7 @@ void PanelLayout::save()
         if (QSplitter* side = m_root->children[1]->splitter)
             settings.setValue(kSidebarSetting, side->saveState());
     }
-    if (defaultShape && !m_roomsFirst[0] && !m_roomsFirst[1])
+    if (defaultShape && m_roomsFirst[0] == kDefaultRoomsFirst[0] && m_roomsFirst[1] == kDefaultRoomsFirst[1])
     {
         settings.remove(kLayoutSetting);
     }
@@ -1104,7 +1108,8 @@ void PanelLayout::reset()
     QSettings settings("RMG-K", "n02");
     for (const char* key : { kLayoutSetting, kMainSetting, kSidebarSetting, kSideBySideSetting, kStackedSetting })
         settings.remove(key);
-    m_roomsFirst[0] = m_roomsFirst[1] = false;
+    m_roomsFirst[0] = kDefaultRoomsFirst[0];
+    m_roomsFirst[1] = kDefaultRoomsFirst[1];
     m_root = defaultTree(width() > 0 && isVisible() ? width() : window()->width());
     rebuild();
     restoreBrowseSplit();
@@ -1178,7 +1183,8 @@ void PanelLayout::restoreBrowseSplit()
     }
 }
 
-// Live beside the open rooms, or above them. Each way keeps its own divider.
+// Live beside the open rooms, or one above the other. Each way keeps its own
+// divider.
 void PanelLayout::setBrowseStacked(bool stacked)
 {
     const Qt::Orientation orientation = stacked ? Qt::Vertical : Qt::Horizontal;
