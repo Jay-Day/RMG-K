@@ -37,10 +37,15 @@ int stickValue(std::uint32_t pad, int shift)
     return static_cast<std::int8_t>(pad >> shift);
 }
 
-// ftCommonDashCheckInterruptCommon, ftCommonKneeBendGetInputTypeRun/Common.
+// ftCommonDashCheckInterruptCommon, ftCommonKneeBendGetInputTypeRun/Common,
+// and ftPhysicsCheckSetFastFall.
 // These are stick ranges. Smash evaluates its tap timers and fighter state.
 int dashRange(int x) { return (x >= 56) - (x <= -56); }
-int jumpRange(int y) { return (y >= 45) + (y >= 53); }
+constexpr int verticalStickRange(int y)
+{
+    if (y <= -53) return -1; // Fastfall
+    return (y >= 45) + (y >= 53); // Running jump, then normal stick jump
+}
 
 struct StickAxis
 {
@@ -163,7 +168,7 @@ void onPadSample(std::uint64_t sampleTicket, std::uint32_t pad)
     const bool buttonsChanged = (sampled.pad >> 16) != (pad >> 16);
     const int x = stickValue(pad, 8), y = stickValue(pad, 0);
     const bool xChanged = xAxis.observe(x, dashRange);
-    const bool yChanged = yAxis.observe(y, jumpRange);
+    const bool yChanged = yAxis.observe(y, verticalStickRange);
     if (!buttonsChanged && !xChanged && !yChanged) return;
     // Reserve the last two revisions for digital input on a noisy stick.
     if (!buttonsChanged && sampled.revision >= maxRevisions - 2) return;
@@ -315,7 +320,7 @@ void LobbyButtonHints::confirm(int frame, const unsigned char* actual)
     if (localSmash) {
         const auto rangeMatches = [](std::uint32_t pad) {
             return dashRange(stickValue(pad, 8)) == dashRange(stickValue(latestActual, 8)) &&
-                   jumpRange(stickValue(pad, 0)) == jumpRange(stickValue(latestActual, 0));
+                   verticalStickRange(stickValue(pad, 0)) == verticalStickRange(stickValue(latestActual, 0));
         };
         const bool previousMatch = rangeMatches(first.previous), predictedMatch = rangeMatches(first.predicted);
         if (predictedMatch && !previousMatch) ++stickRangeHelped;
