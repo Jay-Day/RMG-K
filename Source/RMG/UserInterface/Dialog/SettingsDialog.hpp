@@ -23,6 +23,7 @@
 #include <QWidget>
 #include <QColor>
 #include <QMutex>
+#include <QStackedWidget>
 
 #include <RMG-Core/RomSettings.hpp>
 #include <RMG-Core/RomHeader.hpp>
@@ -82,6 +83,15 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
 
     std::vector<CorePlugin> pluginList;
 
+    QTreeWidget* settingsNavigation = nullptr;
+    QStackedWidget* settingsPages = nullptr;
+    QLineEdit* settingsSearch = nullptr;
+    QPushButton* controllerConfigButton = nullptr;
+    void setupNavigation(QWidget* rollbackPage, QWidget* diagnosticsPage);
+    void setupSettingsFonts(QWidget* sidebar);
+    void setupShortcutsPage();
+    void selectSettingsPage(int id);
+
     int currentIndex(void);
 
     void restoreDefaults(int);
@@ -111,14 +121,17 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
     void loadDefaultPluginSettings(void);
     void loadDefaultDirectorySettings(void);
     void loadDefault64DDSettings(void);
+    void loadDefaultRecordingSettings(void);
     void loadDefaultHotkeySettings(void);
     void loadDefaultInterfaceGeneralSettings(void);
     void loadDefaultInterfaceEmulationSettings(void);
     void loadDefaultInterfaceRomBrowserSettings(void);
     void loadDefaultInterfaceLogSettings(void);
     void loadDefaultInterfaceOSDSettings(void);
+    void loadDefaultNetplayOverlaySettings(void);
     void loadDefaultInterfaceNetplaySettings(void);
     void loadDefaultRollbackSettings(void);
+    void loadDefaultDiagnosticsSettings(void);
 
     void saveSettings(void);
     void saveCoreSettings(void);
@@ -144,6 +157,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
 
 #ifdef _WIN32
     void populateExclusiveFullscreenModes(void);
+    void setExclusiveFullscreenControlsEnabled(bool enabled);
 #endif
     void setIconsForEmulationInfoText(void);
     void hideEmulationInfoText(void);
@@ -190,6 +204,7 @@ class SettingsDialog : public QDialog, private Ui::SettingsDialog
 
     void ShowGameTab(void);
     void ShowPluginsTab(void);
+    void SetControllerConfigAction(QAction* action);
 };
 } // namespace Dialog
 } // namespace UserInterface

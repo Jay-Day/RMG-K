@@ -12,7 +12,12 @@
 #include "Utilities/QtMessageBox.hpp"
 #include "OnScreenDisplay.hpp"
 #include "SettingsDialog.hpp"
+#ifdef NETPLAY
+#include "Lobby/LobbyTheme.hpp"
+#endif
 
+#include <QAction>
+#include <QApplication>
 #include <QRegularExpressionValidator>
 #include <QCryptographicHash>
 #include <QRegularExpression>
@@ -21,11 +26,19 @@
 #include <QGroupBox>
 #include <QFileDialog>
 #include <QColorDialog>
+#include <QFontMetrics>
 #include <QDirIterator>
 #include <QLabel>
 #include <QDir>
 #include <QIcon>
 #include <QList>
+#include <QMouseEvent>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QShortcut>
+#include <QTreeWidgetItemIterator>
+#include <QTabBar>
+#include <QWheelEvent>
 
 #include <RMG-Core/CachedRomHeaderAndSettings.hpp>
 #include <RMG-Core/Directories.hpp>
@@ -42,6 +55,56 @@
 
 using namespace UserInterface::Dialog;
 using namespace Utilities;
+
+namespace
+{
+class ClickToAdjustWheelFilter final : public QObject
+{
+public:
+    explicit ClickToAdjustWheelFilter(QWidget* field)
+        : QObject(field), m_field(field)
+    {
+        m_field->setFocusPolicy(Qt::StrongFocus);
+        m_field->installEventFilter(this);
+        if (auto* editor = m_field->findChild<QLineEdit*>(QString(), Qt::FindDirectChildrenOnly))
+        {
+            editor->installEventFilter(this);
+        }
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::MouseButtonPress
+            && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
+        {
+            m_clicked = true;
+        }
+        // Returning from a dropdown popup is part of the same click interaction.
+        else if (event->type() == QEvent::FocusIn
+                 && static_cast<QFocusEvent*>(event)->reason() != Qt::PopupFocusReason)
+        {
+            m_clicked = false;
+        }
+        else if (event->type() == QEvent::Wheel)
+        {
+            const auto* wheel = static_cast<QWheelEvent*>(event);
+            const auto position = m_field->mapFromGlobal(wheel->globalPosition());
+            if (!m_clicked || !m_field->hasFocus() || !QRectF(m_field->rect()).contains(position))
+            {
+                // Let the page's scroll area handle the wheel.
+                event->ignore();
+                return true;
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QWidget* const m_field;
+    bool m_clicked = false;
+};
+}
 
 static QString getDisplayDirectoryPath(const QString& directoryPath)
 {
@@ -69,6 +132,18 @@ static void setupDirectoryChangeButtonIcon(QPushButton* button)
     // Match the icon sizing approach used by input-mapping icon buttons.
     button->setIcon(QIcon::fromTheme("folder-open-line"));
     button->setIconSize(QSize(20, 16));
+}
+
+static QFont settingsHeaderFont(int size)
+{
+#ifdef NETPLAY
+    return LobbyTheme::pixelFont(size);
+#else
+    QFont font = QApplication::font();
+    font.setPixelSize(size);
+    font.setBold(true);
+    return font;
+#endif
 }
 
 struct ThemeOption
@@ -203,7 +278,10 @@ enum class SettingsDialogTab
     Directory  = 12,
     N64DD      = 13,
     Rollback   = 14,
-    Invalid    = 15
+    Diagnostics = 15,
+    Recording  = 16,
+    NetplayOverlay = 17,
+    Invalid    = 18
 };
 
 
@@ -238,55 +316,44 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 
     QWidget* rollbackTab = new QWidget(this->tabWidget);
     QVBoxLayout* rollbackLayout = new QVBoxLayout(rollbackTab);
-    QGroupBox* rollbackLoggingGroupBox = new QGroupBox(tr("Logging"), rollbackTab);
-    QVBoxLayout* rollbackLoggingLayout = new QVBoxLayout(rollbackLoggingGroupBox);
-    this->rollbackEnableLocalTestingCheckBox = new QCheckBox(tr("Use rollback engine for local play"), rollbackTab);
-    this->rollbackVerboseStatsCheckBox = new QCheckBox(tr("Enable verbose rollback stats logging"), rollbackLoggingGroupBox);
-    this->rollbackStallDiagnosticsCheckBox = new QCheckBox(tr("Log netplay stalls only (lightweight freeze diagnostics)"), rollbackLoggingGroupBox);
+    QWidget* diagnosticsPage = new QWidget(this);
+    QVBoxLayout* diagnosticsLayout = new QVBoxLayout(diagnosticsPage);
+    auto* loggingHeading = new QLabel(tr("Logging"), diagnosticsPage);
+    loggingHeading->setProperty("settingsHeadingOffset", 0);
+    this->rollbackEnableLocalTestingCheckBox = new QCheckBox(tr("Use rollback engine for local play"), diagnosticsPage);
+    this->rollbackVerboseStatsCheckBox = new QCheckBox(tr("Verbose rollback stats"), diagnosticsPage);
+    this->rollbackStallDiagnosticsCheckBox = new QCheckBox(tr("Log netplay stalls"), diagnosticsPage);
     this->rollbackStallDiagnosticsCheckBox->setToolTip(
-        tr("Logs only when a rollback session stalls (a multi-second freeze), with per-peer\n"
-            "network stats so you can see which player's input stopped arriving. Writes nothing\n"
-            "during smooth play, so the log stays tiny — unlike verbose stats, which writes every\n"
-            "frame. Safe to leave on; one player logging is enough to identify the culprit."));
-    this->rollbackPacingTraceCheckBox = new QCheckBox(tr("Enable pacing trace logging"), rollbackLoggingGroupBox);
-    this->rollbackEmulationDiagnosticsCheckBox = new QCheckBox(tr("Enable emulation freeze diagnostics (EEPROM and rollback)"), rollbackLoggingGroupBox);
+        tr("Records per-player network stats during freezes only."));
+    this->rollbackPacingTraceCheckBox = new QCheckBox(tr("Frame pacing traces"), diagnosticsPage);
+    this->rollbackEmulationDiagnosticsCheckBox = new QCheckBox(tr("Emulation freeze diagnostics"), diagnosticsPage);
     this->rollbackEmulationDiagnosticsCheckBox->setToolTip(
-        tr("Records EEPROM reads/writes, rollback saves/restores, frame progress, and CPU/video state\n"
-            "to an emulation log in the Logs folder. Enable on every player before starting a session.\n"
-            "Use only for a short reproduction: detailed logging can affect performance."));
+        tr("Logs EEPROM, rollback and frame state. Enable on every player before reproducing a freeze."));
     this->rollbackPacingTraceCheckBox->setToolTip(
-        tr("Writes detailed frontend and core pacing CSV logs when a rollback session ends.\n"
-            "Enable this only while diagnosing frame pacing; it is disabled by default."));
-    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox(tr("Enable verbose PIF input logging"), rollbackLoggingGroupBox);
-    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox(tr("Enable verbose Glide input logging"), rollbackLoggingGroupBox);
-    this->rollbackPingDiagnosticsCheckBox = new QCheckBox(tr("Enable lobby ping diagnostics logging"), rollbackLoggingGroupBox);
+        tr("Writes pacing CSV files when the session ends."));
+    this->rollbackVerbosePifInputLoggingCheckBox = new QCheckBox(tr("Verbose PIF input"), diagnosticsPage);
+    this->rollbackVerboseGlideInputLoggingCheckBox = new QCheckBox(tr("Verbose Glide input"), diagnosticsPage);
+    this->rollbackPingDiagnosticsCheckBox = new QCheckBox(tr("Lobby connection diagnostics"), diagnosticsPage);
     this->rollbackPingDiagnosticsCheckBox->setToolTip(
-        tr("Write a detailed lobby_ping_*.log file (in the Logs folder) tracing ICE/STUN\n"
-            "candidate gathering, signaling, connectivity checks, and peer pings. Candidate\n"
-            "addresses are included, but ICE credentials are redacted. Only useful when\n"
-            "debugging connection problems. Applies the next time you connect to the lobby."));
-    this->rollbackHideLocationCheckBox = new QCheckBox(tr("Hide my location from other players"), rollbackTab);
+        tr("Logs connection setup and peer pings, including IP addresses. Applies on your next lobby connection."));
+    this->rollbackHideLocationCheckBox = new QCheckBox(tr("Hide my country in the lobby"), rollbackTab);
     this->rollbackHideLocationCheckBox->setToolTip(
-        tr("Your row in the netplay lobby shows no country flag, and no country in its\n"
-        "hover tooltip, for everyone on the server. Region-based ping estimates still\n"
-        "work. Players you actually play with still exchange connection addresses —\n"
-        "this hides the flag, not your traffic. Applies the next time you connect."));
-    this->rollbackRememberInputDelayCheckBox = new QCheckBox(tr("Remember my last input delay"), rollbackTab);
-    this->rollbackRememberInputDelayCheckBox->setToolTip(
-        tr("Reuse your last frame delay choice when hosting or joining a rollback lobby room,\n"
-        "including Quick Match. Choosing Auto remembers Auto instead of its calculated value.\n"
-        "When disabled, each new room starts on Auto. Applies the next time you enter a room."));
-    rollbackLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
-    rollbackLayout->addWidget(this->rollbackHideLocationCheckBox);
+        tr("Hides your country flag and name after reconnecting. Players in your game still exchange IP addresses."));
+    this->rollbackRememberInputDelayCheckBox = new QCheckBox(tr("Remember my last input delay when joining a room"), rollbackTab);
+    this->autoStartNetplayOnStartupCheckBox->setText(tr("Open netplay on startup"));
+    rollbackLayout->addWidget(this->autoStartNetplayOnStartupCheckBox);
     rollbackLayout->addWidget(this->rollbackRememberInputDelayCheckBox);
-    rollbackLoggingLayout->addWidget(this->rollbackVerboseStatsCheckBox);
-    rollbackLoggingLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
-    rollbackLoggingLayout->addWidget(this->rollbackEmulationDiagnosticsCheckBox);
-    rollbackLoggingLayout->addWidget(this->rollbackPacingTraceCheckBox);
-    rollbackLoggingLayout->addWidget(this->rollbackVerbosePifInputLoggingCheckBox);
-    rollbackLoggingLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
-    rollbackLoggingLayout->addWidget(this->rollbackPingDiagnosticsCheckBox);
-    rollbackLayout->addWidget(rollbackLoggingGroupBox);
+    rollbackLayout->addWidget(this->rollbackHideLocationCheckBox);
+    diagnosticsLayout->addWidget(this->rollbackEnableLocalTestingCheckBox);
+    diagnosticsLayout->addWidget(loggingHeading);
+    diagnosticsLayout->addWidget(this->rollbackVerboseStatsCheckBox);
+    diagnosticsLayout->addWidget(this->rollbackStallDiagnosticsCheckBox);
+    diagnosticsLayout->addWidget(this->rollbackEmulationDiagnosticsCheckBox);
+    diagnosticsLayout->addWidget(this->rollbackPacingTraceCheckBox);
+    diagnosticsLayout->addWidget(this->rollbackVerbosePifInputLoggingCheckBox);
+    diagnosticsLayout->addWidget(this->rollbackVerboseGlideInputLoggingCheckBox);
+    diagnosticsLayout->addWidget(this->rollbackPingDiagnosticsCheckBox);
+    diagnosticsLayout->addStretch();
     rollbackLayout->addStretch();
     this->tabWidget->addTab(rollbackTab, tr("Rollback"));
 
@@ -344,9 +411,6 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
     // connect hotkey settings to slot
     this->commonHotkeySettings(SettingsDialogAction::ConnectSignals);
 
-    // Hide Netplay tab - not used with Kaillera netplay
-    this->innerInterfaceTabWidget->setTabVisible(static_cast<int>(SettingsDialogTab::InterfaceNetplay), false);
-
 #ifndef UPDATER
     this->checkForUpdatesCheckBox->setHidden(true);
 #endif // !UPDATER
@@ -356,13 +420,8 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
 #endif // !NETPLAY
 
 #ifdef _WIN32
-    connect(this->exclusiveFullscreenCheckBox, &QCheckBox::toggled, this, [this](bool checked)
-    {
-        this->betaFullscreenBackendCheckBox->setEnabled(checked);
-        this->exclusiveMonitorComboBox->setEnabled(checked);
-        this->exclusiveResolutionComboBox->setEnabled(checked);
-        this->exclusiveRefreshRateComboBox->setEnabled(checked);
-    });
+    connect(this->exclusiveFullscreenCheckBox, &QCheckBox::toggled,
+            this, &SettingsDialog::setExclusiveFullscreenControlsEnabled);
     connect(this->betaFullscreenBackendCheckBox, &QCheckBox::toggled, this, [this](bool checked)
     {
         if (checked)
@@ -379,12 +438,600 @@ SettingsDialog::SettingsDialog(QWidget *parent, QString file) : QDialog(parent)
         this->populateExclusiveFullscreenModes();
     });
 #else
-    this->exclusiveFullscreenGroupBox->setVisible(false);
+    this->exclusiveFullscreenSection->setVisible(false);
 #endif
+    this->infoIconLabel_7->hide();
+    this->label_91->hide();
+    this->setupNavigation(rollbackTab, diagnosticsPage);
 }
 
 SettingsDialog::~SettingsDialog(void)
 {
+}
+
+void SettingsDialog::SetControllerConfigAction(QAction* action)
+{
+    controllerConfigButton->setEnabled(action->isEnabled());
+    connect(action, &QAction::enabledChanged, controllerConfigButton, &QWidget::setEnabled);
+    connect(controllerConfigButton, &QPushButton::clicked, action, [this, action]()
+    {
+        const auto previousPlugin = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+        action->trigger();
+        const auto currentPlugin = CoreSettingsGetStringValue(SettingsID::Core_INPUT_Plugin);
+        if (currentPlugin == previousPlugin)
+        {
+            return;
+        }
+
+        // The input dialog applies its plugin selection before Settings is saved.
+        const auto fileName = QFileInfo(QString::fromStdString(currentPlugin)).fileName();
+        int index = inputPluginsComboBox->findData(fileName);
+        if (index < 0)
+        {
+            inputPluginsComboBox->addItem(getInputPluginDisplayName(fileName, fileName), fileName);
+            index = inputPluginsComboBox->count() - 1;
+        }
+        inputPluginsComboBox->setCurrentIndex(index);
+        manualInputChoice = false;
+    });
+}
+
+void SettingsDialog::setupNavigation(QWidget* rollbackPage, QWidget* diagnosticsPage)
+{
+    // Keep the existing controls and their persistence bindings, but give each
+    // settings scope a stable ID independent of its position in the sidebar.
+    auto* shell = new QWidget(this);
+    auto* shellLayout = new QHBoxLayout(shell);
+    shellLayout->setContentsMargins(0, 0, 0, 0);
+    shellLayout->setSpacing(16);
+    auto* sidebar = new QFrame(shell);
+    sidebar->setObjectName("SettingsSidebar");
+    sidebar->setFixedWidth(240);
+    auto* sidebarLayout = new QVBoxLayout(sidebar);
+    sidebarLayout->setContentsMargins(12, 12, 12, 12);
+    sidebarLayout->setSpacing(12);
+    settingsSearch = new QLineEdit(sidebar);
+    settingsSearch->setObjectName("SettingsSearch");
+    settingsSearch->setPlaceholderText(tr("Find a setting…"));
+    settingsSearch->setAccessibleName(tr("Find a setting"));
+    settingsSearch->setToolTip(tr("Ctrl+F"));
+    settingsSearch->setClearButtonEnabled(true);
+    sidebarLayout->addWidget(settingsSearch);
+    settingsNavigation = new QTreeWidget(sidebar);
+    settingsNavigation->setObjectName("SettingsNavigation");
+    settingsNavigation->setHeaderHidden(true);
+    settingsNavigation->setRootIsDecorated(false);
+    settingsNavigation->setIndentation(0);
+    settingsNavigation->setExpandsOnDoubleClick(false);
+    settingsNavigation->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    settingsNavigation->setAccessibleName(tr("Settings categories"));
+    sidebarLayout->addWidget(settingsNavigation, 1);
+    controllerConfigButton = new QPushButton(QIcon::fromTheme("gamepad-line"), tr("Controller Config"), sidebar);
+    controllerConfigButton->setObjectName("SettingsControllerConfig");
+    controllerConfigButton->setIconSize(QSize(16, 16));
+    controllerConfigButton->setAutoDefault(false);
+    controllerConfigButton->setEnabled(false);
+    sidebarLayout->addWidget(controllerConfigButton);
+    shellLayout->addWidget(sidebar);
+    settingsPages = new QStackedWidget(shell);
+    settingsPages->setObjectName("SettingsPages");
+    shellLayout->addWidget(settingsPages, 1);
+
+    auto section = [this](const QString& title)
+    {
+        auto* item = new QTreeWidgetItem(settingsNavigation, {title});
+        item->setFlags(Qt::ItemIsEnabled);
+        item->setData(0, Qt::UserRole, static_cast<int>(SettingsDialogTab::Invalid));
+        item->setExpanded(true);
+        return item;
+    };
+    auto page = [this](QTreeWidgetItem* group, SettingsDialogTab id, QWidget* controls,
+                       const QString& title, std::initializer_list<SettingsDialogTab> extraScopes = {},
+                       const QString& note = QString())
+    {
+        auto* scroll = new QScrollArea(settingsPages);
+        scroll->setObjectName("SettingsPageScroll");
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        auto* content = new QWidget;
+        content->setObjectName("SettingsPage");
+        auto* layout = new QVBoxLayout(content);
+        layout->setContentsMargins(24, 24, 24, 24);
+        layout->setSpacing(18);
+        auto* heading = new QLabel(title, content);
+        heading->setObjectName("SettingsPageTitle");
+        heading->setProperty("settingsHeadingOffset", 12);
+        heading->setWordWrap(true);
+        layout->addWidget(heading);
+        if (!note.isEmpty())
+        {
+            auto* summary = new QLabel(note, content);
+            summary->setWordWrap(true);
+            summary->setProperty("role", "muted");
+            layout->addWidget(summary);
+        }
+        controls->setParent(content);
+        controls->setEnabled(true);
+        if (controls->layout())
+        {
+            controls->layout()->setContentsMargins(0, 0, 0, 0);
+            if (controls->layout()->spacing() < 12) controls->layout()->setSpacing(12);
+        }
+        const bool shortcuts = id == SettingsDialogTab::Hotkey;
+        // Let the page own its unused space so notes stay next to their controls.
+        for (auto* formLayout : controls->findChildren<QLayout*>())
+        {
+            for (int i = formLayout->count() - 1; i >= 0; --i)
+            {
+                auto* spacer = formLayout->itemAt(i)->spacerItem();
+                if (spacer && spacer->expandingDirections().testFlag(Qt::Vertical)
+                    && (!shortcuts || spacer->sizeHint().height() > 0))
+                    delete formLayout->takeAt(i);
+            }
+        }
+        layout->addWidget(controls, shortcuts ? 1 : 0);
+        if (!shortcuts) layout->addStretch();
+        controls->show();
+        scroll->setWidget(content);
+        auto* item = new QTreeWidgetItem(group, {title});
+        item->setData(0, Qt::UserRole, static_cast<int>(id));
+        item->setData(0, Qt::UserRole + 1, settingsPages->addWidget(scroll));
+        QVariantList resetScopes;
+        for (const auto scope : extraScopes) resetScopes.append(static_cast<int>(scope));
+        item->setData(0, Qt::UserRole + 3, resetScopes);
+
+        // Search labels and help text, never the user's paths or entered values.
+        QStringList terms{title, note, group->text(0)};
+        for (auto* widget : controls->findChildren<QWidget*>())
+        {
+            if (auto* label = qobject_cast<QLabel*>(widget)) terms << label->text();
+            if (auto* button = qobject_cast<QAbstractButton*>(widget)) terms << button->text();
+            if (auto* box = qobject_cast<QGroupBox*>(widget)) terms << box->title();
+            terms << widget->toolTip();
+        }
+        item->setData(0, Qt::UserRole + 2, terms.join(' '));
+    };
+
+    // Compose pages by task rather than by the old tab or config section.
+    auto combine = [this](std::initializer_list<std::pair<QString, QWidget*>> sections)
+    {
+        auto* content = new QWidget(this);
+        auto* layout = new QVBoxLayout(content);
+        layout->setSpacing(24);
+        for (const auto& [title, form] : sections)
+        {
+            auto* section = new QVBoxLayout;
+            section->setSpacing(10);
+            if (!title.isEmpty())
+            {
+                auto* heading = new QLabel(title, content);
+                heading->setProperty("settingsHeadingOffset", 1);
+                section->addWidget(heading);
+            }
+            form->setParent(content);
+            if (form->layout())
+            {
+                form->layout()->setContentsMargins(0, 0, 0, 0);
+                form->layout()->setSpacing(12);
+            }
+            section->addWidget(form);
+            layout->addLayout(section);
+            form->show();
+        }
+        return content;
+    };
+
+    // Capture before reparenting: taking a page out changes QTabWidget indices.
+    QWidget* general = innerInterfaceTabWidget->widget(0);
+    QWidget* display = innerInterfaceTabWidget->widget(1);
+    QWidget* library = innerInterfaceTabWidget->widget(2);
+    QWidget* logs = innerInterfaceTabWidget->widget(3);
+    QWidget* overlay = innerInterfaceTabWidget->widget(4);
+    // These controls also apply to rollback despite their historical names.
+    osdChatEnabledCheckBox->setText(tr("Show chat on-screen"));
+    osdKailleraPortLabelsCheckBox->setText(tr("Show player labels"));
+    kailleraRecordByDefaultCheckBox->setText(tr("Record matches by default"));
+    kailleraRecordsFolderLabel->setText(tr("Replay folder"));
+
+    // General application behavior is independent of the game display.
+    auto* statusDuration = new QWidget(this);
+    auto* statusLayout = new QHBoxLayout(statusDuration);
+    statusLayout->setContentsMargins(0, 0, 0, 0);
+    label->setWordWrap(true);
+    statusLayout->addWidget(label);
+    statusLayout->addWidget(statusBarMessageDurationSpinBox);
+    auto* generalLayout = qobject_cast<QVBoxLayout*>(general->layout());
+    int behaviorIndex = generalLayout->indexOf(checkForUpdatesCheckBox) + 1;
+    generalLayout->insertWidget(behaviorIndex++, confirmExitWhileInGameCheckBox);
+    generalLayout->insertWidget(behaviorIndex, statusDuration);
+
+    // Rendering API belongs with video plugin selection, not window behavior.
+    auto* renderingApi = new QHBoxLayout;
+    renderingApi->addWidget(label_6);
+    renderingApi->addWidget(openglTypeComboBox);
+    videoPluginSectionLayout->addLayout(renderingApi);
+    for (auto* form : {pluginsTab, innerGamePluginsTab})
+    {
+        for (auto* combo : form->findChildren<QComboBox*>())
+        {
+            combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+            combo->setMinimumContentsLength(12);
+            connect(combo, &QComboBox::currentTextChanged, combo, &QComboBox::setToolTip);
+            combo->setToolTip(combo->currentText());
+        }
+    }
+
+    auto* saveNames = new QWidget(this);
+    auto* saveNamesLayout = new QHBoxLayout(saveNames);
+    saveNamesLayout->setContentsMargins(0, 0, 0, 0);
+    saveNamesLayout->addWidget(label_25);
+    saveNamesLayout->addWidget(coreSaveFilenameFormatComboBox);
+    qobject_cast<QVBoxLayout*>(directoriesTab->layout())->insertWidget(0, saveNames);
+
+    setupShortcutsPage();
+
+    auto* everyday = section(QString());
+#ifdef NETPLAY
+    auto* netplayOverlay = new QWidget(this);
+    auto* netplayOverlayLayout = new QVBoxLayout(netplayOverlay);
+    netplayOverlayLayout->addWidget(osdKailleraPortLabelsCheckBox);
+    netplayOverlayLayout->addWidget(osdLiveReplayStatusCheckBox);
+    netplayOverlayLayout->addWidget(osdChatEnabledCheckBox);
+    netplayOverlayLayout->addWidget(osdChatSettings);
+    page(everyday, SettingsDialogTab::Rollback,
+        combine({{QString(), rollbackPage}, {QString(), replaySettings},
+                 {tr("In-game overlay"), netplayOverlay}}), tr("Netplay"),
+        {SettingsDialogTab::NetplayOverlay, SettingsDialogTab::Recording});
+#endif
+    page(everyday, SettingsDialogTab::InterfaceEmulation,
+        combine({{tr("Window"), display}, {tr("Overlay"), overlay}}), tr("Display"),
+        {SettingsDialogTab::InterfaceOSD});
+    page(everyday, SettingsDialogTab::Hotkey, hotkeysTab, tr("Shortcuts"));
+    page(everyday, SettingsDialogTab::Directory,
+        combine({{tr("ROM search"), library}, {tr("Save files"), directoriesTab}}),
+        tr("Games & saves"), {SettingsDialogTab::InterfaceRomBrowser});
+    page(everyday, SettingsDialogTab::InterfaceGeneral, general, tr("Application"));
+    if (showGameSettings)
+    {
+        auto* game = section(tr("This game"));
+        page(game, SettingsDialogTab::Game, innerGameTab, tr("Game settings"));
+        page(game, SettingsDialogTab::GameCore, innerGameCoreTab, tr("Game emulation"));
+        page(game, SettingsDialogTab::GamePlugin, innerGamePluginsTab, tr("Game plugins"));
+    }
+    auto* advanced = section(tr("Advanced"));
+    page(advanced, SettingsDialogTab::Plugin, pluginsTab, tr("Plugins"));
+    page(advanced, SettingsDialogTab::Core, coreTab, tr("Emulation core"));
+#ifdef NETPLAY
+    page(advanced, SettingsDialogTab::Diagnostics,
+        combine({{tr("Application log"), logs}, {tr("Netplay"), diagnosticsPage}}),
+        tr("Diagnostics"), {SettingsDialogTab::InterfaceLog}, tr("Detailed logging can affect performance."));
+    auto* legacy = section(tr("Legacy"));
+    page(legacy, SettingsDialogTab::N64DD, DDTab, tr("Kaillera"));
+#else
+    page(advanced, SettingsDialogTab::InterfaceLog, logs, tr("Diagnostics"));
+    rollbackPage->hide();
+    diagnosticsPage->hide();
+#endif
+
+    auto* empty = new QLabel(tr("No matching settings"), settingsPages);
+    empty->setObjectName("SettingsEmpty");
+    empty->setWordWrap(true);
+    empty->setAlignment(Qt::AlignCenter);
+    const int emptyIndex = settingsPages->addWidget(empty);
+    connect(settingsNavigation, &QTreeWidget::currentItemChanged, this,
+        [this](QTreeWidgetItem* item, QTreeWidgetItem*)
+    {
+        if (!item || !item->parent()) return;
+        settingsPages->setCurrentIndex(item->data(0, Qt::UserRole + 1).toInt());
+        buttonBox->button(QDialogButtonBox::RestoreDefaults)->setEnabled(true);
+    });
+    connect(settingsSearch, &QLineEdit::textChanged, this, [this, emptyIndex](const QString& text)
+    {
+        const auto words = text.simplified().split(' ', Qt::SkipEmptyParts);
+        QTreeWidgetItem* first = nullptr;
+        for (int i = 0; i < settingsNavigation->topLevelItemCount(); ++i)
+        {
+            auto* group = settingsNavigation->topLevelItem(i);
+            bool any = false;
+            for (int j = 0; j < group->childCount(); ++j)
+            {
+                auto* item = group->child(j);
+                bool match = true;
+                const auto terms = item->data(0, Qt::UserRole + 2).toString();
+                for (const auto& word : words) match &= terms.contains(word, Qt::CaseInsensitive);
+                item->setHidden(!match);
+                any |= match;
+                if (match && !item->isDisabled() && !first) first = item;
+            }
+            group->setHidden(!any);
+            group->setExpanded(true);
+        }
+        auto* current = settingsNavigation->currentItem();
+        if (!first)
+        {
+            settingsNavigation->setCurrentItem(nullptr);
+            settingsPages->setCurrentIndex(emptyIndex);
+            buttonBox->button(QDialogButtonBox::RestoreDefaults)->setEnabled(false);
+        }
+        else if (!current || current->isHidden()) settingsNavigation->setCurrentItem(first);
+    });
+    auto* find = new QShortcut(QKeySequence::Find, this);
+    connect(find, &QShortcut::activated, settingsSearch, [this]() { settingsSearch->setFocus(); settingsSearch->selectAll(); });
+    // Enter in the filter moves to the results instead of submitting the dialog.
+    for (const auto key : {Qt::Key_Return, Qt::Key_Enter})
+    {
+        auto* browseResults = new QShortcut(QKeySequence(key), settingsSearch);
+        browseResults->setContext(Qt::WidgetShortcut);
+        connect(browseResults, &QShortcut::activated, settingsNavigation, [this]() { settingsNavigation->setFocus(); });
+    }
+    horizontalLayout->removeWidget(tabWidget);
+    tabWidget->hide();
+    horizontalLayout->addWidget(shell);
+    gridLayout->setContentsMargins(16, 16, 16, 12);
+    verticalLayout->setSpacing(12);
+    buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Save"));
+    buttonBox->button(QDialogButtonBox::Ok)->setObjectName("SaveSettings");
+    buttonBox->button(QDialogButtonBox::Ok)->setDefault(true);
+    buttonBox->button(QDialogButtonBox::RestoreDefaults)->setAutoDefault(false);
+    buttonBox->button(QDialogButtonBox::RestoreDefaults)->setText(tr("Reset page"));
+    buttonBox->button(QDialogButtonBox::RestoreDefaults)->setToolTip(tr("Restore defaults for this page."));
+
+    // Share the lobby palette. Non-netplay builds retain the application palette.
+    QColor bg = palette().color(QPalette::Window), panel = palette().color(QPalette::Base);
+    QColor ink = palette().color(QPalette::WindowText), muted = palette().color(QPalette::Disabled, QPalette::WindowText);
+    QColor line = palette().color(QPalette::Mid), accent = palette().color(QPalette::Highlight);
+    QColor tint = palette().color(QPalette::AlternateBase), well = panel;
+    QColor shortcutSurface = bg, stepperPressed = bg;
+    QString style;
+#ifdef NETPLAY
+    const auto& t = LobbyTheme::tokens();
+    bg = t.bg; panel = t.panel; ink = t.ink; muted = t.muted;
+    line = t.line2; accent = t.accent; tint = t.accentTint; well = t.well;
+    shortcutSurface = t.panelB;
+    stepperPressed = t.raise;
+    style = LobbyTheme::styleSheet();
+#endif
+    style += QStringLiteral(R"(
+        QDialog#SettingsDialog { background: @bg; }
+        QFrame#SettingsSidebar { background: @bg; border: 1px solid @line; border-radius: 12px; }
+        QWidget#SettingsPage, QLabel#SettingsEmpty { background: @panel; color: @ink; border-radius: 12px; }
+        QLabel { color: @ink; }
+        QLabel[role="muted"] { color: @muted; }
+        QTreeWidget#SettingsNavigation { background: transparent; border: none; outline: 0; color: @muted; }
+        QTreeWidget#SettingsNavigation::item { padding: 0 8px; border: 2px solid transparent; border-radius: 7px; }
+        QTreeWidget#SettingsNavigation::item:hover { background: @tint; color: @ink; }
+        QTreeWidget#SettingsNavigation::item:has-children { padding-left: 0; color: @ink; }
+        QTreeWidget#SettingsNavigation::item:has-children:hover { background: transparent; }
+        QTreeWidget#SettingsNavigation::item:selected { background: @tint; color: @ink; border-left-color: @accent; }
+        QTreeWidget#SettingsNavigation::item:disabled { color: @muted; }
+        QScrollArea { border: none; background: transparent; }
+        QScrollArea#SettingsPageScroll QScrollBar:horizontal { height: 10px; background: transparent; }
+        QScrollArea#SettingsPageScroll QScrollBar::handle:horizontal { background: @line; border-radius: 4px; min-width: 24px; }
+        QScrollArea#SettingsPageScroll QScrollBar::add-line:horizontal,
+        QScrollArea#SettingsPageScroll QScrollBar::sub-line:horizontal { width: 0; }
+        QScrollArea#SettingsPageScroll QScrollBar::add-page:horizontal,
+        QScrollArea#SettingsPageScroll QScrollBar::sub-page:horizontal { background: transparent; }
+        QGroupBox { border: none; margin: 0; padding: 0; color: @ink; }
+        QGroupBox[checkable="true"] {
+            border: 1px solid @line; border-radius: 9px;
+            margin-top: 16px; padding: 20px 14px 14px;
+        }
+        QGroupBox[checkable="true"]::title {
+            subcontrol-origin: margin; subcontrol-position: top left;
+            left: 12px; padding: 3px 6px; spacing: 8px; color: @ink;
+        }
+        QGroupBox::indicator { width: 18px; height: 18px; border: 1px solid @line; border-radius: 4px; background: @well; }
+        QGroupBox::indicator:checked { background: @accent; border-color: @accent; image: url(:/icons/white/svg/check-line.svg); }
+        QGroupBox::indicator:hover { border-color: @accent; }
+        QCheckBox { color: @ink; spacing: 8px; padding: 4px 0; }
+        QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid @line; border-radius: 4px; background: @well; }
+        QCheckBox::indicator:checked { background: @accent; border-color: @accent; image: url(:/icons/white/svg/check-line.svg); }
+        QCheckBox::indicator:hover { border-color: @accent; }
+        QCheckBox::indicator:disabled { background: @bg; border-color: @line; }
+        QCheckBox:disabled, QLabel:disabled, QGroupBox:disabled { color: @muted; }
+        QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: @well; color: @ink; border: 1px solid @line; border-radius: 6px; padding: 6px 10px; min-height: 24px; }
+        QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: @accent; }
+        QComboBox { padding-right: 24px; }
+        QComboBox::drop-down { border: none; width: 24px; }
+        QComboBox::down-arrow { image: url(@chevron); width: 12px; height: 12px; }
+        QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: @muted; }
+        QSpinBox, QDoubleSpinBox { padding-right: 38px; }
+        QSpinBox::up-button, QSpinBox::down-button,
+        QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+            subcontrol-origin: padding;
+            position: relative; right: 5px;
+            width: 26px; height: 16px;
+            border: none; border-radius: 4px; background: transparent;
+        }
+        QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-position: top right; top: 1px; }
+        QSpinBox::down-button, QDoubleSpinBox::down-button { subcontrol-position: bottom right; bottom: 1px; }
+        QSpinBox::up-button:hover:enabled, QSpinBox::down-button:hover:enabled,
+        QDoubleSpinBox::up-button:hover:enabled, QDoubleSpinBox::down-button:hover:enabled { background: @tint; }
+        QSpinBox::up-button:pressed:enabled, QSpinBox::down-button:pressed:enabled,
+        QDoubleSpinBox::up-button:pressed:enabled, QDoubleSpinBox::down-button:pressed:enabled { background: @stepperPressed; }
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(@chevronUp); width: 16px; height: 16px; }
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(@chevron); width: 16px; height: 16px; }
+        QPushButton { background: @bg; color: @ink; border: 1px solid @line; border-radius: 6px; padding: 6px 12px; min-height: 24px; }
+        QPushButton:hover, QPushButton:focus { border-color: @accent; }
+        QPushButton:pressed { background: @tint; }
+        QPushButton:disabled { color: @muted; }
+        QPushButton#SettingsControllerConfig { background: @panel; }
+        QPushButton#SettingsControllerConfig:hover:enabled,
+        QPushButton#SettingsControllerConfig:pressed { background: @tint; }
+        QPushButton#SaveSettings { background: @accent; color: white; border-color: @accent; font-weight: 600; padding: 7px 22px; }
+        QPushButton#SaveSettings:focus, QPushButton#SaveSettings:hover { border-color: @ink; }
+        QTabWidget#keybindingsMenuTabWidget::pane {
+            top: -1px; border: none; border-radius: 9px;
+            border-top-left-radius: 0; padding: 3px; background: @shortcutSurface;
+        }
+        QWidget[settingsShortcutPage="true"] { background: @shortcutSurface; }
+        QTabBar#SettingsShortcutTabs { background: transparent; qproperty-drawBase: 0; }
+        QTabBar#SettingsShortcutTabs::tab {
+            height: 34px; padding: 0 10px; margin-right: 2px;
+            color: @muted; background: transparent; border: 1px solid transparent;
+            border-top-left-radius: 7px; border-top-right-radius: 7px;
+        }
+        QTabBar#SettingsShortcutTabs::tab:!selected:hover { color: @ink; background: @tint; }
+        QTabBar#SettingsShortcutTabs::tab:selected {
+            color: @ink; background: @shortcutSurface; border-top: 2px solid @accent;
+        }
+        QTabBar#SettingsShortcutTabs::scroller { width: 48px; }
+        QTabBar#SettingsShortcutTabs QToolButton {
+            color: @ink; background: @shortcutSurface; border: 1px solid @line; border-radius: 5px;
+        }
+        QTabBar#SettingsShortcutTabs QToolButton:hover { background: @tint; }
+        QTabBar#SettingsShortcutTabs QToolButton:disabled { color: @muted; }
+        QPushButton[shortcutBinding="true"] { background: @well; font-weight: 600; }
+    )");
+    const std::pair<const char*, QColor> colors[] = {
+        {"@bg", bg}, {"@panel", panel}, {"@ink", ink}, {"@muted", muted},
+        {"@line", line}, {"@accent", accent}, {"@tint", tint}, {"@well", well},
+        {"@shortcutSurface", shortcutSurface}, {"@stepperPressed", stepperPressed}
+    };
+    for (const auto& [name, color] : colors)
+        style.replace(QLatin1String(name), color.name(QColor::HexArgb));
+    style.replace(QStringLiteral("@chevronUp"), bg.lightness() < 128
+        ? QStringLiteral(":/icons/white/svg/arrow-up-s-line.svg")
+        : QStringLiteral(":/icons/black/svg/arrow-up-s-line.svg"));
+    style.replace(QStringLiteral("@chevron"), bg.lightness() < 128
+        ? QStringLiteral(":/icons/white/svg/arrow-down-s-line.svg")
+        : QStringLiteral(":/icons/black/svg/arrow-down-s-line.svg"));
+    setStyleSheet(style);
+    setupSettingsFonts(sidebar);
+    for (auto* spinBox : settingsPages->findChildren<QAbstractSpinBox*>())
+    {
+        new ClickToAdjustWheelFilter(spinBox);
+    }
+    for (auto* comboBox : settingsPages->findChildren<QComboBox*>())
+    {
+        new ClickToAdjustWheelFilter(comboBox);
+    }
+    setMinimumSize(760, 540);
+    resize(980, 760);
+#ifdef NETPLAY
+    selectSettingsPage(static_cast<int>(SettingsDialogTab::Rollback));
+#else
+    selectSettingsPage(static_cast<int>(SettingsDialogTab::InterfaceGeneral));
+#endif
+    settingsNavigation->verticalScrollBar()->setValue(0);
+}
+
+void SettingsDialog::setupSettingsFonts(QWidget* sidebar)
+{
+    auto body = this->font();
+    body.setPixelSize(15);
+    this->setFont(body);
+    for (auto* button : buttonBox->buttons()) button->setFont(body);
+    // Styled controls may retain their application font after a parent changes.
+    for (auto* widget : settingsPages->findChildren<QWidget*>())
+    {
+        const auto offset = widget->property("settingsHeadingOffset");
+        QFont font = body;
+        if (offset.isValid())
+        {
+            const int size = body.pixelSize() + offset.toInt();
+            if (widget->objectName() == "SettingsPageTitle")
+            {
+                font = settingsHeaderFont(size);
+            }
+            else
+            {
+                font.setPixelSize(size);
+                font.setBold(true);
+            }
+        }
+        widget->setFont(font);
+    }
+
+    auto navigation = body;
+    navigation.setPixelSize(18);
+    sidebar->setFont(navigation);
+    settingsNavigation->setFont(navigation);
+    settingsSearch->setFont(navigation);
+    controllerConfigButton->setFont(body);
+    const auto sectionFont = settingsHeaderFont(navigation.pixelSize() + 3);
+    const QFontMetrics rowMetrics(navigation), sectionMetrics(sectionFont);
+    int sidebarWidth = 240;
+    for (QTreeWidgetItemIterator it(settingsNavigation); *it; ++it)
+    {
+        auto* item = *it;
+        const bool section = !item->parent();
+        const auto& metrics = section ? sectionMetrics : rowMetrics;
+        if (section) item->setFont(0, sectionFont);
+        item->setSizeHint(0, QSize(0, item->text(0).isEmpty() ? 1 : metrics.height() + (section ? 22 : 19)));
+        sidebarWidth = qMax(sidebarWidth, metrics.horizontalAdvance(item->text(0)) + 76);
+    }
+    const auto margins = sidebar->layout()->contentsMargins();
+    sidebar->setFixedWidth(qMax(sidebarWidth, controllerConfigButton->sizeHint().width() + margins.left() + margins.right()));
+
+    // The native style can give the chat combo box and spin boxes different heights.
+    const QList<QWidget*> chatFields{osdLocationComboBox, osdDurationSpinBox, osdHorizontalPaddingSpinBox,
+                                    osdVerticalPaddingSpinBox, osdScaleDoubleSpinBox, osdMaxMessagesSpinBox};
+    int chatFieldHeight = 0;
+    for (auto* field : chatFields)
+    {
+        field->ensurePolished();
+        chatFieldHeight = qMax(chatFieldHeight, field->sizeHint().height());
+    }
+    for (auto* field : chatFields) field->setFixedHeight(chatFieldHeight);
+}
+
+void SettingsDialog::setupShortcutsPage()
+{
+    // The tabs stay in place while each list scrolls, as in the lobby's chat.
+    // Remove the old scroll area around the entire tab widget.
+    verticalLayout_33->removeWidget(scrollArea);
+    scrollArea->hide();
+    verticalLayout_33->insertWidget(0, keybindingsMenuTabWidget);
+    keybindingsMenuTabWidget->show();
+    keybindingsMenuTabWidget->setDocumentMode(false);
+    keybindingsMenuTabWidget->setUsesScrollButtons(true);
+    keybindingsMenuTabWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Ignored);
+    keybindingsMenuTabWidget->setMinimumHeight(180);
+    auto* tabs = keybindingsMenuTabWidget->tabBar();
+    tabs->setObjectName("SettingsShortcutTabs");
+    tabs->setExpanding(false);
+    tabs->setDrawBase(false);
+
+    for (int i = 0; i < keybindingsMenuTabWidget->count(); ++i)
+    {
+        auto* form = keybindingsMenuTabWidget->widget(i);
+        const auto title = keybindingsMenuTabWidget->tabText(i);
+        keybindingsMenuTabWidget->removeTab(i);
+        form->setProperty("settingsShortcutPage", true);
+        if (auto* formLayout = qobject_cast<QVBoxLayout*>(form->layout()))
+        {
+            formLayout->setContentsMargins(16, 14, 16, 14);
+            formLayout->setSpacing(8);
+            formLayout->addStretch();
+        }
+        auto* list = new QScrollArea(keybindingsMenuTabWidget);
+        list->setWidgetResizable(true);
+        list->setFrameShape(QFrame::NoFrame);
+        list->setWidget(form);
+        keybindingsMenuTabWidget->insertTab(i, list, title);
+    }
+    keybindingsMenuTabWidget->setCurrentIndex(0);
+    for (auto* binding : hotkeysTab->findChildren<KeybindButton*>())
+    {
+        binding->setProperty("shortcutBinding", true);
+        binding->setFixedWidth(180);
+        binding->setAutoDefault(false);
+    }
+}
+
+void SettingsDialog::selectSettingsPage(int id)
+{
+    settingsSearch->clear();
+    for (QTreeWidgetItemIterator it(settingsNavigation); *it; ++it)
+    {
+        if ((*it)->parent() && !(*it)->isDisabled() && (*it)->data(0, Qt::UserRole).toInt() == id)
+        {
+            settingsNavigation->setCurrentItem(*it);
+            settingsNavigation->scrollToItem(*it);
+            return;
+        }
+    }
 }
 
 #ifdef _WIN32
@@ -542,38 +1189,18 @@ void SettingsDialog::populateExclusiveFullscreenModes(void)
 
 void SettingsDialog::ShowGameTab(void)
 {
-    this->tabWidget->setCurrentIndex(3);
+    this->selectSettingsPage(static_cast<int>(SettingsDialogTab::Game));
 }
 
 void SettingsDialog::ShowPluginsTab(void)
 {
-    this->tabWidget->setCurrentIndex(4);
+    this->selectSettingsPage(static_cast<int>(SettingsDialogTab::Plugin));
 }
 
 int SettingsDialog::currentIndex(void)
 {
-    int currentIndex = this->tabWidget->currentIndex();
-    int index = currentIndex;
-
-    if (currentIndex == 0)
-    { // interface tab
-        index += this->innerInterfaceTabWidget->currentIndex();
-    }
-    else if (currentIndex > 0)
-    { // above interface tab
-        index += this->innerInterfaceTabWidget->count() - 1;
-    }
-
-    if (currentIndex == 3)
-    { // game tab
-        index += this->innerGameTabWidget->currentIndex();
-    }
-    else if (currentIndex > 3)
-    { // above game tab
-        index += this->innerGameTabWidget->count() - 1;
-    }
-
-    return index;
+    auto* item = this->settingsNavigation->currentItem();
+    return item ? item->data(0, Qt::UserRole).toInt() : static_cast<int>(SettingsDialogTab::Invalid);
 }
 
 void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
@@ -632,6 +1259,15 @@ void SettingsDialog::restoreDefaults(int stackedWidgetIndex)
         break;
     case SettingsDialogTab::Rollback:
         this->loadDefaultRollbackSettings();
+        break;
+    case SettingsDialogTab::Diagnostics:
+        this->loadDefaultDiagnosticsSettings();
+        break;
+    case SettingsDialogTab::Recording:
+        this->loadDefaultRecordingSettings();
+        break;
+    case SettingsDialogTab::NetplayOverlay:
+        this->loadDefaultNetplayOverlaySettings();
         break;
     }
 }
@@ -956,12 +1592,8 @@ void SettingsDialog::loadInterfaceEmulationSettings(void)
         this->exclusiveRefreshRateComboBox->blockSignals(false);
         this->populateExclusiveFullscreenModes();
     }
-    this->betaFullscreenBackendCheckBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
-    this->exclusiveMonitorComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
-    this->exclusiveResolutionComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
-    this->exclusiveRefreshRateComboBox->setEnabled(this->exclusiveFullscreenCheckBox->isChecked());
+    this->setExclusiveFullscreenControlsEnabled(this->exclusiveFullscreenCheckBox->isChecked());
 #endif
-    this->confirmDragDropCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmDragDrop));
     this->confirmExitWhileInGameCheckBox->setChecked(CoreSettingsGetBoolValue(SettingsID::GUI_ConfirmExitWhileInGame));
     this->statusBarMessageDurationSpinBox->setValue(CoreSettingsGetIntValue(SettingsID::GUI_StatusbarMessageDuration));
     this->openglTypeComboBox->setCurrentIndex(CoreSettingsGetBoolValue(SettingsID::GUI_OpenGLES));
@@ -1046,7 +1678,6 @@ void SettingsDialog::loadDefaultCoreSettings(void)
     const int cpuEmulator = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_CPU_Emulator);
     const QString videoCaptureBackend = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::CoreOverlay_GbCameraVideoCaptureBackend1));
     int siDmaDuration = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverlay_SiDmaDuration);
-    const int saveFilenameFormat = CoreSettingsGetDefaultIntValue(SettingsID::CoreOverLay_SaveFileNameFormat);
     const bool randomizeInterrupt = CoreSettingsGetDefaultBoolValue(SettingsID::CoreOverlay_RandomizeInterrupt);
     const bool usePIFROM = CoreSettingsGetDefaultBoolValue(SettingsID::Core_PIF_Use);
     const QString ntscPifROM = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_PIF_NTSC));
@@ -1055,7 +1686,6 @@ void SettingsDialog::loadDefaultCoreSettings(void)
 
     this->coreCpuEmulatorComboBox->setCurrentIndex(cpuEmulator);
     this->coreVideoCaptureBackendComboBox->setCurrentIndex(videoCaptureBackend == "sdl3" ? 1 : 0);
-    this->coreSaveFilenameFormatComboBox->setCurrentIndex(saveFilenameFormat);
     this->coreRandomizeTimingCheckBox->setChecked(randomizeInterrupt);
 
     this->usePifRomGroupBox->setChecked(usePIFROM);
@@ -1107,11 +1737,14 @@ void SettingsDialog::loadDefaultGamePluginSettings(void)
 
 void SettingsDialog::loadDefaultPluginSettings(void)
 {
+    this->openglTypeComboBox->setCurrentIndex(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OpenGLES));
     this->commonPluginSettings(SettingsDialogAction::LoadDefaultSettings);
 }
 
 void SettingsDialog::loadDefaultDirectorySettings(void)
 {
+    this->coreSaveFilenameFormatComboBox->setCurrentIndex(
+        CoreSettingsGetDefaultIntValue(SettingsID::CoreOverLay_SaveFileNameFormat));
     this->screenshotDirLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_ScreenshotPath)));
     this->saveStateDirLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_SaveStatePath)));
     this->saveSramDirLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Core_SaveSRAMPath)));
@@ -1124,23 +1757,28 @@ void SettingsDialog::loadDefault64DDSettings(void)
     {
         kailleraPort = 27886;
     }
+    this->kailleraPortSpinBox->setValue(kailleraPort);
+    this->kailleraFlashOnJoinCheckBox->setChecked(
+        CoreSettingsGetDefaultBoolValue(SettingsID::Kaillera_FlashOnJoin));
+    this->kailleraBeepOnJoinCheckBox->setChecked(
+        CoreSettingsGetDefaultBoolValue(SettingsID::Kaillera_BeepOnJoin));
+}
 
+void SettingsDialog::loadDefaultRecordingSettings(void)
+{
     QString recordsDirectoryRaw = QString::fromStdString(
         CoreSettingsGetDefaultStringValue(SettingsID::Kaillera_RecordsDirectory));
     if (recordsDirectoryRaw.isEmpty())
     {
         recordsDirectoryRaw = "records";
     }
-
     int recordingCapMB = CoreSettingsGetDefaultIntValue(SettingsID::Kaillera_RecordingCapMB);
     if (recordingCapMB < 1)
     {
         recordingCapMB = 1;
     }
-
     this->kailleraRecordByDefaultCheckBox->setChecked(
         CoreSettingsGetDefaultBoolValue(SettingsID::Kaillera_RecordingEnabled));
-    this->kailleraPortSpinBox->setValue(kailleraPort);
     this->kailleraRecordsDirectoryLineEdit->setProperty("rawPath", recordsDirectoryRaw);
     this->kailleraRecordsDirectoryLineEdit->setText(getDisplayDirectoryPath(recordsDirectoryRaw));
     this->kailleraRecordsDirectoryLineEdit->setToolTip(this->kailleraRecordsDirectoryLineEdit->text());
@@ -1148,10 +1786,6 @@ void SettingsDialog::loadDefault64DDSettings(void)
         CoreSettingsGetDefaultBoolValue(SettingsID::Kaillera_RecordingCapEnabled));
     this->kailleraRecordingCapMBSpinBox->setValue(recordingCapMB);
     this->updateKailleraRecordingCapControls();
-    this->kailleraFlashOnJoinCheckBox->setChecked(
-        CoreSettingsGetDefaultBoolValue(SettingsID::Kaillera_FlashOnJoin));
-    this->kailleraBeepOnJoinCheckBox->setChecked(
-        CoreSettingsGetDefaultBoolValue(SettingsID::Kaillera_BeepOnJoin));
 }
 
 void SettingsDialog::loadDefaultHotkeySettings(void)
@@ -1161,6 +1795,8 @@ void SettingsDialog::loadDefaultHotkeySettings(void)
 
 void SettingsDialog::loadDefaultInterfaceGeneralSettings(void)
 {
+    this->confirmExitWhileInGameCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_ConfirmExitWhileInGame));
+    this->statusBarMessageDurationSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_StatusbarMessageDuration));
     const QList<ThemeOption> themeOptions = collectAvailableThemeOptions();
     const QString defaultTheme = QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::GUI_Theme));
     const bool showLegacy = isLegacyThemeValue(themeOptions, defaultTheme);
@@ -1170,7 +1806,6 @@ void SettingsDialog::loadDefaultInterfaceGeneralSettings(void)
     populateThemeCombo(this->themeComboBox, themeOptions, showLegacy, defaultTheme);
     this->iconThemeComboBox->setCurrentText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::GUI_IconTheme)));
     this->languageComboBox->setCurrentIndex(0);
-    this->autoStartNetplayOnStartupCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutoStartNetplayOnStartup));
 #ifdef UPDATER
     this->checkForUpdatesCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_CheckForUpdates));
 #endif // UPDATER
@@ -1186,18 +1821,10 @@ void SettingsDialog::loadDefaultInterfaceEmulationSettings(void)
 #ifdef _WIN32
     this->exclusiveFullscreenCheckBox->setChecked(false);
     this->betaFullscreenBackendCheckBox->setChecked(false);
-    this->betaFullscreenBackendCheckBox->setEnabled(false);
     this->exclusiveMonitorComboBox->setCurrentIndex(0);
     this->exclusiveResolutionComboBox->setCurrentIndex(0);
     this->exclusiveRefreshRateComboBox->setCurrentIndex(0);
-    this->exclusiveMonitorComboBox->setEnabled(false);
-    this->exclusiveResolutionComboBox->setEnabled(false);
-    this->exclusiveRefreshRateComboBox->setEnabled(false);
 #endif
-    this->confirmDragDropCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_ConfirmDragDrop));
-    this->confirmExitWhileInGameCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_ConfirmExitWhileInGame));
-    this->statusBarMessageDurationSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_StatusbarMessageDuration));
-    this->openglTypeComboBox->setCurrentIndex(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OpenGLES));
 }
 
 void SettingsDialog::loadDefaultInterfaceRomBrowserSettings(void)
@@ -1214,15 +1841,9 @@ void SettingsDialog::loadDefaultInterfaceLogSettings(void)
 void SettingsDialog::loadDefaultInterfaceOSDSettings(void)
 {
     this->osdEnabledCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayEnabled));
-    this->osdChatEnabledCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayChatEnabled));
-    this->osdLocationComboBox->setCurrentIndex(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayLocation));
-    this->osdVerticalPaddingSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayPaddingY));
-    this->osdHorizontalPaddingSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayPaddingX));
-    this->osdDurationSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayDuration));
-    this->osdScaleDoubleSpinBox->setValue(CoreSettingsGetDefaultFloatValue(SettingsID::GUI_OnScreenDisplayScale));
-    this->osdMaxMessagesSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayMaxMessages));
-    this->osdKailleraPortLabelsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels));
-    this->osdLiveReplayStatusCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayLiveReplayStatus));
+#ifndef NETPLAY
+    this->loadDefaultNetplayOverlaySettings();
+#endif
 
     const std::vector<int> backgroundColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayBackgroundColor);
     const std::vector<int> textColor = CoreSettingsGetDefaultIntListValue(SettingsID::GUI_OnScreenDisplayTextColor);
@@ -1241,6 +1862,20 @@ void SettingsDialog::loadDefaultInterfaceOSDSettings(void)
     this->updateOSDSettingsEnabledState();
 }
 
+void SettingsDialog::loadDefaultNetplayOverlaySettings(void)
+{
+    this->osdChatEnabledCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayChatEnabled));
+    this->osdLocationComboBox->setCurrentIndex(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayLocation));
+    this->osdVerticalPaddingSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayPaddingY));
+    this->osdHorizontalPaddingSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayPaddingX));
+    this->osdDurationSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayDuration));
+    this->osdScaleDoubleSpinBox->setValue(CoreSettingsGetDefaultFloatValue(SettingsID::GUI_OnScreenDisplayScale));
+    this->osdMaxMessagesSpinBox->setValue(CoreSettingsGetDefaultIntValue(SettingsID::GUI_OnScreenDisplayMaxMessages));
+    this->osdKailleraPortLabelsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayKailleraPortLabels));
+    this->osdLiveReplayStatusCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_OnScreenDisplayLiveReplayStatus));
+    this->updateOSDSettingsEnabledState();
+}
+
 void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
 {
     this->netplayNicknameLineEdit->setText(QString::fromStdString(CoreSettingsGetDefaultStringValue(SettingsID::Netplay_Nickname)));
@@ -1251,6 +1886,13 @@ void SettingsDialog::loadDefaultInterfaceNetplaySettings(void)
 
 void SettingsDialog::loadDefaultRollbackSettings(void)
 {
+    this->autoStartNetplayOnStartupCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::GUI_AutoStartNetplayOnStartup));
+    this->rollbackHideLocationCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_HideLocation));
+    this->rollbackRememberInputDelayCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_RememberInputDelay));
+}
+
+void SettingsDialog::loadDefaultDiagnosticsSettings(void)
+{
     this->rollbackVerboseStatsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseStats));
     this->rollbackStallDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_StallDiagnostics));
     this->rollbackEmulationDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_EmulationDiagnostics));
@@ -1259,8 +1901,6 @@ void SettingsDialog::loadDefaultRollbackSettings(void)
     this->rollbackVerbosePifInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerbosePifInputLogging));
     this->rollbackVerboseGlideInputLoggingCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_VerboseGlideInputLogging));
     this->rollbackPingDiagnosticsCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_PingDiagnostics));
-    this->rollbackHideLocationCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_HideLocation));
-    this->rollbackRememberInputDelayCheckBox->setChecked(CoreSettingsGetDefaultBoolValue(SettingsID::Rollback_RememberInputDelay));
 }
 
 void SettingsDialog::saveSettings(void)
@@ -1482,7 +2122,6 @@ void SettingsDialog::saveInterfaceEmulationSettings(void)
 #else
     CoreSettingsSetValue(SettingsID::GUI_AutomaticFullscreen, this->automaticFullscreenCheckbox->isChecked());
 #endif
-    CoreSettingsSetValue(SettingsID::GUI_ConfirmDragDrop, this->confirmDragDropCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_ConfirmExitWhileInGame, this->confirmExitWhileInGameCheckBox->isChecked());
     CoreSettingsSetValue(SettingsID::GUI_StatusbarMessageDuration, this->statusBarMessageDurationSpinBox->value());
     CoreSettingsSetValue(SettingsID::GUI_OpenGLES, this->openglTypeComboBox->currentIndex() == 1);
@@ -1631,41 +2270,13 @@ void SettingsDialog::commonHotkeySettings(SettingsDialogAction action)
     };
 
 
-    if (action == SettingsDialogAction::LoadDefaultSettings)
-    {
-        int index = this->keybindingsMenuTabWidget->currentIndex();
-        switch (index)
-        {
-        default:
-        case 0:
-            keybindings.insert(keybindings.end(), keybindings_System.begin(), keybindings_System.end());
-            break;
-        case 1:
-            keybindings.insert(keybindings.end(), keybindings_SpeedFactor.begin(), keybindings_SpeedFactor.end());
-            break;
-        case 2:
-            keybindings.insert(keybindings.end(), keybindings_CurrentSaveState.begin(), keybindings_CurrentSaveState.end());
-            break;
-        case 3:
-            keybindings.insert(keybindings.end(), keybindings_Audio.begin(), keybindings_Audio.end());
-            break;
-        case 4:
-            keybindings.insert(keybindings.end(), keybindings_Settings.begin(), keybindings_Settings.end());
-            break;
-        case 5:
-            keybindings.insert(keybindings.end(), keybindings_View.begin(), keybindings_View.end());
-            break;
-        }
-    }
-    else
-    {
-        keybindings.insert(keybindings.end(), keybindings_System.begin(), keybindings_System.end());
-        keybindings.insert(keybindings.end(), keybindings_SpeedFactor.begin(), keybindings_SpeedFactor.end());
-        keybindings.insert(keybindings.end(), keybindings_CurrentSaveState.begin(), keybindings_CurrentSaveState.end());
-        keybindings.insert(keybindings.end(), keybindings_Audio.begin(), keybindings_Audio.end());
-        keybindings.insert(keybindings.end(), keybindings_Settings.begin(), keybindings_Settings.end());
-        keybindings.insert(keybindings.end(), keybindings_View.begin(), keybindings_View.end());
-    }
+    // Reset this page covers every shortcuts tab, just like load and save.
+    keybindings.insert(keybindings.end(), keybindings_System.begin(), keybindings_System.end());
+    keybindings.insert(keybindings.end(), keybindings_SpeedFactor.begin(), keybindings_SpeedFactor.end());
+    keybindings.insert(keybindings.end(), keybindings_CurrentSaveState.begin(), keybindings_CurrentSaveState.end());
+    keybindings.insert(keybindings.end(), keybindings_Audio.begin(), keybindings_Audio.end());
+    keybindings.insert(keybindings.end(), keybindings_Settings.begin(), keybindings_Settings.end());
+    keybindings.insert(keybindings.end(), keybindings_View.begin(), keybindings_View.end());
 
     switch (action)
     {
@@ -1817,8 +2428,7 @@ void SettingsDialog::setIconsForEmulationInfoText(void)
     QLabel* labels[] = {
         this->infoIconLabel_0, this->infoIconLabel_1, this->infoIconLabel_2,
         this->infoIconLabel_3, this->infoIconLabel_5,
-        this->infoIconLabel_7, this->infoIconLabel_6, this->infoIconLabel_8,
-        this->infoIconLabel_9
+        this->infoIconLabel_7, this->infoIconLabel_6, this->infoIconLabel_8
     };
 
     QIcon infoIcon = QIcon::fromTheme("information-line");
@@ -1846,13 +2456,26 @@ void SettingsDialog::hideEmulationInfoText(void)
     }
 }
 
+#ifdef _WIN32
+void SettingsDialog::setExclusiveFullscreenControlsEnabled(bool enabled)
+{
+    this->betaFullscreenBackendCheckBox->setEnabled(enabled);
+    this->exclusiveMonitorLabel->setEnabled(enabled);
+    this->exclusiveMonitorComboBox->setEnabled(enabled);
+    this->exclusiveResolutionLabel->setEnabled(enabled);
+    this->exclusiveResolutionComboBox->setEnabled(enabled);
+    this->exclusiveRefreshRateLabel->setEnabled(enabled);
+    this->exclusiveRefreshRateComboBox->setEnabled(enabled);
+}
+#endif
+
 void SettingsDialog::updateKailleraRecordingCapControls(void)
 {
     const bool recordingByDefault = this->kailleraRecordByDefaultCheckBox->isChecked();
-    const bool capEnabled = this->kailleraRecordingCapEnabledCheckBox->isChecked();
+    const bool capEnabled = recordingByDefault && this->kailleraRecordingCapEnabledCheckBox->isChecked();
 
     this->kailleraRecordingCapEnabledCheckBox->setEnabled(recordingByDefault);
-    this->kailleraRecordingCapMBSpinBox->setEnabled(recordingByDefault && capEnabled);
+    this->kailleraRecordingCapMBSpinBox->setEnabled(capEnabled);
 }
 
 void SettingsDialog::updateOSDSettingsEnabledState(void)
@@ -1860,9 +2483,9 @@ void SettingsDialog::updateOSDSettingsEnabledState(void)
     const bool osdEnabled = this->osdEnabledCheckBox->isChecked();
     const bool chatEnabled = this->osdChatEnabledCheckBox->isChecked();
 
-    this->osdGlobalSettingsGroupBox->setEnabled(osdEnabled);
+    this->osdGlobalSettings->setEnabled(osdEnabled);
     this->osdChatEnabledCheckBox->setEnabled(osdEnabled);
-    this->osdChatSettingsGroupBox->setEnabled(osdEnabled && chatEnabled);
+    this->osdChatSettings->setEnabled(osdEnabled && chatEnabled);
     this->osdKailleraPortLabelsCheckBox->setEnabled(osdEnabled);
     this->osdLiveReplayStatusCheckBox->setEnabled(osdEnabled);
 }
@@ -2024,6 +2647,11 @@ void SettingsDialog::on_buttonBox_clicked(QAbstractButton *button)
     if (pushButton == defaultButton)
     {
         this->restoreDefaults(this->currentIndex());
+        if (auto* item = this->settingsNavigation->currentItem())
+        {
+            for (const auto& scope : item->data(0, Qt::UserRole + 3).toList())
+                this->restoreDefaults(scope.toInt());
+        }
     }
     else if (pushButton == cancelButton)
     {
