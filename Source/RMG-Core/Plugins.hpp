@@ -101,8 +101,8 @@ bool CorePluginsSetGfxVulkanOverlay(const RmgkVulkanOverlayHooks* hooks);
 // plugin use the shared interrupt timing.
 bool CorePluginsApplyNetplayMode(bool synced);
 
-// -1: unavailable, 0: no valid response, 1: normal/checking, 2: slow USB.
-int CoreGetRaphnetHealth(void);
+bool CoreRaphnetAutoUsesCache(void);
+bool CoreHasRaphnetLatencyWarning(void);
 using RaphnetHintCallback = void (*)(std::uint64_t, unsigned int, unsigned int);
 using RaphnetArmHint = void (*)(std::uint64_t, unsigned int, RaphnetHintCallback);
 RaphnetArmHint CoreGetRaphnetArmHint();

@@ -289,7 +289,6 @@ class UnifiedInputDialog : public QDialog
     RaphnetPollingHealth raphnetPollingHealth;
     QString raphnetMeasurementDevice;
     QElapsedTimer raphnetMeasurementTimer;
-    bool raphnetConnectionSlow = false;
     bool settingsLoaded = false;
     bool manualInputChoice = false;
     QSet<QString> raphnetUsbPrompts;

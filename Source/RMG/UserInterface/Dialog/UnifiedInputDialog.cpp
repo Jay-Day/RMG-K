@@ -906,8 +906,8 @@ UnifiedInputDialog::UnifiedInputDialog(QWidget* parent, InputPluginType currentP
       selectedPlugin(inGame ? InputPluginType::USB : currentPlugin),
       inGame(inGame)
 {
-    this->raphnetConnectionSlow = CoreGetRaphnetHealth() == 2;
-    this->raphnetPollingHealth.connection.cached = this->raphnetConnectionSlow;
+    this->raphnetPollingHealth.connection.cached = CoreRaphnetAutoUsesCache();
+    this->raphnetPollingHealth.initialLatencyWarning = CoreHasRaphnetLatencyWarning();
     this->raphnetMeasurementTimer.start();
     if (!this->inGame) CorePauseRaphnetMonitoring(true);
     this->raphnetPlayer1Port = std::clamp(CoreSettingsGetIntValue(SettingsID::RaphnetRaw_Player1AdapterPort), 1, 4) - 1;
@@ -1024,7 +1024,6 @@ void UnifiedInputDialog::setupUi(void)
                 !topology.contains(QStringLiteral("hid:%1").arg(this->raphnetMeasurementDevice)))
             {
                 this->raphnetPollingHealth.reset();
-                this->raphnetConnectionSlow = false;
                 this->raphnetMeasurementDevice.clear();
             }
             this->refreshDetection();
@@ -1544,7 +1543,7 @@ void UnifiedInputDialog::updateWarningLabel(void)
         if (page->messages == nullptr) continue;
         QStringList warnings;
 
-        if (this->selectedPlugin == InputPluginType::Raphnet && this->raphnetConnectionSlow)
+        if (this->selectedPlugin == InputPluginType::Raphnet && this->raphnetPollingHealth.shouldWarn())
             warnings.append(tr("Slow controller USB polling detected.\nTry another USB port directly on your computer, without a hub."));
 
         // This warning describes the adapter's physical mode, not the input type.
@@ -2800,7 +2799,6 @@ bool UnifiedInputDialog::openRaphnetPreview(void)
                 if (!this->raphnetMeasurementDevice.isEmpty() && this->raphnetMeasurementDevice != path)
                 {
                     this->raphnetPollingHealth.reset();
-                    this->raphnetConnectionSlow = false;
                 }
                 this->raphnetMeasurementDevice = path;
                 this->raphnetReportSize = adapter->reportSize;
@@ -2820,7 +2818,6 @@ bool UnifiedInputDialog::openRaphnetPreview(void)
         if (!adapterPresent)
         {
             this->raphnetPollingHealth.reset();
-            this->raphnetConnectionSlow = false;
             this->raphnetMeasurementDevice.clear();
         }
         show_status(page->statusLabel, tr("No raphnet raw-access adapter was detected."));
@@ -2917,13 +2914,10 @@ bool UnifiedInputDialog::pollRaphnetPreview(void)
         show_status(page->statusLabel, tr("No valid controller response. Check the selected adapter port and connection."));
         return false;
     }
-    this->raphnetPollingHealth.observe(elapsedUs, this->raphnetMeasurementTimer.nsecsElapsed() / 1000);
-    const bool slow = this->raphnetPollingHealth.connection.cached != 0;
-    if (slow != this->raphnetConnectionSlow)
-    {
-        this->raphnetConnectionSlow = slow;
-        this->updateWarningLabel();
-    }
+    auto& health = this->raphnetPollingHealth;
+    const bool wasWarning = health.shouldWarn();
+    health.observe(elapsedUs, this->raphnetMeasurementTimer.nsecsElapsed() / 1000);
+    if (health.shouldWarn() != wasWarning) this->updateWarningLabel();
     this->updateRaphnetDiagnostics();
 
     const uint16_t buttons = (static_cast<uint16_t>(response[3]) << 8) | response[4];
@@ -2951,7 +2945,7 @@ void UnifiedInputDialog::updateRaphnetDiagnostics(void)
     this->raphnetPollingControls->setVisible(raphnet);
     const auto& health = this->raphnetPollingHealth;
     const bool cached = raphnet_polling_uses_cache(
-        static_cast<raphnet_polling_mode>(this->raphnetPollingMode), this->raphnetConnectionSlow);
+        static_cast<raphnet_polling_mode>(this->raphnetPollingMode), health.connection.cached);
     const QString speed = health.samples > 0 ?
         tr("%1ms").arg(qRound64(health.totalUs / (1000.0 * health.samples))) : tr("Waiting for response");
     this->raphnetSummaryLabel->setText(tr("USB Port Speed: %1 • %2")
@@ -2965,16 +2959,12 @@ void UnifiedInputDialog::updateRaphnetDiagnostics(void)
 
 bool UnifiedInputDialog::confirmRaphnetDirectPolling(void)
 {
-    if (this->raphnetDirectWarningAccepted) return true;
-    const auto& health = this->raphnetPollingHealth;
-    const bool slow = this->raphnetConnectionSlow || health.averageExceedsCutoff() ||
-        (health.samples == 0 && CoreGetRaphnetHealth() == 2);
-    if (!slow) return true;
+    if (this->raphnetDirectWarningAccepted || !this->raphnetPollingHealth.shouldWarn()) return true;
 
     QMessageBox warning(QMessageBox::Warning, tr("Default mode may reduce FPS"),
         tr("Slow USB polling has been detected (cutoff: %1 ms). "
            "Default mode makes the game wait for controller reads, which may reduce FPS.\n\n"
-           "Use Default mode anyway?").arg(RAPHNET_SLOW_POLL_US / 1000.0, 0, 'g', 3),
+           "Use Default mode anyway?").arg(RAPHNET_WARNING_POLL_US / 1000.0, 0, 'g', 3),
         QMessageBox::Cancel, this);
     warning.setObjectName("raphnetDirectPollingWarning");
     QPushButton* proceed = warning.addButton(tr("Proceed Anyway"), QMessageBox::AcceptRole);

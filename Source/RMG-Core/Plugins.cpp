@@ -22,6 +22,8 @@
 #include "m64p/PluginApi.hpp"
 #include "m64p/Api.hpp"
 
+#include <3rdParty/mupen64plus-input-raphnetraw/src/polling_health.h>
+
 #include <filesystem>
 #include <algorithm>
 #include <stdexcept>
@@ -37,7 +39,7 @@
 static m64p::PluginApi l_Plugins[4];
 static std::string     l_PluginFiles[4];
 static char l_PluginContext[4][20];
-static std::atomic<int> l_RaphnetHealth{-1};
+static std::atomic<int> l_RaphnetHealth{0};
 static std::atomic<int> l_RaphnetMonitorPauseDepth{0};
 static void raphnet_health_changed(int state) { l_RaphnetHealth.store(state); }
 
@@ -213,7 +215,7 @@ static bool apply_plugin_settings(const std::array<std::string, 4>& pluginSettin
 
         if (settingValue != l_PluginFiles[i])
         {
-            if (pluginType == CorePluginType::Input) l_RaphnetHealth.store(-1);
+            if (pluginType == CorePluginType::Input) l_RaphnetHealth.store(0);
             m64p::PluginApi& plugin = l_Plugins[i];
 
             // shutdown plugin when hooked
@@ -232,7 +234,7 @@ static bool apply_plugin_settings(const std::array<std::string, 4>& pluginSettin
 
                 // reset plugin
                 plugin.Unhook();
-                if (pluginType == CorePluginType::Input) l_RaphnetHealth.store(-1);
+                if (pluginType == CorePluginType::Input) l_RaphnetHealth.store(0);
             }
 
             // ensure library file exists
@@ -622,7 +624,7 @@ CORE_EXPORT bool CorePluginsShutdown(void)
 
             // reset plugin
             plugin->Unhook();
-            if (static_cast<CorePluginType>(i + 1) == CorePluginType::Input) l_RaphnetHealth.store(-1);
+            if (static_cast<CorePluginType>(i + 1) == CorePluginType::Input) l_RaphnetHealth.store(0);
         }
     }
 
@@ -651,9 +653,14 @@ RaphnetArmPadSamples CoreGetRaphnetArmPadSamples()
 }
 
 // The UI reads a core-owned atomic, never a possibly unloading plugin handle.
-CORE_EXPORT int CoreGetRaphnetHealth(void)
+CORE_EXPORT bool CoreRaphnetAutoUsesCache(void)
 {
-    return l_RaphnetHealth.load();
+    return (l_RaphnetHealth.load() & RAPHNET_HEALTH_AUTO_CACHED) != 0;
+}
+
+CORE_EXPORT bool CoreHasRaphnetLatencyWarning(void)
+{
+    return (l_RaphnetHealth.load() & RAPHNET_HEALTH_LATENCY_WARNING) != 0;
 }
 
 using ConfigureInputLive = m64p_error (CALL *)(void (*)(void*), void*);

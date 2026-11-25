@@ -4266,7 +4266,7 @@ void MainWindow::updateControllerConnectionNotice(void)
     const bool romListVisible = !inGame && this->isVisible() && this->statusBar()->isVisible() &&
         this->ui_Widgets->currentWidget() == this->ui_Widget_RomBrowser;
     const bool previouslyShown = this->controllerStartupNotice.shown;
-    const bool show = this->controllerStartupNotice.observe(CoreGetRaphnetHealth() == 2, romListVisible, nowMs);
+    const bool show = this->controllerStartupNotice.observe(CoreHasRaphnetLatencyWarning(), romListVisible, nowMs);
     if (show)
     {
         // Use the existing single-line status area; never add a browser row or
@@ -4290,13 +4290,12 @@ void MainWindow::updateControllerConnectionNotice(void)
 
 void MainWindow::checkRaphnetConnection(void)
 {
-    const int health = CoreGetRaphnetHealth();
     this->updateControllerConnectionNotice();
     if (this->emulationThread->isRunning() && this->raphnetWarningBox) this->raphnetWarningBox->close();
     const bool canShow = this->isVisible() &&
         QApplication::applicationState() == Qt::ApplicationActive &&
         !this->emulationThread->isRunning() && !QApplication::activeModalWidget() && !this->raphnetWarningBox;
-    if (!this->raphnetWarningPolicy.observe(health, canShow)) return;
+    if (!this->raphnetWarningPolicy.observe(CoreHasRaphnetLatencyWarning(), canShow)) return;
 
     CoreSettingsSetValue(SettingsID::RaphnetInput_LastUsbWarning,
         std::to_string(QDateTime::currentSecsSinceEpoch()));
