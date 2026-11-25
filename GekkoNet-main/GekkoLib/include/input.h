@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gekko_types.h"
+#include "gekkonet.h"
 #include <deque>
 #include <memory>
 
@@ -31,6 +32,9 @@ namespace Gekko {
 		static const u32 DEFAULT_BUFF_SIZE = 128;
 
 		InputBuffer();
+
+        GekkoInputPredictor predictor = nullptr;
+        GekkoInputObserver observer = nullptr;
 
 		void Init(u8 delay, u8 input_window, u32 input_size, u32 buffer_size = DEFAULT_BUFF_SIZE);
 

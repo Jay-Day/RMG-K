@@ -151,7 +151,7 @@ class rmgk_gekko
         int localPlayer, unsigned short localPort,
         const LobbyRemotePeer* remotes, int numRemotes,
         int localDelay, int predictionWindow, int joinEpoch = -1,
-        const std::vector<LobbyLocalSeat>& extraLocals = {});
+        const std::vector<LobbyLocalSeat>& extraLocals = {}, uint64_t matchId = 0);
     static bool start_local_session(const char* gameName, int players, int inputSize, int localDelay);
     // n02-style shared transport: adopt an already-bound UDP socket (the
     // lobby's anchor) for the next lobby session instead of binding our own.
@@ -217,6 +217,7 @@ class rmgk_gekko
     // Rollback presentation pacer. The core invokes this through the video
     // plugin rendering callback immediately before OpenGL or Vulkan presents.
     static void pace_before_present();
+    static void pace_after_present();
 
     // Buffered rollback-pacing trace hook used by VidExt.cpp.
     // No-op unless Rollback -> Logging -> Pacing Trace is enabled.

@@ -17,6 +17,12 @@ namespace Gekko {
 
 		void AddRemoteInput(Handle player, u8* input, Frame frame);
 
+        void SetInputPredictor(Handle player, GekkoInputPredictor predictor, GekkoInputObserver observer) {
+            if (player < 0 || player >= _num_players) return;
+            _input_buffers[player].predictor = predictor;
+            _input_buffers[player].observer = observer;
+        }
+
 		void IncrementFrame();
 
 		bool GetCurrentInputs(std::unique_ptr<u8[]>& inputs, Frame& frame);

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>What changes when you press shield? · RMG-K netplay</title>
+<style>
+:root{--ink:#152939;--muted:#465e6b;--blue:#145daa;--teal:#086954;--paper:#f7f9f9;--line:#ced9de;--night:#122936;--mint:#8af1c6;--sans:"Inter","Segoe UI",sans-serif;--mono:"IBM Plex Mono",Consolas,monospace}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:1rem}
+body{margin:0;font:17px/1.56 var(--sans);color:var(--ink);background:var(--paper)}
+h1,h2,h3,p,ol,figure{margin:0}
+h1,h2,h3{line-height:1.1;text-wrap:balance}
+h1{font-size:clamp(2.9rem,6.5vw,5.5rem);letter-spacing:-.065em;font-weight:720;max-width:13ch}
+h2{font-size:clamp(1.9rem,3.7vw,3rem);letter-spacing:-.048em}
+h3{font-size:1.27rem;letter-spacing:-.025em}
+a{color:var(--blue);text-underline-offset:.21em}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid #cf811b;outline-offset:4px}
+button,summary{cursor:pointer}
+button{font:inherit;color:inherit}
+.wrap{width:min(1080px,calc(100% - 48px));margin:auto}
+.mast{background:var(--night);color:white}
+.top{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:22px 0;border-bottom:1px solid #39505d}
+.brand{font:700 1rem var(--mono);letter-spacing:.04em}
+.brand b{color:var(--mint)}
+nav{display:flex;gap:20px;flex-wrap:wrap}
+nav a{font-size:.88rem;color:#e0e9ed;text-decoration:none}
+nav a:hover{text-decoration:underline}
+.hero{padding:clamp(38px,6vw,76px) 0;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(240px,.8fr);align-items:center;gap:6%}
+.kicker{font:600 .8rem/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--teal);margin-bottom:12px}
+.hero .kicker{color:var(--mint)}
+.lead{color:#d9e5e9;margin-top:20px;max-width:55ch;font-size:1.13rem}
+.hero aside{border-left:2px solid var(--mint);padding:4px 0 4px 24px;color:#e0e9ec}
+.hero aside strong{display:block;font-size:1.31rem;letter-spacing:-.025em;color:white;line-height:1.25;margin-bottom:9px}
+.hero aside small{display:block;margin-top:13px;color:#aec2ca;font: .79rem/1.5 var(--mono)}
+main{padding-bottom:32px}
+section{padding:48px 0;border-bottom:1px solid var(--line)}
+.intro{color:var(--muted);max-width:78ch;margin:14px 0 22px}
+.defs{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line);background:white}
+.defs p{padding:18px 20px;font-size:.96rem}
+.defs p+p{border-left:1px solid var(--line)}
+.defs strong{display:block;color:var(--blue);font:700 1.1rem var(--mono);margin-bottom:6px}
+.scenario{margin-top:26px;border:1px solid var(--line);background:white;border-radius:12px;overflow:hidden}
+.scenario header{padding:22px 24px 15px}
+.scenario header p{color:var(--muted);margin:9px 0 0}
+.selector{display:flex;flex-wrap:wrap;gap:7px;padding:0 24px 20px}
+.selector button{border-radius:25px;background:white;border:1px solid #9caeb8;font-size:.9rem;font-weight:600;padding:7px 15px}
+.selector button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:white}
+.screens{display:grid;grid-template-columns:1fr 1fr;gap:2px;background:#4b6574}
+.screen{position:relative;isolation:isolate;min-height:160px;display:grid;align-content:space-between;padding:16px 20px;color:white;background:radial-gradient(ellipse at 70% 75%,#284855,#162e3c 70%);overflow:hidden}
+.screen::before{content:"";position:absolute;inset:0;z-index:-1;opacity:.16;background-image:linear-gradient(to top,#80959e 1px,transparent 1px),linear-gradient(to right,#80959e 1px,transparent 1px);background-size:20px 20px}
+.screen-label{font:600 .82rem var(--mono);color:#ccdee4}
+.screen-output{font-weight:680;font-size:1.1rem;z-index:1}
+.token{width:88px;height:88px;position:absolute;right:14%;bottom:25px}
+.token::before{content:"";position:absolute;bottom:0;left:-12px;right:-12px;border-top:3px solid #a7c2cd;box-shadow:0 5px 0 #537484}
+.token::after{content:"";position:absolute;inset:0;border-radius:50%;border:3px solid transparent}
+.guard .token::after{border-color:#85edca;background:radial-gradient(circle at 32% 26%,#c7ffe866,transparent 27%),radial-gradient(circle at 50% 55%,transparent 30%,#61e8bd44 72%);box-shadow:0 0 18px #6af2bb44,inset 0 0 8px #6af2bb66}
+.pawn{position:absolute;width:30px;height:30px;left:29px;bottom:4px;border-radius:15px 15px 5px 5px;background:#dce9eb;transform:skewX(-6deg)}
+.pawn::before{content:"";position:absolute;top:-19px;left:5px;width:20px;height:20px;border-radius:50%;background:#dce9eb}
+.explain{padding:17px 24px;background:#e9f4f0;color:#174d40;min-height:4.65em}
+.detail{margin-top:20px;color:var(--muted)}
+.detail summary{color:var(--ink);font-weight:650}
+.detail p{margin-top:9px;max-width:82ch}
+.ideas{margin-top:23px}
+.idea{display:grid;grid-template-columns:76px minmax(0,1fr) minmax(0,.83fr);gap:20px;padding:23px 0;border-top:1px solid var(--line)}
+.num{font:650 1.5rem var(--mono);color:var(--teal)}
+.idea h3{margin:.12em 0 8px}
+.idea p{font-size:.98rem}
+.idea .next{background:#eaf0f3;padding:13px 17px;align-self:start;border-radius:6px}
+.next b{display:block;font:650 .78rem/1.4 var(--mono);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.timing{padding:24px;background:#e9f0f6;border:1px solid #c5d3dd;border-radius:10px}
+.timing figcaption{font-size:.97rem;color:var(--muted);margin:8px 0 15px}
+.timing table{width:100%;border-collapse:collapse;font-size:.94rem;text-align:left}
+.timing td,.timing th{padding:8px 4px;vertical-align:top}
+.timing th{width:23%}
+.flow{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.step{background:white;padding:3px 8px;border:1px solid #b7cad5;border-radius:4px}
+.wait{background:#f9e7ac;color:#4f3900;border-color:#cbaa50;font-weight:600}
+.arrow{color:#4f6878}
+.order{padding:0;list-style:none;counter-reset:tests;margin-top:22px}
+.order li{counter-increment:tests;display:grid;grid-template-columns:28px 1fr;gap:14px;padding:13px 0;border-top:1px solid var(--line)}
+.order li::before{content:counter(tests);color:var(--teal);font:700 1rem/1.7 var(--mono)}
+.links{display:flex;gap:10px 22px;flex-wrap:wrap;font-size:.9rem}
+footer{padding:4px 0 34px;color:var(--muted)}
+code{font:.9em var(--mono);overflow-wrap:anywhere}
+@media(max-width:740px){.wrap{width:calc(100% - 32px)}.hero{grid-template-columns:1fr;gap:26px}.hero aside{padding-left:15px}.idea{grid-template-columns:46px 1fr;gap:12px}.next{grid-column:2}.defs{grid-template-columns:1fr}.defs p+p{border-left:0;border-top:1px solid var(--line)}.token{right:6%;width:74px;height:74px;bottom:42px}.pawn{left:22px}.screen{min-height:155px;padding:12px}.screen-label{font-size:.74rem}.screen-output{font-size:.95rem}.timing th,.timing td{display:block;width:auto}.timing td{padding-top:0}.timing,.scenario header,.explain{padding:17px}.selector{padding-left:17px;padding-right:17px}section{padding:35px 0}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{.mast,.screen{print-color-adjust:exact}.wrap{width:100%}nav,.selector{display:none}section{padding:16px 0}.idea,.scenario,.timing{break-inside:avoid}.hero{padding:22px 0}h1{font-size:34pt}}
+</style>
+</head>
+<body>
+<header class="mast"><div class="wrap">
+  <div class="top"><div class="brand">RMG<b>–K</b> / Netplay notes</div><nav aria-label="Page sections"><a href="#shield">Button hints</a><a href="#ideas">Four proposals</a><a href="#tests">What’s next</a></nav></div>
+  <div class="hero"><div><p class="kicker">Smash 64 &amp; Smash Remix · Rollback lobby</p><h1>What changes when you press shield?</h1><p class="lead">You might choose 1f against a nearby opponent and 3f across the world. At each chosen delay, we want fewer and smaller visible corrections, and a quicker, more consistent response to your own buttons. If corrections get small enough, you might choose a lower delay next time.</p></div>
+  <aside><strong>The display change has a local measurement.</strong>In stock Smash and Remix at 0f and 1f, an 8 ms earlier target cut the typical time from the emulated controller read to picture submission by 7.5–7.8 ms. The combined changes still need two-PC match tests.<small>24 Nov 2026 · latency-test branch</small></aside></div>
+</div></header>
+<main class="wrap">
+<section id="shield"><p class="kicker">The prototype</p><h2>One press, two screens</h2>
+<p class="intro">A controller read, sometimes called a <strong>poll</strong>, asks the pad what you’re holding. The official read gives Smash the input that counts for a frame. An extra read between official ones can give the other player a head start.</p>
+<div class="defs">
+<p><strong>0f</strong>Smash can use your official input on the current frame. Reading the controller and drawing the picture still take time.</p>
+<p><strong>1f</strong>Your official input is assigned one game frame later. At 60 frames per second, that adds about 16.7 milliseconds.</p>
+<p><strong>Rollback</strong>While your input is traveling, the opponent’s emulator can guess. If it guesses wrong, it goes back and replays the affected frames.</p>
+</div>
+<figure class="scenario"><header><h3>The first frame on the opponent’s screen</h3><p>Imagine you were standing still. You press shield, and the opponent must draw the next frame before your official input arrives.</p></header>
+<div class="selector" role="group" aria-label="Shield example"><button type="button" data-case="timely" aria-pressed="true">Hint in time</button><button type="button" data-case="late" aria-pressed="false">Hint arrives late</button><button type="button" data-case="release" aria-pressed="false">You let go early</button></div>
+<div class="screens"><div class="screen"><span class="screen-label">Without hints</span><div class="token" aria-hidden="true"><i class="pawn"></i></div><span class="screen-output">Standing</span></div><div class="screen guard" id="with-screen"><span class="screen-label">With hints</span><div class="token" aria-hidden="true"><i class="pawn"></i></div><span class="screen-output" id="with-output">Shield up</span></div></div>
+<figcaption class="explain" id="outcome" aria-live="polite"><strong>You keep holding shield.</strong> The early message reaches the opponent in time to show the shield. The official read later confirms it. Without the hint, the opponent initially sees you standing.</figcaption>
+</figure>
+<p class="detail">Your own screen still follows your official read at your chosen delay. The prototype changes the opponent’s first guess. How often that visibly helps in a real match is the part we still need to measure.</p>
+<details class="detail"><summary>Which controllers can send hints?</summary><p>Both peers advertise support in a 1v1 lobby match. Cached raphnet adapters reuse the samples they already take. For a direct adapter, RMG-K learns the timing of this game’s regular reads. If they are fast and there is a clear gap before the next one, it tries an occasional extra read. After four clean trials it can try once per frame. A slow or failed trial, or a measured overlap with game I/O, triggers a cooldown. This happens automatically.</p><p>Either peer can receive hints. Button hints cover shield, attack and C-button jumps. In Smash 64 (U or J) and Smash Remix, the same reads can also catch a stick flick. Moving 56 units left or right crosses the dash threshold. Moving 45 units up crosses the running-jump threshold, and 53 reaches the normal stick-jump threshold. The opponent gets the measured stick position. Smash decides whether your fighter can move.</p></details>
+</section>
+<section id="ideas"><h2>Where the four proposals stand</h2>
+<div class="ideas">
+<article class="idea"><span class="num">#1</span><div><h3>Read your controller later</h3><p>A press just after the normal cutoff could make the current frame. But sending the official input later gives the other player less time to draw your move correctly.</p></div><p class="next"><b>Removed from the branch</b>Your official read stays in its usual place. The display change can show that same input earlier.</p></article>
+<article class="idea"><span class="num">#2</span><div><h3>Give a missing input a chance to arrive</h3><p>Send your official input. If a remote input is missing, use up to 2 ms of spare time and check again at intervals of up to 1 ms. An input that arrives in time can put the opponent’s shield on the first picture.</p></div><p class="next"><b>On for testing</b>Gekko proceeds immediately when all inputs are ready or a correction is already due. Recent slow frames reduce the time available to wait.</p></article>
+<article class="idea"><span class="num">#3</span><div><h3>Make rollback resimulation cheaper</h3><p>If a correction goes back four frames, the emulator restores a saved state and plays those frames again. Finishing before the next picture is due can spare both players a hitch. The corrected move can still look different.</p></div><p class="next"><b>Hidden drawing is already reduced</b>With framebuffer emulation off, GLideN64 skips eligible drawing on hidden frames. The launcher’s <code>-DrawHiddenFrames</code> switch lets you measure that saving. The open question is how much time restoring state and replaying the game still take on frames that miss their display deadline.</p></article>
+<article class="idea"><span class="num">#4</span><div><h3>Make a better guess about the stick</h3><p>Today, a missing stick reading usually means “keep holding the last direction.” If recent official readings show a player letting go, easing toward neutral might produce a smaller correction. A bad guess during a recovery could also <strong>show the wrong drift</strong>.</p></div><p class="next"><b>What’s left</b>Compare both guesses on recorded dashes, reversals and recoveries in each game. This can work from past readings even when the opponent sends no fresh stick hint.</p></article>
+</div>
+<figure class="timing"><h3>One display target, three ways to reach it</h3><figcaption>The official read and the display target stay in the same places. After submitting the picture, the emulator waits until the next frame boundary. A long correction can still miss the target.</figcaption>
+<table aria-label="Three cases at the same chosen delay"><tbody>
+<tr><th scope="row">Opponent’s input is ready</th><td><div class="flow"><span class="step">Read &amp; send</span><span class="arrow">›</span><span class="step">Use real input</span><span class="arrow">›</span><span class="step">Draw</span><span class="arrow">›</span><strong>Show</strong></div></td></tr>
+<tr><th scope="row">Input is missing, time to spare</th><td><div class="flow"><span class="step">Read &amp; send</span><span class="arrow">›</span><span class="step wait">Allow up to 2 ms</span><span class="arrow">›</span><span class="step">Use real input or guess</span><span class="arrow">›</span><span class="step">Draw</span><span class="arrow">›</span><strong>Show</strong></div></td></tr>
+<tr><th scope="row">A correction is already due</th><td><div class="flow"><span class="step">Read &amp; send</span><span class="arrow">›</span><span class="step">Replay affected frames</span><span class="arrow">›</span><span class="step">Draw</span><span class="arrow">›</span><strong>Show</strong></div></td></tr>
+</tbody></table></figure>
+</section>
+<section id="tests"><p class="kicker">Software-only evaluation</p><h2>What to test next</h2>
+<ol class="order">
+<li><div><strong>Check the display gain at one delay.</strong> Use the same game, opponent, input sequence and each player’s delay for <code>Baseline</code> and <code>Display</code>. Compare the median, 95th and 99th percentile time from a local read to submission of the picture for its assigned frame.</div></li>
+<li><div><strong>Count corrections on both screens.</strong> Compare <code>Display</code> with <code>DisplayWait</code>, then <code>DisplayWait</code> with <code>Combined</code> to add hints. Record how often a correction occurs and how many frames it reaches back. Check footage of shields, hits or recoveries for the size of the visible change. A replay count alone cannot tell you that.</div></li>
+<li><div><strong>Try one frame less delay.</strong> Once the combined version improves those results at the same delay, lower one player’s delay by a frame. Check whether the frequency and size of corrections on both screens stay within what the players accepted at the old setting.</div></li>
+</ol>
+<p class="detail">To check a direct adapter, repeat the same <code>Combined</code> matchup at the same delays. On the player whose adapter you are checking, run once normally and once with <code>-NoDirectHintProbes</code>. After each game, open <strong>View → Log</strong> and find <code>Raphnet direct hints</code>. It reports probes, overlaps, the longest overlap in microseconds, and official reads over 2 ms. Use the pacing trace to check the slowest input submissions and late pictures. On the other PC, compare hint accuracy with <code>-VerboseStats</code> and compare rollback frequency and depth. A run with zero probes gives no overlap rate.</p>
+<p class="detail">Repeat at the delays people actually choose for nearby and distant opponents. The players can choose different delays from each other. Cover stock Smash and Remix, including a connection with uneven packet arrival times.</p>
+<details class="detail"><summary>Where to find the measurements</summary><p>Enable pacing trace logging and read <code>local_sample_to_swap_us</code> alongside <code>sampled_delay_frames</code> in the frontend CSV. Skip values of −1, which indicate an unmatched sample or an unmeasured swap. The interval starts when the emulator’s official read completes and ends at OpenGL swap submission. Adapter sample age and monitor scanout are outside it. The trace also records rollback loads, frames replayed and late presentation. To isolate stick hints, compare two <code>Combined</code> runs at the same delay, one with <code>-ButtonHintsOnly</code>. With <code>-VerboseStats</code>, <code>stick_range_helped_frames</code> and <code>stick_range_hurt_frames</code> count frames where hints corrected or spoiled the opponent’s guess about these stick ranges. A smaller error can still require rollback if the exact stick position differs.</p></details>
+</section>
+</main>
+<footer class="wrap"><div class="links"><a href="codex://threads/01a1effb-bea5-73a1-b51a-8a8ec39e58cf">Button-hints implementation chat</a><a href="https://github.com/nickthename/RMG-K/blob/3d921a9d3baa7683ed02369e3639612f55fcc501/Source/RMG-Core/rmgk_gekko.cpp">Frame timing in master</a><a href="https://github.com/nickthename/RMG-K/blob/3d921a9d3baa7683ed02369e3639612f55fcc501/GekkoNet-main/GekkoLib/src/input.cpp">Current prediction code</a></div></footer>
+<script>
+const scenarios = {
+  timely: {guard:true, title:"You keep holding shield.", detail:"The early message reaches the opponent in time to show the shield. The official read later confirms it. Without the hint, the opponent initially sees you standing."},
+  late: {guard:false, title:"The opponent already drew this frame.", detail:"Both versions show you standing at first. You held shield through the official read, so the opponent must correct the missing shield when the real input arrives."},
+  release: {guard:true, title:"The official read catches you after you let go.", detail:"Only the early press has reached the opponent. Hints briefly show a shield that the official input will remove. In this case, repeating the last known input gave the right picture."}
+};
+const buttons = document.querySelectorAll("[data-case]");
+const output = document.getElementById("outcome");
+for (const button of buttons) {
+  button.addEventListener("click", () => {
+    const scenario = scenarios[button.dataset.case];
+    for (const choice of buttons) choice.setAttribute("aria-pressed", String(choice === button));
+    document.getElementById("with-screen").classList.toggle("guard", scenario.guard);
+    document.getElementById("with-output").textContent = scenario.guard ? "Shield up" : "Standing";
+    const title = document.createElement("strong");
+    title.textContent = scenario.title;
+    output.replaceChildren(title, " " + scenario.detail);
+  });
+}
+</script></body></html>

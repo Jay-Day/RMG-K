@@ -63,7 +63,7 @@ set(RMG_CORE_SOURCES
 
 if (NETPLAY)
     add_definitions(-DNETPLAY)
-    list(APPEND RMG_CORE_SOURCES LobbyIce.cpp)
+    list(APPEND RMG_CORE_SOURCES LobbyIce.cpp LobbyButtonHints.cpp)
 endif(NETPLAY)
 
 if (PORTABLE_INSTALL)

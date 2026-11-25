@@ -997,6 +997,7 @@ static m64p_error VidExt_GLSwapBuf(void)
             swapUs,
             0,
             1);
+        rmgk_gekko::pace_after_present();
 
         return M64ERR_SUCCESS;
     }
@@ -1032,6 +1033,7 @@ static m64p_error VidExt_GLSwapBuf(void)
         swapUs,
         makeCurrentUs,
         2);
+    rmgk_gekko::pace_after_present();
 
     return M64ERR_SUCCESS;
 }

@@ -28,6 +28,7 @@
 #include <cstring>
 #include <array>
 #include <atomic>
+#include <bit>
 
 //
 // Local Variables
@@ -629,6 +630,20 @@ CORE_EXPORT bool CorePluginsShutdown(void)
 }
 
 // The UI reads a core-owned atomic, never a possibly unloading plugin handle.
+RaphnetArmHint CoreGetRaphnetArmHint()
+{
+    auto& plugin = get_plugin(CorePluginType::Input);
+    return plugin.IsHooked() ? std::bit_cast<RaphnetArmHint>(
+        CoreGetLibrarySymbol(plugin.GetHandle(), "RaphnetArmButtonHint")) : nullptr;
+}
+
+RaphnetArmPadSamples CoreGetRaphnetArmPadSamples()
+{
+    auto& plugin = get_plugin(CorePluginType::Input);
+    return plugin.IsHooked() ? std::bit_cast<RaphnetArmPadSamples>(
+        CoreGetLibrarySymbol(plugin.GetHandle(), "RaphnetArmPadSamples")) : nullptr;
+}
+
 CORE_EXPORT int CoreGetRaphnetHealth(void)
 {
     return l_RaphnetHealth.load();

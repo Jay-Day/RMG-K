@@ -54,6 +54,12 @@ int gekko_add_actor(GekkoSession* session, GekkoPlayerType player_type, GekkoNet
     return session->AddActor(player_type, !addr ? nullptr : addr);
 }
 
+void gekko_set_input_predictor(GekkoSession* session, int player, GekkoInputPredictor predictor,
+    GekkoInputObserver observer)
+{
+    session->SetInputPredictor(player, predictor, observer);
+}
+
 void gekko_set_local_delay(GekkoSession* session, int player, unsigned char delay)
 {
     session->SetLocalDelay(player, delay);
@@ -97,6 +103,12 @@ void gekko_network_stats(GekkoSession* session, int player, GekkoNetworkStats* s
 void gekko_network_poll(GekkoSession* session)
 {
     session->NetworkPoll();
+}
+
+GekkoGameEvent** gekko_update_session_with_input_wait(GekkoSession* session,
+    int* count, GekkoInputWait wait, void* context)
+{
+    return session->UpdateSessionWithInputWait(count, wait, context);
 }
 
 void gekko_disconnect_player(GekkoSession* session, int handle)
