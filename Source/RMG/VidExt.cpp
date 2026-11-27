@@ -58,6 +58,18 @@ static bool l_OsdInitialized                            = false;
 static QSurfaceFormat l_SurfaceFormat;
 static m64p_render_mode l_RenderMode;
 
+// Names the GPU the context landed on: a PC with two GPUs can use either.
+static void VidExt_LogOpenGLInfo(const GLubyte* vendor, const GLubyte* renderer, const GLubyte* version)
+{
+    auto text = [](const GLubyte* value)
+    {
+        return value != nullptr ? std::string(reinterpret_cast<const char*>(value)) : std::string("unknown");
+    };
+
+    CoreAddCallbackMessage(CoreDebugMessageType::Info,
+        "OpenGL vendor: " + text(vendor) + ", renderer: " + text(renderer) + ", version: " + text(version));
+}
+
 #ifdef _WIN32
 static constexpr int WGL_CONTEXT_MAJOR_VERSION_ARB = 0x2091;
 static constexpr int WGL_CONTEXT_MINOR_VERSION_ARB = 0x2092;
@@ -526,6 +538,9 @@ static bool VidExt_NativeWglSetup(void)
         return false;
     }
 
+    // the new context is current here
+    VidExt_LogOpenGLInfo(glGetString(GL_VENDOR), glGetString(GL_RENDERER), glGetString(GL_VERSION));
+
     ShowWindow(hwnd, SW_SHOW);
     BringWindowToTop(hwnd);
     SetForegroundWindow(hwnd);
@@ -582,6 +597,25 @@ static void VidExt_UpdateOsdDisplaySize(void)
     }
 }
 
+// the log line alone never reaches the error dialog
+static void VidExt_OglSetupFailed(const std::string& message)
+{
+    CoreAddCallbackMessage(CoreDebugMessageType::Error, message);
+    CoreSetEmulationStartError(message);
+}
+
+// On a PC with two GPUs, the one Windows picks for RMG-K (see the GPU exports
+// in main.cpp) can refuse OpenGL while the other works.
+static std::string VidExt_OglContextAdvice(void)
+{
+#ifdef _WIN32
+    return " Update your graphics driver. If this PC has two graphics cards, open Windows Settings > System > "
+           "Display > Graphics, add RMG-K.exe, and try the other GPU (\"Power saving\" or \"High performance\").";
+#else
+    return " Update your graphics driver.";
+#endif
+}
+
 //
 // VidExt Functions
 //
@@ -610,19 +644,25 @@ static bool VidExt_OglSetup(int screenMode)
     {
         if (QSurfaceFormat::defaultFormat().renderableType() == QSurfaceFormat::OpenGLES)
         {
-            CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL ES context");
+            VidExt_OglSetupFailed("Couldn't create an OpenGL ES context." + VidExt_OglContextAdvice());
         }
         else
         {
-            CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to retrieve valid OpenGL context");
+            VidExt_OglSetupFailed("Couldn't create an OpenGL context." + VidExt_OglContextAdvice());
         }
         return false;
     }
 
     if (!(*l_OGLWidget)->GetContext()->makeCurrent((*l_OGLWidget)))
     {
-        CoreAddCallbackMessage(CoreDebugMessageType::Error, "Failed to make OpenGL context current");
+        VidExt_OglSetupFailed("Couldn't make the OpenGL context current." + VidExt_OglContextAdvice());
         return false;
+    }
+
+    {
+        QOpenGLFunctions* functions = (*l_OGLWidget)->GetContext()->functions();
+        VidExt_LogOpenGLInfo(functions->glGetString(GL_VENDOR), functions->glGetString(GL_RENDERER),
+            functions->glGetString(GL_VERSION));
     }
 
     // Some drivers hand back a *valid* context at a lower version than requested
@@ -640,7 +680,7 @@ static bool VidExt_OglSetup(int screenMode)
                 "needs OpenGL 3.3 or newer. Update your graphics driver — outdated AMD/Intel "
                 "drivers, Remote Desktop, and virtual machines commonly cause this.")
                 .arg(actualFormat.majorVersion()).arg(actualFormat.minorVersion());
-            CoreAddCallbackMessage(CoreDebugMessageType::Error, msg.toUtf8().constData());
+            VidExt_OglSetupFailed(msg.toStdString());
             return false;
         }
     }

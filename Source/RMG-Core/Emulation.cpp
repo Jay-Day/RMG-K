@@ -292,6 +292,10 @@ static bool parse_lobby_address(const std::string& address, int& frameDelay, int
 // Frame counter for Kaillera sync (updated via frame callback)
 static int s_CurrentFrame = 0;
 
+// Set by the video extension while M64CMD_EXECUTE runs (on the emulation
+// thread, or a plugin thread it waits for) and read once it returns.
+static std::string s_EmulationStartError;
+
 #ifdef NETPLAY
 // Maximum players supported by Kaillera
 #define MAX_PLAYERS 8
@@ -983,6 +987,11 @@ static void apply_pif_rom_settings(void)
 // Exported Functions
 //
 
+CORE_EXPORT void CoreSetEmulationStartError(std::string error)
+{
+    s_EmulationStartError = error;
+}
+
 CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesystem::path n64ddrom,
     std::string address, int port, int player)
 {
@@ -1366,6 +1375,11 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
         s_PlaybackSpeedRestore = (address == "KAILLERA" && CoreIsKailleraPlaybackMode()) ? CoreGetSpeedFactor() : -1;
 #endif
 
+        // A failed execute must not report an error an earlier settings
+        // lookup left behind.
+        CoreSetError("");
+        s_EmulationStartError.clear();
+
         if (rollbackExecute)
         {
             m64p_ret = rmgk_gekko::execute() ? M64ERR_SUCCESS : M64ERR_SYSTEM_FAIL;
@@ -1379,7 +1393,11 @@ CORE_EXPORT bool CoreStartEmulation(std::filesystem::path n64rom, std::filesyste
             error = rollbackExecute ?
                 "CoreStartEmulation rollback execute Failed: " :
                 "CoreStartEmulation m64p::Core.DoCommand(M64CMD_EXECUTE) Failed: ";
-            if (!CoreGetError().empty())
+            if (!s_EmulationStartError.empty())
+            {
+                error += s_EmulationStartError;
+            }
+            else if (!CoreGetError().empty())
             {
                 error += CoreGetError();
             }
