@@ -23,7 +23,8 @@ class CartridgeTile;
 class LobbyButton;
 class ToggleSwitch;
 
-// The save a room's next match starts from, as the host picked it.
+// The save a room's next match starts from, as the host picked it. Every
+// match starts from Data; only the last match and a kept file move it on.
 struct NetplaySaveChoice
 {
     CoreNetplaySaveData Data;
@@ -31,11 +32,14 @@ struct NetplaySaveChoice
     QString Label;
     // The file it came from, empty for the offline save and the last match's.
     QString File;
-    // After a match that changed the save, the next one starts from where it
-    // ended instead of from this save again.
-    bool ContinueAfterMatch = true;
+    // The list entry it was picked as: "blank", "offline", "file" or "last".
+    QString Source;
+    // "Where the last match left off": after each match, Data becomes the
+    // save as that match ended, so the next one carries on from it.
+    bool FromLastMatch = false;
     // The game's saves are written back to File (a netplay save the host
-    // kept) as the match goes, so the file always holds the latest progress.
+    // kept) as the match goes, so the file always holds the latest progress
+    // and the next match starts from it too.
     bool KeepFileUpdated = false;
 };
 
@@ -46,29 +50,29 @@ QString netplaySaveSummary(const CoreNetplaySaveData& data);
 // 16 hex digits naming these exact bytes, so the room can tell saves apart.
 QString netplaySaveHash(const CoreNetplaySaveData& data);
 
-// The host picks the save the room's next match starts from: their offline
-// save for the game, where the last match left off, a netplay save they kept,
-// or any save file.
+// The host picks the save the room's next match starts from: a blank save,
+// their offline save for the game, where the last match left off, a netplay
+// save they kept, or any save file. Each entry says what the matches start
+// from with it, so the list alone tells what the next one will.
 class StartingSaveDialog : public QDialog
 {
     Q_OBJECT
 
   public:
+    // lastMatch: the save as this room's last match with save data ended,
+    // when there was one.
     StartingSaveDialog(const QString& romFile, const QString& romMd5, const QString& gameName,
                        const std::optional<NetplaySaveChoice>& current,
                        const std::optional<CoreNetplaySaveData>& lastMatch, QWidget* parent = nullptr);
 
     void setCoverPath(const QString& coverPath);
     NetplaySaveChoice choice(void) const;
-    // Where choice() is from, so a later room can pick it again: "blank",
-    // "offline" or "file" (choice().File), or empty for where the last match
-    // left off, which a later room doesn't have.
-    QString source(void) const;
     // That save picked again for a new room of the same game, read afresh,
-    // without the dialog. None when it can't be picked now: the file is gone,
-    // unreadable or made with another ROM, or there's no offline save.
+    // without the dialog. source is a choice's Source; "last" can't be (a new
+    // room has no last match). None when it can't be picked now: the file is
+    // gone, unreadable or made with another ROM, or there's no offline save.
     static std::optional<NetplaySaveChoice> pickAgain(const QString& source, const QString& file,
-                                                      bool continueAfterMatch, bool keepFileUpdated,
+                                                      bool keepFileUpdated,
                                                       const QString& romFile, const QString& romMd5);
 
   private:
@@ -83,6 +87,7 @@ class StartingSaveDialog : public QDialog
         bool OtherRom = false;  // a .rmgsave made with a different ROM
         bool Blank = false;     // a new cartridge: nothing saved yet
         bool Offline = false;   // the host's offline save for the game
+        bool LastMatch = false; // where this room's last match left off
     };
 
     void addEntry(Entry entry, bool select);
@@ -97,7 +102,6 @@ class StartingSaveDialog : public QDialog
     CartridgeTile* m_tile = nullptr;
     QListWidget* m_list = nullptr;
     QLabel* m_details = nullptr;
-    ToggleSwitch* m_continueCheck = nullptr;
     ToggleSwitch* m_keepFileCheck = nullptr;
     // What the host last chose for the box, kept while it's hidden.
     bool m_keepFileWanted = true;

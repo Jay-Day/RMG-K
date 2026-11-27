@@ -29,52 +29,38 @@
   ],
   "presets": [
     {
-      "id": "1v1-vanilla",
-      "label": "1v1 Vanilla",
-      "description": "The original characters and stages on the original select screens, with tournament rules and settings.",
+      "id": "vanilla-tournament",
+      "label": "Vanilla Tournament",
+      "description": "The original characters and stages on the original select screens, with tournament rules and settings. With 4 players it starts on Team Battle.",
       "translations": {
         "ja": {
-          "label": "1対1 初代",
-          "description": "初代のキャラクターとステージを初代の選択画面で選び、大会ルールと大会向けの設定で遊びます。"
+          "label": "初代 大会",
+          "description": "初代のキャラクターとステージを初代の選択画面で選び、大会ルールと大会向けの設定で遊びます。4人のときはチーム戦で始まります。"
         }
       },
-      "options": ["vanilla-css", "vanilla-sss", "tournament-rules", "skip-to-css", "tournament-profile"]
+      "options": ["vanilla-css", "vanilla-sss", "tournament-rules", "skip-to-css", "tournament-profile"],
+      "withPlayers": [
+        { "minPlayers": 4, "options": ["teams-default"], "description": "starts on Team Battle (players can still change it)",
+          "translations": { "ja": { "description": "チーム戦で始まります（ゲーム内で変更できます）" } } }
+      ],
+      "aliases": ["1v1-vanilla", "teams-vanilla"]
     },
     {
-      "id": "1v1-remix",
-      "label": "1v1 Remix",
-      "description": "Smash Remix's full roster and stage select, with tournament rules and settings.",
+      "id": "remix-tournament",
+      "label": "Remix Tournament",
+      "description": "Smash Remix's full roster and stage select, with tournament rules and settings. With 4 players it starts on Team Battle.",
       "translations": {
         "ja": {
-          "label": "1対1 Remix",
-          "description": "Smash Remixの全キャラクターとステージ選択で、大会ルールと大会向けの設定で遊びます。"
+          "label": "Remix 大会",
+          "description": "Smash Remixの全キャラクターとステージ選択で、大会ルールと大会向けの設定で遊びます。4人のときはチーム戦で始まります。"
         }
       },
-      "options": ["tournament-rules", "skip-to-css", "tournament-profile"]
-    },
-    {
-      "id": "teams-vanilla",
-      "label": "Teams Vanilla",
-      "description": "The original characters and stages on the original select screens, in team battles with tournament rules and settings.",
-      "translations": {
-        "ja": {
-          "label": "チーム 初代",
-          "description": "初代のキャラクターとステージを初代の選択画面で選び、大会ルールと大会向けの設定のチーム戦で遊びます。"
-        }
-      },
-      "options": ["vanilla-css", "vanilla-sss", "tournament-rules", "team-battle", "skip-to-css", "tournament-profile"]
-    },
-    {
-      "id": "teams-remix",
-      "label": "Teams Remix",
-      "description": "Smash Remix's full roster and stage select, in team battles with tournament rules and settings.",
-      "translations": {
-        "ja": {
-          "label": "チーム Remix",
-          "description": "Smash Remixの全キャラクターとステージ選択で、大会ルールと大会向けの設定のチーム戦で遊びます。"
-        }
-      },
-      "options": ["tournament-rules", "team-battle", "skip-to-css", "tournament-profile"]
+      "options": ["tournament-rules", "skip-to-css", "tournament-profile"],
+      "withPlayers": [
+        { "minPlayers": 4, "options": ["teams-default"], "description": "starts on Team Battle (players can still change it)",
+          "translations": { "ja": { "description": "チーム戦で始まります（ゲーム内で変更できます）" } } }
+      ],
+      "aliases": ["1v1-remix", "teams-remix"]
     }
   ],
   "options": [
@@ -82,6 +68,7 @@
       "id": "vanilla-css",
       "label": "Vanilla CSS",
       "group": "characters",
+      "aliases": ["vanilla-only"],
       "description": "Only the original 12 characters can be picked, on the original character select screen.",
       "translations": {
         "ja": {
@@ -276,20 +263,50 @@
       "id": "j-variants",
       "label": "J variants",
       "group": "characters",
-      "description": "Each of the original 12 characters plays as its Japanese-version variant from Smash Remix (J Mario, Purin and so on).",
+      "requires": ["vanilla-css"],
+      "description": "Each of the original 12 characters is its Japanese-version variant from Smash Remix (J Mario, Purin and so on), on the character select screen and in the match.",
       "translations": {
         "ja": {
           "label": "日本版キャラ",
-          "description": "初代の12キャラクターが、Smash Remixに入っている日本版のキャラクター（Jマリオ、プリンなど）として戦います。"
+          "description": "初代の12キャラクターが、キャラクター選択画面でも試合でも、Smash Remixに入っている日本版のキャラクター（Jマリオ、プリンなど）になります。"
         }
       },
-      "requires": ["vanilla-css"],
       "patches": [
         {
+          "offset": "0x001302CC",
+          "expect": "3C0A8014240100071081001A3C0880142401000A1081000E3C1880142401000B14810026000010253C0E801495CEBDBC2403000131CF080011E000030000000003E000080000102503E00008006010259718BDBC2403000133190400132000030000000003E000080000102503E00008006010259508BDBC2403000131090080112000030000000003E000080000102503E0000800601025954ABDBC24030001314B0010116000030000000003E00008",
+          "bytes": "3C01804F8C21756838210001102000052CC1000C102000033C01801300260821902623FC03E00008AFA600703C01804F8C21756838210001102000052CE1000C102000033C01801300270821902723FC081494C1000000003C01804F8C21756838210001102000052D81000C102000033C018013002C0821902C23FC08147E65000000003C01804F8C21756838210001102000052C81000C102000033C01801300240821902423FC08147D9D00000000",
+          "note": "New code in the VS CSS overlay (RAM 0x8013204C-0x80132117): the body of mnPlayersVSCheckFighterLocked, which never runs past its first two words once vanilla-css's edit 9 is in. Maps the original fighter id to its J variant (not in 12-Character Battle) for the panel's model, name/logo, announcer call and picked pose"
+        },
+        {
           "offset": "0x0013067C",
-          "expect": "240600010C002062240700010C04C846022020250002C08003B8C8213C0980148D29C4B48F390038020020250C0333F703292821944A00240040202502202825314CFFDFA44C0024358D0001A44D00240C04C7D5AE1100840000202500002825240600120C00265A3C0780002408FFFF00408025AFA80010004020258FA500302406001B0C00277D3C078000020020258FA5002C240600010C002062240700013C0F80148DEFC4B43C0E000025CE0F68020020250C0333F701EE282194580024240B005B240C00413309FFDFA4490024352A0001240D0033240800C4240F00B9",
-          "bytes": "2A292C242B27312830322E250C0D0E0F101112131415161718191A1B1C1D1E1F20212223030B260507010004022D0A2F0806090003E0C0253C08804F8D0875683409000111090003000030250C04C91D3407000C0800171D0300F82503E0C025340600240C04C91D3407000F0300F8250804ECD13C0E800A03E0C8253C04800A24844D2B340500740C04C92A248301D03C0480502484D248340500040C04C92A24830060032000080000000090880000010648230127482B112000043C0A801301485021914A23FCA08A0000008520211483FFF60000000003E0000800000000",
-          "note": "New code and id table in the VS CSS overlay (RAM 0x801323FC-0x801324DB): the rest of mnPlayersVSMakePortraitShadow after vanilla-css's dispatchers, unreachable because no fighter is ever locked. Swaps original <-> J fighter ids in the VS battle state's four players and in Tag Team's queues"
+          "expect": "240600010C002062240700010C04C846022020250002C08003B8C8213C0980148D29C4B48F390038020020250C0333F703292821944A00240040202502202825314CFFDFA44C0024358D0001A44D00240C04C7D5AE1100840000202500002825240600120C00265A3C0780002408FFFF00408025AFA80010004020258FA500302406001B0C00277D3C078000020020258FA5002C240600010C002062240700013C0F80148DEFC4B43C0E000025CE0F68020020250C0333F701EE282194580024240B005B240C00413309FFDFA4490024352A0001240D0033240800C4240F00B9240E00A9A44A0024A04B0060A04C0061A04D0062A0480028A04F0029A04E002AAE110084004020250C04C7D5",
+          "bytes": "2A292C242B27312830322E250C0D0E0F101112131415161718191A1B1C1D1E1F20212223030B260507010004022D0A2F0806090003E0C0253C08804F8D0875683409000111090003000030250C04C91D3407000C0800171D0300F82503E0C025340600240C04C91D3407000F0300F8250804ECD13C0E800A03E0C8253C04800A24844D2B340500740C04C92A248301D03C0480502484D248340500040C04C92A24830060032000080000000090880000010648230127482B112000043C0A801301485021914A23FCA08A0000008520211483FFF60000000003E00008000000003C01804F8C21756838210001102000052C81000C102000033C01801300240821902423FC03E0000800000000",
+          "note": "New code and id table in the VS CSS overlay (RAM 0x801323FC-0x8013251F): the rest of mnPlayersVSMakePortraitShadow after vanilla-css's dispatchers, unreachable because no fighter is ever locked. Swaps original <-> J fighter ids in the VS battle state's four players and in Tag Team's queues, and maps the panel's fighter for Remix's regional flag"
+        },
+        {
+          "offset": "0x00130CAC",
+          "expect": "0C1494C1",
+          "bytes": "0C04C81E",
+          "note": "mnPlayersVSMakeNameAndEmblem (VS CSS overlay, RAM 0x80132A2C): call the J mapping of a3 (the fighter id) before Remix's prevent_series_logo_and_name_display_, so Remix's name and series logo tables are read with the J id (was: jal 0x80525304)"
+        },
+        {
+          "offset": "0x00132B6C",
+          "expect": "08147D9D",
+          "bytes": "0804C834",
+          "note": "mnPlayersVSGetStatusSelected (VS CSS overlay, RAM 0x801348EC): map a0 to the J id before Remix's get_action_ (the pose when a fighter is picked) (was: j 0x8051F674)"
+        },
+        {
+          "offset": "0x00132D28",
+          "expect": "AFA60070",
+          "bytes": "0C04C813",
+          "note": "mnPlayersVSMakeFighter (VS CSS overlay, RAM 0x80134AA8): map a2 (the fighter id) to the J id before it is stored, so the panel's model is the J fighter with its CSS zoom (was: sw a2, 0x70(sp), done by the new code)"
+        },
+        {
+          "offset": "0x00134B10",
+          "expect": "0C147E65",
+          "bytes": "0C04C829",
+          "note": "mnPlayersVSAnnounceFighter (VS CSS overlay, RAM 0x80136890): map t4 to the J id before Remix's get_fgm_, so the announcer calls the J fighter (J Fox, Purin) (was: jal 0x8051F994)"
         },
         {
           "offset": "0x00138CC8",
@@ -302,6 +319,36 @@
           "expect": "3C0E800A",
           "bytes": "0804C916",
           "note": "mnPlayersVSStartScene (VS CSS overlay, RAM 0x8013B33C): when the VS CSS opens, swap J -> original first, so the panels and vanilla-css's restore check see the original fighters (was: lui t6, 0x800A, redone by the new code)"
+        },
+        {
+          "offset": "0x02D22180",
+          "expect": "8D240048",
+          "bytes": "0C149B35",
+          "note": "CharacterSelect.update_variant_indicators_ (RAM 0x80522180): load the panel's fighter through the new helper, which maps it to the J id on the VS CSS, so Remix draws its J flag next to a picked panel (was: lw a0, 0x48(t1), done by the helper)"
+        },
+        {
+          "offset": "0x02D22220",
+          "expect": "356B10D08D6B00008D6E00403C0D801335ADBA8815AE00033C09C100",
+          "bytes": "8D6B10D0956E004239CEBA883C09C1303C153F8015C000053C12433F",
+          "note": "Edit 8, CharacterSelect.update_variant_indicators_ (0x80522220): render control object with lui/lw, VS screen test on the low half of the player struct base (xori 0xBA88), x offset -11 (was -8), scale 1 and uly 191 as Remix's defaults"
+        },
+        {
+          "offset": "0x02D22244",
+          "expect": "441100003C12433F3413000034140000",
+          "bytes": "3C1243383C153F404411000034130000",
+          "note": "Edit 8 (0x80522244): on the VS select screen uly = 184 and scale 0.75, then ulx, color, palette around Render.draw_texture_: the J flag goes to the panel's lower-left corner at 3/4 size (x = panel + 23 to 34, y = 184 to 191)"
+        },
+        {
+          "offset": "0x02D22258",
+          "expect": "3C153F80",
+          "bytes": "34140000",
+          "note": "Edit 8 (0x80522258): ori s4, r0, 0 (palette) in the delay slot of the Render.draw_texture_ call (was lui s5, 0x3F80, now set before the VS test)"
+        },
+        {
+          "offset": "0x02D26CD4",
+          "expect": "27BDFFF0AFA80004AFA900083C08805235086D0CAD000000AD000004AD000008AD00000C8FA80004",
+          "bytes": "8D2400483C01800A90214AD03821001014200003000000000804C9370000000003E0000800000000",
+          "note": "New resident helper (RAM 0x80526CD4-0x80526D0B, CharacterSelectDebugMenu.DpadFunctions.clear_settings_for_training_, never called): loads the panel's fighter for the flag check and, on the VS CSS only (scene 0x10), maps it in the overlay"
         }
       ]
     },
@@ -309,6 +356,7 @@
       "id": "vanilla-sss",
       "label": "Vanilla SSS",
       "group": "stages",
+      "conflicts": ["stage-list"],
       "description": "Only the original 9 stages can be picked, on the original stage select screen.",
       "translations": {
         "ja": {
@@ -316,7 +364,6 @@
           "description": "初代スマブラのステージ選択画面で、初代の9ステージだけを選べます。"
         }
       },
-      "conflicts": ["stages-dream-land", "stages-competitive"],
       "patches": [
         {
           "offset": "0x0014D71C",
@@ -1235,1788 +1282,308 @@
           "expect": "00000001",
           "bytes": "00000000",
           "note": "Random stage toggle 0x60 \"Yoshi's Story\" (RAM 0x8046906C): off"
+        },
+        {
+          "offset": "0x02C604BC",
+          "expect": "0C111209",
+          "bytes": "0C123469",
+          "note": "Toggles.load_ (RAM 0x804604BC): call the new stage_import_guard instead of Menu.import_, so a starting save's Stage Settings block isn't loaded and the stage toggles keep this option's values (the guard is the same in every stage option) (was: jal Menu.import_)"
+        },
+        {
+          "offset": "0x02C8D1A4",
+          "expect": "3C038013246313F08C62003C27BDFFD0AFBF001C14400011AFA4003044800000",
+          "bytes": "3C01804634216ED01081000300000000081112090000000003E0000800000000",
+          "note": "New code (RAM 0x8048D1A4-0x8048D1C3, Hazards.rttf_bomb_2_, never referenced): stage_import_guard skips Menu.import_ for Toggles.head_stage_settings and imports every other block as before"
         }
       ]
     },
     {
-      "id": "stages-dream-land",
-      "label": "Dream Land only",
+      "id": "stage-list",
+      "label": "Stage list",
       "group": "stages",
-      "description": "No stage select; every game is on Dream Land.",
+      "conflicts": ["vanilla-sss"],
+      "aliases": [
+        { "id": "stages-competitive", "stageList": "competitive" },
+        { "id": "stages-dream-land", "stageList": "dream-land", "with": ["skip-sss"] }
+      ],
+      "description": "The stage select shows only the stages on the list, in its order, each with its own hazard and movement setting, and Random picks among them.",
       "translations": {
         "ja": {
-          "label": "プププランドのみ",
-          "description": "ステージ選択なし。すべての試合がプププランド。"
+          "label": "ステージリスト",
+          "description": "ステージセレクトにはリストのステージだけが順番どおりに並び、ステージごとに仕掛けと動きの設定が決まります。ランダムもその中から選ばれます。"
         }
       },
-      "conflicts": ["vanilla-sss", "stages-competitive"],
+      "stageList": {
+        "codePrefix": "STG",
+        "codeSalt": "smash-remix-2.0.1",
+        "maxStages": 85,
+        "table": { "offset": "0x02C568E0", "expect": "06376E2A2DA44C6F2C722BAB332EBB6031DE6330458D3DC4738E8539102FC09C587C84DE6B6967744192730671728F943FA9B5B650DE4634363E559D404783864B5C7E7D445FDE88353C495A61090A0BA3A6B048294AB8BADE00", "pageIcons": 18, "pageStages": 17, "pageColumns": 6, "random": "0xDE", "note": "L1 Stages.stage_table_tournament (5 pages x 18 icons): the list, 17 stages per page, Random (0xDE) on the last icon of each page and on unused icons" },
+        "pages": { "offset": "0x02C56704", "expect": "00000003", "note": "L2 Stages.stage_table_pages[TOURNAMENT]: ceil(n / 17) pages, big-endian" },
+        "modes": { "offset": "0x02C5B1C0", "expect": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000100010001000000000001000101000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000101000000000000000000000000000000000000000000000000", "note": "L3 Stages.tournament_hazard_mode_table (a byte per stage id 0x00-0xD7): each listed stage's hazard mode, bit 0 hazards off, bit 1 movement off" },
+        "icons": { "fileTable": "0x001AC870", "files": 5455, "file": "0x0A04", "sprites": "0x02C56C9C", "randomSprite": "0x02C56FFC", "fileBases": "0x3CD08", "note": "Stages.icon_offset_table / icon_offset_random: (file index << 24) | Sprite offset in the stage icon file 0x0A04 of the file table at ROM 0x001AC870 (0x154F files)" },
+        "groups": [
+          { "id": "page1", "label": "Vanilla and Smash stages", "translations": { "ja": { "label": "オリジナルとスマブラのステージ" } } },
+          { "id": "page2", "label": "Original design stages", "translations": { "ja": { "label": "オリジナルデザインのステージ" } } },
+          { "id": "page3", "label": "Guest stages", "translations": { "ja": { "label": "ゲストステージ" } } },
+          { "id": "page4", "label": "More stages", "translations": { "ja": { "label": "その他のステージ" } } },
+          { "id": "page5", "label": "More stages", "translations": { "ja": { "label": "その他のステージ" } } }
+        ],
+        "variantKinds": {
+          "dl": { "label": "Dream Land layout", "translations": { "ja": { "label": "プププランドの地形" } } },
+          "omega": { "label": "Flat, no platforms", "translations": { "ja": { "label": "足場なしの平らな地形" } } },
+          "remix": { "label": "Remix's other version", "translations": { "ja": { "label": "Remixの別バージョン" } } }
+        },
+        "presets": [
+          { "id": "dream-land", "label": "Dream Land only", "description": "Dream Land alone, hazards on.", "translations": { "ja": { "label": "プププランドのみ", "description": "プププランドだけ（仕掛けあり）。" } },
+            "stages": [["0x06", 0]] },
+          { "id": "competitive", "label": "Competitive stages", "description": "Dream Land, Goomba Road, Pokemon Stadium 2 and Pokemon Stadium, hazards on.", "translations": { "ja": { "label": "大会向けステージ", "description": "プププランド、Goomba Road、ポケモンスタジアム2、ポケモンスタジアム（仕掛けあり）。" } },
+            "stages": [["0x06", 0], ["0x6F", 0], ["0xA4", 0], ["0x2D", 0]] },
+          { "id": "dream-land-variants", "label": "Dream Land variants", "description": "Dream Land and every stage's Dream Land layout version (DL), hazards and movement off.", "translations": { "ja": { "label": "プププランド地形のステージ", "description": "プププランドと、各ステージのプププランド地形版（DL）。仕掛けと動きはオフ。" } },
+            "stages": [["0x6B", 1], ["0x69", 1], ["0x67", 1], ["0x74", 1], ["0x41", 1], ["0x92", 0], ["0x73", 1], ["0x06", 1], ["0x71", 1], ["0x72", 2], ["0x8F", 0], ["0x94", 0], ["0x3F", 0], ["0xA9", 1], ["0xB5", 0], ["0xB6", 0], ["0x50", 0], ["0xC8", 0], ["0x93", 0]] }
+        ],
+        "stages": [
+          {"id": "0x00", "name": "Peach's Castle", "group": "page1", "hazards": true, "movement": true},
+          {"id": "0x6B", "name": "Peach's Castle DL", "variantOf": "0x00", "short": "DL", "kind": "dl", "hazards": true},
+          {"id": "0x6C", "name": "Peach's Castle Ω", "variantOf": "0x00", "short": "Ω", "kind": "omega", "hazards": true},
+          {"id": "0x96", "name": "Peach's Castle Beta", "variantOf": "0x00", "short": "Beta", "kind": "remix", "hazards": true, "movement": true},
+          {"id": "0xC9", "name": "LMAO Castle", "variantOf": "0x00", "short": "LMAO Castle", "kind": "remix", "hazards": true, "movement": true},
+          {"id": "0x02", "name": "Congo Jungle", "group": "page1", "hazards": true, "movement": true},
+          {"id": "0x69", "name": "Congo Jungle DL", "variantOf": "0x02", "short": "DL", "kind": "dl", "hazards": true},
+          {"id": "0x6A", "name": "Congo Jungle Ω", "variantOf": "0x02", "short": "Ω", "kind": "omega", "hazards": true},
+          {"id": "0x04", "name": "Hyrule Castle", "group": "page1", "hazards": true},
+          {"id": "0x67", "name": "Hyrule Castle DL", "variantOf": "0x04", "short": "DL", "kind": "dl", "hazards": true},
+          {"id": "0x68", "name": "Hyrule Castle Ω", "variantOf": "0x04", "short": "Ω", "kind": "omega", "hazards": true},
+          {"id": "0x97", "name": "Hyrule Castle SR", "variantOf": "0x04", "short": "SR", "kind": "remix", "hazards": true},
+          {"id": "0x03", "name": "Planet Zebes", "group": "page1", "hazards": true, "movement": true},
+          {"id": "0x74", "name": "Planet Zebes DL", "variantOf": "0x03", "short": "DL", "kind": "dl", "hazards": true},
+          {"id": "0x79", "name": "Planet Zebes Ω", "variantOf": "0x03", "short": "Ω", "kind": "omega", "hazards": true},
+          {"id": "0x08", "name": "Mushroom Kingdom", "group": "page1", "hazards": true},
+          {"id": "0x41", "name": "Mushroom Kingdom DL", "variantOf": "0x08", "short": "DL", "kind": "dl", "hazards": true},
+          {"id": "0x42", "name": "Mushroom Kingdom Ω", "variantOf": "0x08", "short": "Ω", "kind": "omega", "hazards": true},
+          {"id": "0x9B", "name": "Mushroom Kingdom SR", "variantOf": "0x08", "short": "SR", "kind": "remix", "hazards": true},
+          {"id": "0x61", "name": "World 1-1", "variantOf": "0x08", "short": "World 1-1", "kind": "remix", "movement": true},
+          {"id": "0x0D", "name": "Meta Crystal", "group": "page1"},
+          {"id": "0x94", "name": "Meta Crystal DL", "variantOf": "0x0D", "short": "DL", "kind": "dl"},
+          {"id": "0xBC", "name": "Meta Crystent", "variantOf": "0x0D", "short": "Meta Crystent", "kind": "remix"},
+          {"id": "0x05", "name": "Yoshi's Island", "group": "page1", "hazards": true},
+          {"id": "0x73", "name": "Yoshi's Island DL", "variantOf": "0x05", "short": "DL", "kind": "dl", "hazards": true},
+          {"id": "0x77", "name": "Yoshi's Island Ω", "variantOf": "0x05", "short": "Ω", "kind": "omega", "hazards": true},
+          {"id": "0x0C", "name": "Mini Yoshi's Island", "variantOf": "0x05", "short": "Mini Yoshi's Island", "kind": "remix"},
+          {"id": "0x06", "name": "Dream Land", "group": "page1", "hazards": true},
+          {"id": "0xA9", "name": "Winter Dream Land", "variantOf": "0x06", "short": "Winter Dream Land", "kind": "dl", "hazards": true},
+          {"id": "0x78", "name": "Dream Land Ω", "variantOf": "0x06", "short": "Ω", "kind": "omega", "hazards": true},
+          {"id": "0x95", "name": "Dream Greens", "variantOf": "0x06", "short": "Dream Greens", "kind": "remix", "hazards": true},
+          {"id": "0x01", "name": "Sector Z", "group": "page1", "hazards": true},
+          {"id": "0x71", "name": "Sector Z DL", "variantOf": "0x01", "short": "DL", "kind": "dl", "hazards": true},
+          {"id": "0x75", "name": "Sector Z Ω", "variantOf": "0x01", "short": "Ω", "kind": "omega", "hazards": true},
+          {"id": "0x98", "name": "Sector Z SR", "variantOf": "0x01", "short": "SR", "kind": "remix", "hazards": true},
+          {"id": "0x46", "name": "Corneria", "variantOf": "0x01", "short": "Corneria", "kind": "remix", "hazards": true},
+          {"id": "0x07", "name": "Saffron City", "group": "page1", "hazards": true, "movement": true},
+          {"id": "0x72", "name": "Saffron City DL", "variantOf": "0x07", "short": "DL", "kind": "dl", "movement": true},
+          {"id": "0x76", "name": "Saffron City Ω", "variantOf": "0x07", "short": "Ω", "kind": "omega"},
+          {"id": "0x0E", "name": "Duel Zone", "group": "page1"},
+          {"id": "0x92", "name": "Duel Zone DL", "variantOf": "0x0E", "short": "DL", "kind": "dl"},
+          {"id": "0x10", "name": "Final Destination", "group": "page1"},
+          {"id": "0x8F", "name": "Final Destination DL", "variantOf": "0x10", "short": "DL", "kind": "dl"},
+          {"id": "0x90", "name": "Final Tentination", "variantOf": "0x10", "short": "Final Tentination", "kind": "remix"},
+          {"id": "0x35", "name": "Dragon King", "group": "page1"},
+          {"id": "0xAD", "name": "Dragon King Remix", "variantOf": "0x35", "short": "Remix", "kind": "remix"},
+          {"id": "0x2A", "name": "First Destination", "group": "page1"},
+          {"id": "0xB8", "name": "First Destination Remix", "variantOf": "0x2A", "short": "Remix", "kind": "remix"},
+          {"id": "0x3C", "name": "Showdown", "variantOf": "0x2A", "short": "Showdown", "kind": "remix"},
+          {"id": "0x09", "name": "Dream Land Beta 1", "group": "page1"},
+          {"id": "0xC8", "name": "Dream Land Beta DL", "variantOf": "0x09", "short": "Dream Land Beta DL", "kind": "dl"},
+          {"id": "0x0A", "name": "Dream Land Beta 2", "variantOf": "0x09", "short": "Dream Land Beta 2", "kind": "remix", "movement": true},
+          {"id": "0x0B", "name": "How to Play", "group": "page1"},
+          {"id": "0xD7", "name": "Autumn How to Play", "variantOf": "0x0B", "short": "Autumn How to Play", "kind": "remix"},
+          {"id": "0x31", "name": "Battlefield", "group": "page1"},
+          {"id": "0x50", "name": "Battlefield DL", "variantOf": "0x31", "short": "DL", "kind": "dl"},
+          {"id": "0x4A", "name": "Crateria", "group": "page2", "movement": true},
+          {"id": "0xB6", "name": "Crateria DL", "variantOf": "0x4A", "short": "DL", "kind": "dl"},
+          {"id": "0x2B", "name": "Ganon's Tower", "group": "page2"},
+          {"id": "0x3D", "name": "Spiral Mountain", "group": "page2", "movement": true},
+          {"id": "0x34", "name": "Cool Cool Mountain", "group": "page2"},
+          {"id": "0x93", "name": "Cool Cool Mountain DL", "variantOf": "0x34", "short": "DL", "kind": "dl"},
+          {"id": "0x91", "name": "Cool Cool Mountain SR", "variantOf": "0x34", "short": "SR", "kind": "remix"},
+          {"id": "0x33", "name": "Dr. Mario", "group": "page2"},
+          {"id": "0x43", "name": "Bowser's Stadium", "group": "page2", "hazards": true},
+          {"id": "0x3E", "name": "N64", "group": "page2"},
+          {"id": "0xCD", "name": "N64 Remix", "variantOf": "0x3E", "short": "Remix", "kind": "remix"},
+          {"id": "0x29", "name": "Deku Tree", "group": "page2"},
+          {"id": "0xB5", "name": "Deku Tree DL", "variantOf": "0x29", "short": "DL", "kind": "dl"},
+          {"id": "0x40", "name": "Mad Monster Mansion", "group": "page2"},
+          {"id": "0x88", "name": "Game Boy Land", "group": "page2", "hazards": true, "movement": true},
+          {"id": "0x3A", "name": "Muda Kingdom", "variantOf": "0x88", "short": "Muda Kingdom", "kind": "remix"},
+          {"id": "0x99", "name": "Mute City", "group": "page2", "hazards": true, "movement": true},
+          {"id": "0x3F", "name": "Mute City DL", "variantOf": "0x99", "short": "DL", "kind": "dl"},
+          {"id": "0x47", "name": "Kitchen Island", "group": "page2", "movement": true},
+          {"id": "0x4B", "name": "Frosty Village", "group": "page2"},
+          {"id": "0x37", "name": "Fray's Stage", "group": "page2"},
+          {"id": "0x6E", "name": "Fray's Stage - Night", "variantOf": "0x37", "short": "Night", "kind": "dl"},
+          {"id": "0x30", "name": "WarioWare, Inc.", "group": "page2"},
+          {"id": "0x2C", "name": "Gym Leader Castle", "group": "page2"},
+          {"id": "0x2D", "name": "Pokemon Stadium", "group": "page2"},
+          {"id": "0xA4", "name": "Pokemon Stadium 2", "variantOf": "0x2D", "short": "Pokemon Stadium 2", "kind": "remix"},
+          {"id": "0x2E", "name": "Tal Tal Heights", "group": "page3", "hazards": true},
+          {"id": "0xA7", "name": "Tal Tal Heights Remix", "variantOf": "0x2E", "short": "Remix", "kind": "remix", "hazards": true},
+          {"id": "0x4C", "name": "Smashville", "group": "page3", "movement": true},
+          {"id": "0xC4", "name": "Smashville Remix", "variantOf": "0x4C", "short": "Remix", "kind": "remix", "movement": true},
+          {"id": "0xBE", "name": "Grim Reaper's Cavern", "group": "page3"},
+          {"id": "0x3B", "name": "Mementos", "variantOf": "0xBE", "short": "Mementos", "kind": "remix", "movement": true},
+          {"id": "0x5D", "name": "Raid Blue", "group": "page3"},
+          {"id": "0x36", "name": "Great Bay", "group": "page3", "movement": true},
+          {"id": "0x39", "name": "Fountain of Dreams", "group": "page3", "movement": true},
+          {"id": "0x38", "name": "Tower of Heaven", "group": "page3"},
+          {"id": "0x5A", "name": "Smashketball", "group": "page3", "hazards": true},
+          {"id": "0x5C", "name": "Norfair", "group": "page3", "hazards": true},
+          {"id": "0xA5", "name": "Norfair Remix", "variantOf": "0x5C", "short": "Remix", "kind": "remix", "hazards": true},
+          {"id": "0x45", "name": "Delfino Plaza", "group": "page3", "movement": true},
+          {"id": "0x44", "name": "Peach's Castle II", "group": "page3", "movement": true},
+          {"id": "0x48", "name": "Big Blue", "group": "page3", "hazards": true, "movement": true},
+          {"id": "0x49", "name": "Onett", "group": "page3", "hazards": true},
+          {"id": "0x2F", "name": "Glacial River", "group": "page3"},
+          {"id": "0xAB", "name": "Glacial River Remix", "variantOf": "0x2F", "short": "Remix", "kind": "remix"},
+          {"id": "0x55", "name": "Hyrule Temple", "group": "page3"},
+          {"id": "0x58", "name": "New Pork City", "group": "page3"},
+          {"id": "0x5E", "name": "Congo Falls", "group": "page3", "hazards": true},
+          {"id": "0x32", "name": "Flat Zone", "group": "page4", "hazards": true},
+          {"id": "0x62", "name": "Flat Zone II", "variantOf": "0x32", "short": "II", "kind": "remix", "hazards": true, "movement": true},
+          {"id": "0x5F", "name": "Pigmask Fortress", "group": "page4"},
+          {"id": "0x60", "name": "Yoshi's Story", "group": "page4", "movement": true},
+          {"id": "0x63", "name": "Gerudo Valley", "group": "page4"},
+          {"id": "0x6F", "name": "Goomba Road", "group": "page4"},
+          {"id": "0x7C", "name": "Bowser's Keep", "group": "page4", "movement": true},
+          {"id": "0x7D", "name": "Rith Essa", "group": "page4"},
+          {"id": "0x7E", "name": "Venom", "group": "page4", "hazards": true},
+          {"id": "0x83", "name": "Windy", "group": "page4", "movement": true},
+          {"id": "0x84", "name": "dataDyne Central", "group": "page4", "movement": true},
+          {"id": "0x85", "name": "Planet Clancer", "group": "page4", "movement": true},
+          {"id": "0x86", "name": "Jungle Japes", "group": "page4", "hazards": true},
+          {"id": "0x8D", "name": "Castle Siege", "group": "page4"},
+          {"id": "0x8E", "name": "Yoshi's Island II", "group": "page4", "movement": true},
+          {"id": "0x9C", "name": "Green Hill Zone", "group": "page4", "movement": true},
+          {"id": "0x9D", "name": "Subcon", "group": "page4", "movement": true},
+          {"id": "0x9E", "name": "Pirate Land", "group": "page4", "hazards": true},
+          {"id": "0x9F", "name": "Casino Night Zone", "group": "page5", "hazards": true},
+          {"id": "0xA2", "name": "Metallic Madness", "group": "page5", "hazards": true, "movement": true},
+          {"id": "0xA3", "name": "Rainbow Road", "group": "page5", "hazards": true, "movement": true},
+          {"id": "0xA6", "name": "Toad's Turnpike", "group": "page5", "hazards": true, "movement": true},
+          {"id": "0xB0", "name": "Dracula's Castle", "group": "page5", "movement": true},
+          {"id": "0xB1", "name": "Reverse Castle", "variantOf": "0xB0", "short": "Reverse Castle", "kind": "remix", "movement": true},
+          {"id": "0xB3", "name": "Mt. Dedede", "group": "page5", "movement": true},
+          {"id": "0xB4", "name": "Edo Town", "group": "page5"},
+          {"id": "0xBA", "name": "Twilight City", "group": "page5", "movement": true},
+          {"id": "0xBB", "name": "Melrode", "group": "page5"},
+          {"id": "0xBF", "name": "Scuttle Town", "group": "page5", "movement": true},
+          {"id": "0xC0", "name": "Big Boo's Haunt", "group": "page5", "movement": true},
+          {"id": "0xC1", "name": "Dinosaur Land", "group": "page5", "movement": true},
+          {"id": "0xC3", "name": "Spawned Fear", "group": "page5", "hazards": true, "movement": true},
+          {"id": "0xC6", "name": "Poke Floats", "group": "page5", "movement": true},
+          {"id": "0xC7", "name": "Big Snowman", "group": "page5", "movement": true},
+          {"id": "0xCA", "name": "Discovery Falls", "group": "page5"},
+          {"id": "0xCC", "name": "Discovery Falls Remix", "variantOf": "0xCA", "short": "Remix", "kind": "remix"},
+          {"id": "0xD2", "name": "Time Twister", "group": "page5", "movement": true},
+          {"id": "0xD4", "name": "N. Sanity Beach", "variantOf": "0xD2", "short": "N. Sanity Beach", "kind": "remix"},
+          {"id": "0xD5", "name": "Snow Go", "variantOf": "0xD2", "short": "Snow Go", "kind": "remix"},
+          {"id": "0xD6", "name": "Future Frenzy", "variantOf": "0xD2", "short": "Future Frenzy", "kind": "remix", "movement": true}
+        ]
+      },
       "patches": [
         {
-          "offset": "0x0017EE20",
-          "expect": "3C02800A24424AD0904F0000",
-          "bytes": "3C08800A08002E7FA1004D12",
-          "note": "stage_boot_init (N64 logo overlay, RAM 0x80131C60, in mnStartupActorFuncRun's unreachable skip-to-title branch): VS battle state (0x800A4D08) stage select off; jumps to gcMakeDefaultCameraGObj"
+          "offset": "0x02C547C4",
+          "expect": "8D290004",
+          "bytes": "34090001",
+          "note": "F2 Stages.update_stage_icons_: lw of Toggles.entry_sss_layout -> ori r9, r0, 1 (always the tournament layout)"
         },
         {
-          "offset": "0x0017EF04",
-          "expect": "0C002E7F",
-          "bytes": "0C04C718",
-          "note": "mnStartupFuncStart (N64 logo overlay, RAM 0x80131D44): call stage_boot_init (0x80131C60) instead of gcMakeDefaultCameraGObj; it jumps on with a0-a3 untouched"
+          "offset": "0x02C548E4",
+          "expect": "8D4A0004",
+          "bytes": "340A0001",
+          "note": "F2 Stages.check_valid_page_: lw of Toggles.entry_sss_layout -> ori r10, r0, 1 (always the tournament layout)"
         },
         {
-          "offset": "0x02C549C8",
-          "expect": "34080006",
-          "bytes": "340800FF",
-          "note": "Stages.get_stage_id_ (RAM 0x804549C8): the Dream Land page-3 hazard exception compares against no stage (0xFF), so the hazard table decides"
+          "offset": "0x02C54984",
+          "expect": "8D290004",
+          "bytes": "34090001",
+          "note": "F2 Stages.get_stage_id_: lw of Toggles.entry_sss_layout -> ori r9, r0, 1 (always the tournament layout)"
         },
         {
-          "offset": "0x02C549E0",
-          "expect": "34080073",
-          "bytes": "340800FF",
-          "note": "Stages.get_stage_id_ (RAM 0x804549E0): the Yoshi's Island DL pages 1-2 hazard exception compares against no stage (0xFF)"
+          "offset": "0x02C549BC",
+          "expect": "3C0B8045",
+          "bytes": "10000014",
+          "note": "F3 Stages.get_stage_id_: b 0x80454A10 (was lui t3, 0x8045): skip the per-page hazard exceptions; the hazard mode comes from Stages.tournament_hazard_mode_table for every stage"
         },
         {
-          "offset": "0x02C549F8",
-          "expect": "34080072",
-          "bytes": "340800FF",
-          "note": "Stages.get_stage_id_ (RAM 0x804549F8): the Saffron City DL page-3 hazard exception compares against no stage (0xFF)"
+          "offset": "0x02C54BCC",
+          "expect": "8D6B0004",
+          "bytes": "340B0001",
+          "note": "F2 Stages.update_text_ (hazard text): lw of Toggles.entry_sss_layout -> ori r11, r0, 1 (always the tournament layout)"
         },
         {
-          "offset": "0x02C56704",
-          "expect": "00000003",
-          "bytes": "00000001",
-          "note": "Stages.stage_table_pages[TOURNAMENT] (RAM 0x80456704): 3 -> 1 page"
+          "offset": "0x02C54CF0",
+          "expect": "8D080004",
+          "bytes": "34080001",
+          "note": "F2 Stages.update_text_ (layout text): lw of Toggles.entry_sss_layout -> ori r8, r0, 1 (always the tournament layout)"
         },
         {
-          "offset": "0x02C568E0",
-          "expect": "06376E2A2DA44C6F2C722BAB332EBB6031DE6330",
-          "bytes": "06DEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDEDE6330",
-          "note": "Stages.stage_table_tournament page 1 (RAM 0x804568E0, 6x3 icons): this option's stages, Random on every other icon"
+          "offset": "0x02C54D50",
+          "expect": "8D6B0004",
+          "bytes": "340B0001",
+          "note": "F2 Stages.update_text_ (cursor color): lw of Toggles.entry_sss_layout -> ori r11, r0, 1 (always the tournament layout)"
+        },
+        {
+          "offset": "0x02C54EC0",
+          "expect": "8D290004",
+          "bytes": "34090001",
+          "note": "F2 Stages.right_check_ (page count): lw of Toggles.entry_sss_layout -> ori r9, r0, 1 (always the tournament layout)"
+        },
+        {
+          "offset": "0x02C54FD8",
+          "expect": "8D080004",
+          "bytes": "34080001",
+          "note": "F2 Stages.right_check_ (L hazard toggle): lw of Toggles.entry_sss_layout -> ori r8, r0, 1 (always the tournament layout)"
+        },
+        {
+          "offset": "0x02C550DC",
+          "expect": "8D290004",
+          "bytes": "34090001",
+          "note": "F2 Stages.right_check_ (C-down variant): lw of Toggles.entry_sss_layout -> ori r9, r0, 1 (always the tournament layout)"
+        },
+        {
+          "offset": "0x02C556B8",
+          "expect": "27BDFFF0AFA80004AFA90008AFAA000C3402000010800002340800018C8800043C098045352958188D2300000106402511000015000000003C08804635086ED08D080004110000098C8800243C0A8046354AA6582508FFFF00084080014850218D480000110000080000000024630001AD2300003C0880453508575701034021A1050000340200018FA800048FA900048FAA000827BD001003E0000800000000",
+          "bytes": "27BDFFF0AFA80004AFA90008AFAA000C3C0980458D23581814C0000B340200003C088045350868E0250A005A910200001045000525080001150AFFFC00000000100000063402000024630001AD23581801234021A1055757340200018FA800048FA900088FAA000C03E0000827BD0010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "note": "F4 Stages.add_stage_to_random_list_ rewritten: add the stage when it is in Stages.stage_table_tournament (not by its random toggle / Tournament default)"
+        },
+        {
+          "offset": "0x02C562D4",
+          "expect": "8D290004",
+          "bytes": "34090001",
+          "note": "F2 Stages.setup_ (hazard line labels): lw of Toggles.entry_sss_layout -> ori r9, r0, 1 (always the tournament layout)"
+        },
+        {
+          "offset": "0x02C565D0",
+          "expect": "8D290004",
+          "bytes": "34090001",
+          "note": "F2 Stages.setup_ (L button images): lw of Toggles.entry_sss_layout -> ori r9, r0, 1 (always the tournament layout)"
+        },
+        {
+          "offset": "0x02C5EADC",
+          "expect": "8C210004",
+          "bytes": "34010001",
+          "note": "F2 Stages.swap_stage_ (Random hazard mode): lw of Toggles.entry_sss_layout -> ori r1, r0, 1 (always the tournament layout)"
+        },
+        {
+          "offset": "0x02C5EB04",
+          "expect": "1000000C",
+          "bytes": "00000000",
+          "note": "F5 Stages.swap_stage_: b _end -> nop after a tournament-layout Random pick, so dont_freeze_stage is set for the picked stage"
         },
         {
           "offset": "0x02C66ED4",
           "expect": "00000000",
           "bytes": "00000001",
-          "note": "Toggles.entry_sss_layout (RAM 0x80466ED4): Stage Select Layout NORMAL -> TOURNAMENT (its own stage table, no layout variants, no L hazard toggle; the hazard mode comes from Stages.tournament_hazard_mode_table)"
-        },
-        {
-          "offset": "0x02C6711C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x02 \"Congo Jungle\" (RAM 0x8046711C): off"
-        },
-        {
-          "offset": "0x02C67200",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x0E \"Duel Zone\" (RAM 0x80467200): off"
-        },
-        {
-          "offset": "0x02C67234",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x10 \"Final Destination\" (RAM 0x80467234): off"
-        },
-        {
-          "offset": "0x02C672A4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x04 \"Hyrule Castle\" (RAM 0x804672A4): off"
-        },
-        {
-          "offset": "0x02C672DC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x0D \"Meta Crystal\" (RAM 0x804672DC): off"
-        },
-        {
-          "offset": "0x02C67314",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x08 \"Mushroom Kingdom\" (RAM 0x80467314): off"
-        },
-        {
-          "offset": "0x02C67350",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x00 \"Peach's Castle\" (RAM 0x80467350): off"
-        },
-        {
-          "offset": "0x02C67388",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x03 \"Planet Zebes\" (RAM 0x80467388): off"
-        },
-        {
-          "offset": "0x02C673C0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x07 \"Saffron City\" (RAM 0x804673C0): off"
-        },
-        {
-          "offset": "0x02C673F8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x01 \"Sector Z\" (RAM 0x804673F8): off"
-        },
-        {
-          "offset": "0x02C6742C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x05 \"Yoshi's Island\" (RAM 0x8046742C): off"
-        },
-        {
-          "offset": "0x02C67464",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x0C \"Mini Yoshi's Island\" (RAM 0x80467464): off"
-        },
-        {
-          "offset": "0x02C674A0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD7 \"Autumn How to Play\" (RAM 0x804674A0): off"
-        },
-        {
-          "offset": "0x02C674DC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x31 \"Battlefield\" (RAM 0x804674DC): off"
-        },
-        {
-          "offset": "0x02C67510",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x50 \"Battlefield DL\" (RAM 0x80467510): off"
-        },
-        {
-          "offset": "0x02C67548",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x48 \"Big Blue\" (RAM 0x80467548): off"
-        },
-        {
-          "offset": "0x02C6757C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC0 \"Big Boo's Haunt\" (RAM 0x8046757C): off"
-        },
-        {
-          "offset": "0x02C675B4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC7 \"Big Snowman\" (RAM 0x804675B4): off"
-        },
-        {
-          "offset": "0x02C675E8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x7C \"Bowser's Keep\" (RAM 0x804675E8): off"
-        },
-        {
-          "offset": "0x02C67620",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x43 \"Bowser's Stadium\" (RAM 0x80467620): off"
-        },
-        {
-          "offset": "0x02C6765C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9F \"Casino Night Zone\" (RAM 0x8046765C): off"
-        },
-        {
-          "offset": "0x02C67698",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x8D \"Castle Siege\" (RAM 0x80467698): off"
-        },
-        {
-          "offset": "0x02C676D0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5E \"Congo Falls\" (RAM 0x804676D0): off"
-        },
-        {
-          "offset": "0x02C67704",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6A \"Congo Jungle \" (RAM 0x80467704): off"
-        },
-        {
-          "offset": "0x02C6773C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x69 \"Congo Jungle DL\" (RAM 0x8046773C): off"
-        },
-        {
-          "offset": "0x02C67774",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x34 \"Cool Cool Mountain\" (RAM 0x80467774): off"
-        },
-        {
-          "offset": "0x02C677B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x93 \"Cool Cool Mountain DL\" (RAM 0x804677B0): off"
-        },
-        {
-          "offset": "0x02C677F0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x91 \"Cool Cool Mountain SR\" (RAM 0x804677F0): off"
-        },
-        {
-          "offset": "0x02C67830",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x46 \"Corneria\" (RAM 0x80467830): off"
-        },
-        {
-          "offset": "0x02C67864",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x4A \"Crateria\" (RAM 0x80467864): off"
-        },
-        {
-          "offset": "0x02C67898",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB6 \"Crateria DL\" (RAM 0x80467898): off"
-        },
-        {
-          "offset": "0x02C678CC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x84 \"dataDyne Central\" (RAM 0x804678CC): off"
-        },
-        {
-          "offset": "0x02C67908",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x29 \"Deku Tree\" (RAM 0x80467908): off"
-        },
-        {
-          "offset": "0x02C6793C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB5 \"Deku Tree DL\" (RAM 0x8046793C): off"
-        },
-        {
-          "offset": "0x02C67974",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x45 \"Delfino Plaza\" (RAM 0x80467974): off"
-        },
-        {
-          "offset": "0x02C679AC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC1 \"Dinosaur Land\" (RAM 0x804679AC): off"
-        },
-        {
-          "offset": "0x02C679E4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xCA \"Discovery Falls\" (RAM 0x804679E4): off"
-        },
-        {
-          "offset": "0x02C67A1C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xCC \"Discovery Falls Remix\" (RAM 0x80467A1C): off"
-        },
-        {
-          "offset": "0x02C67A5C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x33 \"Dr. Mario\" (RAM 0x80467A5C): off"
-        },
-        {
-          "offset": "0x02C67A90",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB0 \"Dracula's Castle\" (RAM 0x80467A90): off"
-        },
-        {
-          "offset": "0x02C67ACC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x35 \"Dragon King\" (RAM 0x80467ACC): off"
-        },
-        {
-          "offset": "0x02C67B00",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xAD \"Dragon King Remix\" (RAM 0x80467B00): off"
-        },
-        {
-          "offset": "0x02C67B3C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x95 \"Dream Greens\" (RAM 0x80467B3C): off"
-        },
-        {
-          "offset": "0x02C67B74",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x78 \"Dream Land \" (RAM 0x80467B74): off"
-        },
-        {
-          "offset": "0x02C67BAC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC8 \"Dream Land Beta DL\" (RAM 0x80467BAC): off"
-        },
-        {
-          "offset": "0x02C67BE8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x92 \"Duel Zone DL\" (RAM 0x80467BE8): off"
-        },
-        {
-          "offset": "0x02C67C20",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB4 \"Edo Town\" (RAM 0x80467C20): off"
-        },
-        {
-          "offset": "0x02C67C54",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x8F \"Final Destination DL\" (RAM 0x80467C54): off"
-        },
-        {
-          "offset": "0x02C67C94",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x90 \"Final Tentination\" (RAM 0x80467C94): off"
-        },
-        {
-          "offset": "0x02C67CD0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2A \"First Destination\" (RAM 0x80467CD0): off"
-        },
-        {
-          "offset": "0x02C67D0C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB8 \"First Destination Remix\" (RAM 0x80467D0C): off"
-        },
-        {
-          "offset": "0x02C67D4C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x32 \"Flat Zone\" (RAM 0x80467D4C): off"
-        },
-        {
-          "offset": "0x02C67D80",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x62 \"Flat Zone II\" (RAM 0x80467D80): off"
-        },
-        {
-          "offset": "0x02C67DB8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x39 \"Fountain of Dreams\" (RAM 0x80467DB8): off"
-        },
-        {
-          "offset": "0x02C67DF4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x37 \"Fray's Stage\" (RAM 0x80467DF4): off"
-        },
-        {
-          "offset": "0x02C67E2C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6E \"Fray's Stage - Night\" (RAM 0x80467E2C): off"
-        },
-        {
-          "offset": "0x02C67E6C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x4B \"Frosty Village\" (RAM 0x80467E6C): off"
-        },
-        {
-          "offset": "0x02C67EA4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD6 \"Future Frenzy\" (RAM 0x80467EA4): off"
-        },
-        {
-          "offset": "0x02C67EDC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x88 \"Game Boy Land\" (RAM 0x80467EDC): off"
-        },
-        {
-          "offset": "0x02C67F14",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2B \"Ganon's Tower\" (RAM 0x80467F14): off"
-        },
-        {
-          "offset": "0x02C67F4C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x63 \"Gerudo Valley\" (RAM 0x80467F4C): off"
-        },
-        {
-          "offset": "0x02C67F84",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2F \"Glacial River\" (RAM 0x80467F84): off"
-        },
-        {
-          "offset": "0x02C67FBC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xAB \"Glacial River Remix\" (RAM 0x80467FBC): off"
-        },
-        {
-          "offset": "0x02C67FF8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6F \"Goomba Road\" (RAM 0x80467FF8): off"
-        },
-        {
-          "offset": "0x02C6802C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x36 \"Great Bay\" (RAM 0x8046802C): off"
-        },
-        {
-          "offset": "0x02C68060",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9C \"Green Hill Zone\" (RAM 0x80468060): off"
-        },
-        {
-          "offset": "0x02C68098",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBE \"Grim Reaper's Cavern\" (RAM 0x80468098): off"
-        },
-        {
-          "offset": "0x02C680D8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2C \"Gym Leader Castle\" (RAM 0x804680D8): off"
-        },
-        {
-          "offset": "0x02C68114",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x68 \"Hyrule Castle \" (RAM 0x80468114): off"
-        },
-        {
-          "offset": "0x02C6814C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x67 \"Hyrule Castle DL\" (RAM 0x8046814C): off"
-        },
-        {
-          "offset": "0x02C68188",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x97 \"Hyrule Castle SR\" (RAM 0x80468188): off"
-        },
-        {
-          "offset": "0x02C681C4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x55 \"Hyrule Temple\" (RAM 0x804681C4): off"
-        },
-        {
-          "offset": "0x02C681FC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x86 \"Jungle Japes\" (RAM 0x804681FC): off"
-        },
-        {
-          "offset": "0x02C68234",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x47 \"Kitchen Island\" (RAM 0x80468234): off"
-        },
-        {
-          "offset": "0x02C6826C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC9 \"LMAO Castle\" (RAM 0x8046826C): off"
-        },
-        {
-          "offset": "0x02C682A0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x40 \"Mad Monster Mansion\" (RAM 0x804682A0): off"
-        },
-        {
-          "offset": "0x02C682DC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBB \"Melrode\" (RAM 0x804682DC): off"
-        },
-        {
-          "offset": "0x02C6830C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3B \"Mementos\" (RAM 0x8046830C): off"
-        },
-        {
-          "offset": "0x02C68340",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x94 \"Meta Crystal DL\" (RAM 0x80468340): off"
-        },
-        {
-          "offset": "0x02C68378",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBC \"Meta Crystent\" (RAM 0x80468378): off"
-        },
-        {
-          "offset": "0x02C683B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA2 \"Metallic Madness\" (RAM 0x804683B0): off"
-        },
-        {
-          "offset": "0x02C683EC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB3 \"Mt. Dedede\" (RAM 0x804683EC): off"
-        },
-        {
-          "offset": "0x02C68420",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3A \"Muda Kingdom\" (RAM 0x80468420): off"
-        },
-        {
-          "offset": "0x02C68458",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x42 \"Mushroom Kingdom \" (RAM 0x80468458): off"
-        },
-        {
-          "offset": "0x02C68494",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x41 \"Mushroom Kingdom DL\" (RAM 0x80468494): off"
-        },
-        {
-          "offset": "0x02C684D0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9B \"Mushroom Kingdom SR\" (RAM 0x804684D0): off"
-        },
-        {
-          "offset": "0x02C6850C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x99 \"Mute City\" (RAM 0x8046850C): off"
-        },
-        {
-          "offset": "0x02C68540",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3F \"Mute City DL\" (RAM 0x80468540): off"
-        },
-        {
-          "offset": "0x02C68578",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD4 \"N. Sanity Beach\" (RAM 0x80468578): off"
-        },
-        {
-          "offset": "0x02C685B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3E \"N64\" (RAM 0x804685B0): off"
-        },
-        {
-          "offset": "0x02C685DC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xCD \"N64 Remix\" (RAM 0x804685DC): off"
-        },
-        {
-          "offset": "0x02C68610",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x58 \"New Pork City\" (RAM 0x80468610): off"
-        },
-        {
-          "offset": "0x02C68648",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5C \"Norfair\" (RAM 0x80468648): off"
-        },
-        {
-          "offset": "0x02C68678",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA5 \"Norfair Remix\" (RAM 0x80468678): off"
-        },
-        {
-          "offset": "0x02C686B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x49 \"Onett\" (RAM 0x804686B0): off"
-        },
-        {
-          "offset": "0x02C686E0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6C \"Peach's Castle \" (RAM 0x804686E0): off"
-        },
-        {
-          "offset": "0x02C6871C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x96 \"Peach's Castle Beta\" (RAM 0x8046871C): off"
-        },
-        {
-          "offset": "0x02C68758",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6B \"Peach's Castle DL\" (RAM 0x80468758): off"
-        },
-        {
-          "offset": "0x02C68794",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x44 \"Peach's Castle II\" (RAM 0x80468794): off"
-        },
-        {
-          "offset": "0x02C687D0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5F \"Pigmask Fortress\" (RAM 0x804687D0): off"
-        },
-        {
-          "offset": "0x02C6880C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9E \"Pirate Land\" (RAM 0x8046880C): off"
-        },
-        {
-          "offset": "0x02C68840",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x85 \"Planet Clancer\" (RAM 0x80468840): off"
-        },
-        {
-          "offset": "0x02C68878",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x79 \"Planet Zebes \" (RAM 0x80468878): off"
-        },
-        {
-          "offset": "0x02C688B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x74 \"Planet Zebes DL\" (RAM 0x804688B0): off"
-        },
-        {
-          "offset": "0x02C688E8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC6 \"Poke Floats\" (RAM 0x804688E8): off"
-        },
-        {
-          "offset": "0x02C6891C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2D \"Pokemon Stadium\" (RAM 0x8046891C): off"
-        },
-        {
-          "offset": "0x02C68954",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA4 \"Pokemon Stadium 2\" (RAM 0x80468954): off"
-        },
-        {
-          "offset": "0x02C68990",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5D \"Raid Blue\" (RAM 0x80468990): off"
-        },
-        {
-          "offset": "0x02C689C4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA3 \"Rainbow Road\" (RAM 0x804689C4): off"
-        },
-        {
-          "offset": "0x02C689FC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB1 \"Reverse Castle\" (RAM 0x804689FC): off"
-        },
-        {
-          "offset": "0x02C68A34",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x7D \"Rith Essa\" (RAM 0x80468A34): off"
-        },
-        {
-          "offset": "0x02C68A68",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x76 \"Saffron City \" (RAM 0x80468A68): off"
-        },
-        {
-          "offset": "0x02C68AA0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x72 \"Saffron City DL\" (RAM 0x80468AA0): off"
-        },
-        {
-          "offset": "0x02C68AD8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBF \"Scuttle Town\" (RAM 0x80468AD8): off"
-        },
-        {
-          "offset": "0x02C68B10",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x75 \"Sector Z \" (RAM 0x80468B10): off"
-        },
-        {
-          "offset": "0x02C68B44",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x71 \"Sector Z DL\" (RAM 0x80468B44): off"
-        },
-        {
-          "offset": "0x02C68B78",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x98 \"Sector Z SR\" (RAM 0x80468B78): off"
-        },
-        {
-          "offset": "0x02C68BAC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3C \"Showdown\" (RAM 0x80468BAC): off"
-        },
-        {
-          "offset": "0x02C68BE0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5A \"Smashketball\" (RAM 0x80468BE0): off"
-        },
-        {
-          "offset": "0x02C68C18",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x4C \"Smashville\" (RAM 0x80468C18): off"
-        },
-        {
-          "offset": "0x02C68C4C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC4 \"Smashville Remix\" (RAM 0x80468C4C): off"
-        },
-        {
-          "offset": "0x02C68C88",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD5 \"Snow Go\" (RAM 0x80468C88): off"
-        },
-        {
-          "offset": "0x02C68CB8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC3 \"Spawned Fear\" (RAM 0x80468CB8): off"
-        },
-        {
-          "offset": "0x02C68CF0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3D \"Spiral Mountain\" (RAM 0x80468CF0): off"
-        },
-        {
-          "offset": "0x02C68D28",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9D \"Subcon\" (RAM 0x80468D28): off"
-        },
-        {
-          "offset": "0x02C68D58",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2E \"Tal Tal Heights\" (RAM 0x80468D58): off"
-        },
-        {
-          "offset": "0x02C68D90",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA7 \"Tal Tal Heights Remix\" (RAM 0x80468D90): off"
-        },
-        {
-          "offset": "0x02C68DD0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD2 \"Time Twister\" (RAM 0x80468DD0): off"
-        },
-        {
-          "offset": "0x02C68E08",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA6 \"Toad's Turnpike\" (RAM 0x80468E08): off"
-        },
-        {
-          "offset": "0x02C68E40",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x38 \"Tower of Heaven\" (RAM 0x80468E40): off"
-        },
-        {
-          "offset": "0x02C68E78",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBA \"Twilight City\" (RAM 0x80468E78): off"
-        },
-        {
-          "offset": "0x02C68EB0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x7E \"Venom\" (RAM 0x80468EB0): off"
-        },
-        {
-          "offset": "0x02C68EE0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x30 \"WarioWare, Inc.\" (RAM 0x80468EE0): off"
-        },
-        {
-          "offset": "0x02C68F18",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x83 \"Windy\" (RAM 0x80468F18): off"
-        },
-        {
-          "offset": "0x02C68F48",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA9 \"Winter Dream Land\" (RAM 0x80468F48): off"
-        },
-        {
-          "offset": "0x02C68F84",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x61 \"World 1-1\" (RAM 0x80468F84): off"
-        },
-        {
-          "offset": "0x02C68FB8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x77 \"Yoshi's Island \" (RAM 0x80468FB8): off"
-        },
-        {
-          "offset": "0x02C68FF4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x73 \"Yoshi's Island DL\" (RAM 0x80468FF4): off"
-        },
-        {
-          "offset": "0x02C69030",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x8E \"Yoshi's Island II\" (RAM 0x80469030): off"
-        },
-        {
-          "offset": "0x02C6906C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x60 \"Yoshi's Story\" (RAM 0x8046906C): off"
-        },
-        {
-          "offset": "0x02CF757C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "VsRemixMenu.global_stage_select (RAM 0x804F757C): 1 -> 0, Remix's saved copy of the VS stage select flag"
-        }
-      ]
-    },
-    {
-      "id": "stages-competitive",
-      "label": "Competitive stages",
-      "group": "stages",
-      "description": "Stage select offers only Dream Land, Goomba Road, Pokemon Stadium 2, Pokemon Stadium and Random.",
-      "translations": {
-        "ja": {
-          "label": "大会向けステージ",
-          "description": "ステージ選択はプププランド、Goomba Road、ポケモンスタジアム2、ポケモンスタジアム、ランダムのみ。"
-        }
-      },
-      "conflicts": ["vanilla-sss", "stages-dream-land"],
-      "patches": [
-        {
-          "offset": "0x02C549C8",
-          "expect": "34080006",
-          "bytes": "340800FF",
-          "note": "Stages.get_stage_id_ (RAM 0x804549C8): the Dream Land page-3 hazard exception compares against no stage (0xFF), so the hazard table decides"
-        },
-        {
-          "offset": "0x02C549E0",
-          "expect": "34080073",
-          "bytes": "340800FF",
-          "note": "Stages.get_stage_id_ (RAM 0x804549E0): the Yoshi's Island DL pages 1-2 hazard exception compares against no stage (0xFF)"
-        },
-        {
-          "offset": "0x02C549F8",
-          "expect": "34080072",
-          "bytes": "340800FF",
-          "note": "Stages.get_stage_id_ (RAM 0x804549F8): the Saffron City DL page-3 hazard exception compares against no stage (0xFF)"
-        },
-        {
-          "offset": "0x02C56704",
-          "expect": "00000003",
-          "bytes": "00000001",
-          "note": "Stages.stage_table_pages[TOURNAMENT] (RAM 0x80456704): 3 -> 1 page"
-        },
-        {
-          "offset": "0x02C568E0",
-          "expect": "06376E2A2DA44C6F2C722BAB332EBB6031DE6330",
-          "bytes": "066FA42DDEDEDEDEDEDEDEDEDEDEDEDEDEDE6330",
-          "note": "Stages.stage_table_tournament page 1 (RAM 0x804568E0, 6x3 icons): this option's stages, Random on every other icon"
-        },
-        {
-          "offset": "0x02C66ED4",
-          "expect": "00000000",
-          "bytes": "00000001",
-          "note": "Toggles.entry_sss_layout (RAM 0x80466ED4): Stage Select Layout NORMAL -> TOURNAMENT (its own stage table, no layout variants, no L hazard toggle; the hazard mode comes from Stages.tournament_hazard_mode_table)"
-        },
-        {
-          "offset": "0x02C6711C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x02 \"Congo Jungle\" (RAM 0x8046711C): off"
-        },
-        {
-          "offset": "0x02C67200",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x0E \"Duel Zone\" (RAM 0x80467200): off"
-        },
-        {
-          "offset": "0x02C67234",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x10 \"Final Destination\" (RAM 0x80467234): off"
-        },
-        {
-          "offset": "0x02C672A4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x04 \"Hyrule Castle\" (RAM 0x804672A4): off"
-        },
-        {
-          "offset": "0x02C672DC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x0D \"Meta Crystal\" (RAM 0x804672DC): off"
-        },
-        {
-          "offset": "0x02C67314",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x08 \"Mushroom Kingdom\" (RAM 0x80467314): off"
-        },
-        {
-          "offset": "0x02C67350",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x00 \"Peach's Castle\" (RAM 0x80467350): off"
-        },
-        {
-          "offset": "0x02C67388",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x03 \"Planet Zebes\" (RAM 0x80467388): off"
-        },
-        {
-          "offset": "0x02C673C0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x07 \"Saffron City\" (RAM 0x804673C0): off"
-        },
-        {
-          "offset": "0x02C673F8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x01 \"Sector Z\" (RAM 0x804673F8): off"
-        },
-        {
-          "offset": "0x02C6742C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x05 \"Yoshi's Island\" (RAM 0x8046742C): off"
-        },
-        {
-          "offset": "0x02C67464",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x0C \"Mini Yoshi's Island\" (RAM 0x80467464): off"
-        },
-        {
-          "offset": "0x02C674A0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD7 \"Autumn How to Play\" (RAM 0x804674A0): off"
-        },
-        {
-          "offset": "0x02C674DC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x31 \"Battlefield\" (RAM 0x804674DC): off"
-        },
-        {
-          "offset": "0x02C67510",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x50 \"Battlefield DL\" (RAM 0x80467510): off"
-        },
-        {
-          "offset": "0x02C67548",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x48 \"Big Blue\" (RAM 0x80467548): off"
-        },
-        {
-          "offset": "0x02C6757C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC0 \"Big Boo's Haunt\" (RAM 0x8046757C): off"
-        },
-        {
-          "offset": "0x02C675B4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC7 \"Big Snowman\" (RAM 0x804675B4): off"
-        },
-        {
-          "offset": "0x02C675E8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x7C \"Bowser's Keep\" (RAM 0x804675E8): off"
-        },
-        {
-          "offset": "0x02C67620",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x43 \"Bowser's Stadium\" (RAM 0x80467620): off"
-        },
-        {
-          "offset": "0x02C6765C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9F \"Casino Night Zone\" (RAM 0x8046765C): off"
-        },
-        {
-          "offset": "0x02C67698",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x8D \"Castle Siege\" (RAM 0x80467698): off"
-        },
-        {
-          "offset": "0x02C676D0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5E \"Congo Falls\" (RAM 0x804676D0): off"
-        },
-        {
-          "offset": "0x02C67704",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6A \"Congo Jungle \" (RAM 0x80467704): off"
-        },
-        {
-          "offset": "0x02C6773C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x69 \"Congo Jungle DL\" (RAM 0x8046773C): off"
-        },
-        {
-          "offset": "0x02C67774",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x34 \"Cool Cool Mountain\" (RAM 0x80467774): off"
-        },
-        {
-          "offset": "0x02C677B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x93 \"Cool Cool Mountain DL\" (RAM 0x804677B0): off"
-        },
-        {
-          "offset": "0x02C677F0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x91 \"Cool Cool Mountain SR\" (RAM 0x804677F0): off"
-        },
-        {
-          "offset": "0x02C67830",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x46 \"Corneria\" (RAM 0x80467830): off"
-        },
-        {
-          "offset": "0x02C67864",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x4A \"Crateria\" (RAM 0x80467864): off"
-        },
-        {
-          "offset": "0x02C67898",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB6 \"Crateria DL\" (RAM 0x80467898): off"
-        },
-        {
-          "offset": "0x02C678CC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x84 \"dataDyne Central\" (RAM 0x804678CC): off"
-        },
-        {
-          "offset": "0x02C67908",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x29 \"Deku Tree\" (RAM 0x80467908): off"
-        },
-        {
-          "offset": "0x02C6793C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB5 \"Deku Tree DL\" (RAM 0x8046793C): off"
-        },
-        {
-          "offset": "0x02C67974",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x45 \"Delfino Plaza\" (RAM 0x80467974): off"
-        },
-        {
-          "offset": "0x02C679AC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC1 \"Dinosaur Land\" (RAM 0x804679AC): off"
-        },
-        {
-          "offset": "0x02C679E4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xCA \"Discovery Falls\" (RAM 0x804679E4): off"
-        },
-        {
-          "offset": "0x02C67A1C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xCC \"Discovery Falls Remix\" (RAM 0x80467A1C): off"
-        },
-        {
-          "offset": "0x02C67A5C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x33 \"Dr. Mario\" (RAM 0x80467A5C): off"
-        },
-        {
-          "offset": "0x02C67A90",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB0 \"Dracula's Castle\" (RAM 0x80467A90): off"
-        },
-        {
-          "offset": "0x02C67ACC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x35 \"Dragon King\" (RAM 0x80467ACC): off"
-        },
-        {
-          "offset": "0x02C67B00",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xAD \"Dragon King Remix\" (RAM 0x80467B00): off"
-        },
-        {
-          "offset": "0x02C67B3C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x95 \"Dream Greens\" (RAM 0x80467B3C): off"
-        },
-        {
-          "offset": "0x02C67B74",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x78 \"Dream Land \" (RAM 0x80467B74): off"
-        },
-        {
-          "offset": "0x02C67BAC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC8 \"Dream Land Beta DL\" (RAM 0x80467BAC): off"
-        },
-        {
-          "offset": "0x02C67BE8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x92 \"Duel Zone DL\" (RAM 0x80467BE8): off"
-        },
-        {
-          "offset": "0x02C67C20",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB4 \"Edo Town\" (RAM 0x80467C20): off"
-        },
-        {
-          "offset": "0x02C67C54",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x8F \"Final Destination DL\" (RAM 0x80467C54): off"
-        },
-        {
-          "offset": "0x02C67C94",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x90 \"Final Tentination\" (RAM 0x80467C94): off"
-        },
-        {
-          "offset": "0x02C67CD0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2A \"First Destination\" (RAM 0x80467CD0): off"
-        },
-        {
-          "offset": "0x02C67D0C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB8 \"First Destination Remix\" (RAM 0x80467D0C): off"
-        },
-        {
-          "offset": "0x02C67D4C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x32 \"Flat Zone\" (RAM 0x80467D4C): off"
-        },
-        {
-          "offset": "0x02C67D80",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x62 \"Flat Zone II\" (RAM 0x80467D80): off"
-        },
-        {
-          "offset": "0x02C67DB8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x39 \"Fountain of Dreams\" (RAM 0x80467DB8): off"
-        },
-        {
-          "offset": "0x02C67DF4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x37 \"Fray's Stage\" (RAM 0x80467DF4): off"
-        },
-        {
-          "offset": "0x02C67E2C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6E \"Fray's Stage - Night\" (RAM 0x80467E2C): off"
-        },
-        {
-          "offset": "0x02C67E6C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x4B \"Frosty Village\" (RAM 0x80467E6C): off"
-        },
-        {
-          "offset": "0x02C67EA4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD6 \"Future Frenzy\" (RAM 0x80467EA4): off"
-        },
-        {
-          "offset": "0x02C67EDC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x88 \"Game Boy Land\" (RAM 0x80467EDC): off"
-        },
-        {
-          "offset": "0x02C67F14",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2B \"Ganon's Tower\" (RAM 0x80467F14): off"
-        },
-        {
-          "offset": "0x02C67F4C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x63 \"Gerudo Valley\" (RAM 0x80467F4C): off"
-        },
-        {
-          "offset": "0x02C67F84",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2F \"Glacial River\" (RAM 0x80467F84): off"
-        },
-        {
-          "offset": "0x02C67FBC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xAB \"Glacial River Remix\" (RAM 0x80467FBC): off"
-        },
-        {
-          "offset": "0x02C6802C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x36 \"Great Bay\" (RAM 0x8046802C): off"
-        },
-        {
-          "offset": "0x02C68060",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9C \"Green Hill Zone\" (RAM 0x80468060): off"
-        },
-        {
-          "offset": "0x02C68098",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBE \"Grim Reaper's Cavern\" (RAM 0x80468098): off"
-        },
-        {
-          "offset": "0x02C680D8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2C \"Gym Leader Castle\" (RAM 0x804680D8): off"
-        },
-        {
-          "offset": "0x02C68114",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x68 \"Hyrule Castle \" (RAM 0x80468114): off"
-        },
-        {
-          "offset": "0x02C6814C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x67 \"Hyrule Castle DL\" (RAM 0x8046814C): off"
-        },
-        {
-          "offset": "0x02C68188",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x97 \"Hyrule Castle SR\" (RAM 0x80468188): off"
-        },
-        {
-          "offset": "0x02C681C4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x55 \"Hyrule Temple\" (RAM 0x804681C4): off"
-        },
-        {
-          "offset": "0x02C681FC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x86 \"Jungle Japes\" (RAM 0x804681FC): off"
-        },
-        {
-          "offset": "0x02C68234",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x47 \"Kitchen Island\" (RAM 0x80468234): off"
-        },
-        {
-          "offset": "0x02C6826C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC9 \"LMAO Castle\" (RAM 0x8046826C): off"
-        },
-        {
-          "offset": "0x02C682A0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x40 \"Mad Monster Mansion\" (RAM 0x804682A0): off"
-        },
-        {
-          "offset": "0x02C682DC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBB \"Melrode\" (RAM 0x804682DC): off"
-        },
-        {
-          "offset": "0x02C6830C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3B \"Mementos\" (RAM 0x8046830C): off"
-        },
-        {
-          "offset": "0x02C68340",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x94 \"Meta Crystal DL\" (RAM 0x80468340): off"
-        },
-        {
-          "offset": "0x02C68378",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBC \"Meta Crystent\" (RAM 0x80468378): off"
-        },
-        {
-          "offset": "0x02C683B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA2 \"Metallic Madness\" (RAM 0x804683B0): off"
-        },
-        {
-          "offset": "0x02C683EC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB3 \"Mt. Dedede\" (RAM 0x804683EC): off"
-        },
-        {
-          "offset": "0x02C68420",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3A \"Muda Kingdom\" (RAM 0x80468420): off"
-        },
-        {
-          "offset": "0x02C68458",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x42 \"Mushroom Kingdom \" (RAM 0x80468458): off"
-        },
-        {
-          "offset": "0x02C68494",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x41 \"Mushroom Kingdom DL\" (RAM 0x80468494): off"
-        },
-        {
-          "offset": "0x02C684D0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9B \"Mushroom Kingdom SR\" (RAM 0x804684D0): off"
-        },
-        {
-          "offset": "0x02C6850C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x99 \"Mute City\" (RAM 0x8046850C): off"
-        },
-        {
-          "offset": "0x02C68540",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3F \"Mute City DL\" (RAM 0x80468540): off"
-        },
-        {
-          "offset": "0x02C68578",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD4 \"N. Sanity Beach\" (RAM 0x80468578): off"
-        },
-        {
-          "offset": "0x02C685B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3E \"N64\" (RAM 0x804685B0): off"
-        },
-        {
-          "offset": "0x02C685DC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xCD \"N64 Remix\" (RAM 0x804685DC): off"
-        },
-        {
-          "offset": "0x02C68610",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x58 \"New Pork City\" (RAM 0x80468610): off"
-        },
-        {
-          "offset": "0x02C68648",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5C \"Norfair\" (RAM 0x80468648): off"
-        },
-        {
-          "offset": "0x02C68678",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA5 \"Norfair Remix\" (RAM 0x80468678): off"
-        },
-        {
-          "offset": "0x02C686B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x49 \"Onett\" (RAM 0x804686B0): off"
-        },
-        {
-          "offset": "0x02C686E0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6C \"Peach's Castle \" (RAM 0x804686E0): off"
-        },
-        {
-          "offset": "0x02C6871C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x96 \"Peach's Castle Beta\" (RAM 0x8046871C): off"
-        },
-        {
-          "offset": "0x02C68758",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x6B \"Peach's Castle DL\" (RAM 0x80468758): off"
-        },
-        {
-          "offset": "0x02C68794",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x44 \"Peach's Castle II\" (RAM 0x80468794): off"
-        },
-        {
-          "offset": "0x02C687D0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5F \"Pigmask Fortress\" (RAM 0x804687D0): off"
-        },
-        {
-          "offset": "0x02C6880C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9E \"Pirate Land\" (RAM 0x8046880C): off"
-        },
-        {
-          "offset": "0x02C68840",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x85 \"Planet Clancer\" (RAM 0x80468840): off"
-        },
-        {
-          "offset": "0x02C68878",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x79 \"Planet Zebes \" (RAM 0x80468878): off"
-        },
-        {
-          "offset": "0x02C688B0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x74 \"Planet Zebes DL\" (RAM 0x804688B0): off"
-        },
-        {
-          "offset": "0x02C688E8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC6 \"Poke Floats\" (RAM 0x804688E8): off"
-        },
-        {
-          "offset": "0x02C68990",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5D \"Raid Blue\" (RAM 0x80468990): off"
-        },
-        {
-          "offset": "0x02C689C4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA3 \"Rainbow Road\" (RAM 0x804689C4): off"
-        },
-        {
-          "offset": "0x02C689FC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xB1 \"Reverse Castle\" (RAM 0x804689FC): off"
-        },
-        {
-          "offset": "0x02C68A34",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x7D \"Rith Essa\" (RAM 0x80468A34): off"
-        },
-        {
-          "offset": "0x02C68A68",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x76 \"Saffron City \" (RAM 0x80468A68): off"
-        },
-        {
-          "offset": "0x02C68AA0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x72 \"Saffron City DL\" (RAM 0x80468AA0): off"
-        },
-        {
-          "offset": "0x02C68AD8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBF \"Scuttle Town\" (RAM 0x80468AD8): off"
-        },
-        {
-          "offset": "0x02C68B10",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x75 \"Sector Z \" (RAM 0x80468B10): off"
-        },
-        {
-          "offset": "0x02C68B44",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x71 \"Sector Z DL\" (RAM 0x80468B44): off"
-        },
-        {
-          "offset": "0x02C68B78",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x98 \"Sector Z SR\" (RAM 0x80468B78): off"
-        },
-        {
-          "offset": "0x02C68BAC",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3C \"Showdown\" (RAM 0x80468BAC): off"
-        },
-        {
-          "offset": "0x02C68BE0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x5A \"Smashketball\" (RAM 0x80468BE0): off"
-        },
-        {
-          "offset": "0x02C68C18",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x4C \"Smashville\" (RAM 0x80468C18): off"
-        },
-        {
-          "offset": "0x02C68C4C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC4 \"Smashville Remix\" (RAM 0x80468C4C): off"
-        },
-        {
-          "offset": "0x02C68C88",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD5 \"Snow Go\" (RAM 0x80468C88): off"
-        },
-        {
-          "offset": "0x02C68CB8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xC3 \"Spawned Fear\" (RAM 0x80468CB8): off"
-        },
-        {
-          "offset": "0x02C68CF0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x3D \"Spiral Mountain\" (RAM 0x80468CF0): off"
-        },
-        {
-          "offset": "0x02C68D28",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x9D \"Subcon\" (RAM 0x80468D28): off"
-        },
-        {
-          "offset": "0x02C68D58",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x2E \"Tal Tal Heights\" (RAM 0x80468D58): off"
-        },
-        {
-          "offset": "0x02C68D90",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA7 \"Tal Tal Heights Remix\" (RAM 0x80468D90): off"
-        },
-        {
-          "offset": "0x02C68DD0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xD2 \"Time Twister\" (RAM 0x80468DD0): off"
-        },
-        {
-          "offset": "0x02C68E08",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA6 \"Toad's Turnpike\" (RAM 0x80468E08): off"
-        },
-        {
-          "offset": "0x02C68E40",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x38 \"Tower of Heaven\" (RAM 0x80468E40): off"
-        },
-        {
-          "offset": "0x02C68E78",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xBA \"Twilight City\" (RAM 0x80468E78): off"
-        },
-        {
-          "offset": "0x02C68EB0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x7E \"Venom\" (RAM 0x80468EB0): off"
-        },
-        {
-          "offset": "0x02C68EE0",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x30 \"WarioWare, Inc.\" (RAM 0x80468EE0): off"
-        },
-        {
-          "offset": "0x02C68F18",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x83 \"Windy\" (RAM 0x80468F18): off"
-        },
-        {
-          "offset": "0x02C68F48",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0xA9 \"Winter Dream Land\" (RAM 0x80468F48): off"
-        },
-        {
-          "offset": "0x02C68F84",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x61 \"World 1-1\" (RAM 0x80468F84): off"
-        },
-        {
-          "offset": "0x02C68FB8",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x77 \"Yoshi's Island \" (RAM 0x80468FB8): off"
-        },
-        {
-          "offset": "0x02C68FF4",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x73 \"Yoshi's Island DL\" (RAM 0x80468FF4): off"
-        },
-        {
-          "offset": "0x02C69030",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x8E \"Yoshi's Island II\" (RAM 0x80469030): off"
-        },
-        {
-          "offset": "0x02C6906C",
-          "expect": "00000001",
-          "bytes": "00000000",
-          "note": "Random stage toggle 0x60 \"Yoshi's Story\" (RAM 0x8046906C): off"
+          "note": "F1 Toggles.entry_sss_layout value: NORMAL -> TOURNAMENT (boot default; the Stages code below reads it as TOURNAMENT anyway)"
         }
       ]
     },
@@ -3068,6 +1635,8 @@
       "id": "team-battle",
       "label": "Teams",
       "group": "rules",
+      "hidden": true,
+      "conflicts": ["teams-default"],
       "description": "Team battle with team attack on, and the character select screen can't switch back to free-for-all.",
       "translations": {
         "ja": {
@@ -3093,6 +1662,28 @@
           "expect": "27BDFF98AFBF00143C08804635086F0C8D080004310800011500001D000000003C098013352913008D2900002529FFEC8D2B00E0256BF8183C0A8013354A13F0AD400008AD4B0000",
           "bytes": "924800023C09804F8D297568152000040000000034080001A2480002A24800090804EBC8000000003C01804F8C217568142000030000000003E00008000010250813DF0900000000",
           "note": "New code in the unused Hazards.peach_castle_II_setup_ (RAM 0x804906B0): when the CSS opens in normal VS, team battle and team attack on; the FFA/Team Battle button does nothing in normal VS and runs Remix's check in Remix's modes"
+        }
+      ]
+    },
+    {
+      "id": "teams-default",
+      "label": "Teams by default",
+      "group": "rules",
+      "hidden": true,
+      "conflicts": ["team-battle"],
+      "description": "Matches start in Team Battle, but players can still switch to free-for-all on the character select screen and it stays as they set it.",
+      "translations": {
+        "ja": {
+          "label": "チーム戦を初期設定に",
+          "description": "最初はチーム戦で始まりますが、キャラクター選択画面で個人戦に切り替えることができ、その設定がそのまま残ります。"
+        }
+      },
+      "patches": [
+        {
+          "offset": "0x02C6F400",
+          "expect": "34090000A1090000",
+          "bytes": "A109FFE6A1000000",
+          "note": "Settings.set_vs_settings_ (0x8046F400, runs once per boot): the item frequency block also stores is_team_battle = TRUE (sb t1, -0x1A(t0) with t1 = 1 from the team attack store; was ori t1, r0, 0) and stores the item frequency from r0 (was sb t1, 0(t0))"
         }
       ]
     },
@@ -3135,9 +1726,54 @@
       ]
     },
     {
+      "id": "skip-sss",
+      "label": "Skip stage select",
+      "group": "rules",
+      "description": "The match goes straight from the character select screen to the battle, on a random stage from the stages in play.",
+      "translations": {
+        "ja": {
+          "label": "ステージ選択なし",
+          "description": "キャラクター選択画面から直接対戦が始まり、ステージは使用中のステージからランダムに選ばれます。"
+        }
+      },
+      "patches": [
+        {
+          "offset": "0x001270A8",
+          "expect": "9048000A",
+          "bytes": "00004025",
+          "note": "mnVSOptionsInitVars (VS options, 0x801338C8): or t0, r0, r0 (was lbu t0, 0xA(v0)), so the Stage Select row opens as Off"
+        },
+        {
+          "offset": "0x001277BC",
+          "expect": "AC2B48EC",
+          "bytes": "AC2048EC",
+          "note": "VS options Stage Select row, left/right (0x80133FDC): sw r0 (was sw t3 = On), the row stays Off"
+        },
+        {
+          "offset": "0x00127CB0",
+          "expect": "AC6E0000",
+          "bytes": "AC600000",
+          "note": "VS options Stage Select row, A (0x801344D0): sw r0 (was sw t6 = On), the row stays Off"
+        },
+        {
+          "offset": "0x00138C60",
+          "expect": "93394D12",
+          "bytes": "0000C825",
+          "note": "mnPlayersVSFuncRun (VS CSS, 0x8013A9E0): or t9, r0, r0 (was lbu t9, 0x4D12(t9), is_stage_select), so the CSS always goes to the battle with a random stage, as with Stage Select off"
+        },
+        {
+          "offset": "0x00138C80",
+          "expect": "914A493724100008314B001011600003",
+          "bytes": "254B4D08AD4B50E81000000400000000",
+          "note": "mnPlayersVSFuncRun (VS CSS, 0x8013AA00): gSCManagerBattleState = &gSCManagerTransferBattleState before Remix's stage pick (as the VS battle does at its start), so Remix's SFXReplace doesn't read through NULL when a CSS fighter plays a sound in the frame the CSS hands over to the first battle (was the original stage count, unused since Remix's swap_stage_)"
+        }
+      ]
+    },
+    {
       "id": "tournament-profile",
       "label": "Tournament settings",
       "group": "remix",
+      "saveData": "blank",
       "description": "Remix's settings start on its Tournament profile (hold Start to pause, no combo meter or CSS panel menu, level 10 CPUs); players can still change them.",
       "translations": {
         "ja": {
@@ -3230,11 +1866,11 @@
       "id": "random-vanilla",
       "label": "Random: original 12",
       "group": "remix",
-      "description": "Random character picks start out limited to the original 12 characters; players can change this in Remix's settings.",
+      "description": "Random character picks start out limited to the original 12 characters, even with a starting save; players can change this in Remix's settings.",
       "translations": {
         "ja": {
           "label": "ランダムは初代12キャラ",
-          "description": "ランダム選択で初代の12キャラクターだけが選ばれます（Remixの設定で変更できます）。"
+          "description": "ランダム選択で初代の12キャラクターだけが選ばれます（セーブデータがあっても同じです。Remixの設定で変更できます）。"
         }
       },
       "patches": [
@@ -3242,7 +1878,93 @@
           "offset": "0x02C620D8",
           "expect": "00000000",
           "bytes": "00000003",
-          "note": "Toggles.entry_variant_random (RAM 0x804620D8): Random Select starts on VANILLA ONLY (3) instead of DEFAULT (0)"
+          "note": "Toggles.entry_variant_random + 4 (RAM 0x804620D8): Random Select starts on VANILLA ONLY (3) instead of DEFAULT (0)"
+        },
+        {
+          "offset": "0x02C6F394",
+          "expect": "0800018E",
+          "bytes": "0813EFB1",
+          "note": "Boot.load_ (RAM 0x8046F394): after the save (or the blank SRAM setup) jump to the new rv_after_boot, which sets Random Select to VANILLA ONLY again and goes on to 0x80000638 (was: j 0x80000638)"
+        },
+        {
+          "offset": "0x02CFBEC4",
+          "expect": "0C13EFB12401001C3C04804F34847F588C840000",
+          "bytes": "3C01804634090003AC2920D80800018E00000000",
+          "note": "New code (RAM 0x804FBEC4-0x804FBEFF, TwelveCharBattle.prevent_invalid_cpu_, never called): rv_after_boot"
+        }
+      ]
+    },
+    {
+      "id": "j-gameplay",
+      "label": "J gameplay",
+      "group": "remix",
+      "description": "Remix's settings start with its Japanese profile's gameplay: J hitlag, DI, shield stun, stun/sleep, momentum slide, hit sounds, Whispy and Pokemon voices; players can still change them.",
+      "translations": {
+        "ja": {
+          "label": "日本版のゲーム設定",
+          "description": "Remixの設定の初期値をJapaneseプロファイルのゲーム設定にします（ヒットストップ、ずらし、シールド硬直、ふらふら・ねむり、滑り、ヒット音、ウィスピー、ポケモンの声）。設定画面で変更できます。"
+        }
+      },
+      "patches": [
+        {
+          "offset": "0x02C62428",
+          "expect": "00000000",
+          "bytes": "00000001",
+          "note": "Toggles.entry_hitlag + 4 (RAM 0x80462428): Hitlag starts on JAPANESE (1) instead of NORMAL (0)"
+        },
+        {
+          "offset": "0x02C62458",
+          "expect": "00000000",
+          "bytes": "00000001",
+          "note": "Toggles.entry_di + 4 (RAM 0x80462458): DI starts on JAPANESE (1) instead of NORMAL (0)"
+        },
+        {
+          "offset": "0x02C62484",
+          "expect": "00000000",
+          "bytes": "00000001",
+          "note": "Toggles.entry_japanese_sounds + 4 (RAM 0x80462484): Japanese Sounds starts on ALWAYS (1) instead of DEFAULT (0)"
+        },
+        {
+          "offset": "0x02C624BC",
+          "expect": "00000000",
+          "bytes": "00000001",
+          "note": "Toggles.entry_j_stun_sleep + 4 (RAM 0x804624BC): Japanese Stun/Sleep starts ON"
+        },
+        {
+          "offset": "0x02C624F8",
+          "expect": "00000000",
+          "bytes": "00000001",
+          "note": "Toggles.entry_momentum_slide + 4 (RAM 0x804624F8): Momentum Slide starts ON"
+        },
+        {
+          "offset": "0x02C62530",
+          "expect": "00000000",
+          "bytes": "00000001",
+          "note": "Toggles.entry_shieldstun + 4 (RAM 0x80462530): Shield Stun starts on JAPANESE (1) instead of DEFAULT (0)"
+        },
+        {
+          "offset": "0x02C66F44",
+          "expect": "00000000",
+          "bytes": "00000001",
+          "note": "Toggles.entry_whispy_mode + 4 (RAM 0x80466F44): Whispy Mode starts on JAPANESE (1) instead of NORMAL (0)"
+        },
+        {
+          "offset": "0x02C690A4",
+          "expect": "00000000",
+          "bytes": "00000001",
+          "note": "Toggles.entry_pokemon_voices + 4 (RAM 0x804690A4): Pokemon SFX starts on JAPANESE (1) instead of DEFAULT (0)"
+        },
+        {
+          "offset": "0x02C6F384",
+          "expect": "0C118116",
+          "bytes": "0C149C81",
+          "note": "Boot.load_ (RAM 0x8046F384): when the save has Remix settings, call the new jg_after_load, which calls Toggles.load_ and then sets the eight toggles again (was: jal Toggles.load_)"
+        },
+        {
+          "offset": "0x02D27204",
+          "expect": "27BDFFE0AFA80004AFA90008AFAA000CAFAB0010AFAC00143C0880523508741000006025240A0002240900018D0B0000516A0006AD090000240A0004240900038D0B0000516A0001",
+          "bytes": "27BDFFE8AFBF00140C118116000000008FBF001427BD00183C01804634090001AC292428AC292458AC292484AC2924BCAC2924F8AC292530AC296F443C01804703E00008AC2990A4",
+          "note": "New code (RAM 0x80527204-0x8052727F, CharacterSelectDebugMenu.DpadControl.force_settings_for_training_, never called): jg_after_load"
         }
       ]
     }

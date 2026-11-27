@@ -70,9 +70,10 @@ namespace
         t.warn = QColor("#f0a63a");
         t.warnTint = rgba(240, 166, 58, 0.13);
         t.bad = QColor("#ef5a4f");
-        t.stateRoom = QColor("#a9a294");
+        t.stateRoom = QColor("#3ec6c8");
         t.stateWatch = QColor("#c08bff");
         t.watchTint = rgba(192, 139, 255, 0.14);
+        t.portDim = QColor("#a9a294");
         t.secondaryA = QColor("#322f35");
         t.secondaryB = QColor("#28262b");
         t.secondaryLip = QColor("#0e0d0f");
@@ -122,9 +123,10 @@ namespace
         t.warn = QColor("#8f5a00");
         t.warnTint = rgba(178, 111, 0, 0.11);
         t.bad = QColor("#c5362c");
-        t.stateRoom = QColor("#7b7364");
+        t.stateRoom = QColor("#0b8f94");
         t.stateWatch = QColor("#7f4fc4");
         t.watchTint = rgba(127, 79, 196, 0.1);
+        t.portDim = QColor("#7b7364");
         t.secondaryA = QColor("#fffdf7");
         t.secondaryB = QColor("#efeadc");
         t.secondaryLip = QColor("#c7beaa");
@@ -630,6 +632,8 @@ QString styleSheet()
         QPushButton[chip="true"]:hover { color: @ink; }
         QPushButton[chip="true"]:checked { background-color: @raise; color: @ink; }
         QPushButton[chip="true"]:disabled { color: @faint; }
+        /* A stage list's variant on the list: as marked as its card. */
+        QPushButton#StageVariantChip:checked { background-color: @accentTint; color: @ink; border-color: @accent; }
         QFrame#ChipSeg { background-color: @well; border: 1px solid @line2; border-radius: 8px; }
         QFrame#ChipSeg QPushButton[chip="true"] {
             min-height: 20px; max-height: 20px; padding: 0 9px; border: none; border-radius: 6px;

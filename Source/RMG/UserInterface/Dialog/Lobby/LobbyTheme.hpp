@@ -36,7 +36,11 @@ struct Tokens
     QColor accent, accentHi, accentLo, accentLip, accentTint, accentInk;
     QColor live, liveBg, liveTint;
     QColor ok, okTint, warn, warnTint, bad;
+    // Presence dots: in a room (cyan-teal, apart from online's green and
+    // away's grey) and watching.
     QColor stateRoom, stateWatch, watchTint;
+    // The grey a port colour fades toward on a seat that's out of the match.
+    QColor portDim;
     QColor secondaryA, secondaryB, secondaryLip;
     QColor bandA, bandB;
     QColor cartA, cartB;

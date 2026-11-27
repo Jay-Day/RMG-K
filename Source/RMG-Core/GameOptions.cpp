@@ -1,5 +1,6 @@
 #define CORE_INTERNAL
 #include "GameOptions.hpp"
+#include "StageList.hpp"
 #include "Directories.hpp"
 #include "Callback.hpp"
 #include "Archive.hpp"
@@ -19,6 +20,8 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -41,18 +44,36 @@ constexpr int kMaxJsonDepth = 32;
 // language code -> (label, description), either may be empty
 using Translations = std::map<std::string, std::pair<std::string, std::string>>;
 
+// An option's "stageList" block: the list's rules and stages in English, the
+// translations of its headings and presets by id, and where it goes.
+struct LoadedStageList
+{
+    CoreStageListInfo Info;
+    std::map<std::string, Translations> GroupText;
+    std::map<std::string, Translations> KindText;
+    std::map<std::string, Translations> PresetText;
+    CoreStageListLayout Layout;
+};
+
 struct LoadedOption
 {
     std::string Id;
     std::string Label;
     std::string Description;
     Translations Text;
+    // With a stage list, its three ranges are in here too, holding the
+    // unpatched bytes: the list's bytes replace them when it resolves.
     std::vector<CoreGameOptionPatch> Patches;
     std::string Group;
     // Ids of other options in the same pack. Conflicts are made symmetric
     // when the pack loads.
     std::vector<std::string> Requires;
     std::vector<std::string> Conflicts;
+    bool BlankSave = false;
+    bool Hidden = false;
+    std::shared_ptr<const LoadedStageList> StageList;
+    // Checked once every option is parsed (link_options).
+    std::vector<CoreGameOptionAlias> Aliases;
 };
 
 struct LoadedGroup
@@ -70,6 +91,13 @@ struct LoadedPreset
     Translations Text;
     // In pack order.
     std::vector<std::string> Options;
+    // Stage list option id -> the share code of the stage list preset named.
+    std::map<std::string, std::string> Lists;
+    // Fewest players first, each in pack order; WithPlayersText holds each
+    // entry's translations.
+    std::vector<CoreGameOptionPresetExtra> WithPlayers;
+    std::vector<Translations> WithPlayersText;
+    std::vector<std::string> Aliases;
 };
 
 struct LoadedPack
@@ -775,6 +803,58 @@ static std::vector<std::string> parse_id_list(const JsonValue& json, std::string
     return ids;
 }
 
+// An option's "aliases": old ids, each "id" or { "id", "stageList", "with" }.
+// Their shape is checked here, what they name once every option is parsed
+// (link_options); a bad entry is logged and left out.
+static std::vector<CoreGameOptionAlias> parse_option_aliases(const JsonValue& json, const std::string& optionId,
+                                                             const std::filesystem::path& file)
+{
+    std::vector<CoreGameOptionAlias> aliases;
+    const JsonValue* list = json.find("aliases");
+    if (list == nullptr)
+        return aliases;
+    if (list->type != JsonValue::Type::Array)
+    {
+        log_pack(file, "option \"" + optionId + "\": aliases isn't a list, ignored");
+        return aliases;
+    }
+    for (const JsonValue& entry : list->array)
+    {
+        CoreGameOptionAlias alias;
+        const std::string* id = entry.type == JsonValue::Type::String ? &entry.text : string_member(entry, "id");
+        bool ok = id != nullptr && valid_option_id(*id) && *id != optionId &&
+            (entry.type == JsonValue::Type::String || entry.type == JsonValue::Type::Object);
+        if (ok && entry.type == JsonValue::Type::Object)
+        {
+            if (const JsonValue* stageList = entry.find("stageList"))
+            {
+                ok = stageList->type == JsonValue::Type::String && valid_option_id(stageList->text);
+                if (ok)
+                    alias.StageListPreset = stageList->text;
+            }
+            if (const JsonValue* with = entry.find("with"); ok && with != nullptr)
+            {
+                ok = with->type == JsonValue::Type::Array;
+                for (size_t i = 0; ok && i < with->array.size(); i++)
+                {
+                    const JsonValue& other = with->array[i];
+                    ok = other.type == JsonValue::Type::String && valid_option_id(other.text);
+                    if (ok && std::find(alias.With.begin(), alias.With.end(), other.text) == alias.With.end())
+                        alias.With.push_back(other.text);
+                }
+            }
+        }
+        if (!ok)
+        {
+            log_pack(file, "option \"" + optionId + "\": ignored an alias that isn't valid");
+            continue;
+        }
+        alias.Id = *id;
+        aliases.push_back(std::move(alias));
+    }
+    return aliases;
+}
+
 static bool parse_option(const JsonValue& json, LoadedOption& option, std::string& error)
 {
     if (json.type != JsonValue::Type::Object)
@@ -880,6 +960,352 @@ static bool parse_option(const JsonValue& json, LoadedOption& option, std::strin
         }
     }
     return true;
+}
+
+// A whole number from min to max, written as a JSON number.
+static bool parse_int(const JsonValue* value, int min, int max, int& out)
+{
+    if (value == nullptr || value->type != JsonValue::Type::Number)
+        return false;
+    int parsed = 0;
+    const std::string& text = value->text;
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed, 10);
+    if (result.ec != std::errc() || result.ptr != text.data() + text.size() || parsed < min || parsed > max)
+        return false;
+    out = parsed;
+    return true;
+}
+
+// A stage id: "0x06", or a number.
+static bool parse_stage_id(const JsonValue* value, int& out)
+{
+    uint32_t parsed = 0;
+    if (value == nullptr || !parse_offset(*value, parsed) || parsed > 0xFF)
+        return false;
+    out = int(parsed);
+    return true;
+}
+
+// { "offset": ..., "expect": ... } of a stage list's range.
+static bool parse_stage_list_range(const JsonValue& json, const char* key, uint32_t& offset,
+                                   std::vector<uint8_t>& expect, std::string& error)
+{
+    const JsonValue* range = json.find(key);
+    const JsonValue* at = range != nullptr && range->type == JsonValue::Type::Object ? range->find("offset") : nullptr;
+    const std::string* bytes = range != nullptr ? string_member(*range, "expect") : nullptr;
+    if (at == nullptr || !parse_offset(*at, offset) || bytes == nullptr || !parse_hex_bytes(*bytes, expect) ||
+        uint64_t(offset) + expect.size() > kMaxRomBytes)
+    {
+        error = std::string("its ") + key + " has no valid offset and expect";
+        return false;
+    }
+    return true;
+}
+
+// [[stage id, mode], ...]
+static bool parse_stage_entries(const JsonValue* list, std::vector<CoreStageListEntry>& out)
+{
+    out.clear();
+    if (list == nullptr || list->type != JsonValue::Type::Array)
+        return false;
+    for (const JsonValue& entry : list->array)
+    {
+        int id = 0, mode = 0;
+        if (entry.type != JsonValue::Type::Array || entry.array.size() != 2 || !parse_stage_id(&entry.array[0], id) ||
+            !parse_int(&entry.array[1], 0, 3, mode))
+            return false;
+        out.push_back({ uint8_t(id), uint8_t(mode) });
+    }
+    return true;
+}
+
+// An option's "stageList": the stages a host can list, the rules of the
+// stage select it fills, its share codes and where its icons are. The list's
+// three ranges are added to the option's patches with their unpatched bytes,
+// so the usual overlap and conflict checks cover them.
+static bool parse_stage_list(const JsonValue& json, LoadedOption& option, const std::filesystem::path& file,
+                             std::string& error)
+{
+    const JsonValue* block = json.find("stageList");
+    if (block == nullptr)
+        return true;
+    const std::string where = "option \"" + option.Id + "\": stage list: ";
+    if (block->type != JsonValue::Type::Object)
+    {
+        error = where + "isn't an object";
+        return false;
+    }
+    auto list = std::make_shared<LoadedStageList>();
+    CoreStageListInfo& info = list->Info;
+    CoreStageListLayout& layout = list->Layout;
+    info.OptionId = option.Id;
+
+    // Share codes: the prefix can't start with a code's first character,
+    // which is always a digit.
+    const std::string* prefix = string_member(*block, "codePrefix");
+    const std::string* salt = string_member(*block, "codeSalt");
+    const auto upperLetters = [](const std::string& s) {
+        return !s.empty() && s.size() <= 8 && std::all_of(s.begin(), s.end(), [](char c) { return c >= 'A' && c <= 'Z'; });
+    };
+    const auto printable = [](const std::string& s) {
+        return !s.empty() && s.size() <= 64 && std::all_of(s.begin(), s.end(), [](char c) { return c >= 0x20 && c < 0x7f; });
+    };
+    if (prefix == nullptr || !upperLetters(*prefix) || salt == nullptr || !printable(*salt))
+    {
+        error = where + "codePrefix needs 1-8 letters A-Z and codeSalt 1-64 printable ASCII characters";
+        return false;
+    }
+    info.CodePrefix = *prefix;
+    info.CodeSalt = *salt;
+
+    const JsonValue* table = block->find("table");
+    int random = 0;
+    if (!parse_stage_list_range(*block, "table", layout.TableOffset, layout.TableExpect, error) ||
+        !parse_stage_list_range(*block, "pages", layout.PagesOffset, layout.PagesExpect, error) ||
+        !parse_stage_list_range(*block, "modes", layout.ModesOffset, layout.ModesExpect, error))
+    {
+        error = where + error;
+        return false;
+    }
+    if (!parse_int(table->find("pageIcons"), 1, 64, info.PageIcons) ||
+        !parse_int(table->find("pageStages"), 1, info.PageIcons, info.PageStages) ||
+        !parse_stage_id(table->find("random"), random) || layout.TableExpect.size() % size_t(info.PageIcons) != 0)
+    {
+        error = where + "its table needs pageIcons (1-64), pageStages (1 to pageIcons), a random stage id, "
+            "and room for whole pages";
+        return false;
+    }
+    info.RandomStage = uint8_t(random);
+    if (!parse_int(table->find("pageColumns"), 1, info.PageIcons, info.PageColumns))
+        info.PageColumns = info.PageIcons;
+    info.MaxPages = int(layout.TableExpect.size() / size_t(info.PageIcons));
+    const int fits = info.PageStages * info.MaxPages;
+    // The code counts stages in 7 bits.
+    if (!parse_int(block->find("maxStages"), 1, std::min(fits, 127), info.MaxStages))
+    {
+        error = where + "maxStages must be 1 to " + std::to_string(std::min(fits, 127));
+        return false;
+    }
+    if (layout.PagesExpect.size() > 4 || (layout.PagesExpect.size() < 4 && info.MaxPages >= (1 << (8 * layout.PagesExpect.size()))))
+    {
+        error = where + "its page count is too narrow";
+        return false;
+    }
+
+    if (const JsonValue* icons = block->find("icons"); icons != nullptr && icons->type == JsonValue::Type::Object)
+    {
+        int files = 0;
+        const JsonValue* fileTable = icons->find("fileTable");
+        const JsonValue* iconFile = icons->find("file");
+        const JsonValue* sprites = icons->find("sprites");
+        const JsonValue* randomSprite = icons->find("randomSprite");
+        const JsonValue* fileBases = icons->find("fileBases");
+        if (fileTable == nullptr || !parse_offset(*fileTable, layout.FileTable) || !parse_int(icons->find("files"), 1, 0xFFFF, files) ||
+            iconFile == nullptr || !parse_offset(*iconFile, layout.IconFile) || sprites == nullptr ||
+            !parse_offset(*sprites, layout.Sprites) || randomSprite == nullptr ||
+            !parse_offset(*randomSprite, layout.RandomSprite) || fileBases == nullptr ||
+            !parse_offset(*fileBases, layout.FileBases))
+        {
+            log_pack(file, where + "icons isn't complete, ignored (the list shows names only)");
+            layout.FileCount = 0;
+        }
+        else
+        {
+            layout.FileCount = uint32_t(files);
+        }
+    }
+
+    // Headings: groups, and the kinds of variant.
+    if (const JsonValue* groups = block->find("groups"); groups != nullptr && groups->type == JsonValue::Type::Array)
+    {
+        for (const JsonValue& entry : groups->array)
+        {
+            const std::string* id = string_member(entry, "id");
+            const std::string* label = string_member(entry, "label");
+            if (id == nullptr || !valid_option_id(*id) || label == nullptr || !valid_label(*label))
+                continue;
+            const bool taken = std::any_of(info.Groups.begin(), info.Groups.end(),
+                [id](const CoreStageListText& g) { return g.Id == *id; });
+            if (taken)
+                continue;
+            info.Groups.push_back({ *id, *label, std::string() });
+            parse_translations(entry, list->GroupText[*id]);
+        }
+    }
+    if (const JsonValue* kinds = block->find("variantKinds"); kinds != nullptr && kinds->type == JsonValue::Type::Object)
+    {
+        for (const auto& [id, entry] : kinds->object)
+        {
+            const std::string* label = string_member(entry, "label");
+            if (!valid_option_id(id) || label == nullptr || !valid_label(*label))
+                continue;
+            info.Kinds.push_back({ id, *label, std::string() });
+            parse_translations(entry, list->KindText[id]);
+        }
+    }
+
+    // The stages, as the editor lists them.
+    const JsonValue* stages = block->find("stages");
+    if (stages == nullptr || stages->type != JsonValue::Type::Array || stages->array.empty())
+    {
+        error = where + "has no stages";
+        return false;
+    }
+    for (const JsonValue& entry : stages->array)
+    {
+        CoreStageListStage s;
+        int id = 0;
+        const std::string* name = entry.type == JsonValue::Type::Object ? string_member(entry, "name") : nullptr;
+        if (!parse_stage_id(entry.find("id"), id) || name == nullptr || !valid_label(*name) || id == random ||
+            size_t(id) >= layout.ModesExpect.size() || info.stage(id) != nullptr)
+        {
+            error = where + "a stage has no valid id or name, or its id is Random's, past the modes table or taken";
+            return false;
+        }
+        s.Id = uint8_t(id);
+        s.Name = *name;
+        if (const JsonValue* base = entry.find("variantOf"))
+        {
+            int baseId = 0;
+            if (!parse_stage_id(base, baseId) || baseId == id)
+            {
+                error = where + "stage \"" + s.Name + "\" has an invalid variantOf";
+                return false;
+            }
+            s.VariantOf = baseId;
+            const std::string* shortName = string_member(entry, "short");
+            s.Short = shortName != nullptr && valid_label(*shortName) ? *shortName : s.Name;
+            if (const std::string* kind = string_member(entry, "kind"))
+                s.Kind = *kind;
+        }
+        else if (const std::string* group = string_member(entry, "group"))
+        {
+            s.Group = *group;
+        }
+        const JsonValue* hazards = entry.find("hazards");
+        const JsonValue* movement = entry.find("movement");
+        s.Hazards = hazards != nullptr && hazards->type == JsonValue::Type::Bool && hazards->boolean;
+        s.Movement = movement != nullptr && movement->type == JsonValue::Type::Bool && movement->boolean;
+        info.Stages.push_back(std::move(s));
+    }
+    for (CoreStageListStage& s : info.Stages)
+    {
+        if (s.VariantOf >= 0)
+        {
+            const CoreStageListStage* base = info.stage(s.VariantOf);
+            if (base == nullptr || base->VariantOf >= 0)
+            {
+                error = where + "stage \"" + s.Name + "\" is a variant of a stage that isn't a base stage on the list";
+                return false;
+            }
+            if (!s.Kind.empty() && std::none_of(info.Kinds.begin(), info.Kinds.end(),
+                    [&s](const CoreStageListText& k) { return k.Id == s.Kind; }))
+                s.Kind.clear();
+        }
+        else if (!s.Group.empty() && std::none_of(info.Groups.begin(), info.Groups.end(),
+                     [&s](const CoreStageListText& g) { return g.Id == s.Group; }))
+        {
+            s.Group.clear();
+        }
+    }
+
+    // Ready-made lists with names; one that breaks the rules is left out.
+    // "user-" ids are a host's saved lists in a room.
+    if (const JsonValue* presets = block->find("presets"); presets != nullptr && presets->type == JsonValue::Type::Array)
+    {
+        for (const JsonValue& entry : presets->array)
+        {
+            CoreStageListPreset preset;
+            const std::string* id = string_member(entry, "id");
+            const std::string* label = string_member(entry, "label");
+            if (id == nullptr || !valid_option_id(*id) || id->rfind("user-", 0) == 0 || label == nullptr ||
+                !valid_label(*label) || !parse_stage_entries(entry.find("stages"), preset.Stages) ||
+                CoreNormalizeStageList(info, preset.Stages) != CoreStageListProblem::None)
+            {
+                log_pack(file, where + "skipped a preset list that isn't valid");
+                continue;
+            }
+            const auto same = std::find_if(info.Presets.begin(), info.Presets.end(), [&](const CoreStageListPreset& other) {
+                return other.Id == *id || other.Stages == preset.Stages;
+            });
+            if (same != info.Presets.end())
+            {
+                log_pack(file, where + "skipped preset list \"" + *id + "\": " +
+                    (same->Id == *id ? std::string("a second one with that id") : "the same list as \"" + same->Id + "\""));
+                continue;
+            }
+            preset.Id = *id;
+            preset.Label = *label;
+            preset.EnglishLabel = *label;
+            if (const std::string* description = string_member(entry, "description"))
+                preset.Description = *description;
+            parse_translations(entry, list->PresetText[*id]);
+            info.Presets.push_back(std::move(preset));
+        }
+    }
+
+    // The list's ranges, holding the unpatched bytes until a list resolves.
+    const std::vector<CoreGameOptionPatch> ranges = {
+        { layout.TableOffset, layout.TableExpect, layout.TableExpect },
+        { layout.PagesOffset, layout.PagesExpect, layout.PagesExpect },
+        { layout.ModesOffset, layout.ModesExpect, layout.ModesExpect },
+    };
+    size_t totalBytes = 0;
+    for (const CoreGameOptionPatch& patch : option.Patches)
+        totalBytes += patch.Bytes.size();
+    for (const CoreGameOptionPatch& range : ranges)
+    {
+        for (const CoreGameOptionPatch& other : option.Patches)
+        {
+            if (patches_overlap(range, other))
+            {
+                error = where + "its ranges overlap each other or the option's patches";
+                return false;
+            }
+        }
+        if (range.Offset < 0x101000 && uint64_t(range.Offset) + range.Bytes.size() > 0x1000)
+        {
+            error = where + "its ranges reach into the boot code (0x1000-0x101000)";
+            return false;
+        }
+        totalBytes += range.Bytes.size();
+        option.Patches.push_back(range);
+    }
+    if (option.Patches.size() > size_t(CoreGameOptionMaxPatches) || totalBytes > CoreGameOptionsMaxPatchBytes)
+    {
+        error = where + "with its ranges the option has too many patches or bytes";
+        return false;
+    }
+    std::sort(option.Patches.begin(), option.Patches.end(),
+        [](const CoreGameOptionPatch& a, const CoreGameOptionPatch& b) { return a.Offset < b.Offset; });
+    option.StageList = std::move(list);
+    return true;
+}
+
+// The stage list in a language: its headings' and presets' translations.
+static CoreStageListInfo stage_list_in(const LoadedStageList& list, const std::string& language)
+{
+    CoreStageListInfo info = list.Info;
+    const auto translate = [&language](const std::map<std::string, Translations>& text, CoreStageListText& entry) {
+        const auto it = text.find(entry.Id);
+        const auto* translation = it != text.end() ? find_translation(it->second, language) : nullptr;
+        if (translation != nullptr && !translation->first.empty())
+            entry.Label = translation->first;
+        if (translation != nullptr && !translation->second.empty())
+            entry.Description = translation->second;
+    };
+    for (CoreStageListText& group : info.Groups)
+        translate(list.GroupText, group);
+    for (CoreStageListText& kind : info.Kinds)
+        translate(list.KindText, kind);
+    for (CoreStageListPreset& preset : info.Presets)
+    {
+        CoreStageListText text{ preset.Id, preset.Label, preset.Description };
+        translate(list.PresetText, text);
+        preset.Label = text.Label;
+        preset.Description = text.Description;
+    }
+    return info;
 }
 
 static bool contains(const std::vector<std::string>& ids, const std::string& id)
@@ -1101,6 +1527,56 @@ static void link_options(const JsonValue& options, LoadedPack& pack)
                 other->Conflicts.push_back(option.Id);
         }
     }
+
+    // Aliases. One that is an option's id (skipped or not) or another
+    // alias's, names a preset list the option lacks, or makes a set that
+    // can't be on is left out: the id then means nothing.
+    std::vector<const LoadedOption*> all;
+    for (const LoadedOption& option : pack.Options)
+        all.push_back(&option);
+    std::vector<std::string> aliasIds;
+    for (LoadedOption& option : pack.Options)
+    {
+        std::vector<CoreGameOptionAlias> kept;
+        for (CoreGameOptionAlias& alias : option.Aliases)
+        {
+            std::string why;
+            if (contains(declared, alias.Id))
+                why = "it's the id of an option";
+            else if (contains(aliasIds, alias.Id))
+                why = "another option has it";
+            else if (option.StageList && option.StageList->Info.preset(alias.StageListPreset) == nullptr)
+                why = "it names none of the option's preset lists (stageList)";
+            else if (!option.StageList && !alias.StageListPreset.empty())
+                why = "the option takes no stage list";
+            std::vector<const LoadedOption*> set = { &option };
+            for (const std::string& id : alias.With)
+            {
+                const LoadedOption* other = loaded(id);
+                if (why.empty() && (other == nullptr || other == &option || other->StageList))
+                    why = "with names \"" + id + "\", which isn't another usable option without a stage list";
+                else if (other != nullptr)
+                    set.push_back(other);
+            }
+            if (why.empty() && !check_option_set(set, all, why))
+                why = "with it the options can't be on together: " + why;
+            if (!why.empty())
+            {
+                log_pack(pack.File, "option \"" + option.Id + "\": ignored alias \"" + alias.Id + "\": " + why);
+                continue;
+            }
+            std::vector<std::string> with;
+            for (const LoadedOption& other : pack.Options)
+            {
+                if (contains(alias.With, other.Id))
+                    with.push_back(other.Id);
+            }
+            alias.With = std::move(with);
+            aliasIds.push_back(alias.Id);
+            kept.push_back(std::move(alias));
+        }
+        option.Aliases = std::move(kept);
+    }
 }
 
 static bool parse_preset(const JsonValue& json, const LoadedPack& pack, LoadedPreset& preset, std::string& error)
@@ -1129,21 +1605,67 @@ static bool parse_preset(const JsonValue& json, const LoadedPack& pack, LoadedPr
         error = "preset \"" + preset.Id + "\" turns no options on (the unchanged game needs no preset)";
         return false;
     }
+    const auto optionOf = [&pack](const std::string& id) -> const LoadedOption* {
+        for (const LoadedOption& option : pack.Options)
+        {
+            if (option.Id == id)
+                return &option;
+        }
+        return nullptr;
+    };
+    // "stageLists": { "<option id>": "<one of its preset lists>" }, the list
+    // each stage list option the preset turns on gets.
+    std::map<std::string, std::string> listPresets;
+    if (const JsonValue* stageLists = json.find("stageLists"); stageLists != nullptr)
+    {
+        if (stageLists->type != JsonValue::Type::Object)
+        {
+            error = "preset \"" + preset.Id + "\": stageLists isn't an object";
+            return false;
+        }
+        for (const auto& [optionId, presetId] : stageLists->object)
+        {
+            const LoadedOption* option = optionOf(optionId);
+            const CoreStageListPreset* list = option != nullptr && option->StageList != nullptr &&
+                presetId.type == JsonValue::Type::String ? option->StageList->Info.preset(presetId.text) : nullptr;
+            if (list == nullptr)
+            {
+                error = "preset \"" + preset.Id + "\": stageLists names \"" + optionId +
+                    "\" with something that isn't one of its preset lists";
+                return false;
+            }
+            listPresets[optionId] = presetId.text;
+            preset.Lists[optionId] = CoreEncodeStageList(option->StageList->Info, list->Stages);
+        }
+    }
     std::vector<std::string> ids;
     for (const JsonValue& entry : options->array)
     {
-        const bool known = entry.type == JsonValue::Type::String &&
-            std::any_of(pack.Options.begin(), pack.Options.end(),
-                [&entry](const LoadedOption& option) { return option.Id == entry.text; });
-        if (!known)
+        const LoadedOption* option = entry.type == JsonValue::Type::String ? optionOf(entry.text) : nullptr;
+        if (option == nullptr)
         {
             error = "preset \"" + preset.Id + "\" names \"" +
                 (entry.type == JsonValue::Type::String ? entry.text : std::string("?")) +
                 "\", which isn't a usable option of this pack";
             return false;
         }
+        // A stage list option needs its list, one of the option's preset lists.
+        if (option->StageList && listPresets.count(entry.text) == 0)
+        {
+            error = "preset \"" + preset.Id + "\" names \"" + entry.text +
+                "\", which takes a stage list, without one in stageLists";
+            return false;
+        }
         if (!contains(ids, entry.text))
             ids.push_back(entry.text);
+    }
+    for (const auto& [optionId, list] : listPresets)
+    {
+        if (!contains(ids, optionId))
+        {
+            error = "preset \"" + preset.Id + "\": stageLists names \"" + optionId + "\", which it doesn't turn on";
+            return false;
+        }
     }
 
     std::vector<const LoadedOption*> set;
@@ -1162,6 +1684,125 @@ static bool parse_preset(const JsonValue& json, const LoadedPack& pack, LoadedPr
     {
         error = "preset \"" + preset.Id + "\" can't be used: " + why;
         return false;
+    }
+
+    // "withPlayers": [ { "minPlayers": 4, "options": [...] } ], what it turns
+    // on as well in bigger matches. Each player count's set has to be one
+    // that can be on together, or the preset would fail at match start.
+    if (const JsonValue* withPlayers = json.find("withPlayers"); withPlayers != nullptr)
+    {
+        if (withPlayers->type != JsonValue::Type::Array)
+        {
+            error = "preset \"" + preset.Id + "\": withPlayers isn't a list";
+            return false;
+        }
+        std::vector<std::string> taken = ids;
+        for (const JsonValue& entry : withPlayers->array)
+        {
+            const JsonValue* minPlayers = entry.type == JsonValue::Type::Object ? entry.find("minPlayers") : nullptr;
+            const JsonValue* extra = entry.type == JsonValue::Type::Object ? entry.find("options") : nullptr;
+            if (minPlayers == nullptr || minPlayers->type != JsonValue::Type::Number ||
+                (minPlayers->text != "2" && minPlayers->text != "3" && minPlayers->text != "4"))
+            {
+                error = "preset \"" + preset.Id + "\": a withPlayers entry has no minPlayers of 2, 3 or 4";
+                return false;
+            }
+            CoreGameOptionPresetExtra rule;
+            rule.MinPlayers = minPlayers->text[0] - '0';
+            const bool repeated = std::any_of(preset.WithPlayers.begin(), preset.WithPlayers.end(),
+                [&rule](const CoreGameOptionPresetExtra& other) { return other.MinPlayers == rule.MinPlayers; });
+            if (repeated || extra == nullptr || extra->type != JsonValue::Type::Array || extra->array.empty())
+            {
+                error = "preset \"" + preset.Id + "\": withPlayers for " + std::to_string(rule.MinPlayers) +
+                    " players " + (repeated ? "is there twice" : "turns no options on");
+                return false;
+            }
+            std::vector<std::string> extraIds;
+            for (const JsonValue& id : extra->array)
+            {
+                const bool known = id.type == JsonValue::Type::String &&
+                    std::any_of(pack.Options.begin(), pack.Options.end(),
+                        [&id](const LoadedOption& option) { return option.Id == id.text && !option.StageList; });
+                if (!known || contains(taken, id.text))
+                {
+                    error = "preset \"" + preset.Id + "\": withPlayers names \"" +
+                        (id.type == JsonValue::Type::String ? id.text : std::string("?")) + "\", which " +
+                        (known ? "it already turns on" : "isn't a usable option of this pack");
+                    return false;
+                }
+                taken.push_back(id.text);
+                extraIds.push_back(id.text);
+            }
+            for (const LoadedOption& option : pack.Options)
+            {
+                if (contains(extraIds, option.Id))
+                    rule.Options.push_back(option.Id);
+            }
+            // What they do, for the Custom view's line about them.
+            if (const std::string* description = string_member(entry, "description"); description != nullptr &&
+                valid_label(*description))
+                rule.Description = *description;
+            Translations text;
+            parse_translations(entry, text);
+            preset.WithPlayers.push_back(std::move(rule));
+            preset.WithPlayersText.push_back(std::move(text));
+        }
+        // Fewest players first, each entry's translations with it.
+        std::vector<size_t> order(preset.WithPlayers.size());
+        for (size_t i = 0; i < order.size(); i++)
+            order[i] = i;
+        std::sort(order.begin(), order.end(), [&preset](size_t a, size_t b) {
+            return preset.WithPlayers[a].MinPlayers < preset.WithPlayers[b].MinPlayers;
+        });
+        std::vector<CoreGameOptionPresetExtra> sortedRules;
+        std::vector<Translations> sortedText;
+        for (const size_t i : order)
+        {
+            sortedRules.push_back(std::move(preset.WithPlayers[i]));
+            sortedText.push_back(std::move(preset.WithPlayersText[i]));
+        }
+        preset.WithPlayers = std::move(sortedRules);
+        preset.WithPlayersText = std::move(sortedText);
+
+        std::vector<std::string> bigger = ids;
+        for (const CoreGameOptionPresetExtra& rule : preset.WithPlayers)
+        {
+            bigger.insert(bigger.end(), rule.Options.begin(), rule.Options.end());
+            std::vector<const LoadedOption*> biggerSet;
+            for (const LoadedOption& option : pack.Options)
+            {
+                if (contains(bigger, option.Id))
+                    biggerSet.push_back(&option);
+            }
+            if (!check_option_set(biggerSet, all, why))
+            {
+                error = "preset \"" + preset.Id + "\" can't be used with " + std::to_string(rule.MinPlayers) +
+                    " players: " + why;
+                return false;
+            }
+        }
+    }
+
+    // "aliases": the ids it had before, for choices remembered by them.
+    if (const JsonValue* aliases = json.find("aliases"); aliases != nullptr)
+    {
+        if (aliases->type != JsonValue::Type::Array)
+        {
+            log_pack(pack.File, "preset \"" + preset.Id + "\": aliases isn't a list, ignored");
+        }
+        else
+        {
+            for (const JsonValue& alias : aliases->array)
+            {
+                if (alias.type != JsonValue::Type::String || !valid_option_id(alias.text) || alias.text == preset.Id)
+                {
+                    log_pack(pack.File, "preset \"" + preset.Id + "\": ignored an alias that isn't another preset id");
+                    continue;
+                }
+                if (!contains(preset.Aliases, alias.text))
+                    preset.Aliases.push_back(alias.text);
+            }
+        }
     }
     return true;
 }
@@ -1262,7 +1903,7 @@ static bool parse_pack(const std::string& text, LoadedPack& pack, std::string& e
     {
         LoadedOption option;
         std::string optionError;
-        if (!parse_option(entry, option, optionError))
+        if (!parse_option(entry, option, optionError) || !parse_stage_list(entry, option, pack.File, optionError))
         {
             log_pack(pack.File, "skipped an option: " + optionError);
             continue;
@@ -1283,6 +1924,23 @@ static bool parse_pack(const std::string& text, LoadedPack& pack, std::string& e
         }
         option.Requires = parse_id_list(entry, "requires", option.Id, pack.File);
         option.Conflicts = parse_id_list(entry, "conflicts", option.Id, pack.File);
+        // "saveData": "blank" is the only value so far; anything else might
+        // mean a rule this version doesn't know, so it's logged.
+        if (const JsonValue* saveData = entry.find("saveData"); saveData != nullptr)
+        {
+            if (saveData->type == JsonValue::Type::String && saveData->text == "blank")
+                option.BlankSave = true;
+            else
+                log_pack(pack.File, "option \"" + option.Id + "\": saveData isn't \"blank\", ignored");
+        }
+        if (const JsonValue* hidden = entry.find("hidden"); hidden != nullptr)
+        {
+            if (hidden->type == JsonValue::Type::Bool)
+                option.Hidden = hidden->boolean;
+            else
+                log_pack(pack.File, "option \"" + option.Id + "\": hidden isn't true or false, ignored");
+        }
+        option.Aliases = parse_option_aliases(entry, option.Id, pack.File);
         pack.Options.push_back(std::move(option));
     }
     link_options(*options, pack);
@@ -1310,7 +1968,7 @@ static bool parse_pack(const std::string& text, LoadedPack& pack, std::string& e
                     continue;
                 }
                 const auto same = std::find_if(pack.Presets.begin(), pack.Presets.end(), [&preset](const LoadedPreset& other) {
-                    return other.Id == preset.Id || other.Options == preset.Options;
+                    return other.Id == preset.Id || (other.Options == preset.Options && other.Lists == preset.Lists);
                 });
                 if (same != pack.Presets.end())
                 {
@@ -1592,8 +2250,22 @@ CORE_EXPORT std::vector<CoreGameOptionInfo> CoreGetGameOptions(const std::string
         info.PackId = pack->Id;
         info.Game = pack->Game;
         info.Group = option->Group;
+        info.NeedsBlankSave = option->BlankSave;
+        info.StageList = option->StageList != nullptr;
+        info.Hidden = option->Hidden;
         std::copy_if(option->Requires.begin(), option->Requires.end(), std::back_inserter(info.Requires), isOffered);
         std::copy_if(option->Conflicts.begin(), option->Conflicts.end(), std::back_inserter(info.Conflicts), isOffered);
+        // An alias never stands for an option that's offered, and only turns
+        // on this pack's own options.
+        const auto ownOption = [&, pack = pack](const std::string& id) {
+            return std::any_of(offered.begin(), offered.end(),
+                [&](const auto& entry) { return entry.first == pack && entry.second->Id == id; });
+        };
+        for (const CoreGameOptionAlias& alias : option->Aliases)
+        {
+            if (!isOffered(alias.Id) && std::all_of(alias.With.begin(), alias.With.end(), ownOption))
+                info.Aliases.push_back(alias);
+        }
 
         if (const auto* translation = find_translation(option->Text, language))
         {
@@ -1659,12 +2331,16 @@ CORE_EXPORT std::vector<CoreGameOptionPresetInfo> CoreGetGameOptionPresets(const
         {
             // Its options as this pack has them: another pack that came first
             // may offer an option of the same id that does something else.
-            const bool ownOptions = std::all_of(preset.Options.begin(), preset.Options.end(), [&](const std::string& id) {
+            const auto ownOption = [&](const std::string& id) {
                 return std::any_of(offered.begin(), offered.end(),
                     [&](const auto& entry) { return entry.first == &pack && entry.second->Id == id; });
-            });
+            };
+            const bool ownOptions = std::all_of(preset.Options.begin(), preset.Options.end(), ownOption) &&
+                std::all_of(preset.WithPlayers.begin(), preset.WithPlayers.end(), [&](const CoreGameOptionPresetExtra& rule) {
+                    return std::all_of(rule.Options.begin(), rule.Options.end(), ownOption);
+                });
             const bool taken = std::any_of(infos.begin(), infos.end(), [&preset](const CoreGameOptionPresetInfo& info) {
-                return info.Id == preset.Id || info.Options == preset.Options;
+                return info.Id == preset.Id || (info.Options == preset.Options && info.Lists == preset.Lists);
             });
             if (!ownOptions || taken)
             {
@@ -1677,6 +2353,15 @@ CORE_EXPORT std::vector<CoreGameOptionPresetInfo> CoreGetGameOptionPresets(const
             info.Label = preset.Label;
             info.Description = preset.Description;
             info.Options = preset.Options;
+            info.Lists = preset.Lists;
+            info.WithPlayers = preset.WithPlayers;
+            for (size_t i = 0; i < info.WithPlayers.size() && i < preset.WithPlayersText.size(); i++)
+            {
+                const auto* translation = find_translation(preset.WithPlayersText[i], language);
+                if (translation != nullptr && !translation->second.empty())
+                    info.WithPlayers[i].Description = translation->second;
+            }
+            info.Aliases = preset.Aliases;
             info.PackId = pack.Id;
             if (const auto* translation = find_translation(preset.Text, language))
             {
@@ -1693,6 +2378,13 @@ CORE_EXPORT std::vector<CoreGameOptionPresetInfo> CoreGetGameOptionPresets(const
 
 CORE_EXPORT bool CoreResolveGameOptions(const std::filesystem::path& rom, const std::string& romMd5,
                                         const std::vector<std::string>& ids, CoreNetplayGameOptions& options)
+{
+    return CoreResolveGameOptions(rom, romMd5, ids, {}, options);
+}
+
+CORE_EXPORT bool CoreResolveGameOptions(const std::filesystem::path& rom, const std::string& romMd5,
+                                        const std::vector<std::string>& ids, const std::map<std::string, std::string>& lists,
+                                        CoreNetplayGameOptions& options)
 {
     options = {};
     if (ids.empty())
@@ -1718,11 +2410,39 @@ CORE_EXPORT bool CoreResolveGameOptions(const std::filesystem::path& rom, const 
     for (const auto& [pack, option] : offered)
     {
         all.push_back(option);
-        if (std::find(ids.begin(), ids.end(), option->Id) != ids.end())
+        if (std::find(ids.begin(), ids.end(), option->Id) == ids.end())
         {
-            chosen.push_back(option);
-            options.Options.push_back({ option->Id, option->Label, option->Patches });
+            continue;
         }
+        chosen.push_back(option);
+        CoreNetplayGameOption resolved{ option->Id, option->Label, option->Patches };
+        if (option->StageList)
+        {
+            // The list's three ranges get the list's bytes; the rest is the
+            // same for every list.
+            const LoadedStageList& list = *option->StageList;
+            const auto code = lists.find(option->Id);
+            std::vector<CoreStageListEntry> entries;
+            const CoreStageListProblem problem = code == lists.end() ? CoreStageListProblem::Empty
+                : CoreDecodeStageList(list.Info, code->second, entries);
+            if (problem != CoreStageListProblem::None)
+            {
+                options = {};
+                CoreSetError(problem == CoreStageListProblem::Empty
+                    ? "\"" + option->Label + "\" is on, but no stages were picked for it."
+                    : "\"" + option->Label + "\" has a stage list code this version can't use.");
+                return false;
+            }
+            for (const CoreGameOptionPatch& made : CoreStageListPatches(list.Info, list.Layout, entries))
+            {
+                for (CoreGameOptionPatch& patch : resolved.Patches)
+                {
+                    if (patch.Offset == made.Offset && patch.Bytes.size() == made.Bytes.size())
+                        patch = made;
+                }
+            }
+        }
+        options.Options.push_back(std::move(resolved));
     }
 
     std::string error;
@@ -1766,6 +2486,66 @@ CORE_EXPORT bool CoreResolveGameOptions(const std::filesystem::path& rom, const 
                 return false;
             }
         }
+    }
+    return true;
+}
+
+static const LoadedStageList* offered_stage_list(const std::string& romMd5, const std::string& optionId)
+{
+    ensure_packs_loaded();
+    for (const auto& [pack, option] : offered_options(romMd5))
+    {
+        if (option->Id == optionId)
+            return option->StageList.get();
+    }
+    return nullptr;
+}
+
+CORE_EXPORT bool CoreGetStageList(const std::string& romMd5, const std::string& optionId,
+                                  const std::string& language, CoreStageListInfo& info)
+{
+    const LoadedStageList* list = offered_stage_list(romMd5, optionId);
+    if (list == nullptr)
+    {
+        info = {};
+        return false;
+    }
+    info = stage_list_in(*list, language);
+    return true;
+}
+
+CORE_EXPORT bool CoreReadStageListIcons(const std::filesystem::path& rom, const std::string& romMd5,
+                                        const std::string& optionId, std::map<int, CoreStageIcon>& icons)
+{
+    icons.clear();
+    const LoadedStageList* list = offered_stage_list(romMd5, optionId);
+    if (list == nullptr || list->Layout.FileCount == 0)
+    {
+        CoreSetError("This game's stage list has no icons.");
+        return false;
+    }
+    std::vector<char> image;
+    if (!read_rom_image(rom, image))
+    {
+        return false;
+    }
+    // The ROM the pack is for, as far as the list's own ranges tell.
+    const CoreStageListLayout& layout = list->Layout;
+    const auto matches = [&image](uint32_t offset, const std::vector<uint8_t>& expect) {
+        return uint64_t(offset) + expect.size() <= image.size() &&
+            std::memcmp(image.data() + offset, expect.data(), expect.size()) == 0;
+    };
+    if (!matches(layout.TableOffset, layout.TableExpect) || !matches(layout.PagesOffset, layout.PagesExpect) ||
+        !matches(layout.ModesOffset, layout.ModesExpect))
+    {
+        CoreSetError("The ROM isn't the version of the game its pack is for.");
+        return false;
+    }
+    std::string error;
+    if (!CoreDecodeStageListIcons(image, list->Info, layout, icons, error))
+    {
+        CoreSetError("Couldn't read the stage icons: " + error);
+        return false;
     }
     return true;
 }

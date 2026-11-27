@@ -83,11 +83,20 @@ public:
     };
 
     // A game option the host turned on (ROOM_UPDATE_GAME_OPTIONS): the pack's
-    // id and the host's English label, for clients without the pack.
+    // id and the host's English label, for clients without the pack, and
+    // what the host picked for an option that takes a choice of its own (a
+    // stage list's share code), empty for others. Servers from before
+    // params drop it (ROOM_STATE gameOptionParams says whether it's kept).
+    // paramPresetId and paramPresetLabel name the param when it has a name
+    // ("paramPreset": a preset list's id, or "user-" and the id of a list the
+    // host saved, with the host's English label or own name), else empty.
     struct LobbyGameOption
     {
         QString id;
         QString label;
+        QString param;
+        QString paramPresetId;
+        QString paramPresetLabel;
     };
     // The "gameOptions" array of ROOM_STATE or a ROOM_LIST entry.
     static QList<LobbyGameOption> parseGameOptions(const QJsonValue& value);

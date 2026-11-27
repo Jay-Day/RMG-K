@@ -3597,10 +3597,6 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>変更...</translation>
         </message>
         <message>
-            <source>Pick another save for the next match to start from.</source>
-            <translation>次の対戦で使うセーブを選び直します。</translation>
-        </message>
-        <message>
             <source>Save As...</source>
             <translation>名前を付けて保存...</translation>
         </message>
@@ -3719,10 +3715,6 @@ The game saves to memory only during the match: nobody's own save files are touc
             <translation>この対戦中にゲームがセーブしました。コピーを残すには「名前を付けて保存」を使ってください。</translation>
         </message>
         <message>
-            <source> (continued)</source>
-            <translation>（続き）</translation>
-        </message>
-        <message>
             <source>Save Game Save</source>
             <translation>ゲームのセーブを保存</translation>
         </message>
@@ -3772,6 +3764,500 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
         </message>
     </context>
     <context>
+    <name>UserInterface::Dialog::StageListDialog</name>
+        <message>
+            <source>1 stage</source>
+            <translation>1ステージ</translation>
+        </message>
+        <message>
+            <source>%1 stages</source>
+            <translation>%1ステージ</translation>
+        </message>
+        <message>
+            <source>No stages yet</source>
+            <translation>まだステージがありません</translation>
+        </message>
+        <message>
+            <source>%1 on 1 page</source>
+            <translation>%1（1ページ）</translation>
+        </message>
+        <message>
+            <source>%1 on %2 pages</source>
+            <translation>%1（%2ページ）</translation>
+        </message>
+        <message>
+            <source>Hazards and movement</source>
+            <comment>what a stage has</comment>
+            <translation>仕掛けあり・動く</translation>
+        </message>
+        <message>
+            <source>Hazards</source>
+            <comment>what a stage has</comment>
+            <translation>仕掛けあり</translation>
+        </message>
+        <message>
+            <source>Moves</source>
+            <comment>what a stage has</comment>
+            <translation>動く</translation>
+        </message>
+        <message>
+            <source>No hazards or movement</source>
+            <translation>仕掛けなし・動かない</translation>
+        </message>
+        <message>
+            <source>Number %1 on your list</source>
+            <translation>リストの%1番目</translation>
+        </message>
+        <message>
+            <source>%1, number %2</source>
+            <translation>%1（%2番目）</translation>
+        </message>
+        <message>
+            <source>Drag to move</source>
+            <translation>ドラッグで移動</translation>
+        </message>
+        <message>
+            <source>%1 on %2</source>
+            <translation>%2の%1</translation>
+        </message>
+        <message>
+            <source>Hazards</source>
+            <translation>仕掛け</translation>
+        </message>
+        <message>
+            <source>Off: the stage's hazards stay away.</source>
+            <translation>オフ：ステージの仕掛けが出ません。</translation>
+        </message>
+        <message>
+            <source>Movement</source>
+            <translation>動き</translation>
+        </message>
+        <message>
+            <source>Off: the stage stays still.</source>
+            <translation>オフ：ステージが動きません。</translation>
+        </message>
+        <message>
+            <source>Move up</source>
+            <translation>上へ</translation>
+        </message>
+        <message>
+            <source>Move %1 up</source>
+            <translation>%1を上へ</translation>
+        </message>
+        <message>
+            <source>Move down</source>
+            <translation>下へ</translation>
+        </message>
+        <message>
+            <source>Move %1 down</source>
+            <translation>%1を下へ</translation>
+        </message>
+        <message>
+            <source>Take off the list</source>
+            <translation>リストから外す</translation>
+        </message>
+        <message>
+            <source>Take %1 off the list</source>
+            <translation>%1をリストから外す</translation>
+        </message>
+        <message>
+            <source>How the stage select's page looks</source>
+            <translation>ステージセレクトのページの見え方</translation>
+        </message>
+        <message>
+            <source>Random</source>
+            <translation>ランダム</translation>
+        </message>
+        <message>
+            <source>The Host's Stage List</source>
+            <translation>ホストのステージリスト</translation>
+        </message>
+        <message>
+            <source>Click stages to put them on the list, in the order the stage select will show them: %1 to a page, with Random on the last icon. Hazards and movement are set per stage on the list.</source>
+            <translation>ステージをクリックしてリストに入れます。ステージセレクトにはこの順に1ページ%1個ずつ並び、最後のアイコンはランダムです。仕掛けと動きはリストでステージごとに設定します。</translation>
+        </message>
+        <message>
+            <source>The stages the host picked, in the order the stage select shows them, each with its hazards and movement as the host set them.</source>
+            <translation>ホストが選んだステージです。ステージセレクトに並ぶ順で、仕掛けと動きはホストの設定どおりです。</translation>
+        </message>
+        <message>
+            <source>The stage icons come from your copy of the game, which couldn't be read here, so the stages show by name only.</source>
+            <translation>ステージのアイコンはお手持ちのゲームから読み込みますが、ここでは読み込めなかったため、ステージ名だけを表示しています。</translation>
+        </message>
+        <message>
+            <source>A name, like Weekly bracket</source>
+            <translation>名前（例：週末大会）</translation>
+        </message>
+        <message>
+            <source>Name for this stage list</source>
+            <translation>このステージリストの名前</translation>
+        </message>
+        <message>
+            <source>Save</source>
+            <translation>保存</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>Save as...</source>
+            <translation>名前を付けて保存...</translation>
+        </message>
+        <message>
+            <source>Done</source>
+            <translation>完了</translation>
+        </message>
+        <message>
+            <source>Close</source>
+            <translation>閉じる</translation>
+        </message>
+        <message>
+            <source>Start from a list</source>
+            <translation>リストから始める</translation>
+        </message>
+        <message>
+            <source>Rename</source>
+            <translation>名前を変更</translation>
+        </message>
+        <message>
+            <source>Delete</source>
+            <translation>削除</translation>
+        </message>
+        <message>
+            <source>Paste code...</source>
+            <translation>コードを貼り付け...</translation>
+        </message>
+        <message>
+            <source>Use a stage list someone shared as a code (STG-...).</source>
+            <translation>コード（STG-...）で共有されたステージリストを使います。</translation>
+        </message>
+        <message>
+            <source>Copy code</source>
+            <translation>コードをコピー</translation>
+        </message>
+        <message>
+            <source>Copy a short code for this list, to share it: whoever pastes it gets the same stages, order and settings.</source>
+            <translation>このリストを共有するための短いコードをコピーします。貼り付けた人には同じステージ、順番、設定が入ります。</translation>
+        </message>
+        <message>
+            <source>Paste a stage list code, like %1-220C-6YA8-2T5V-W0</source>
+            <translation>ステージリストのコードを貼り付け（例：%1-220C-6YA8-2T5V-W0）</translation>
+        </message>
+        <message>
+            <source>Stage list code</source>
+            <translation>ステージリストのコード</translation>
+        </message>
+        <message>
+            <source>Use code</source>
+            <translation>コードを使う</translation>
+        </message>
+        <message>
+            <source>Undo</source>
+            <translation>元に戻す</translation>
+        </message>
+        <message>
+            <source>Search stages</source>
+            <translation>ステージを検索</translation>
+        </message>
+        <message>
+            <source>All</source>
+            <comment>filter: every stage</comment>
+            <translation>すべて</translation>
+        </message>
+        <message>
+            <source>Every stage</source>
+            <translation>すべてのステージ</translation>
+        </message>
+        <message>
+            <source>Static</source>
+            <comment>filter: stages with no hazards and no movement</comment>
+            <translation>動かない</translation>
+        </message>
+        <message>
+            <source>Stages with no hazards and no movement</source>
+            <translation>仕掛けも動きもないステージ</translation>
+        </message>
+        <message>
+            <source>Hazards</source>
+            <comment>filter: stages with hazards</comment>
+            <translation>仕掛け</translation>
+        </message>
+        <message>
+            <source>Stages with hazards</source>
+            <translation>仕掛けのあるステージ</translation>
+        </message>
+        <message>
+            <source>Moving</source>
+            <comment>filter: stages that move</comment>
+            <translation>動く</translation>
+        </message>
+        <message>
+            <source>Stages that move</source>
+            <translation>動くステージ</translation>
+        </message>
+        <message>
+            <source>Page %1</source>
+            <translation>%1ページ</translation>
+        </message>
+        <message>
+            <source>Page %1 of the game's own stage select</source>
+            <translation>ゲーム本来のステージセレクトの%1ページ目</translation>
+        </message>
+        <message>
+            <source>Other stages</source>
+            <translation>その他のステージ</translation>
+        </message>
+        <message>
+            <source>Your list</source>
+            <translation>あなたのリスト</translation>
+        </message>
+        <message>
+            <source>The list</source>
+            <translation>リスト</translation>
+        </message>
+        <message>
+            <source>On the stage select</source>
+            <translation>ステージセレクトでの表示</translation>
+        </message>
+        <message>
+            <source>Previous page</source>
+            <translation>前のページ</translation>
+        </message>
+        <message>
+            <source>Next page</source>
+            <translation>次のページ</translation>
+        </message>
+        <message>
+            <source>No stages yet. Click a stage on the left to put it on the list, or start from a ready-made list above.</source>
+            <translation>まだステージがありません。左のステージをクリックしてリストに入れるか、上の用意されたリストから始めてください。</translation>
+        </message>
+        <message>
+            <source>The host hasn't picked any stages.</source>
+            <translation>ホストはまだステージを選んでいません。</translation>
+        </message>
+        <message>
+            <source>All hazards off</source>
+            <translation>仕掛けをすべてオフ</translation>
+        </message>
+        <message>
+            <source>Turn hazards off on every stage that has them.</source>
+            <translation>仕掛けのあるすべてのステージで、仕掛けをオフにします。</translation>
+        </message>
+        <message>
+            <source>Turned hazards off on every stage.</source>
+            <translation>すべてのステージで仕掛けをオフにしました。</translation>
+        </message>
+        <message>
+            <source>All movement off</source>
+            <translation>動きをすべてオフ</translation>
+        </message>
+        <message>
+            <source>Stop every stage that moves.</source>
+            <translation>動くステージをすべて止めます。</translation>
+        </message>
+        <message>
+            <source>Turned movement off on every stage.</source>
+            <translation>すべてのステージで動きをオフにしました。</translation>
+        </message>
+        <message>
+            <source>All on</source>
+            <translation>すべてオン</translation>
+        </message>
+        <message>
+            <source>Hazards and movement on, on every stage.</source>
+            <translation>すべてのステージで仕掛けと動きをオンにします。</translation>
+        </message>
+        <message>
+            <source>Turned hazards and movement on everywhere.</source>
+            <translation>すべてのステージで仕掛けと動きをオンにしました。</translation>
+        </message>
+        <message>
+            <source>Clear</source>
+            <translation>クリア</translation>
+        </message>
+        <message>
+            <source>Take every stage off the list.</source>
+            <translation>リストからすべてのステージを外します。</translation>
+        </message>
+        <message>
+            <source>Cleared the list.</source>
+            <translation>リストをクリアしました。</translation>
+        </message>
+        <message>
+            <source>A list holds at most %1 stages: %2 pages of %3 on the stage select, each with Random on its last icon. Take one off to add another.</source>
+            <translation>リストに入るのは最大%1ステージです（ステージセレクトで1ページ%3個ずつ%2ページ、各ページの最後のアイコンはランダム）。追加するには、どれかを外してください。</translation>
+        </message>
+        <message>
+            <source>%1 + Random</source>
+            <translation>%1＋ランダム</translation>
+        </message>
+        <message>
+            <source>%1, Random on the other icons</source>
+            <translation>%1、残りのアイコンはランダム</translation>
+        </message>
+        <message>
+            <source>Up to %1 stages, each once.</source>
+            <translation>最大%1ステージ、同じステージは1回まで。</translation>
+        </message>
+        <message>
+            <source>Put some stages on the list first.</source>
+            <translation>先にステージをリストに入れてください。</translation>
+        </message>
+        <message>
+            <source>Page %1 of %2</source>
+            <translation>%1 / %2ページ</translation>
+        </message>
+        <message>
+            <source>No stages of this kind.</source>
+            <translation>この種類のステージはありません。</translation>
+        </message>
+        <message>
+            <source>No stages match "%1".</source>
+            <translation>「%1」に一致するステージはありません。</translation>
+        </message>
+        <message>
+            <source>Start from a list...</source>
+            <translation>リストから始める...</translation>
+        </message>
+        <message>
+            <source>%1 (%2)</source>
+            <translation>%1（%2）</translation>
+        </message>
+        <message>
+            <source>Your saved list</source>
+            <translation>保存したリスト</translation>
+        </message>
+        <message>
+            <source>Started from "%1".</source>
+            <translation>「%1」から始めました。</translation>
+        </message>
+        <message>
+            <source>Loaded "%1".</source>
+            <translation>「%1」を読み込みました。</translation>
+        </message>
+        <message>
+            <source>Copied the list's code: %1</source>
+            <translation>リストのコードをコピーしました：%1</translation>
+        </message>
+        <message>
+            <source>That code is incomplete or has extra characters. Copy the whole code, from %1- to its end.</source>
+            <translation>コードが途中までか、余分な文字があります。%1-から最後までコード全体をコピーしてください。</translation>
+        </message>
+        <message>
+            <source>That isn't a stage list code: codes are letters and digits in groups, like %1-220C-6YA8-2T5V-W0.</source>
+            <translation>ステージリストのコードではありません。コードは英数字のまとまりです（例：%1-220C-6YA8-2T5V-W0）。</translation>
+        </message>
+        <message>
+            <source>That code doesn't check out: a character may be mistyped, or it's a code for another game or version.</source>
+            <translation>コードが正しくありません。文字の打ち間違いか、別のゲームやバージョンのコードです。</translation>
+        </message>
+        <message>
+            <source>That code was made by a newer version of RMG-K.</source>
+            <translation>このコードは新しいバージョンのRMG-Kで作られています。</translation>
+        </message>
+        <message>
+            <source>That code has more than %1 stages.</source>
+            <translation>このコードには%1を超えるステージが入っています。</translation>
+        </message>
+        <message>
+            <source>That code names a stage this game doesn't have.</source>
+            <translation>このコードには、このゲームにないステージが入っています。</translation>
+        </message>
+        <message>
+            <source>That code has a stage on it twice.</source>
+            <translation>このコードには同じステージが2回入っています。</translation>
+        </message>
+        <message>
+            <source>Paste a code first.</source>
+            <translation>先にコードを貼り付けてください。</translation>
+        </message>
+        <message>
+            <source>Used the pasted code: %1.</source>
+            <translation>貼り付けたコードを使いました：%1。</translation>
+        </message>
+        <message>
+            <source>Saved as "%1"</source>
+            <translation>「%1」として保存済み</translation>
+        </message>
+        <message>
+            <source>You already have a list saved as "%1".</source>
+            <translation>「%1」という名前のリストはすでにあります。</translation>
+        </message>
+        <message>
+            <source>You already have a list saved as "%1". Replace it with this one?</source>
+            <translation>「%1」という名前のリストはすでにあります。このリストで置き換えますか？</translation>
+        </message>
+        <message>
+            <source>You can keep up to %1 stage lists for a game. Delete one to save another.</source>
+            <translation>1つのゲームに保存できるステージリストは%1個までです。保存するには、どれかを削除してください。</translation>
+        </message>
+        <message>
+            <source>Replace</source>
+            <translation>置き換え</translation>
+        </message>
+        <message>
+            <source>Renamed "%1" to "%2".</source>
+            <translation>「%1」の名前を「%2」に変更しました。</translation>
+        </message>
+        <message>
+            <source>Replaced "%1" with this list.</source>
+            <translation>「%1」をこのリストで置き換えました。</translation>
+        </message>
+        <message>
+            <source>Saved as "%1". It's in your stage lists when you host.</source>
+            <translation>「%1」として保存しました。ホストするときにステージリストから選べます。</translation>
+        </message>
+        <message>
+            <source>Deleted the saved list "%1". The list is still here.</source>
+            <translation>保存したリスト「%1」を削除しました。今のリストはそのままです。</translation>
+        </message>
+        <message>
+            <source>Stage List</source>
+            <translation>ステージリスト</translation>
+        </message>
+        <message>
+            <source>The game's preset lists and your saved lists. Picking one replaces the list (you can undo it).</source>
+            <translation>ゲームのプリセットリストと保存したリストです。選ぶと今のリストと置き換わります（元に戻せます）。</translation>
+        </message>
+        <message>
+            <source>Saved as "%1". You can pick it from the Stage list now.</source>
+            <translation>「%1」として保存しました。ステージリストから選べます。</translation>
+        </message>
+        <message>
+            <source>This is the "%1" list already.</source>
+            <translation>これはすでに「%1」のリストです。</translation>
+        </message>
+        <message>
+            <source>This list is saved as "%1".</source>
+            <translation>このリストは「%1」として保存されています。</translation>
+        </message>
+        <message>
+            <source>You already have this list saved as "%1".</source>
+            <translation>このリストはすでに「%1」として保存しています。</translation>
+        </message>
+        <message>
+            <source>Same as "%1"</source>
+            <translation>「%1」と同じ</translation>
+        </message>
+        <message>
+            <source>The host's own list, saved as "%1"</source>
+            <translation>ホストが「%1」として保存したリスト</translation>
+        </message>
+        <message>
+            <source>Save this list under a name of your own, to pick it from the stage lists next time.</source>
+            <translation>このリストに名前を付けて保存すると、次からステージリストで選べます。</translation>
+        </message>
+        <message>
+            <source>Save the host's list under a name of your own, to pick it when you host.</source>
+            <translation>ホストのリストに名前を付けて保存すると、自分がホストのときに選べます。</translation>
+        </message>
+        <message>
+            <source>"%1" is already one of the stage lists' entries.</source>
+            <translation>「%1」はすでにステージリストの項目にあります。</translation>
+        </message>
+</context>
+<context>
         <name>UserInterface::Dialog::StartingSaveDialog</name>
         <message>
             <source>Starting Save Data</source>
@@ -3786,26 +4272,8 @@ ROMディレクトリへ追加して一覧を更新してから、もう一度�
             <translation>セーブファイルを参照...</translation>
         </message>
         <message>
-            <source>Continue from where each match left off</source>
-            <translation>前回の対戦の続きから始める</translation>
-        </message>
-        <message>
-            <source>When a match changes the save, the next match starts from the changed save.
-Turn this off to start every match from the save picked here.</source>
-            <translation>対戦でセーブが変わると、次の対戦は変わったセーブから始まります。
-オフにすると、毎回ここで選んだセーブから始まります。</translation>
-        </message>
-        <message>
             <source>Keep this save file updated as the game saves</source>
             <translation>ゲームがセーブするたびにこのセーブファイルを更新する</translation>
-        </message>
-        <message>
-            <source>Rewrites the picked file each time the game saves, so it always holds your latest progress.
-Turn this off to leave the file as it is. The game then saves to memory only,
-and you use Save As to keep a copy.</source>
-            <translation>ゲームがセーブするたびに選んだファイルを書き換えるので、常に最新の進行状況が残ります。
-オフにするとファイルはそのまま残ります。その場合セーブはメモリ上だけで行われ、
-残すには「名前を付けて保存」を使います。</translation>
         </message>
         <message>
             <source>Use This Save</source>
@@ -3822,10 +4290,6 @@ and you use Save As to keep a copy.</source>
         <message>
             <source>Where the last match left off</source>
             <translation>前回の対戦の続き</translation>
-        </message>
-        <message>
-            <source>%1 · from this room</source>
-            <translation>%1 · このルームから</translation>
         </message>
         <message>
             <source>netplay save · %1</source>
@@ -3860,10 +4324,6 @@ and you use Save As to keep a copy.</source>
             <translation>新品のカートリッジ · まだセーブなし</translation>
         </message>
         <message>
-            <source>%1 starts as on a new cartridge, with nothing saved. Use Save As during the match to keep what the game saves.</source>
-            <translation>%1は新品のカートリッジと同じく、何もセーブされていない状態から始まります。ゲームがセーブした内容を残すには、対戦中に「名前を付けて保存」を使ってください。</translation>
-        </message>
-        <message>
             <source>Holds: nothing yet</source>
             <translation>内容：まだなし</translation>
         </message>
@@ -3890,6 +4350,42 @@ and you use Save As to keep a copy.</source>
         <message>
             <source>Cancel</source>
             <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>Rewrites the picked file each time the game saves, so it always holds your latest progress
+and each match starts where the last one left off.
+Turn this off to leave the file as it is: every match then starts from it as it is now.</source>
+            <translation>ゲームがセーブするたびに選んだファイルを書き換えるので、常に最新の進行状況が残り、
+各対戦は前回の続きから始まります。
+オフにするとファイルはそのまま残り、毎回の対戦は今の内容から始まります。</translation>
+        </message>
+        <message>
+            <source>%1 · from this room's last match</source>
+            <translation>%1 · このルームの前回の対戦から</translation>
+        </message>
+        <message>
+            <source>in use now</source>
+            <translation>現在使用中</translation>
+        </message>
+        <message>
+            <source>%1 starts as on a new cartridge, with nothing saved, and so does every match. Use Save As during a match to keep what the game saves.</source>
+            <translation>%1は新品のカートリッジと同じく、何もセーブされていない状態から始まります。毎回の対戦も同じです。ゲームがセーブした内容を残すには、対戦中に「名前を付けて保存」を使ってください。</translation>
+        </message>
+        <message>
+            <source>Every match starts where the one before it left off, so the progress carries on from match to match.</source>
+            <translation>毎回の対戦は前の対戦の続きから始まるので、進行状況が引き継がれていきます。</translation>
+        </message>
+        <message>
+            <source>Every match starts from a copy of your save. Your own save file isn't changed.</source>
+            <translation>毎回の対戦はあなたのセーブのコピーから始まります。あなたのセーブファイル自体は変更されません。</translation>
+        </message>
+        <message>
+            <source>Every match starts from this file, and the game's saves are written back to it, so the progress carries on from match to match.</source>
+            <translation>毎回の対戦はこのファイルから始まり、ゲームのセーブはこのファイルに書き戻されるので、進行状況が引き継がれていきます。</translation>
+        </message>
+        <message>
+            <source>Every match starts from this save as it is now. The file isn't changed.</source>
+            <translation>毎回の対戦はこのセーブの今の内容から始まります。ファイルは変更されません。</translation>
         </message>
     </context>
     <context>
@@ -6894,14 +7390,6 @@ A local replay is saved only if Save replay is on.</source>
             <translation>カスタム（%1）</translation>
         </message>
         <message>
-            <source>Custom...</source>
-            <translation>カスタム...</translation>
-        </message>
-        <message>
-            <source>Turn the game's options on and off one by one.</source>
-            <translation>ゲームのオプションを1つずつオン・オフします。</translation>
-        </message>
-        <message>
             <source>Same as your saved &quot;%1&quot;.</source>
             <translation>保存した「%1」と同じです。</translation>
         </message>
@@ -7063,6 +7551,116 @@ A local replay is saved only if Save replay is on.</source>
             <source>Saved as &quot;%1&quot;. It's in your Game settings list when you host.</source>
             <translation>「%1」として保存しました。ホストになったときに「ゲーム設定」のリストから選べます。</translation>
         </message>
+        <message>
+            <source>With 4 players in the match, %1 also turns on %2.</source>
+            <translation>4人の対戦では、「%1」で「%2」もオンになります。</translation>
+        </message>
+        <message>
+            <source>With %1 or more players in the match, %2 also turns on %3.</source>
+            <translation>%1人以上の対戦では、「%2」で「%3」もオンになります。</translation>
+        </message>
+        <message>
+            <source>Needs a blank save: while it's on, matches start without save data.</source>
+            <translation>空のセーブが必要です。オンの間、対戦はセーブデータなしで始まります。</translation>
+        </message>
+        <message>
+            <source>%1 has no stages picked.</source>
+            <translation>%1にはステージが選ばれていません。</translation>
+        </message>
+        <message>
+            <source>%1's list can't be read by your game options pack.</source>
+            <translation>%1のリストは、あなたのゲームオプションパックでは読み込めません。</translation>
+        </message>
+        <message>
+            <source>No stages picked yet.</source>
+            <translation>まだステージが選ばれていません。</translation>
+        </message>
+        <message>
+            <source>The host's list can't be read by your game options pack.</source>
+            <translation>ホストのリストは、あなたのゲームオプションパックでは読み込めません。</translation>
+        </message>
+        <message numerus="yes">
+            <source>and %n more</source>
+            <translation>
+                <numerusform>ほか%n個</numerusform>
+            </translation>
+        </message>
+        <message>
+            <source>%1: %2</source>
+            <translation>%1：%2</translation>
+        </message>
+        <message>
+            <source>Turned %1 off: its list has no stages.</source>
+            <translation>%1をオフにしました（リストにステージがありません）。</translation>
+        </message>
+        <message>
+            <source>With 4 players in the match, %1 %2.</source>
+            <comment>%2: what the preset does then</comment>
+            <translation>4人の対戦では、「%1」は%2。</translation>
+        </message>
+        <message>
+            <source>With %1 or more players in the match, %2 %3.</source>
+            <comment>%3: what the preset does then</comment>
+            <translation>%1人以上の対戦では、「%2」は%3。</translation>
+        </message>
+        <message>
+            <source>Off</source>
+            <comment>a stage list option that isn't on</comment>
+            <translation>オフ</translation>
+        </message>
+        <message>
+            <source>The game's own stage select.</source>
+            <translation>ゲーム本来のステージ選択です。</translation>
+        </message>
+        <message>
+            <source>Your saved list: %1</source>
+            <translation>保存したリスト：%1</translation>
+        </message>
+        <message>
+            <source>Custom (%1)</source>
+            <comment>a stage list that isn't a preset or saved, with how many stages it has</comment>
+            <translation>カスタム（%1）</translation>
+        </message>
+        <message>
+            <source>Picking a list also turns on %1.</source>
+            <translation>リストを選ぶと「%1」もオンになります。</translation>
+        </message>
+        <message>
+            <source>Off also turns off %1.</source>
+            <translation>オフにすると「%1」もオフになります。</translation>
+        </message>
+        <message>
+            <source>Picking a list turns off %1.</source>
+            <translation>リストを選ぶと「%1」はオフになります。</translation>
+        </message>
+        <message>
+            <source>Customize...</source>
+            <translation>カスタマイズ...</translation>
+        </message>
+        <message>
+            <source>View...</source>
+            <translation>表示...</translation>
+        </message>
+        <message>
+            <source>Customize %1</source>
+            <translation>%1をカスタマイズ</translation>
+        </message>
+        <message>
+            <source>View %1</source>
+            <translation>%1を表示</translation>
+        </message>
+        <message>
+            <source>The host's list</source>
+            <translation>ホストのリスト</translation>
+        </message>
+        <message>
+            <source>Make a list of your own, or change this one, in the stage list editor.</source>
+            <translation>ステージリストの編集画面で、自分のリストを作るか、このリストを変更します。</translation>
+        </message>
+        <message>
+            <source>See the host's list.</source>
+            <translation>ホストのリストを表示します。</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::RollbackLobbyDialog</name>
@@ -7147,6 +7745,39 @@ A local replay is saved only if Save replay is on.</source>
             <source>The lobby server didn't take the name &quot;%1&quot;, so other players see these settings as custom.</source>
             <translation>ロビーサーバーが「%1」という名前を受け付けなかったため、ほかのプレイヤーにはカスタムの設定として表示されます。</translation>
         </message>
+        <message>
+            <source>%1 needs a blank save</source>
+            <translation>%1には空のセーブが必要です</translation>
+        </message>
+        <message>
+            <source>%1 isn't updated: this match didn't start from it</source>
+            <translation>%1は更新されません（この対戦はそのセーブから始まっていません）</translation>
+        </message>
+        <message>
+            <source>Pick another save for the next match to start from, or where the last match left off.</source>
+            <translation>次の対戦を始めるセーブを選び直すか、前回の対戦の続きを選びます。</translation>
+        </message>
+        <message>
+            <source>Matches start from a blank save while %1 is on (%2).
+The save you picked comes back when it's off.</source>
+            <translation>%1がオンの間、対戦は空のセーブから始まります（%2）。
+オフにすると、選んだセーブに戻ります。</translation>
+        </message>
+        <message numerus="yes">
+            <source>and %n more</source>
+            <translation>
+                <numerusform>ほか%n個</numerusform>
+            </translation>
+        </message>
+        <message>
+            <source>%1: %2 (%3)</source>
+            <comment>stage list option: list name (stages)</comment>
+            <translation>%1：%2（%3）</translation>
+        </message>
+        <message>
+            <source>This lobby server can't carry a stage list. It needs an update first.</source>
+            <translation>このロビーサーバーはステージリストに対応していません。先にサーバーの更新が必要です。</translation>
+        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::CreateRoomDialog</name>
@@ -7155,8 +7786,16 @@ A local replay is saved only if Save replay is on.</source>
             <translation>ゲーム設定</translation>
         </message>
         <message>
-            <source>Every player's game is changed for the match, and so is its replay. Custom... turns options on one by one, and saves them under a name.</source>
-            <translation>対戦中は全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。「カスタム...」でオプションを1つずつオンにして、名前を付けて保存できます。</translation>
+            <source>Every player's game is changed for the match, and so is its replay. Customize... turns options on one by one, and saves them under a name.</source>
+            <translation>対戦中は全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。「カスタマイズ...」でオプションを1つずつオンにして、名前を付けて保存できます。</translation>
+        </message>
+        <message>
+            <source>Customize...</source>
+            <translation>カスタマイズ...</translation>
+        </message>
+        <message>
+            <source>Turn the game's options on and off one by one, starting from the settings picked in the list.</source>
+            <translation>リストで選んだ設定から始めて、ゲームのオプションを1つずつオン・オフします。</translation>
         </message>
     </context>
 </TS>

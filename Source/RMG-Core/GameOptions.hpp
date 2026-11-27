@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -70,6 +71,21 @@ struct CoreNetplayGameOptions
     }
 };
 
+// An id that named an option before (pack "aliases" on the option): a choice
+// remembered by it, such as a saved set or the last room's settings, turns
+// this option on instead, with the list of one of its stage list presets
+// when it takes a list, and the options in With. A room's option ids are
+// never read as aliases.
+struct CoreGameOptionAlias
+{
+    std::string Id;
+    // The id of one of the option's stage list presets (CoreStageListInfo::
+    // Presets): always set for an option that takes a list, else empty.
+    std::string StageListPreset;
+    // Other options it turns on too, in pack order.
+    std::vector<std::string> With;
+};
+
 // An option a pack offers for a ROM.
 struct CoreGameOptionInfo
 {
@@ -90,6 +106,23 @@ struct CoreGameOptionInfo
     // both ways: an option lists the ones that name it too.
     std::vector<std::string> Requires;
     std::vector<std::string> Conflicts;
+    // The option only works as meant from a blank save (pack "saveData":
+    // "blank"), say because the game reads the settings it changes from save
+    // data: while it's on, a room's matches start without save data, whatever
+    // save the host picked.
+    bool NeedsBlankSave = false;
+    // The option is made from a list of stages the host picks (pack
+    // "stageList", see StageList.hpp), carried as its share code: it only
+    // resolves with one. A preset turns it on with one of its stage list
+    // presets (CoreGameOptionPresetInfo::Lists).
+    bool StageList = false;
+    // Never listed, counted or named to players (pack "hidden": true), but
+    // applied like any other when a match has it: for rules a preset, an
+    // alias or the lobby turns on, such as forcing Team Battle in ranked.
+    bool Hidden = false;
+    // The ids it stood in for before, valid ones only (none names an option
+    // that's offered).
+    std::vector<CoreGameOptionAlias> Aliases;
 };
 
 // A heading a pack sorts its options under ("Characters", "Stages").
@@ -101,7 +134,20 @@ struct CoreGameOptionGroupInfo
     std::string EnglishLabel;
 };
 
-// A named set of a pack's options ("1v1 Vanilla").
+// Options a preset turns on as well once a match has this many players.
+struct CoreGameOptionPresetExtra
+{
+    // 2 to 4. Every seated player counts, players on the same PC too.
+    int MinPlayers = 0;
+    // In pack order; none of them is among the preset's own Options.
+    std::vector<std::string> Options;
+    // What they do, in the language asked for when the pack has it, else
+    // English: the end of "With 4 players in the match, <preset> ...", or
+    // empty when the pack has none (the options' labels say it then).
+    std::string Description;
+};
+
+// A named set of a pack's options ("Vanilla Tournament").
 struct CoreGameOptionPresetInfo
 {
     // [a-z0-9-], 1 to 32 characters, like an option id.
@@ -114,6 +160,17 @@ struct CoreGameOptionPresetInfo
     // The ids of the options it turns on, in pack order: at least one, and a
     // set CoreResolveGameOptions takes.
     std::vector<std::string> Options;
+    // The share code of each stage list option among Options, from the
+    // stage list preset the pack names for it: option id -> code.
+    std::map<std::string, std::string> Lists;
+    // What it adds with more players, fewest players first. The options with
+    // every entry up to a match's player count added are a set
+    // CoreResolveGameOptions takes too. A room on the preset still shows only
+    // Options; the host's client adds these when the match starts.
+    std::vector<CoreGameOptionPresetExtra> WithPlayers;
+    // Ids the preset had before: a choice remembered by one of them is this
+    // preset now. A room's preset id is never looked up by them.
+    std::vector<std::string> Aliases;
     std::string PackId;
 };
 
@@ -133,7 +190,8 @@ std::vector<CoreGameOptionInfo> CoreGetGameOptions(const std::string& romMd5, co
 std::vector<CoreGameOptionGroupInfo> CoreGetGameOptionGroups(const std::string& romMd5, const std::string& language = std::string());
 
 // The presets the packs offer for this ROM, in pack order. Each names only
-// options CoreGetGameOptions offers, and no two have the same options. UI thread.
+// options CoreGetGameOptions offers (in WithPlayers too), and no two have the
+// same Options and Lists. UI thread.
 std::vector<CoreGameOptionPresetInfo> CoreGetGameOptionPresets(const std::string& romMd5, const std::string& language = std::string());
 
 // Resolves the chosen option ids into what a match carries, checking every
@@ -144,6 +202,12 @@ std::vector<CoreGameOptionPresetInfo> CoreGetGameOptionPresets(const std::string
 // options. UI thread.
 bool CoreResolveGameOptions(const std::filesystem::path& rom, const std::string& romMd5,
                             const std::vector<std::string>& ids, CoreNetplayGameOptions& options);
+
+// The same, with each stage list option's list: option id -> share code. An
+// option that takes a list fails without a valid one; others ignore theirs.
+bool CoreResolveGameOptions(const std::filesystem::path& rom, const std::string& romMd5,
+                            const std::vector<std::string>& ids, const std::map<std::string, std::string>& lists,
+                            CoreNetplayGameOptions& options);
 
 // Stages the game options the next synced session (rollback match, late
 // join, live replay, replay) patches its ROM with. Offline and Kaillera
