@@ -22,6 +22,11 @@ enum class CoreEmulationState
 // starts emulation with given ROM
 bool CoreStartEmulation(std::filesystem::path n64rom, std::filesystem::path n64ddrom, std::string address = "", int port = -1, int player = -1);
 
+// sets why emulation can't run, for the video extension to call while
+// CoreStartEmulation runs; it's reported ahead of CoreGetError(), which
+// the GUI thread overwrites meanwhile (e.g. the render widget's resize timer)
+void CoreSetEmulationStartError(std::string error);
+
 // stops emulation
 bool CoreStopEmulation(void);
 

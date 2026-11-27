@@ -27,7 +27,9 @@ class OGLWidget : public QWindow
     OGLWidget(QWidget *);
     ~OGLWidget(void);
 
-    void MoveContextToThread(QThread* thread);
+    // recreates the context and moves it to thread; when the context can't
+    // be created, retryFormat (if given) is tried once
+    void MoveContextToThread(QThread* thread, const QSurfaceFormat* retryFormat = nullptr);
     QOpenGLContext* GetContext();
 
     void SetHideCursor(bool hide);

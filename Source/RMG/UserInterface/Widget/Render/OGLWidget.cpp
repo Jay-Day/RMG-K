@@ -11,9 +11,28 @@
 
 #include <QGuiApplication>
 
+#include <RMG-Core/Callback.hpp>
 #include <RMG-Core/Video.hpp>
 
+#include <string>
+
 using namespace UserInterface::Widget;
+
+static std::string describeFormat(const QSurfaceFormat& format)
+{
+    const bool gles = format.renderableType() == QSurfaceFormat::OpenGLES;
+    std::string text = gles ? "OpenGL ES " : "OpenGL ";
+    text += std::to_string(format.majorVersion()) + "." + std::to_string(format.minorVersion());
+    if (!gles && format.profile() == QSurfaceFormat::CompatibilityProfile)
+    {
+        text += " compatibility profile";
+    }
+    else if (!gles && format.profile() == QSurfaceFormat::CoreProfile)
+    {
+        text += " core profile";
+    }
+    return text;
+}
 
 OGLWidget::OGLWidget(QWidget *parent)
 {
@@ -40,11 +59,21 @@ OGLWidget::~OGLWidget(void)
     this->openGLcontext->deleteLater();
 }
 
-void OGLWidget::MoveContextToThread(QThread* thread)
+void OGLWidget::MoveContextToThread(QThread* thread, const QSurfaceFormat* retryFormat)
 {
-    this->GetContext()->doneCurrent();
-    this->GetContext()->create();
-    this->GetContext()->moveToThread(thread);
+    QOpenGLContext* context = this->GetContext();
+    context->doneCurrent();
+    if (!context->create() && retryFormat != nullptr)
+    {
+        // The context asks for the default format (no profile). Before giving
+        // up, ask for exactly what the plugin set for the surface instead.
+        CoreAddCallbackMessage(CoreDebugMessageType::Warning,
+            "Couldn't create an OpenGL context with " + describeFormat(context->format()) +
+            ", retrying with " + describeFormat(*retryFormat));
+        context->setFormat(*retryFormat);
+        context->create();
+    }
+    context->moveToThread(thread);
 }
 
 QOpenGLContext* OGLWidget::GetContext()

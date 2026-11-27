@@ -76,13 +76,17 @@ void CoreCallbacks::timerEvent(QTimerEvent *event)
 {
     if (event->timerId() == this->callbackTimerId)
     {
+        // emit without the lock: the receivers can log (e.g. a Qt warning
+        // from an error dialog), which takes the lock again on this thread
+        QList<CoreCallbackMessage> messages;
         l_CallbackMessagesMutex.lock();
-        if (!l_CallbackMessages.isEmpty())
-        {
-            emit this->OnCoreDebugCallback(l_CallbackMessages);
-            l_CallbackMessages.clear();
-        }
+        messages.swap(l_CallbackMessages);
         l_CallbackMessagesMutex.unlock();
+
+        if (!messages.isEmpty())
+        {
+            emit this->OnCoreDebugCallback(messages);
+        }
     }
 }
 
