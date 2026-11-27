@@ -11,6 +11,7 @@
 
 #include <QDialog>
 #include <QList>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 
@@ -21,7 +22,6 @@ class QComboBox;
 class QLineEdit;
 class QPushButton;
 class QLabel;
-class QTimer;
 
 namespace UserInterface
 {
@@ -69,9 +69,13 @@ public:
 
     // The selected game's cover art, for the dialog's header tile.
     void setCoverPath(const QString& coverPath);
-    // Checks a set of game options against this PC's ROM when the Custom
-    // view applies it (false, with why, when the ROM can't take it).
-    void setGameOptionsCheck(std::function<bool(const QStringList& ids, QString& error)> check);
+    // Checks a set of game options (and their stage lists) against this PC's
+    // ROM when the Custom view applies it (false, with why, when the ROM
+    // can't take it).
+    void setGameOptionsCheck(
+        std::function<bool(const QStringList& ids, const QMap<QString, QString>& lists, QString& error)> check);
+    // The selected game's ROM, for the stage list editor's icons.
+    void setRomPath(const QString& romPath);
     // Rule out rooms too small for everyone on this PC.
     void setMinimumPlayers(int players);
 
@@ -112,8 +116,8 @@ private:
     void loadDefaults();
     void saveDefaults();
     void setFormEnabled(bool enabled);
-    // Game settings: the list's entries around the choice made, the choice
-    // (the entry picked before Custom... opened the Custom view), and that view.
+    // Game settings: the list's entries around the choice made, the choice,
+    // and the Custom view that Customize... opens on it.
     void fillGameSettings(const GameSettingsChoice& current);
     GameSettingsChoice gameSettingsChoice() const;
     void onGameSettingsPicked();
@@ -131,16 +135,19 @@ private:
     QPushButton* m_anyConnectionButton = nullptr;
     QPushButton* m_wiredOnlyButton = nullptr;
     ToggleSwitch* m_liveReplaySwitch = nullptr;
-    // Default, the game options packs' presets, the host's saved sets and
-    // Custom...; null for a game without a pack. The choice is its entry's
-    // data; a custom set's options are kept apart.
+    // Default, the game options packs' presets, the host's saved sets and,
+    // while it's the choice, "Custom (n)"; null for a game without a pack.
+    // The choice is its entry's data; a custom set's options are kept apart.
+    // Customize... beside it opens the Custom view.
     QComboBox*   m_gameSettingsCombo = nullptr;
+    LobbyButton* m_gameSettingsButton = nullptr;
     QString      m_gameSettingsData;
     QStringList  m_customGameOptions;
-    QTimer*      m_gameSettingsPick = nullptr;
+    QMap<QString, QString> m_customGameLists;
     bool         m_customGameSettingsOpen = false;
     QString      m_coverPath;
-    std::function<bool(const QStringList&, QString&)> m_gameOptionsCheck;
+    QString      m_romPath;
+    std::function<bool(const QStringList&, const QMap<QString, QString>&, QString&)> m_gameOptionsCheck;
     LobbyButton* m_createButton   = nullptr;
     LobbyButton* m_cancelButton   = nullptr;
     QLabel*      m_statusLabel    = nullptr;

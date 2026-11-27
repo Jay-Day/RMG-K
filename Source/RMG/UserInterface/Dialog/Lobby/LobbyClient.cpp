@@ -4513,6 +4513,12 @@ void LobbyClient::updateRoomGameOptions(const QList<LobbyGameOption>& options, c
         QJsonObject o;
         o["id"] = option.id;
         o["label"] = option.label;
+        if (!option.param.isEmpty())
+            o["param"] = option.param;
+        // The list's name; servers from before names drop it, and the room
+        // then shows how many stages it has.
+        if (!option.param.isEmpty() && !option.paramPresetId.isEmpty())
+            o["paramPreset"] = QJsonObject{ { "id", option.paramPresetId }, { "label", option.paramPresetLabel } };
         list.append(o);
     }
     QJsonObject d;
@@ -4534,7 +4540,13 @@ QList<LobbyClient::LobbyGameOption> LobbyClient::parseGameOptions(const QJsonVal
     for (const auto& v : value.toArray())
     {
         const QJsonObject o = v.toObject();
-        LobbyGameOption option{ o.value("id").toString(), o.value("label").toString() };
+        LobbyGameOption option{ o.value("id").toString(), o.value("label").toString(), o.value("param").toString() };
+        const QJsonObject name = o.value("paramPreset").toObject();
+        if (!option.param.isEmpty() && !name.value("id").toString().isEmpty() && !name.value("label").toString().isEmpty())
+        {
+            option.paramPresetId = name.value("id").toString();
+            option.paramPresetLabel = name.value("label").toString();
+        }
         if (!option.id.isEmpty())
             options.append(option);
     }

@@ -23,7 +23,6 @@
 #include <QIcon>
 #include <QPainter>
 #include <QSignalBlocker>
-#include <QTimer>
 
 #include <algorithm>
 
@@ -57,9 +56,15 @@ void CreateRoomDialog::setCoverPath(const QString& coverPath)
         m_tile->setGame(m_romName, coverPath);
 }
 
-void CreateRoomDialog::setGameOptionsCheck(std::function<bool(const QStringList&, QString&)> check)
+void CreateRoomDialog::setGameOptionsCheck(
+    std::function<bool(const QStringList&, const QMap<QString, QString>&, QString&)> check)
 {
     m_gameOptionsCheck = std::move(check);
+}
+
+void CreateRoomDialog::setRomPath(const QString& romPath)
+{
+    m_romPath = romPath;
 }
 
 void CreateRoomDialog::setMinimumPlayers(int players)
@@ -245,30 +250,35 @@ void CreateRoomDialog::buildUi(const QString& defaultUsername, const QString& de
     body->addLayout(limits);
 
     // What the game options packs offer for this game: a preset, a set saved
-    // under a name, or one made in the Custom view. The room starts with it;
-    // the room's own list changes it later.
+    // under a name, or one made in the Custom view, the same list and button
+    // as the room's. The room starts with it; the room's own list changes it later.
     const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
     if (!catalog.isEmpty())
     {
         auto* settingsBox = new QVBoxLayout;
         settingsBox->setSpacing(6);
         settingsBox->addWidget(makeFieldLabel(tr("Game settings")));
+        auto* settingsRow = new QHBoxLayout;
+        settingsRow->setSpacing(8);
         m_gameSettingsCombo = new QComboBox(this);
         m_gameSettingsCombo->setObjectName("CreateGameSettingsCombo");
         m_gameSettingsCombo->setMinimumHeight(34);
         m_gameSettingsCombo->setAccessibleName(tr("Game settings"));
         m_gameSettingsCombo->setToolTip(tr("Every player's game is changed for the match, and so is its replay. "
-                                           "Custom... turns options on one by one, and saves them under a name."));
-        settingsBox->addWidget(m_gameSettingsCombo);
+                                           "Customize... turns options on one by one, and saves them under a name."));
+        settingsRow->addWidget(m_gameSettingsCombo, 1);
+        m_gameSettingsButton = new LobbyButton(tr("Customize..."), LobbyButton::Kind::Secondary, this);
+        m_gameSettingsButton->setObjectName("CreateGameSettingsButton");
+        m_gameSettingsButton->setIconName(QStringLiteral("edit-line"));
+        m_gameSettingsButton->setButtonSize(LobbyButton::Size::Medium);
+        m_gameSettingsButton->setToolTip(tr("Turn the game's options on and off one by one, starting from the "
+                                            "settings picked in the list."));
+        settingsRow->addWidget(m_gameSettingsButton);
+        settingsBox->addLayout(settingsRow);
         body->addLayout(settingsBox);
         fillGameSettings(GameSettingsChoice());
-        // Arrow keys on the closed list pass Custom... on the way: only the
-        // entry they stop on opens it.
-        m_gameSettingsPick = new QTimer(this);
-        m_gameSettingsPick->setSingleShot(true);
-        m_gameSettingsPick->setInterval(400);
-        connect(m_gameSettingsPick, &QTimer::timeout, this, &CreateRoomDialog::openCustomGameSettings);
         connect(m_gameSettingsCombo, QOverload<int>::of(&QComboBox::activated), this, &CreateRoomDialog::onGameSettingsPicked);
+        connect(m_gameSettingsButton, &QPushButton::clicked, this, &CreateRoomDialog::openCustomGameSettings);
     }
 
     m_liveReplaySwitch = new ToggleSwitch(tr("Allow spectators"), this);
@@ -423,7 +433,10 @@ void CreateRoomDialog::setFormEnabled(bool enabled)
     m_wiredOnlyButton->setEnabled(enabled);
     m_liveReplaySwitch->setEnabled(enabled);
     if (m_gameSettingsCombo)
+    {
         m_gameSettingsCombo->setEnabled(enabled);
+        m_gameSettingsButton->setEnabled(enabled);
+    }
     m_passwordEdit->setEnabled(enabled && m_passwordButton->isChecked());
     m_createButton->setEnabled(enabled);
 }
@@ -469,7 +482,10 @@ void CreateRoomDialog::loadDefaults()
         const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
         const GameSettingsChoice choice = catalog.rememberedChoice(s, catalog.savedSets(m_romMd5));
         if (choice.Type == GameSettingsChoice::Kind::Custom)
+        {
             m_customGameOptions = choice.Options;
+            m_customGameLists = choice.Lists;
+        }
         fillGameSettings(choice);
     }
     s.endGroup();
@@ -497,8 +513,8 @@ GameSettingsChoice CreateRoomDialog::gameSettingsChoice() const
     const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
     const QList<SavedGameSettings> saved = catalog.savedSets(m_romMd5);
     // A deleted saved set is Default; a custom set saved since is that set.
-    const GameSettingsChoice choice = catalog.choiceFromData(m_gameSettingsData, saved, m_customGameOptions);
-    return catalog.choiceFor(choice.Options, saved,
+    const GameSettingsChoice choice = catalog.choiceFromData(m_gameSettingsData, saved, m_customGameOptions, m_customGameLists);
+    return catalog.choiceFor(choice.Options, choice.Lists, saved,
                              choice.Type == GameSettingsChoice::Kind::Saved ? choice.Id : QString());
 }
 
@@ -506,47 +522,44 @@ void CreateRoomDialog::onGameSettingsPicked()
 {
     if (m_customGameSettingsOpen)
         return;
-    const QString data = m_gameSettingsCombo->currentData().toString();
-    if (data == QLatin1String("custom"))
-    {
-        m_gameSettingsPick->start();
-        return;
-    }
-    m_gameSettingsPick->stop();
-    m_gameSettingsData = data;
+    // "Custom (n)" is only listed while it's the choice, so picking it again
+    // changes nothing.
+    m_gameSettingsData = m_gameSettingsCombo->currentData().toString();
     fillGameSettings(gameSettingsChoice());
 }
 
 void CreateRoomDialog::openCustomGameSettings()
 {
-    if (m_customGameSettingsOpen || m_gameSettingsCombo->currentData().toString() != QLatin1String("custom"))
+    if (m_customGameSettingsOpen)
         return;
     GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
     if (catalog.isEmpty())
         return;
-    // It starts from what was picked before: a preset, a saved set or the custom set.
-    const QStringList start = gameSettingsChoice().Options;
-    auto* dialog = new GameSettingsDialog(m_romName, std::move(catalog), start, true, CoreGameOptionsMaxOptions, this);
+    // It starts from what's picked: Default, a preset, a saved set or the custom set.
+    const GameSettingsChoice start = gameSettingsChoice();
+    auto* dialog = new GameSettingsDialog(m_romName, std::move(catalog), start.Options, start.Lists, true,
+                                          CoreGameOptionsMaxOptions, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setCoverPath(m_coverPath);
+    dialog->setRomPath(m_romPath);
     dialog->enableSavedSets(m_romMd5);
     if (m_gameOptionsCheck)
         dialog->setApplyCheck(m_gameOptionsCheck);
     m_customGameSettingsOpen = true;
     // The list follows saved sets made, renamed or deleted while it's open.
-    connect(dialog, &GameSettingsDialog::savedSetsChanged, this, [this]() {
-        fillGameSettings(gameSettingsChoice());
-        const QSignalBlocker blocker(m_gameSettingsCombo);
-        m_gameSettingsCombo->setCurrentIndex(m_gameSettingsCombo->findData(QStringLiteral("custom")));
-    });
+    connect(dialog, &GameSettingsDialog::savedSetsChanged, this, [this]() { fillGameSettings(gameSettingsChoice()); });
     connect(dialog, &QDialog::finished, this, [this, dialog](int result) {
         m_customGameSettingsOpen = false;
         if (result == QDialog::Accepted)
         {
             const GameSettingsCatalog catalog = GameSettingsCatalog::forRom(m_romMd5);
-            const GameSettingsChoice choice = catalog.choiceFor(dialog->chosen(), catalog.savedSets(m_romMd5));
+            const GameSettingsChoice choice = catalog.choiceFor(dialog->chosen(), dialog->chosenLists(),
+                                                                catalog.savedSets(m_romMd5));
             if (choice.Type == GameSettingsChoice::Kind::Custom)
+            {
                 m_customGameOptions = choice.Options;
+                m_customGameLists = choice.Lists;
+            }
             m_gameSettingsData = choice.data();
         }
         // Cancel goes back to what was picked before.

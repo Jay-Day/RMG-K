@@ -45,8 +45,8 @@
 // rebuild matched Smash_Remix_2.0.1.z64 byte for byte apart from the header
 // CRCs). Every edited word's original value is in the JSON "expect" field.
 //
-// The three stage options (vanilla-sss, stages-dream-land,
-// stages-competitive) share Random's toggles and can't be on together.
+// vanilla-sss and stage-list both set the stage select's stages and can't be
+// on together.
 
 arch n64.cpu
 endian msb

@@ -115,6 +115,19 @@ QString safeFileName(QString name)
     return name.trimmed();
 }
 
+// The same file, however each path spells it: the save folder can be relative
+// to the app's folder, and a file browsed for is absolute.
+bool sameFile(const QString& a, const QString& b)
+{
+    if (a.isEmpty() || b.isEmpty())
+        return false;
+    const QString canonicalA = QFileInfo(a).canonicalFilePath();
+    const QString canonicalB = QFileInfo(b).canonicalFilePath();
+    if (!canonicalA.isEmpty() && !canonicalB.isEmpty())
+        return canonicalA == canonicalB;
+    return QFileInfo(a).absoluteFilePath().compare(QFileInfo(b).absoluteFilePath(), Qt::CaseInsensitive) == 0;
+}
+
 QString defaultSaveFolder(const QString& gameName)
 {
     QString folder = QString::fromStdU32String(CoreGetNetplaySaveDirectory().u32string());
@@ -212,23 +225,17 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
     m_details->setFont(LobbyTheme::uiFont(12));
     m_details->setTextFormat(Qt::RichText);
     m_details->setWordWrap(true);
-    m_details->setMinimumHeight(2 * QFontMetrics(m_details->font()).lineSpacing());
+    m_details->setMinimumHeight(3 * QFontMetrics(m_details->font()).lineSpacing());
     layout->addWidget(m_details);
 
-    m_continueCheck = new ToggleSwitch(tr("Continue from where each match left off"), this);
-    m_continueCheck->setObjectName("StartingSaveContinue");
-    m_continueCheck->setToolTip(tr("When a match changes the save, the next match starts from the changed save.\n"
-                                   "Turn this off to start every match from the save picked here."));
-    m_continueCheck->setChecked(!current || current->ContinueAfterMatch);
-    layout->addWidget(m_continueCheck);
-
     // Playing on a kept netplay save: the game's saves go back into the file,
-    // or the progress is gone when the room closes.
+    // and each match starts from it as the last one left it. Off, the file
+    // stays as it is.
     m_keepFileCheck = new ToggleSwitch(tr("Keep this save file updated as the game saves"), this);
     m_keepFileCheck->setObjectName("StartingSaveKeepFile");
-    m_keepFileCheck->setToolTip(tr("Rewrites the picked file each time the game saves, so it always holds your latest progress.\n"
-                                   "Turn this off to leave the file as it is. The game then saves to memory only,\n"
-                                   "and you use Save As to keep a copy."));
+    m_keepFileCheck->setToolTip(tr("Rewrites the picked file each time the game saves, so it always holds your latest progress\n"
+                                   "and each match starts where the last one left off.\n"
+                                   "Turn this off to leave the file as it is: every match then starts from it as it is now."));
     m_keepFileWanted = !current || current->File.isEmpty() || current->KeepFileUpdated;
     layout->addWidget(m_keepFileCheck);
     root->addLayout(layout, 1);
@@ -244,8 +251,10 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(browseButton, &QPushButton::clicked, this, &StartingSaveDialog::browse);
     connect(m_list, &QListWidget::currentRowChanged, this, &StartingSaveDialog::showDetails);
-    connect(m_continueCheck, &QCheckBox::toggled, this, &StartingSaveDialog::showDetails);
-    connect(m_keepFileCheck, &QCheckBox::clicked, this, [this](bool checked) { m_keepFileWanted = checked; });
+    connect(m_keepFileCheck, &QCheckBox::clicked, this, [this](bool checked) {
+        m_keepFileWanted = checked;
+        showDetails();
+    });
     connect(m_list, &QListWidget::itemDoubleClicked, this, [this]() {
         if (m_useButton->isEnabled())
             accept();
@@ -281,12 +290,15 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
         }
     }
 
+    // The room's last match, as it ended: picked, every match carries on from
+    // the one before it.
     if (lastMatch)
     {
         Entry entry;
         entry.Title = tr("Where the last match left off");
-        entry.Detail = tr("%1 · from this room").arg(netplaySaveSummary(*lastMatch));
+        entry.Detail = tr("%1 · from this room's last match").arg(netplaySaveSummary(*lastMatch));
         entry.Data = *lastMatch;
+        entry.LastMatch = true;
         addEntry(std::move(entry), false);
     }
 
@@ -321,20 +333,43 @@ StartingSaveDialog::StartingSaveDialog(const QString& romFile, const QString& ro
     for (Entry& entry : kept)
         addEntry(std::move(entry), false);
 
-    // Reselect what the room uses now: the same bytes, or the same file.
-    // Otherwise offer the first real save, if there is one.
+    // Reselect what the room uses now, marked as such: the same entry, or for
+    // a file, the same file (it may hold newer progress by now). A file
+    // that's not listed (browsed for) is added again. Otherwise offer the
+    // first real save, if there is one.
     int select = m_entries.size() > 1 ? 1 : 0;
+    int inUse = -1;
     if (current)
     {
-        for (int i = 0; i < int(m_entries.size()); i++)
+        for (int i = 0; i < int(m_entries.size()) && inUse < 0; i++)
         {
-            if (m_entries[i].Data == current->Data &&
-                (current->File.isEmpty() || m_entries[i].File == current->File))
-            {
-                select = i;
-                break;
-            }
+            const Entry& entry = m_entries[size_t(i)];
+            const bool same = current->Source == QLatin1String("blank")   ? entry.Blank
+                            : current->Source == QLatin1String("offline") ? entry.Offline
+                            : current->Source == QLatin1String("last")    ? entry.LastMatch
+                            : sameFile(entry.File, current->File);
+            if (same)
+                inUse = i;
         }
+        if (inUse < 0 && current->Source == QLatin1String("file") && !current->File.isEmpty())
+        {
+            Entry entry;
+            entry.File = current->File;
+            entry.Data = current->Data;
+            entry.Title = current->Label;
+            entry.Native = QFileInfo(current->File).suffix().toLower() != QStringLiteral("rmgsave");
+            entry.Detail = entry.Native ? tr("emulator save file · %1").arg(netplaySaveSummary(entry.Data))
+                                        : tr("netplay save · %1").arg(netplaySaveSummary(entry.Data));
+            addEntry(std::move(entry), false);
+            inUse = int(m_entries.size()) - 1;
+        }
+    }
+    if (inUse >= 0)
+    {
+        select = inUse;
+        QListWidgetItem* item = m_list->item(inUse);
+        const Entry& entry = m_entries[size_t(inUse)];
+        item->setText(QStringLiteral("%1\n%2 · %3").arg(entry.Title, entry.Detail, tr("in use now")));
     }
     m_list->setCurrentRow(select);
 }
@@ -388,13 +423,11 @@ bool StartingSaveDialog::canKeepFile(int row) const
 void StartingSaveDialog::showDetails(void)
 {
     const int row = m_list->currentRow();
-    // Only a netplay save file is written back to, and only when matches
-    // continue from one another: otherwise each match would replace the file
-    // with a fresh start's save.
+    // Only a netplay save file is written back to: the host's offline save
+    // and emulator save files are never changed.
     const bool keepable = canKeepFile(row);
     m_keepFileCheck->setVisible(keepable);
-    m_keepFileCheck->setEnabled(keepable && m_continueCheck->isChecked());
-    m_keepFileCheck->setChecked(keepable && m_continueCheck->isChecked() && m_keepFileWanted);
+    m_keepFileCheck->setChecked(keepable && m_keepFileWanted);
     if (row < 0 || row >= int(m_entries.size()))
     {
         m_details->clear();
@@ -405,8 +438,8 @@ void StartingSaveDialog::showDetails(void)
     const Entry& entry = m_entries[size_t(row)];
     if (entry.Blank)
     {
-        m_details->setText(tr("%1 starts as on a new cartridge, with nothing saved. "
-                              "Use Save As during the match to keep what the game saves.")
+        m_details->setText(tr("%1 starts as on a new cartridge, with nothing saved, and so does every match. "
+                              "Use Save As during a match to keep what the game saves.")
                                .arg(m_gameName.toHtmlEscaped()));
         m_useButton->setEnabled(true);
         return;
@@ -436,11 +469,24 @@ void StartingSaveDialog::showDetails(void)
             .arg(warnHex(), tr("An emulator save file doesn't say which game it's from. Make sure it's for %1.")
                 .arg(m_gameName.toHtmlEscaped()));
     }
-    else
+    else if (!entry.LastMatch)
     {
         lines << QStringLiteral("<span style='color:%1;'>&#10003; %2</span>")
             .arg(okHex(), tr("Made for %1.").arg(m_gameName.toHtmlEscaped()));
     }
+
+    // What the matches start from with it, said once here rather than in a
+    // switch of its own.
+    if (entry.LastMatch)
+        lines << tr("Every match starts where the one before it left off, so the progress carries on "
+                    "from match to match.");
+    else if (entry.Offline)
+        lines << tr("Every match starts from a copy of your save. Your own save file isn't changed.");
+    else if (!entry.OtherRom && m_keepFileCheck->isChecked())
+        lines << tr("Every match starts from this file, and the game's saves are written back to it, "
+                    "so the progress carries on from match to match.");
+    else if (!entry.OtherRom)
+        lines << tr("Every match starts from this save as it is now. The file isn't changed.");
     m_details->setText(lines.join(QStringLiteral("<br>")));
     m_useButton->setEnabled(!entry.OtherRom);
 }
@@ -460,30 +506,22 @@ NetplaySaveChoice StartingSaveDialog::choice(void) const
         choice.Data = entry.Data;
         choice.Label = entry.Title;
         choice.File = entry.File;
+        choice.FromLastMatch = entry.LastMatch;
+        choice.Source = entry.Blank ? QStringLiteral("blank")
+                      : entry.Offline ? QStringLiteral("offline")
+                      : entry.LastMatch ? QStringLiteral("last")
+                                        : QStringLiteral("file");
     }
-    choice.ContinueAfterMatch = m_continueCheck->isChecked();
-    choice.KeepFileUpdated = canKeepFile(row) && choice.ContinueAfterMatch && m_keepFileCheck->isChecked();
+    choice.KeepFileUpdated = canKeepFile(row) && m_keepFileCheck->isChecked();
     return choice;
 }
 
-QString StartingSaveDialog::source(void) const
-{
-    const int row = m_list->currentRow();
-    if (row < 0 || row >= int(m_entries.size()))
-        return QString();
-    const Entry& entry = m_entries[size_t(row)];
-    return entry.Blank ? QStringLiteral("blank")
-         : entry.Offline ? QStringLiteral("offline")
-         : !entry.File.isEmpty() ? QStringLiteral("file")
-                                 : QString();
-}
-
 std::optional<NetplaySaveChoice> StartingSaveDialog::pickAgain(const QString& source, const QString& file,
-                                                               bool continueAfterMatch, bool keepFileUpdated,
+                                                               bool keepFileUpdated,
                                                                const QString& romFile, const QString& romMd5)
 {
     NetplaySaveChoice choice;
-    choice.ContinueAfterMatch = continueAfterMatch;
+    choice.Source = source;
     if (source == QLatin1String("blank"))
     {
         choice.Label = tr("Blank save");
@@ -509,7 +547,7 @@ std::optional<NetplaySaveChoice> StartingSaveDialog::pickAgain(const QString& so
         return std::nullopt;
     choice.Label = QString::fromStdString(info.Name);
     choice.File = file;
-    choice.KeepFileUpdated = keepFileUpdated && continueAfterMatch && !native;
+    choice.KeepFileUpdated = keepFileUpdated && !native;
     return choice;
 }
 

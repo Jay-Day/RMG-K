@@ -1590,7 +1590,7 @@ protected:
         painter.setRenderHint(QPainter::Antialiasing);
         QColor base = LobbyTheme::portColor(m_slot);
         if (m_muted)
-            base = LobbyTheme::mix(base, LobbyTheme::tokens().stateRoom, 0.3);
+            base = LobbyTheme::mix(base, LobbyTheme::tokens().portDim, 0.3);
         const QRectF box = QRectF(rect());
         const QPainterPath path = roundedPath(box, 12);
         QLinearGradient fill(box.topLeft(), box.bottomRight());
