@@ -28,9 +28,11 @@
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #include "KailleraUIBridge.hpp"
 #include "Dialog/Kaillera/KailleraPlaybackDialog.hpp"
+#include "StreamViewer/StreamViewerClient.hpp"
 #include "n02_client.h"
 #include "kailleraclient.h"
 #endif // NETPLAY
+#include <RMG-Core/Volume.hpp>
 #include "UserInterface/EventFilter.hpp"
 #include "Utilities/QtKeyToSdl3Key.hpp"
 #include "Utilities/QtMessageBox.hpp"
@@ -1653,7 +1655,19 @@ MainWindow::~MainWindow()
 
 bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
 {
-    this->applyAutomaticInputSelection();
+#ifdef NETPLAY
+    if (this->isStreamViewer())
+    {
+        // Watching takes no controller input, and a backend like raphnet's
+        // would take the adapter from the main window: a viewer window uses
+        // the built-in one. Its settings stay in memory.
+        CoreSettingsSetValue(SettingsID::Core_INPUT_Plugin, plugin_filename_from_type(InputPluginType::USB));
+    }
+    else
+#endif // NETPLAY
+    {
+        this->applyAutomaticInputSelection();
+    }
 
     if (!CoreApplyPluginSettings())
     {
@@ -1666,7 +1680,10 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->initializeActions();
     this->configureUI(app, showUI);
 #ifdef NETPLAY
-    this->refreshKailleraRecordingStorageStatus(true);
+    // A viewer window records nothing, so the recordings folder's warnings
+    // belong to the main window.
+    if (!this->isStreamViewer())
+        this->refreshKailleraRecordingStorageStatus(true);
     // A replay or live replay relabels its ports when a player leaves or joins
     // mid-match. Called on the playback's thread; the labels have a lock.
     n02::setPlaybackPortNamesCallback([](const char (*names)[32]) {
@@ -1679,10 +1696,15 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
 
     this->connectActionSignals();
     this->configureActions();
+#ifdef NETPLAY
+    if (this->isStreamViewer())
+        this->configureStreamViewerUI();
+#endif // NETPLAY
     this->updateActions(false, false);
 
 #ifdef UPDATER
-    this->checkForUpdates(true, false);
+    if (!this->isStreamViewer())
+        this->checkForUpdates(true, false);
 #else
     this->action_Help_Update->setVisible(false);
 #endif // UPDATER
@@ -1723,9 +1745,17 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     this->ui_AutoStartNetplayOnStartupPending =
         showUI &&
         !launchROM &&
+        !this->isStreamViewer() &&
         CoreSettingsGetBoolValue(SettingsID::GUI_AutoStartNetplayOnStartup);
     // Note: tryAutoStartNetplayOnStartup() is called from showEvent()
     // to ensure the main window is visible before opening Kaillera dialog
+
+    if (this->isStreamViewer())
+    {
+        // The controller notices are the main window's to show.
+        this->connectStreamViewer();
+        return true;
+    }
 #endif // NETPLAY
 
     this->raphnetWarningPolicy.warningShown = QString::fromStdString(
@@ -1735,6 +1765,15 @@ bool MainWindow::Init(QApplication* app, bool showUI, bool launchROM)
     inputHealthTimer->start(1000);
 
     return true;
+}
+
+bool MainWindow::isStreamViewer(void) const
+{
+#ifdef NETPLAY
+    return !this->ui_StreamViewerServer.isEmpty();
+#else
+    return false;
+#endif // NETPLAY
 }
 
 void MainWindow::OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation, int stateSlot)
@@ -1855,6 +1894,16 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     bool inEmulation = this->emulationThread->isRunning();
 
+#ifdef NETPLAY
+    // Closing a viewer window just stops watching: nothing to confirm, and
+    // nothing of the main window's to store.
+    if (this->isStreamViewer())
+    {
+        this->ui_StreamViewerClosing = true;
+        this->ui_ForceClose = true;
+    }
+#endif // NETPLAY
+
     if (this->ui_ShowUI &&
         !this->ui_ForceClose &&
         inEmulation &&
@@ -1876,14 +1925,18 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // for the ROM browser when emulation
     // isn't running (or hasn't run at all)
     if (!this->ui_QuitAfterEmulation &&
-        !inEmulation)
+        !inEmulation &&
+        !this->isStreamViewer())
     {
         this->storeGeometry();
     }
 
     // store toolbar location to settings
-    Qt::ToolBarArea toolbarArea = this->toolBarArea(this->toolBar);
-    CoreSettingsSetValue(SettingsID::GUI_ToolbarArea, this->getToolbarSettingAreaFromArea(toolbarArea));
+    if (!this->isStreamViewer())
+    {
+        Qt::ToolBarArea toolbarArea = this->toolBarArea(this->toolBar);
+        CoreSettingsSetValue(SettingsID::GUI_ToolbarArea, this->getToolbarSettingAreaFromArea(toolbarArea));
+    }
 
     // attempt to shutdown emulation
     this->ui_NoSwitchToRomBrowser = true;
@@ -2028,7 +2081,12 @@ void MainWindow::configureUI(QApplication* app, bool showUI)
 
     QString geometry = QString::fromStdString(CoreSettingsGetStringValue(SettingsID::RomBrowser_Geometry));
     bool maximized = CoreSettingsGetBoolValue(SettingsID::RomBrowser_Maximized);
-    if (maximized)
+    if (this->isStreamViewer())
+    {
+        // The saved place is the main window's; a viewer opens where the
+        // system puts new windows, and takes the game's size once it runs.
+    }
+    else if (maximized)
     {
         this->showMaximized();
     }
@@ -2401,6 +2459,11 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
 
             this->setWindowTitle(goodName + QString(" - ") + this->ui_WindowTitle);
         }
+#ifdef NETPLAY
+        // A viewer window goes by its players, in the taskbar and in capture tools.
+        if (this->isStreamViewer())
+            this->updateStreamViewerTitle();
+#endif // NETPLAY
 
         if (this->ui_VidExtRenderMode == VidExtRenderMode::OpenGL)
         {
@@ -2422,6 +2485,17 @@ void MainWindow::updateUI(bool inEmulation, bool isPaused)
 
         this->storeGeometry();
     }
+#ifdef NETPLAY
+    else if (this->isStreamViewer())
+    {
+        // No ROM browser here: the page saying how the stream stands.
+        this->updateStreamViewerTitle();
+        if (this->ui_StreamViewerPage != nullptr)
+            this->ui_Widgets->setCurrentWidget(this->ui_StreamViewerPage);
+        this->loadGeometry();
+        this->ui_NoSwitchToRomBrowser = false;
+    }
+#endif // NETPLAY
     else if (!this->ui_NoSwitchToRomBrowser)
     {
         this->setWindowTitle(this->ui_WindowTitle);
@@ -2626,7 +2700,10 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
         return;
     }
 
-    const bool startInFullscreen = this->ui_LaunchInFullscreen || CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen);
+    // Viewer windows sit beside each other, so they don't take the screen
+    // on their own.
+    const bool startInFullscreen = this->ui_LaunchInFullscreen ||
+        (CoreSettingsGetBoolValue(SettingsID::GUI_AutomaticFullscreen) && !this->isStreamViewer());
 #ifdef _WIN32
     const bool useNativeFullscreenStartup = startInFullscreen &&
         CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen) &&
@@ -2692,7 +2769,7 @@ void MainWindow::launchEmulationThread(QString cartRom, QString diskRom, bool re
     this->ui_ExclusiveFullscreen = CoreSettingsGetBoolValue(SettingsID::GUI_ExclusiveFullscreen);
 #endif
 
-    if (this->ui_ShowUI)
+    if (this->ui_ShowUI && !this->isStreamViewer())
     {
         this->ui_ShowToolbar = CoreSettingsGetBoolValue(SettingsID::GUI_Toolbar);
         this->ui_ShowStatusbar = CoreSettingsGetBoolValue(SettingsID::GUI_StatusBar);
@@ -3540,13 +3617,14 @@ void MainWindow::timerEvent(QTimerEvent *event)
                                   std::string(barW - filled, '-') + "]  " +
                                   std::to_string(static_cast<int>(seconds + 0.5)) + "/" +
                                   std::to_string(targetSeconds) + "s";
-                this->setWindowTitle(QString::fromStdString(msg));
+                this->showSpectateProgress(QString::fromStdString(msg));
+                this->reportSpectateState(StreamViewer::State::CatchingUp);
                 return;
             }
             if (this->ui_SpectateBuffering)
             {
                 this->ui_SpectateBuffering = false;
-                this->setWindowTitle(this->ui_SpectateSavedTitle);
+                this->clearSpectateProgress();
             }
 
             // Fast-forward while there's buffered krec ahead of us, then settle near
@@ -3583,7 +3661,7 @@ void MainWindow::timerEvent(QTimerEvent *event)
                 // Reached the settle point — restore the title; the core already
                 // resumed rendering at realtime, so the next presented frame is live.
                 OnScreenDisplaySetCenterMessage("");
-                this->setWindowTitle(this->ui_SpectateSavedTitle);
+                this->clearSpectateProgress();
                 this->ui_SpectateFastForward = false;
                 this->ui_SpectateBannerPending = false;
             }
@@ -3630,8 +3708,10 @@ void MainWindow::timerEvent(QTimerEvent *event)
                     msg += "  ~" + std::to_string(etaSec) + "s";
                 }
                 // Bar goes in the title (UI thread) so it updates even with zero presents.
-                this->setWindowTitle(QString::fromStdString(msg));
+                this->showSpectateProgress(QString::fromStdString(msg));
             }
+            this->reportSpectateState(this->ui_SpectateFastForward ? StreamViewer::State::CatchingUp
+                                                                   : StreamViewer::State::Live);
         }
     }
 #endif // NETPLAY
@@ -4395,23 +4475,20 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QStr
     }
     if (this->emulationThread->isRunning())
     {
-        this->showErrorMessage("Busy", "Stop the current game before watching a live replay.");
-        if (this->rollbackLobbyDialog != nullptr)
-            this->rollbackLobbyDialog->stopSpectating();
+        this->reportSpectateError("Busy", "Stop the current game before watching a live replay.");
+        this->reportSpectateStopped();
         return;
     }
     if (this->kailleraSessionManager != nullptr)
     {
-        this->showErrorMessage("Busy", "Close the current netplay window before watching a live replay.");
-        if (this->rollbackLobbyDialog != nullptr)
-            this->rollbackLobbyDialog->stopSpectating();
+        this->reportSpectateError("Busy", "Close the current netplay window before watching a live replay.");
+        this->reportSpectateStopped();
         return;
     }
     if (!CoreInitKaillera())
     {
-        this->showErrorMessage("Live Replay Error", QString::fromStdString(CoreGetError()));
-        if (this->rollbackLobbyDialog != nullptr)
-            this->rollbackLobbyDialog->stopSpectating();
+        this->reportSpectateError("Live Replay Error", QString::fromStdString(CoreGetError()));
+        this->reportSpectateStopped();
         return;
     }
     this->ensureKailleraSessionManager();
@@ -4426,6 +4503,8 @@ void MainWindow::on_Lobby_SpectateLaunch(quint64 matchId, QString gameName, QStr
     this->ui_SpectateLiveFrame = 0; // updated from broadcaster-stamped SPECTATE_DATA
     this->ui_SpectateNamesShown = false; // set once the krec header arrives
     this->ui_SpectateExpectedOffset = 0;
+    this->ui_SpectateReportedState = -1;
+    this->reportSpectateState(StreamViewer::State::Connecting);
     CoreClearSpectateKeyframe(); // drop any stale keyframe from a previous spectate
 
     // ~60 Hz: drive the playback state machine + fast-forward.
@@ -4452,7 +4531,7 @@ void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 o
             .arg(this->ui_SpectateExpectedOffset)
             .arg(offset);
         this->stopLobbySpectate();
-        this->showErrorMessage(QStringLiteral("Live Replay Error"), reason);
+        this->reportSpectateError(QStringLiteral("Live Replay Error"), reason);
         return;
     }
     // Track the broadcaster's live edge (monotonic) — the fast-forward target.
@@ -4461,7 +4540,7 @@ void MainWindow::on_Lobby_SpectateData(QByteArray bytes, int liveFrame, qint64 o
     if (!n02::playbackAppendBytes(bytes.constData(), static_cast<int>(bytes.size())))
     {
         this->stopLobbySpectate();
-        this->showErrorMessage(QStringLiteral("Live Replay Error"),
+        this->reportSpectateError(QStringLiteral("Live Replay Error"),
             QStringLiteral("The live replay sent data that can't be played. Playback was stopped."));
         return;
     }
@@ -4523,7 +4602,7 @@ void MainWindow::stopLobbySpectate()
         this->ui_SpectateTimerId = 0;
     }
     if (this->ui_SpectateFastForward || this->ui_SpectateBuffering)
-        this->setWindowTitle(this->ui_SpectateSavedTitle);
+        this->clearSpectateProgress();
     this->ui_SpectateFastForward = false;
     this->ui_SpectateBuffering = false;
     this->ui_SpectateBannerPending = false;
@@ -4541,9 +4620,81 @@ void MainWindow::stopLobbySpectate()
         this->cleanupLobbySpectateSession();
     }
     // Tell the lobby to drop us from the broadcast (idempotent if already done).
-    if (this->rollbackLobbyDialog != nullptr)
+    this->reportSpectateStopped();
+}
+
+void MainWindow::reportSpectateState(StreamViewer::State state)
+{
+    if (static_cast<int>(state) == this->ui_SpectateReportedState)
+        return;
+    this->ui_SpectateReportedState = static_cast<int>(state);
+    if (this->ui_StreamViewer != nullptr)
+        this->ui_StreamViewer->sendState(state);
+    else if (this->rollbackLobbyDialog != nullptr)
+        this->rollbackLobbyDialog->setMainStreamState(state);
+}
+
+void MainWindow::reportSpectateStopped()
+{
+    if (this->ui_StreamViewer == nullptr)
     {
-        this->rollbackLobbyDialog->stopSpectating();
+        if (this->rollbackLobbyDialog != nullptr)
+            this->rollbackLobbyDialog->stopSpectating();
+        return;
+    }
+    // The stream ran out. An error that stopped it says so right after this,
+    // and closes the window itself; give it that turn before saying it ended.
+    QTimer::singleShot(0, this, [this]() {
+        if (!this->ui_StreamViewerClosing)
+            this->closeStreamViewer(tr("The live replay ended."));
+    });
+}
+
+void MainWindow::reportSpectateError(const QString& title, const QString& text)
+{
+    if (this->ui_StreamViewer == nullptr)
+    {
+        this->showErrorMessage(title, text);
+        return;
+    }
+    // The lobby shows it once, rather than a box in each window.
+    this->ui_StreamViewer->sendFailed(text);
+    this->closeStreamViewer();
+}
+
+void MainWindow::showSpectateProgress(const QString& text)
+{
+    if (this->ui_StreamViewerStatus != nullptr)
+        this->ui_StreamViewerStatus->setText(text);
+    else
+        this->setWindowTitle(text);
+}
+
+void MainWindow::clearSpectateProgress()
+{
+    if (this->ui_StreamViewerStatus != nullptr)
+        this->ui_StreamViewerStatus->clear();
+    else
+        this->setWindowTitle(this->ui_SpectateSavedTitle);
+}
+
+void MainWindow::reportSpectateMuted()
+{
+    if (!CoreIsEmulationRunning())
+        return;
+    const bool muted = CoreIsVolumeMuted();
+    if (this->ui_StreamViewer != nullptr)
+    {
+        if (this->ui_StreamViewerMuted != muted)
+        {
+            this->ui_StreamViewerMuted = muted;
+            this->updateStreamViewerTitle();
+        }
+        this->ui_StreamViewer->sendMuted(muted);
+    }
+    else if (this->rollbackLobbyDialog != nullptr)
+    {
+        this->rollbackLobbyDialog->setMainStreamMuted(muted);
     }
 }
 
@@ -5037,6 +5188,19 @@ void MainWindow::ensureRollbackLobbyDialog()
             this, &MainWindow::on_Lobby_LiveReplayViewerCountChanged);
     connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::liveReplayViewerCountCleared,
             this, []() { OnScreenDisplaySetLiveReplayStatus(""); });
+    // The Watching strip's entry for this window's live replay.
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::mainStreamMuteToggleRequested,
+            this, [this]() {
+                if (this->ui_SpectateActive && CoreIsEmulationRunning())
+                    this->on_Action_Audio_ToggleVolumeMute();
+            });
+    connect(this->rollbackLobbyDialog, &Dialog::RollbackLobbyDialog::mainStreamWindowRequested,
+            this, [this]() {
+                if (this->isMinimized())
+                    this->setWindowState(this->windowState() & ~Qt::WindowMinimized);
+                this->raise();
+                this->activateWindow();
+            });
     // Late join notices for the running game. Someone joining and leaving the
     // room over and over sends one after another; the lobby's chat keeps them
     // all, so the overlay shows at most one every few seconds.
@@ -5091,8 +5255,12 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
         : this->findRomByName(gameName);
     if (romFile.isEmpty())
     {
-        this->showErrorMessage("ROM Not Found",
-            "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
+        const QString notFound = "Could not find ROM: " + gameName +
+                                 "\n\nPlease add it to your ROM directory and refresh the list.";
+        if (this->ui_SpectateActive)
+            this->reportSpectateError("ROM Not Found", notFound);
+        else
+            this->showErrorMessage("ROM Not Found", notFound);
         // Just end the Kaillera game - full cleanup happens when dialog closes
         CoreEndKailleraGame();
         // A spectate session can't proceed without the ROM — tear it down so its
@@ -5116,6 +5284,11 @@ void MainWindow::on_Kaillera_GameStarted(QString gameName, int playerNum, int to
             timeout -= 10;
         }
     }
+
+    // A Kaillera game of this PC's own (not a replay or a live replay) closes
+    // the viewer windows, as a lobby match does.
+    if (!this->ui_SpectateActive && !CoreIsKailleraPlaybackMode() && this->rollbackLobbyDialog != nullptr)
+        this->rollbackLobbyDialog->ownGameStarting();
 
     this->emulationThread->SetNetplay("KAILLERA", 0, playerNum); // "KAILLERA" is the marker
     OnScreenDisplaySetKailleraPortLabels(totalPlayers, GetLiveKailleraPortLabelNames());
@@ -5151,6 +5324,11 @@ void MainWindow::on_Rollback_SessionRequested(QString gameName, QString remoteAd
             "Could not find ROM: " + gameName + "\n\nPlease add it to your ROM directory and refresh the list.");
         return;
     }
+
+    // A direct rollback session is a game of this PC's own: the viewer
+    // windows close, as for a lobby match.
+    if (this->rollbackLobbyDialog != nullptr)
+        this->rollbackLobbyDialog->ownGameStarting();
 
     if (this->emulationThread->isRunning())
     {
@@ -5523,8 +5701,13 @@ bool MainWindow::handleNetplayChatKeyPress(QKeyEvent *event)
                 {
                     // Live replay viewers chat only among themselves; the
                     // match's players never see it. The server echoes our own
-                    // line back, so no local echo here either.
-                    if (this->rollbackLobbyDialog != nullptr)
+                    // line back, so no local echo here either. A viewer
+                    // window's line goes out on the main window's connection.
+                    if (this->ui_StreamViewer != nullptr)
+                    {
+                        this->ui_StreamViewer->sendChat(normalizedMessage);
+                    }
+                    else if (this->rollbackLobbyDialog != nullptr)
                     {
                         this->rollbackLobbyDialog->sendSpectatorChat(normalizedMessage);
                     }
@@ -6041,6 +6224,15 @@ void MainWindow::on_Emulation_Finished(bool ret, QString error)
     // after switching back to the ROM browser
     if (!ret)
     {
+#ifdef NETPLAY
+        if (this->ui_StreamViewer != nullptr)
+        {
+            // Told once in the lobby, like any other reason watching stopped.
+            this->ui_StreamViewer->sendFailed(error);
+            this->closeStreamViewer();
+            return;
+        }
+#endif // NETPLAY
         this->showErrorMessage("EmulationThread::run Failed", error);
     }
 }
@@ -6601,6 +6793,15 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             else if (value == (int)CoreEmulationState::Running)
             {
                 OnScreenDisplayResume();
+#ifdef NETPLAY
+                // The audio plugin is up now: a viewer window that opened
+                // muted mutes it, and the lobby hears how a stream sounds.
+                if (this->ui_SpectateActive)
+                {
+                    this->applyStreamViewerMute();
+                    this->reportSpectateMuted();
+                }
+#endif // NETPLAY
             }
 
             if (value == static_cast<int>(CoreEmulationState::Paused))
@@ -6654,6 +6855,10 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             {
                 OnScreenDisplaySetMessage(tr("Volume muted").toStdString());
             }
+#ifdef NETPLAY
+            if (this->ui_SpectateActive)
+                this->reportSpectateMuted();
+#endif // NETPLAY
         } break;
         case CoreStateCallbackType::SaveStateLoaded:
         {
@@ -6664,7 +6869,7 @@ void MainWindow::on_Core_StateCallback(CoreStateCallbackType type, int value)
             if (this->ui_SpectateActive && value == 0)
             {
                 this->stopLobbySpectate();
-                this->showErrorMessage(tr("Live Replay Error"),
+                this->reportSpectateError(tr("Live Replay Error"),
                     tr("Couldn't load the live replay's saved state, so watching stopped. "
                        "Your ROM or RMG-K version is probably different from the players'."));
                 break;

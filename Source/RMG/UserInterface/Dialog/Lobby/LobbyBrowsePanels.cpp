@@ -275,7 +275,8 @@ public:
 
 signals:
     void watchRequested(quint64 roomId);
-    void stopWatchingRequested();
+    void watchInWindowRequested(quint64 roomId);
+    void stopWatchingRequested(quint64 roomId);
     void joinRequested(quint64 roomId);
     void contextMenuRequested(quint64 roomId, const QPoint& globalPos);
     void playerMenuRequested(const QString& name, const QPoint& globalPos);
@@ -286,10 +287,33 @@ protected:
         return m_view.matchId != 0 && m_view.hasRom && !m_view.inRoom && !m_view.watching;
     }
 
+    // A window of its own can open from inside a room, or beside a game.
+    bool canWatchInWindow() const
+    {
+        return m_view.matchId != 0 && m_view.hasRom;
+    }
+
+    // The main window shows a live replay, this one or another.
+    bool watchingHere() const
+    {
+        return (m_view.watching && !m_view.watchingInWindow) || m_view.watchingOther;
+    }
+
     bool canJoin() const
     {
         return m_view.openSeats > 0 && m_view.openSeats >= m_view.seatsNeeded && m_view.hasRom && !m_view.inRoom &&
-               !m_view.watching && !m_view.watchingOther;
+               !watchingHere();
+    }
+
+    // The button beside Watch that opens the match in a window of its own.
+    void applyWindowButton(IconButton* button) const
+    {
+        button->setVisible(canWatchInWindow());
+        button->setToolTip(m_view.watchingInWindow
+            ? tr("Bring its window to the front")
+            : tr("Watch in a new window (Ctrl+double-click)"));
+        // An icon alone says nothing to a screen reader.
+        button->setAccessibleName(button->toolTip());
     }
 
     // The watch button's face for this match's state, shared so the row and the
@@ -318,7 +342,8 @@ protected:
         {
             button->setText(tr("Stop"));
             button->setIconName(QStringLiteral("stop-fill"));
-            button->setToolTip(tr("Stop watching this match."));
+            button->setToolTip(m_view.watchingInWindow ? tr("Stop watching this match and close its window.")
+                                                       : tr("Stop watching this match."));
         }
         else if (m_view.inRoom)
         {
@@ -358,7 +383,7 @@ protected:
     void onWatchClicked()
     {
         if (m_view.watching)
-            emit stopWatchingRequested();
+            emit stopWatchingRequested(m_view.roomId);
         else
             emit watchRequested(m_view.roomId);
     }
@@ -380,8 +405,36 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent* event) override
     {
-        if (event->button() == Qt::LeftButton && canWatch())
+        if (event->button() != Qt::LeftButton)
+            return;
+        // Ctrl opens a window of its own. A match already being watched
+        // brings its window forward, wherever that is.
+        if ((event->modifiers() & Qt::ControlModifier) && canWatchInWindow())
+            emit watchInWindowRequested(m_view.roomId);
+        else if (canWatch() || (m_view.watching && canWatchInWindow()))
             emit watchRequested(m_view.roomId);
+    }
+
+    // Taken, so the release that opens the window comes here too.
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::MiddleButton)
+        {
+            event->accept();
+            return;
+        }
+        QFrame::mousePressEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::MiddleButton && canWatchInWindow() &&
+            rect().contains(event->position().toPoint()))
+        {
+            emit watchInWindowRequested(m_view.roomId);
+            return;
+        }
+        QFrame::mouseReleaseEvent(event);
     }
 
     void contextMenuEvent(QContextMenuEvent* event) override
@@ -484,6 +537,13 @@ public:
         m_watch->setButtonSize(LobbyButton::Size::Small);
         m_watch->setMinimumWidth(widestWatchFace(m_watch));
         actions->addWidget(m_watch);
+        m_watchWindow = new IconButton(QStringLiteral("external-link-line"), 22, this);
+        m_watchWindow->setObjectName("MatchWatchWindowButton");
+        // Kept in the layout while hidden, so the columns still line up.
+        QSizePolicy windowPolicy = m_watchWindow->sizePolicy();
+        windowPolicy.setRetainSizeWhenHidden(true);
+        m_watchWindow->setSizePolicy(windowPolicy);
+        actions->addWidget(m_watchWindow);
         m_more = new IconButton(QStringLiteral("arrow-right-s-line"), 22, this);
         m_more->setObjectName("MatchMoreButton");
         m_more->setToolTip(tr("Show details"));
@@ -530,6 +590,10 @@ public:
             button->setVisible(false);
             gameLine->addWidget(button);
         }
+        m_hoverWatchWindow = new IconButton(QStringLiteral("external-link-line"), 22, m_compactGameBox);
+        m_hoverWatchWindow->setObjectName("MatchHoverWatchWindowButton");
+        m_hoverWatchWindow->setVisible(false);
+        gameLine->addWidget(m_hoverWatchWindow);
         m_compactSeats = new ElidedLabel(Role::Ok, m_compactGameBox);
         m_compactSeats->setFont(LobbyTheme::uiFont(11, QFont::DemiBold));
         m_compactSeats->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
@@ -605,8 +669,10 @@ public:
         m_details->setVisible(false);
 
         connect(m_watch, &QPushButton::clicked, this, [this]() { onWatchClicked(); });
+        connect(m_watchWindow, &QToolButton::clicked, this, [this]() { emit watchInWindowRequested(m_view.roomId); });
         connect(m_join, &QPushButton::clicked, this, [this]() { emit joinRequested(m_view.roomId); });
         connect(m_hoverWatch, &QPushButton::clicked, m_watch, &QPushButton::click);
+        connect(m_hoverWatchWindow, &QToolButton::clicked, m_watchWindow, &QToolButton::click);
         connect(m_hoverJoin, &QPushButton::clicked, m_join, &QPushButton::click);
         connect(m_more, &QToolButton::clicked, this, [this]() { emit toggled(m_view.roomId); });
         connect(m_compactMore, &QToolButton::clicked, this, [this]() { emit toggled(m_view.roomId); });
@@ -640,6 +706,9 @@ public:
         updateDuration();
 
         applyWatchButton(m_watch);
+        applyWindowButton(m_watchWindow);
+        m_hoverWatchWindow->setToolTip(m_watchWindow->toolTip());
+        m_hoverWatchWindow->setAccessibleName(m_watchWindow->toolTip());
         m_join->setVisible(joinable);
         applyDim();
 
@@ -768,7 +837,9 @@ protected:
     // The minimal list opens a row only from its chevron.
     void mousePressEvent(QMouseEvent* event) override
     {
-        if (event->button() == Qt::LeftButton && !m_minimal)
+        if (event->button() == Qt::MiddleButton)
+            LiveMatchBase::mousePressEvent(event);
+        else if (event->button() == Qt::LeftButton && !m_minimal)
             emit toggled(m_view.roomId);
     }
 
@@ -834,6 +905,7 @@ private:
         const bool hovered = m_minimal && !m_expanded && underMouse();
         const bool watch = !m_watch->isHidden() && m_watch->isEnabled();
         m_hoverWatch->setVisible(hovered && watch);
+        m_hoverWatchWindow->setVisible(hovered && canWatchInWindow());
         m_hoverJoin->setVisible(hovered && !watch && canJoin());
     }
 
@@ -854,6 +926,7 @@ private:
     ElidedLabel* m_viewers = nullptr;
     LobbyButton* m_join = nullptr;
     LobbyButton* m_watch = nullptr;
+    IconButton* m_watchWindow = nullptr;
     IconButton* m_more = nullptr;
     QWidget* m_details = nullptr;
     DetailLine m_lines[4];
@@ -866,6 +939,7 @@ private:
     ElidedLabel* m_compactGame = nullptr;
     LobbyButton* m_hoverJoin = nullptr;
     LobbyButton* m_hoverWatch = nullptr;
+    IconButton* m_hoverWatchWindow = nullptr;
     ElidedLabel* m_compactSeats = nullptr;
     QWidget* m_compactMeta = nullptr;
     QLabel* m_compactTime = nullptr;
@@ -931,10 +1005,18 @@ public:
         m_watch = new LobbyButton(tr("Watch"), LobbyButton::Kind::Secondary, this);
         m_watch->setObjectName("MatchWatchButton");
         m_watch->setButtonSize(LobbyButton::Size::Medium);
-        right->addWidget(m_watch, 0, Qt::AlignRight);
+        m_watchWindow = new IconButton(QStringLiteral("external-link-line"), 28, this);
+        m_watchWindow->setObjectName("MatchWatchWindowButton");
+        auto* buttons = new QHBoxLayout;
+        buttons->setSpacing(6);
+        buttons->addStretch(1);
+        buttons->addWidget(m_watchWindow);
+        buttons->addWidget(m_watch);
+        right->addLayout(buttons);
         outer->addLayout(right);
 
         connect(m_watch, &QPushButton::clicked, this, [this]() { onWatchClicked(); });
+        connect(m_watchWindow, &QToolButton::clicked, this, [this]() { emit watchInWindowRequested(m_view.roomId); });
     }
 
     void apply(const LiveMatchView& view) override
@@ -954,6 +1036,7 @@ public:
         m_viewers->setText(tr("%1 watching").arg(view.viewers));
         updateDuration();
         applyWatchButton(m_watch);
+        applyWindowButton(m_watchWindow);
     }
 
     void updateDuration() override
@@ -1004,6 +1087,7 @@ private:
     QLabel* m_viewers = nullptr;
     QLabel* m_time = nullptr;
     LobbyButton* m_watch = nullptr;
+    IconButton* m_watchWindow = nullptr;
 };
 
 // ── LiveGallery ──────────────────────────────────────────────────────
@@ -1133,6 +1217,7 @@ LiveGallery::LiveGallery(QWidget* parent)
 void LiveGallery::connectMatch(LiveMatchBase* match)
 {
     connect(match, &LiveMatchBase::watchRequested, this, &LiveGallery::watchRequested);
+    connect(match, &LiveMatchBase::watchInWindowRequested, this, &LiveGallery::watchInWindowRequested);
     connect(match, &LiveMatchBase::stopWatchingRequested, this, &LiveGallery::stopWatchingRequested);
     connect(match, &LiveMatchBase::joinRequested, this, &LiveGallery::joinRequested);
     connect(match, &LiveMatchBase::contextMenuRequested, this, &LiveGallery::contextMenuRequested);

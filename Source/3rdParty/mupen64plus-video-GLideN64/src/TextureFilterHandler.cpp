@@ -1,4 +1,5 @@
 #include <stdarg.h>
+#include <stdlib.h>
 #include <osal_files.h>
 #include "GLideNHQ/TxFilterExport.h"
 #include <Graphics/Context.h>
@@ -67,6 +68,11 @@ u32 TextureFilterHandler::_getConfigOptions() const
 		options |= FILE_HIRESTEXCACHE;
 	if (config.textureFilter.txNoTextureFileStorage)
 		options |= FILE_NOTEXCACHE;
+	// RMG-K: a live replay viewer window writes no texture caches or dumps;
+	// those folders belong to the main window. Caches stay in memory.
+	const char * readOnly = getenv("RMGK_READ_ONLY_USER_FILES");
+	if (readOnly != nullptr && readOnly[0] != '\0' && readOnly[0] != '0')
+		options &= ~(DUMP_TEXCACHE | DUMP_HIRESTEXCACHE | DUMP_TEX | FILE_TEXCACHE | FILE_HIRESTEXCACHE);
 	return options;
 }
 

@@ -28,6 +28,7 @@
 #include "Dialog/Netplay/NetplaySessionDialog.hpp"
 #include "Dialog/Lobby/RollbackLobbyDialog.hpp"
 #include "KailleraSessionManager.hpp"
+#include "StreamViewer/StreamViewerProtocol.hpp"
 #endif // NETPLAY
 #include "Dialog/LogDialog.hpp"
 
@@ -54,6 +55,10 @@ class QTimer;
 
 namespace UserInterface
 {
+#ifdef NETPLAY
+class StreamViewerClient;
+#endif // NETPLAY
+
 class MainWindow : public QMainWindow, private Ui::MainWindow
 {
     Q_OBJECT
@@ -66,6 +71,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     void OpenROM(QString file, QString disk, bool fullscreen, bool quitAfterEmulation, int stateSlot);
 #ifdef NETPLAY
     QString ResolveKailleraRomByName(QString gameName);
+    // Makes this a live replay viewer window (--stream-viewer): it plays the
+    // one stream the main window sends down the named pipe, with a window
+    // stripped to watching. Call before Init.
+    void SetStreamViewer(const QString& serverName, const QByteArray& token);
 #endif
 
   private:
@@ -215,6 +224,8 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     int     ui_SpectateRateLastBehind = 0;  // "behind" at the last rate sample
     qint64  ui_SpectateRateLastMs     = 0;  // wall-clock of the last rate sample
     QString ui_SpectateSavedTitle;          // window title to restore after catch-up (bar lives in the title while headless)
+    // What the lobby's Watching strip was last told about this stream.
+    int     ui_SpectateReportedState = -1;
     // Lazily creates rollbackLobbyDialog and wires its signals (once).
     void ensureRollbackLobbyDialog();
     // Creates the KailleraSessionManager + callback wiring if absent. Shared by
@@ -223,6 +234,43 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     // Lobby spectate lifecycle.
     void stopLobbySpectate();
     void cleanupLobbySpectateSession();
+    // Where a live replay comes from: the lobby window, or (in a viewer
+    // window) the main window's pipe. These tell it what the shared playback
+    // code above did.
+    void reportSpectateState(StreamViewer::State state);
+    void reportSpectateStopped();
+    void reportSpectateError(const QString& title, const QString& text);
+    // The catch-up bar: the main window writes it in its title (the overlay
+    // can't draw while the game runs headless); a viewer window keeps its
+    // title, which the taskbar and capture tools know it by.
+    void showSpectateProgress(const QString& text);
+    void clearSpectateProgress();
+    // The main window's watch's sound, for the lobby's Watching strip.
+    void reportSpectateMuted();
+
+    // ── Live replay viewer window (MainWindowStreamViewer.cpp) ──
+    StreamViewerClient* ui_StreamViewer = nullptr; // set in a viewer window only
+    QString ui_StreamViewerServer;
+    QByteArray ui_StreamViewerToken;
+    QString ui_StreamViewerTitle;
+    // A sound state asked for before the game ran (the main window's start
+    // muted, or the switch); the game takes it once its audio is up.
+    bool    ui_StreamViewerMutePending = false;
+    bool    ui_StreamViewerMuted = false;       // what the Mute button says
+    bool    ui_StreamViewerClosing = false;
+    QLabel* ui_StreamViewerPage = nullptr;   // what shows before the game, and after it
+    QLabel* ui_StreamViewerStatus = nullptr; // the toolbar's catch-up progress
+    QAction* action_StreamViewer_Mute = nullptr;
+    QAction* action_StreamViewer_Close = nullptr;
+    void configureStreamViewerUI(void);
+    void connectStreamViewer(void);
+    void showStreamViewerPage(const QString& text);
+    void updateStreamViewerTitle(void);
+    void applyStreamViewerMute(void);
+    void setStreamViewerMuted(bool muted);
+    void raiseStreamViewer(void);
+    // Ends the window: now, or after showing why for a moment.
+    void closeStreamViewer(const QString& message = QString());
     struct PendingLocalChatEcho
     {
         QString message;
@@ -230,6 +278,10 @@ class MainWindow : public QMainWindow, private Ui::MainWindow
     };
     std::deque<PendingLocalChatEcho> ui_PendingLocalChatEchoes;
 #endif // NETPLAY
+
+    // A live replay viewer window (see SetStreamViewer); always false
+    // without netplay.
+    bool isStreamViewer(void) const;
 
     // Opens the Kaillera launcher; initialTab >= 0 jumps to that tab
     // (0=Server delay, 1=Peer to Peer), -1 uses the persisted last tab.

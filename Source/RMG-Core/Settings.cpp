@@ -15,6 +15,7 @@
 #include "Version.hpp"
 #include "String.hpp"
 #include "Error.hpp"
+#include "Core.hpp"
 
 #include "m64p/Api.hpp"
 #include "m64p/api/m64p_types.h"
@@ -2069,6 +2070,13 @@ CORE_EXPORT bool CoreSettingsSave(void)
     if (!m64p::Config.IsHooked())
     {
         return false;
+    }
+
+    // A viewer window keeps its changes in memory; the file is the main
+    // window's. (The core would skip the write too.)
+    if (CoreUserFilesReadOnly())
+    {
+        return true;
     }
 
     ret = m64p::Config.SaveFile();

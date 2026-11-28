@@ -11,6 +11,7 @@
 #include <Utilities/Translation.hpp>
 #if defined(NETPLAY)
 #include <Utilities/KailleraExport/KrecMp4Export.hpp>
+#include <UserInterface/StreamViewer/StreamViewerProtocol.hpp>
 #endif
 
 #include <QCommandLineParser>
@@ -256,6 +257,13 @@ int main(int argc, char **argv)
     exportChatOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportLabelPortsOption.setFlags(QCommandLineOption::HiddenFromHelp);
     exportVerboseOption.setFlags(QCommandLineOption::HiddenFromHelp);
+#if defined(NETPLAY)
+    // A live replay viewer window, started by the main window's lobby.
+    QCommandLineOption streamViewerOption(StreamViewer::kServerOption, "Internal live replay viewer mode: local server name", "name");
+    QCommandLineOption streamTokenOption(StreamViewer::kTokenOption, "Internal live replay viewer mode: stream token", "token");
+    streamViewerOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    streamTokenOption.setFlags(QCommandLineOption::HiddenFromHelp);
+#endif
 
 #ifndef PORTABLE_INSTALL
     parser.addOption(libPathOption);
@@ -278,6 +286,10 @@ int main(int argc, char **argv)
     parser.addOption(exportChatOption);
     parser.addOption(exportLabelPortsOption);
     parser.addOption(exportVerboseOption);
+#if defined(NETPLAY)
+    parser.addOption(streamViewerOption);
+    parser.addOption(streamTokenOption);
+#endif
     parser.addPositionalArgument("ROM", "ROM to open");
 
     // parse arguments
@@ -317,6 +329,18 @@ int main(int argc, char **argv)
 #endif
     }
 
+#if defined(NETPLAY)
+    const bool streamViewer = parser.isSet(streamViewerOption);
+    if (streamViewer)
+    {
+        // It shares the main window's config and caches, and writes none of
+        // them; set before the core reads (or would write) anything.
+        CoreSetUserFilesReadOnly();
+    }
+#else
+    const bool streamViewer = false;
+#endif
+
     if (!CoreInit())
     {
         std::cerr << "CoreInit() Failed: " << CoreGetError() << std::endl;
@@ -341,8 +365,16 @@ int main(int argc, char **argv)
         CoreAddCallbackMessage(CoreDebugMessageType::Info,
                 "Initializing on " + QGuiApplication::platformName().toStdString());
 
-        // initialize window
-        if (window.Init(&app, !parser.isSet(noGuiOption), !args.empty()))
+#if defined(NETPLAY)
+        if (streamViewer)
+        {
+            window.SetStreamViewer(parser.value(streamViewerOption), parser.value(streamTokenOption).toLatin1());
+            args.clear();
+        }
+#endif
+
+        // initialize window (a viewer window lists no ROMs)
+        if (window.Init(&app, !parser.isSet(noGuiOption), !args.empty() || streamViewer))
         {
             windowInitialized = true;
 
@@ -366,7 +398,8 @@ int main(int argc, char **argv)
         }
     }
 
-    if (windowInitialized)
+    // A viewer window's settings were never its own to keep.
+    if (windowInitialized && !streamViewer)
     {
         CoreSettingsSave();
     }

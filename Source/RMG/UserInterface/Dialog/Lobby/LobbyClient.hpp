@@ -160,6 +160,9 @@ public:
         bool fromAdmin = false;
         // Spectator chat only: the sender is playing the match being watched.
         bool fromPlayer = false;
+        // Spectator chat only: the live replay the line belongs to. Zero from
+        // servers that don't say, which have one stream per connection.
+        quint64 matchId = 0;
         // Private messages only: who it's for, this client or one of its local
         // players when it was sent to this PC.
         quint64 toUserId = 0;
@@ -229,8 +232,9 @@ public:
     // One entry per connection in a match roster, for anything talking to peers.
     static QList<LobbyMatchPeer> connectionPeers(const QList<LobbyMatchPeer>& peers);
 
-    // Chat
-    void sendChat(const QString& channel, const QString& message);
+    // Chat. matchId names the live replay a spectator-channel line is for, so
+    // the server can tell this connection's streams apart; zero leaves it out.
+    void sendChat(const QString& channel, const QString& message, quint64 matchId = 0);
     void requestChatHistory(const QString& channel);
     // asUserId picks who on this PC is talking; zero is this client's own user.
     void sendPrivateMessage(quint64 toUserId, quint64 asUserId, const QString& message);
@@ -386,7 +390,12 @@ public:
     // Spectate (pull a broadcast match's krec stream back down).
     void startSpectate(quint64 matchId);
     void stopSpectate(quint64 matchId);
-    bool applySpectateManifest(const QByteArray& manifest);
+    // Subscribed to that match, as far as this client knows.
+    bool isSpectating(quint64 matchId) const { return m_spectateMatchIds.contains(matchId); }
+    // Stages a SPECTATE_BEGIN manifest's cheats, save data and game options in
+    // this process. Static: a viewer window applies its stream's manifest
+    // without a lobby connection of its own.
+    static bool applySpectateManifest(const QByteArray& manifest);
 
     // --- Late join (the lobby's MATCH_ADMIT_* hand-off) ---
     // Controller ports the match MATCH_BEGIN started emulates; 0 when it
@@ -725,15 +734,21 @@ private:
     QString m_admitBlobStep;
     QList<QByteArray> m_admitBlobParts;
 
-    // The match startSpectate() asked to watch (0 when none). Keyframe chunks
-    // for any other match are dropped before they are buffered.
-    quint64    m_spectateMatchId = 0;
-    // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME messages).
-    int        m_kfRecvFrame = -1;
-    int        m_kfRecvCount = 0;
-    int        m_kfRecvGot = 0;
-    QByteArray m_kfRecvBuf;
-    QList<bool> m_kfRecvChunkSeen;
+    // The matches startSpectate() asked to watch: the main window's and any
+    // viewer windows'. Keyframe chunks for any other match are dropped before
+    // they are buffered.
+    QSet<quint64> m_spectateMatchIds;
+    // Incoming spectate keyframe reassembly (chunked SPECTATE_KEYFRAME
+    // messages), one per watched match: two streams' chunks can interleave.
+    struct KeyframeAssembly
+    {
+        int frame = -1;
+        int count = 0;
+        int got = 0;
+        QByteArray buf;
+        QList<bool> chunkSeen;
+    };
+    QHash<quint64, KeyframeAssembly> m_kfRecv;
 
     // Outbound priority/backpressure state. Ordinary control/chat/replay messages
     // are sent immediately. A keyframe contributes at most one small WebSocket

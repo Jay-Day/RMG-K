@@ -7159,4 +7159,210 @@ A local replay is saved only if Save replay is on.</source>
             <translation>対戦中は全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。「カスタム...」でオプションを1つずつオンにして、名前を付けて保存できます。</translation>
         </message>
     </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>Watch</source>
+            <translation>観戦</translation>
+        </message>
+        <message>
+            <source>Bring to Front</source>
+            <translation>前面に表示</translation>
+        </message>
+        <message>
+            <source>Watch in New Window</source>
+            <translation>新しいウィンドウで観戦</translation>
+        </message>
+        <message>
+            <source>No ROM</source>
+            <translation>ROMなし</translation>
+        </message>
+        <message>
+            <source>Too many windows</source>
+            <translation>ウィンドウが多すぎます</translation>
+        </message>
+        <message>
+            <source>You can watch up to %1 live replays in windows of their own at once. Close one to open another.</source>
+            <translation>別ウィンドウで同時に観戦できるライブリプレイは%1件までです。別のものを開くには、どれかを閉じてください。</translation>
+        </message>
+        <message>
+            <source>Opening %1 in a window of its own…</source>
+            <translation>%1を別ウィンドウで開いています…</translation>
+        </message>
+        <message>
+            <source>Couldn't watch %1: %2</source>
+            <translation>%1を観戦できませんでした: %2</translation>
+        </message>
+        <message>
+            <source>Your game is starting, so the live replay windows were closed: games running in the background cost a rollback match frames.</source>
+            <translation>自分のゲームが始まるため、ライブリプレイのウィンドウを閉じました。裏で動くゲームはロールバック対戦のフレームを奪います。</translation>
+        </message>
+        <message>
+            <source>Message the viewers of %1…</source>
+            <translation>%1の観戦者にメッセージ…</translation>
+        </message>
+        <message>
+            <source>The live replay ended.</source>
+            <translation>ライブリプレイが終了しました。</translation>
+        </message>
+        <message>
+            <source>This is %1's chat. Click another stream under Watching to talk to its viewers.</source>
+            <translation>これは%1のチャットです。ほかの観戦者と話すには、「観戦中」で別の配信をクリックしてください。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::WatchTracker</name>
+        <message>
+            <source>WATCHING</source>
+            <translation>観戦中</translation>
+        </message>
+        <message>
+            <source>Close all</source>
+            <translation>すべて閉じる</translation>
+        </message>
+        <message>
+            <source>Stop watching all of them.</source>
+            <translation>すべての観戦をやめます。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::WatchEntry</name>
+        <message>
+            <source>Connecting</source>
+            <translation>接続中</translation>
+        </message>
+        <message>
+            <source>Catching up</source>
+            <translation>追いつき中</translation>
+        </message>
+        <message>
+            <source>Live</source>
+            <translation>ライブ</translation>
+        </message>
+        <message>
+            <source>Ended</source>
+            <translation>終了</translation>
+        </message>
+        <message>
+            <source>Turn its sound on</source>
+            <translation>音をオンにする</translation>
+        </message>
+        <message>
+            <source>Mute it</source>
+            <translation>ミュートする</translation>
+        </message>
+        <message>
+            <source>Stop watching</source>
+            <translation>観戦をやめる</translation>
+        </message>
+        <message>
+            <source>Close its window</source>
+            <translation>ウィンドウを閉じる</translation>
+        </message>
+        <message>
+            <source>In the main window.</source>
+            <translation>メインウィンドウで観戦中です。</translation>
+        </message>
+        <message>
+            <source>In a window of its own.</source>
+            <translation>別ウィンドウで観戦中です。</translation>
+        </message>
+        <message>
+            <source>%1 · %2</source>
+            <translation>%1 · %2</translation>
+        </message>
+        <message>
+            <source>%1, %2</source>
+            <translation>%1、%2</translation>
+        </message>
+        <message>
+            <source>Click to bring it to the front and chat with its viewers.</source>
+            <translation>クリックすると前面に表示し、その観戦者とチャットします。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::LiveMatchBase</name>
+        <message>
+            <source>Bring its window to the front</source>
+            <translation>ウィンドウを前面に表示</translation>
+        </message>
+        <message>
+            <source>Watch in a new window (Ctrl+double-click)</source>
+            <translation>新しいウィンドウで観戦（Ctrl+ダブルクリック）</translation>
+        </message>
+        <message>
+            <source>Stop watching this match and close its window.</source>
+            <translation>この対戦の観戦をやめ、ウィンドウを閉じます。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::StreamViewerHost</name>
+        <message>
+            <source>Couldn't open a window for the live replay: %1</source>
+            <translation>ライブリプレイのウィンドウを開けませんでした: %1</translation>
+        </message>
+        <message>
+            <source>You can watch up to %1 live replays in windows of their own at once.</source>
+            <translation>別ウィンドウで同時に観戦できるライブリプレイは%1件までです。</translation>
+        </message>
+        <message>
+            <source>Its window didn't start.</source>
+            <translation>ウィンドウが起動しませんでした。</translation>
+        </message>
+        <message>
+            <source>Its window closed unexpectedly.</source>
+            <translation>ウィンドウが予期せず閉じました。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::MainWindow</name>
+        <message>
+            <source>&amp;Mute</source>
+            <translation>ミュート(&amp;M)</translation>
+        </message>
+        <message>
+            <source>Un&amp;mute</source>
+            <translation>ミュート解除(&amp;M)</translation>
+        </message>
+        <message>
+            <source>&amp;Close</source>
+            <translation>閉じる(&amp;C)</translation>
+        </message>
+        <message>
+            <source>&amp;Watch</source>
+            <translation>観戦(&amp;W)</translation>
+        </message>
+        <message>
+            <source>Volume &amp;Up</source>
+            <translation>音量を上げる(&amp;U)</translation>
+        </message>
+        <message>
+            <source>Volume &amp;Down</source>
+            <translation>音量を下げる(&amp;D)</translation>
+        </message>
+        <message>
+            <source>Connecting to the live replay…</source>
+            <translation>ライブリプレイに接続しています…</translation>
+        </message>
+        <message>
+            <source>Connecting to %1…</source>
+            <translation>%1に接続しています…</translation>
+        </message>
+        <message>
+            <source>The live replay ended.</source>
+            <translation>ライブリプレイが終了しました。</translation>
+        </message>
+        <message>
+            <source>The live replay's cheat settings are missing or invalid.</source>
+            <translation>ライブリプレイのチート設定がないか、無効です。</translation>
+        </message>
+        <message>
+            <source>Live replay</source>
+            <translation>ライブリプレイ</translation>
+        </message>
+        <message>
+            <source>%1 — Live — %2</source>
+            <translation>%1 — ライブ — %2</translation>
+        </message>
+    </context>
 </TS>

@@ -1,6 +1,7 @@
 #include <QSettings>
 #include <QColor>
 #include <QFile>
+#include <cstdlib>
 
 #ifdef OS_WINDOWS
 #include <windows.h>
@@ -304,6 +305,15 @@ void _writeSettingsToFile(const QString & filename)
 	settings.endGroup();
 }
 
+// RMG-K: a live replay viewer window reads the settings file but leaves
+// updating it to the main window, which owns it.
+static
+bool _readOnlyUserFiles()
+{
+	const char * value = getenv("RMGK_READ_ONLY_USER_FILES");
+	return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
 static
 void _loadSettingsFromFile(const QString & filename)
 {
@@ -316,6 +326,11 @@ void _loadSettingsFromFile(const QString & filename)
 		config.resetToDefaults();
 		config.generalEmulation.hacks = hacks;
 		config.translationFile = configTranslationFile.toLocal8Bit().constData();
+		if (configVersion < CONFIG_WITH_PROFILES && _readOnlyUserFiles()) {
+			_loadSettings(settings);
+			config.version = CONFIG_VERSION_CURRENT;
+			return;
+		}
 		if (configVersion < CONFIG_WITH_PROFILES) {
 			_loadSettings(settings);
 			config.version = CONFIG_VERSION_CURRENT;
@@ -337,7 +352,7 @@ void _loadSettingsFromFile(const QString & filename)
 		if (config.version != CONFIG_VERSION_CURRENT)
 			rewriteSettings = true;
 	}
-	if (rewriteSettings) {
+	if (rewriteSettings && !_readOnlyUserFiles()) {
 		// Keep settings up-to-date
 		{
 			QSettings settings(filename, QSettings::IniFormat);

@@ -103,6 +103,23 @@ CORE_EXPORT bool CoreDecreaseVolume(void)
     return CoreSetVolume(volume - 10);
 }
 
+CORE_EXPORT bool CoreIsVolumeMuted(void)
+{
+    int muted = 0;
+
+    if (!m64p::Core.IsHooked())
+    {
+        return false;
+    }
+
+    if (m64p::Core.DoCommand(M64CMD_CORE_STATE_QUERY, M64CORE_AUDIO_MUTE, &muted) != M64ERR_SUCCESS)
+    {
+        return false;
+    }
+
+    return muted != 0;
+}
+
 CORE_EXPORT bool CoreToggleMuteVolume(void)
 {
     std::string error;

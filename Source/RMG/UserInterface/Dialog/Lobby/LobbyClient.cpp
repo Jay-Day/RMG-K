@@ -730,6 +730,9 @@ void LobbyClient::connectToServer(const QString& wsUrl, const QString& username,
     m_spectatorChatSupported = false;
     m_challengeSettingsSupported = false;
     m_pmSettingsSupported = false;
+    // Subscriptions end with the old connection.
+    m_spectateMatchIds.clear();
+    m_kfRecv.clear();
     emit localPlayersChanged();
 
     qInfo() << "Rollback lobby local IPv4 detection"
@@ -2349,6 +2352,7 @@ void LobbyClient::handleChatMsg(const QJsonObject& data)
     m.serverTimeMs   = static_cast<qint64>(data.value("serverTime").toDouble());
     m.fromAdmin      = data.value("admin").toBool();
     m.fromPlayer     = data.value("fromPlayer").toBool();
+    m.matchId        = static_cast<quint64>(data.value("matchId").toDouble());
     m.toUserId       = static_cast<quint64>(data.value("toUserId").toDouble());
     m.toUsername     = data.value("toUsername").toString();
     emit chatMessageReceived(m);
@@ -3001,8 +3005,8 @@ void LobbyClient::handleSpectateKeyframe(const QJsonObject& data)
     const int frame      = data.value("frame").toInt();
     const int chunkIndex = data.value("chunkIndex").toInt();
     const int chunkCount = data.value("chunkCount").toInt();
-    if (matchId == 0 || matchId != m_spectateMatchId)
-        return; // not the match being watched
+    if (matchId == 0 || !m_spectateMatchIds.contains(matchId))
+        return; // not a match being watched
     const QByteArray raw = QByteArray::fromBase64(data.value("data").toString().toLatin1());
     if (chunkCount <= 0 || chunkCount > MAX_RECEIVED_CHUNK_COUNT ||
         chunkIndex < 0 || chunkIndex >= chunkCount || raw.size() > MAX_RECEIVED_CHUNK_BYTES)
@@ -3010,44 +3014,35 @@ void LobbyClient::handleSpectateKeyframe(const QJsonObject& data)
 
     // (Re)start reassembly when a new keyframe appears. Chunks arrive in order over
     // the WS, but track per-index seen flags so a stray/duplicate can't corrupt it.
-    if (m_kfRecvFrame != frame || m_kfRecvCount != chunkCount || m_kfRecvChunkSeen.size() != chunkCount)
+    KeyframeAssembly& kf = m_kfRecv[matchId];
+    if (kf.frame != frame || kf.count != chunkCount || kf.chunkSeen.size() != chunkCount)
     {
-        m_kfRecvFrame = frame;
-        m_kfRecvCount = chunkCount;
-        m_kfRecvGot = 0;
-        m_kfRecvBuf.clear();
-        m_kfRecvChunkSeen = QList<bool>();
+        kf = KeyframeAssembly{};
+        kf.frame = frame;
+        kf.count = chunkCount;
         for (int i = 0; i < chunkCount; i++)
-            m_kfRecvChunkSeen.append(false);
+            kf.chunkSeen.append(false);
     }
-    if (!m_kfRecvChunkSeen[chunkIndex])
+    if (!kf.chunkSeen[chunkIndex])
     {
-        if (m_kfRecvBuf.size() + raw.size() > MAX_KEYFRAME_ENCODED_BYTES)
+        if (kf.buf.size() + raw.size() > MAX_KEYFRAME_ENCODED_BYTES)
         {
             qWarning() << "lobby: rejected oversized live replay keyframe";
-            m_kfRecvFrame = -1;
-            m_kfRecvCount = 0;
-            m_kfRecvGot = 0;
-            m_kfRecvBuf.clear();
-            m_kfRecvChunkSeen = QList<bool>();
+            m_kfRecv.remove(matchId);
             stopSpectate(matchId);
             emit spectateFailed(matchId, QStringLiteral("invalid_keyframe"));
             return;
         }
-        m_kfRecvChunkSeen[chunkIndex] = true;
-        m_kfRecvBuf.append(raw); // in-order append (server sends chunks sequentially)
-        m_kfRecvGot++;
+        kf.chunkSeen[chunkIndex] = true;
+        kf.buf.append(raw); // in-order append (server sends chunks sequentially)
+        kf.got++;
     }
-    if (m_kfRecvGot < m_kfRecvCount)
+    if (kf.got < kf.count)
         return;
 
-    const QByteArray encoded = m_kfRecvBuf;
-    const int doneFrame = m_kfRecvFrame;
-    m_kfRecvFrame = -1;
-    m_kfRecvCount = 0;
-    m_kfRecvGot = 0;
-    m_kfRecvBuf.clear();
-    m_kfRecvChunkSeen = QList<bool>();
+    const QByteArray encoded = kf.buf;
+    const int doneFrame = kf.frame;
+    m_kfRecv.remove(matchId);
 
     QByteArray full;
     if (!decodeSpectateKeyframe(encoded, full))
@@ -3068,16 +3063,16 @@ void LobbyClient::handleSpectateKeyframe(const QJsonObject& data)
 void LobbyClient::handleSpectateEnd(const QJsonObject& data)
 {
     const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
-    if (matchId == m_spectateMatchId)
-        m_spectateMatchId = 0;
+    m_spectateMatchIds.remove(matchId);
+    m_kfRecv.remove(matchId);
     emit spectateEnded(matchId, data.value("reason").toString());
 }
 
 void LobbyClient::handleSpectateFail(const QJsonObject& data)
 {
     const quint64 matchId = static_cast<quint64>(data.value("matchId").toDouble());
-    if (matchId == m_spectateMatchId)
-        m_spectateMatchId = 0;
+    m_spectateMatchIds.remove(matchId);
+    m_kfRecv.remove(matchId);
     emit spectateFailed(matchId, data.value("reason").toString());
 }
 
@@ -4152,11 +4147,13 @@ bool LobbyClient::allIcePeersConnected(const QList<LobbyMatchPeer>& peers, QStri
 
 // -------- Chat API --------
 
-void LobbyClient::sendChat(const QString& channel, const QString& message)
+void LobbyClient::sendChat(const QString& channel, const QString& message, quint64 matchId)
 {
     QJsonObject d;
     d["channel"] = channel;
     d["message"] = message;
+    if (matchId != 0)
+        d["matchId"] = QJsonValue(qint64(matchId));
     sendEnvelope("CHAT_SEND", d);
 }
 
@@ -4708,7 +4705,9 @@ void LobbyClient::startSpectate(quint64 matchId)
 {
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
-    m_spectateMatchId = matchId;
+    m_spectateMatchIds.insert(matchId);
+    // A fresh subscribe starts its keyframe over.
+    m_kfRecv.remove(matchId);
     sendEnvelope("SPECTATE_START", d);
 }
 
@@ -4716,8 +4715,8 @@ void LobbyClient::stopSpectate(quint64 matchId)
 {
     QJsonObject d;
     d["matchId"] = QJsonValue(qint64(matchId));
-    if (matchId == m_spectateMatchId)
-        m_spectateMatchId = 0;
+    m_spectateMatchIds.remove(matchId);
+    m_kfRecv.remove(matchId);
     sendEnvelope("SPECTATE_STOP", d);
 }
 
