@@ -20,6 +20,7 @@
 #include "LobbyTheme.hpp"
 #include "LobbyWidgets.hpp"
 #include "OnScreenDisplay.hpp"
+#include "UserInterface/StreamViewer/StreamViewerHost.hpp"
 
 #include <RMG-Core/Settings.hpp>
 
@@ -379,6 +380,8 @@ void RollbackLobbyDialog::showPlayerMenu(quint64 userId, const QPoint& globalPos
             {
                 connect(menu.addItem(QStringLiteral("eye-line"), tr("Watch match")), &QAction::triggered, this,
                         [this, roomId]() { onMatchWatchRequested(roomId); });
+                connect(menu.addItem(QStringLiteral("external-link-line"), tr("Watch in New Window")),
+                        &QAction::triggered, this, [this, roomId]() { onMatchWatchInWindowRequested(roomId); });
             }
         }
         else if (!theirRoom->privateRoom)
@@ -1155,11 +1158,12 @@ void RollbackLobbyDialog::refreshPlayerSpectatorChat()
     {
         if (m_playerChatMatchId != 0)
         {
+            m_spectateChatLines.remove(m_playerChatMatchId);
             m_playerChatMatchId = 0;
             m_playerChatLive = false;
             m_spectatorStrip->setVisible(false);
-            m_chatViewSpectate->clear();
-            setSpectatorChatVisible(false);
+            // Streams being watched keep the tab.
+            refreshSpectatorChatAvailability();
         }
         return;
     }
@@ -1169,31 +1173,40 @@ void RollbackLobbyDialog::refreshPlayerSpectatorChat()
 
     const bool live = m_client->spectatorChatSupported() && m_currentMatchId != 0 &&
                       room->broadcasting && room->matchId == m_currentMatchId;
+    const bool wasLive = m_playerChatLive;
     if (live && m_playerChatMatchId != m_currentMatchId)
     {
+        if (m_playerChatMatchId != 0)
+            m_spectateChatLines.remove(m_playerChatMatchId);
         m_playerChatMatchId = m_currentMatchId;
-        m_chatViewSpectate->clear();
+        // Live from here, so the tab shows this match's chat (chatStream).
+        m_playerChatLive = true;
+        m_spectateChatLines.remove(m_playerChatMatchId);
         m_pendingMentions[kChatTabSpectators].clear();
         setChatTabAvailable(kChatTabSpectators, true);
-        refreshSpectatorTab();
-        appendChatSystemLine(CHANNEL_SPECTATE, tr("Spectators' comments show up here, and they can see your replies."),
-                             QStringLiteral("eye-line"));
+        refreshSpectateChatView(true);
+        appendSpectateSystemLine(m_playerChatMatchId,
+                                 tr("Spectators' comments show up here, and they can see your replies."),
+                                 QStringLiteral("eye-line"));
         setChatUnread(kChatTabSpectators, 0);
     }
-    else if (!live && m_playerChatLive)
+    else if (!live && wasLive)
     {
         const int unread = m_chatUnread[kChatTabSpectators];
-        appendChatSystemLine(CHANNEL_SPECTATE, tr("Spectator chat is closed until your next match."), QStringLiteral("eye-line"));
+        appendSpectateSystemLine(m_playerChatMatchId, tr("Spectator chat is closed until your next match."),
+                                 QStringLiteral("eye-line"));
         setChatUnread(kChatTabSpectators, unread);
     }
-    const bool changed = live != m_playerChatLive;
+    const bool changed = live != wasLive;
     m_playerChatLive = live;
-    m_spectatorStrip->setVisible(m_playerChatMatchId != 0);
+    m_spectatorStrip->setVisible(m_playerChatMatchId != 0 && m_chatStreamShown == m_playerChatMatchId);
     const QString audience = tr("%1 watching").arg(room->viewerCount);
     m_spectatorCount->setText(audience);
     refreshRoomTitleTip();
     if (changed)
     {
+        // Also hands the tab back to a stream being watched, if any.
+        refreshSpectateChatView();
         refreshSpectatorTab();
         refreshChatInput();
     }
@@ -1210,10 +1223,17 @@ void RollbackLobbyDialog::refreshSpectatorTab()
     m_spectatorEye->setColorOverride(LobbyTheme::tokens().stateWatch);
 
     const bool shared = m_client && m_client->spectatorChatSupported();
-    m_chatTabs->setTabToolTip(kChatTabSpectators, m_playerChatMatchId != 0
-        ? tr("Everyone watching your match. They can see your replies.")
+    const bool own = m_playerChatMatchId != 0 && m_chatStreamShown == m_playerChatMatchId;
+    QString tip = own ? tr("Everyone watching your match. They can see your replies.")
         : shared ? tr("Everyone watching this match, and its players.")
-                 : tr("Everyone watching this match. The players can't see it."));
+                 : tr("Everyone watching this match. The players can't see it.");
+    // With several streams open, which one this is; pick another in the
+    // Watching strip.
+    const int streams = (m_spectatingMatchId != 0 ? 1 : 0) + (m_viewerHost ? m_viewerHost->count() : 0);
+    if (!own && streams > 1)
+        tip += QLatin1Char('\n') + tr("This is %1's chat. Click another stream under Watching to talk to its viewers.")
+                                       .arg(m_streamTitles.value(m_chatStreamShown));
+    m_chatTabs->setTabToolTip(kChatTabSpectators, tip);
     // The split chat's pane below names it the same way.
     if (m_chatSplitTab == kChatTabSpectators)
     {
@@ -1243,6 +1263,7 @@ QString RollbackLobbyDialog::chatIconHtml(const QString& icon, const QColor& col
     // The document needs each tinted icon registered under a name of its own.
     const QString name = QString("lobby-icon://%1/%2").arg(icon, color.name().mid(1));
     const QPixmap pixmap = LobbyTheme::icon(icon, color, px, devicePixelRatioF());
+    m_chatIcons.insert(name, pixmap);
     QList<ChatView*> views = m_privateChats ? m_privateChats->views() : QList<ChatView*>();
     views << m_chatViewLobby << m_chatViewRoom << m_chatViewSpectate;
     for (ChatView* view : views)
@@ -1333,7 +1354,7 @@ void RollbackLobbyDialog::noteMention(const QString& channel, const LobbyClient:
     }
     // Someone playing isn't interrupted: the badge waits for them, and their switch
     // says whether comments reach the game.
-    if (tab == kChatTabSpectators && m_spectatingMatchId == 0)
+    if (tab == kChatTabSpectators && !watchingStream(m_chatStreamShown))
         return;
     alertFrom(msg.fromUserId);
     // Room and spectator chat already reach the in-game overlay. Not roomChatReceived

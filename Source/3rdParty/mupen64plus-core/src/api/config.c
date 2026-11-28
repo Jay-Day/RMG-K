@@ -373,6 +373,14 @@ static m64p_error write_configlist_file(void)
     char *filepath;
     char *temppath;
     FILE *fPtr;
+    const char *readOnly;
+
+    /* RMG-K: a live replay viewer window shares this file with the main window,
+     * which owns it. Its settings stay in memory, so two processes never write
+     * the file (or its shared temporary file) at once. */
+    readOnly = getenv("RMGK_READ_ONLY_USER_FILES");
+    if (readOnly != NULL && readOnly[0] != '\0' && readOnly[0] != '0')
+        return M64ERR_SUCCESS;
 
     /* get the full pathname to the config file */
     configpath = ConfigGetUserConfigPath();

@@ -19,6 +19,7 @@
   <file alias="icons/edit-2-line.svg">Resource/lobby/icons/edit-2-line.svg</file>
   <file alias="icons/edit-line.svg">Resource/lobby/icons/edit-line.svg</file>
   <file alias="icons/error-warning-line.svg">Resource/lobby/icons/error-warning-line.svg</file>
+  <file alias="icons/external-link-line.svg">Resource/lobby/icons/external-link-line.svg</file>
   <file alias="icons/eye-line.svg">Resource/lobby/icons/eye-line.svg</file>
   <file alias="icons/file-copy-line.svg">Resource/lobby/icons/file-copy-line.svg</file>
   <file alias="icons/filter-3-line.svg">Resource/lobby/icons/filter-3-line.svg</file>
@@ -56,6 +57,7 @@
   <file alias="icons/user-unfollow-line.svg">Resource/lobby/icons/user-unfollow-line.svg</file>
   <file alias="icons/vip-crown-fill.svg">Resource/lobby/icons/vip-crown-fill.svg</file>
   <file alias="icons/volume-mute-line.svg">Resource/lobby/icons/volume-mute-line.svg</file>
+  <file alias="icons/volume-up-line.svg">Resource/lobby/icons/volume-up-line.svg</file>
   <file alias="icons/wifi-line.svg">Resource/lobby/icons/wifi-line.svg</file>
   <file alias="icons/window-maximize.svg">Resource/lobby/icons/window-maximize.svg</file>
   <file alias="icons/window-restore.svg">Resource/lobby/icons/window-restore.svg</file>

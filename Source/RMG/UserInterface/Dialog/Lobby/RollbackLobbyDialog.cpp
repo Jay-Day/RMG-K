@@ -43,8 +43,12 @@
 #include "LobbySocialWidgets.hpp"
 #include "NetplaySaveDialogs.hpp"
 #include "GameSettingsDialog.hpp"
+#include "LobbyWatchTracker.hpp"
+#include "UserInterface/StreamViewer/StreamViewerHost.hpp"
 
 #include <RMG-Core/Callback.hpp>
+#include <RMG-Core/Emulation.hpp>
+#include <RMG-Core/Volume.hpp>
 #include <RMG-Core/Directories.hpp>
 #include <RMG-Core/Error.hpp>
 #include <RMG-Core/Settings.hpp>
@@ -167,6 +171,8 @@ namespace
     const char* const CHANNEL_ROOM  = "room";
     // Viewers of one live replay; the server never relays it to the players.
     const char* const CHANNEL_SPECTATE = "spectate";
+    // Lines a stream's spectator chat keeps while another's is on screen.
+    constexpr int kSpectateChatKeep = 500;
 
     constexpr int MARGIN_STAGE       = 14;  // around the stage and the sidebar
     constexpr int MARGIN_STAGE_INNER = 8;   // the stage's edge beside the splitter handle
@@ -882,6 +888,10 @@ RollbackLobbyDialog::RollbackLobbyDialog(QWidget* parent)
 
     m_client = new LobbyClient(this);
     m_lagStats = new LagStatsExchange([this](quint64 userId) { return m_client->measuredPingMs(userId); }, this);
+    m_viewerHost = new StreamViewerHost(this);
+    connect(m_viewerHost, &StreamViewerHost::streamsChanged, this, &RollbackLobbyDialog::refreshWatchTracker);
+    connect(m_viewerHost, &StreamViewerHost::streamClosed, this, &RollbackLobbyDialog::onViewerWindowClosed);
+    connect(m_viewerHost, &StreamViewerHost::chatSendRequested, this, &RollbackLobbyDialog::sendSpectatorChatTo);
 
     // Before anything is built: some widgets take their colours once.
     {
@@ -1019,6 +1029,32 @@ QWidget* RollbackLobbyDialog::buildLobbyView()
 
     lay->addWidget(buildMarquee());
     lay->addWidget(new PortStripe(container));
+
+    // Everything being watched, above whatever view is up, so a room's window
+    // can't cover it.
+    m_watchTracker = new WatchTracker(container);
+    connect(m_watchTracker, &WatchTracker::entryClicked, this, [this](quint64 matchId) {
+        // The pick decides the Spectators chat until it closes.
+        m_chatStreamPick = matchId;
+        if (m_viewerHost->has(matchId))
+            m_lastViewerStream = matchId;
+        focusStream(matchId);
+        refreshSpectateChatView();
+    });
+    connect(m_watchTracker, &WatchTracker::muteToggled, this, [this](quint64 matchId, bool muted) {
+        if (matchId == m_spectatingMatchId)
+            emit mainStreamMuteToggleRequested();
+        else
+            m_viewerHost->setMuted(matchId, muted);
+    });
+    connect(m_watchTracker, &WatchTracker::closeClicked, this, &RollbackLobbyDialog::stopWatchingMatch);
+    connect(m_watchTracker, &WatchTracker::closeAllClicked, this, [this]() {
+        for (const auto& stream : m_viewerHost->streams())
+            stopWatchingMatch(stream.matchId);
+        if (m_spectatingMatchId != 0)
+            stopWatchingMatch(m_spectatingMatchId);
+    });
+    lay->addWidget(m_watchTracker);
 
     // The stage, the players and the chat, where the player put them.
     m_panelLayout = new PanelLayout(container);
@@ -1367,8 +1403,16 @@ QWidget* RollbackLobbyDialog::buildBrowseView()
     m_liveGallery = new LiveGallery(this);
     m_liveGallery->setMinimumWidth(276);
     connect(m_liveGallery, &LiveGallery::watchRequested, this, &RollbackLobbyDialog::onMatchWatchRequested);
+    connect(m_liveGallery, &LiveGallery::watchInWindowRequested, this, &RollbackLobbyDialog::onMatchWatchInWindowRequested);
     connect(m_liveGallery, &LiveGallery::joinRequested, this, &RollbackLobbyDialog::onRoomJoinRequested);
-    connect(m_liveGallery, &LiveGallery::stopWatchingRequested, this, [this]() {
+    connect(m_liveGallery, &LiveGallery::stopWatchingRequested, this, [this](quint64 roomId) {
+        const auto room = m_client->rooms().constFind(roomId);
+        const quint64 matchId = room != m_client->rooms().constEnd() ? room->matchId : 0;
+        if (matchId != 0 && m_viewerHost->has(matchId))
+        {
+            stopWatchingMatch(matchId);
+            return;
+        }
         m_pendingSpectate = PendingSpectate{};
         emit spectateStreamClosed(QStringLiteral("stopped"));
     });
@@ -2255,15 +2299,18 @@ void RollbackLobbyDialog::refreshChatInput()
 
 void RollbackLobbyDialog::refreshChannelCompose(QLineEdit* input, int tab, bool connected)
 {
-    if (tab == kChatTabSpectators && m_spectatingMatchId == 0)
+    if (tab == kChatTabSpectators && !watchingStream(m_chatStreamShown))
     {
         input->setPlaceholderText(m_playerChatLive ? tr("Message the spectators…") : tr("Closed until your next match"));
         input->setEnabled(connected && m_playerChatLive);
         return;
     }
+    // With several streams open, the box says which one it talks to.
+    const int streams = (m_spectatingMatchId != 0 ? 1 : 0) + m_viewerHost->count() + (m_playerChatLive ? 1 : 0);
     input->setPlaceholderText(tab == kChatTabSpectators
-            ? (m_client && m_client->spectatorChatSupported() ? tr("Message the spectators and players…")
-                                                              : tr("Message the other spectators…"))
+            ? (streams > 1 ? tr("Message the viewers of %1…").arg(m_streamTitles.value(m_chatStreamShown))
+               : m_client && m_client->spectatorChatSupported() ? tr("Message the spectators and players…")
+                                                                : tr("Message the other spectators…"))
         : tab == kChatTabRoom ? tr("Message the room…")
                               : tr("Message the lobby…"));
     input->setEnabled(connected);
@@ -3222,11 +3269,16 @@ void RollbackLobbyDialog::onClientStateChanged(LobbyClient::ConnectionState s)
         m_pendingSpectate = PendingSpectate{};
         if (m_spectatingMatchId != 0)
         {
+            m_spectateChatLines.remove(m_spectatingMatchId);
+            m_streamTitles.remove(m_spectatingMatchId);
             m_spectatingMatchId = 0;
             m_spectateStreamArmed = false;
-            setSpectatorChatVisible(false);
+            refreshSpectatorChatAvailability();
             emit spectateStreamClosed(QStringLiteral("disconnected"));
         }
+        // The viewer windows' streams come over this connection too.
+        m_viewerHost->closeAll();
+        refreshWatchTracker();
         clearPlayerRows();
         m_quickMatchActive = false;
         // The client dropped its side of a ping check with the connection.
@@ -4046,8 +4098,9 @@ void RollbackLobbyDialog::onRoomListChanged()
             match.seatsNeeded = m_client->seatsOnThisPc();
             match.hasRom = hasRom;
             match.sameGame = sameGame;
-            match.watching = m_spectatingMatchId != 0 && m_spectatingMatchId == r.matchId;
-            match.watchingOther = m_spectatingMatchId != 0 && !match.watching;
+            match.watchingInWindow = r.matchId != 0 && m_viewerHost->has(r.matchId);
+            match.watching = (m_spectatingMatchId != 0 && m_spectatingMatchId == r.matchId) || match.watchingInWindow;
+            match.watchingOther = m_spectatingMatchId != 0 && m_spectatingMatchId != r.matchId;
             match.inRoom = m_currentRoomId != 0;
             for (const QString& name : r.playerNames)
                 match.players.append({ name, countries.value(name), connections.value(name) });
@@ -4244,22 +4297,58 @@ void RollbackLobbyDialog::clearServerRoomSnapshot()
 
 void RollbackLobbyDialog::showAdminRoomMenu(quint64 roomId, const QPoint& globalPos)
 {
-    // Right-click close is a moderator tool — everyone else gets no menu.
-    if (!m_client || !m_client->isModerator() || roomId == 0)
+    // A live match can be watched from its menu, here or in a window of its
+    // own. Closing a room is a moderator tool.
+    if (!m_client || roomId == 0)
         return;
     const auto room = m_client->rooms().constFind(roomId);
     if (room == m_client->rooms().constEnd())
         return;
+    const bool moderator = m_client->isModerator();
+    const bool live = room->state == QLatin1String("in_game") && room->broadcasting && room->matchId != 0;
+    if (!moderator && !live)
+        return;
+    // Copies: the menu runs an event loop, and a room list arriving under it
+    // replaces the client's rooms.
+    const QString roomName = room->name;
+    const bool inGame = room->state == QLatin1String("in_game");
+    const bool hasRom = !romPathForMatch(room.value()).isEmpty();
+    const bool watched = live && watchingStream(room->matchId);
 
     LobbyMenu menu(this);
-    QAction* closeAction = menu.addDangerItem(QStringLiteral("close-circle-line"), room->state == QLatin1String("in_game")
-        ? tr("End match && close room  (moderator)")
-        : tr("Close room  (moderator)"));
-    if (menu.exec(globalPos) != closeAction)
+    QAction* watchAction = nullptr;
+    QAction* windowAction = nullptr;
+    if (live && hasRom)
+    {
+        watchAction = menu.addItem(QStringLiteral("eye-line"), watched ? tr("Bring to Front") : tr("Watch"));
+        windowAction = menu.addItem(QStringLiteral("external-link-line"), tr("Watch in New Window"));
+    }
+    else if (live)
+    {
+        menu.addDisabledItem(QStringLiteral("eye-line"), tr("Watch"), tr("No ROM"));
+    }
+    QAction* closeAction = nullptr;
+    if (moderator)
+    {
+        if (live)
+            menu.addSeparator();
+        closeAction = menu.addDangerItem(QStringLiteral("close-circle-line"), inGame
+            ? tr("End match && close room  (moderator)")
+            : tr("Close room  (moderator)"));
+    }
+    QAction* chosen = menu.exec(globalPos);
+    if (chosen == nullptr)
+        return;
+    if (chosen == watchAction || chosen == windowAction)
+    {
+        requestWatch(roomId, chosen == windowAction);
+        return;
+    }
+    if (chosen != closeAction)
         return;
 
     if (QMessageBox::question(this, tr("Close room"),
-            tr("Close \"%1\" for everyone?").arg(room->name)) != QMessageBox::Yes)
+            tr("Close \"%1\" for everyone?").arg(roomName)) != QMessageBox::Yes)
         return;
 
     m_client->sendModAction(QStringLiteral("closeroom"),
@@ -4506,7 +4595,7 @@ void RollbackLobbyDialog::onRoomJoinRequested(quint64 roomId)
     {
         if (summary.broadcasting && summary.matchId != 0)
         {
-            beginSpectate(summary.matchId, summary.romName, summary.romMd5);
+            requestWatch(roomId, false);
         }
         else
         {
@@ -4633,14 +4722,32 @@ void RollbackLobbyDialog::onPingCheckFinished(quint64 roomId, int pingMs, bool m
 
 void RollbackLobbyDialog::onMatchWatchRequested(quint64 roomId)
 {
+    requestWatch(roomId, false);
+}
+
+void RollbackLobbyDialog::onMatchWatchInWindowRequested(quint64 roomId)
+{
+    requestWatch(roomId, true);
+}
+
+void RollbackLobbyDialog::requestWatch(quint64 roomId, bool newWindow)
+{
     if (m_client->state() != LobbyClient::ConnectionState::Connected) return;
-    if (m_currentRoomId != 0)
+    const auto room = m_client->rooms().constFind(roomId);
+    if (room != m_client->rooms().constEnd() && room->matchId != 0 && watchingStream(room->matchId))
+    {
+        // Watched already, here or in a window of its own: that comes forward.
+        focusStream(room->matchId);
+        return;
+    }
+    // A window of its own watches beside a room or a game; the main window
+    // keeps its rules.
+    if (!newWindow && m_currentRoomId != 0)
     {
         QMessageBox::information(this, tr("In a room"),
             tr("Leave your room before watching a match."));
         return;
     }
-    const auto room = m_client->rooms().constFind(roomId);
     if (room == m_client->rooms().constEnd())
         return;
     if (!room->broadcasting || room->matchId == 0)
@@ -4649,7 +4756,10 @@ void RollbackLobbyDialog::onMatchWatchRequested(quint64 roomId)
             tr("That match isn't streaming a live replay, so there's nothing to watch."));
         return;
     }
-    beginSpectate(room->matchId, room->romName, room->romMd5);
+    if (newWindow)
+        openViewerWindow(room.value());
+    else
+        beginSpectate(room->matchId, room->romName, room->romMd5);
 }
 
 void RollbackLobbyDialog::onRoomCreateFailed(const QString& reason)
@@ -7105,7 +7215,9 @@ void RollbackLobbyDialog::onChatSendClicked()
     const QString text = m_chatInput->text().trimmed();
     if (text.isEmpty()) return;
     const int tab = activeChatTab();
-    const QString channel = tab == kChatTabSpectators && (m_spectatingMatchId != 0 || m_playerChatLive) ? CHANNEL_SPECTATE
+    const bool spectateOpen = watchingStream(m_chatStreamShown) ||
+                              (m_playerChatLive && m_chatStreamShown == m_playerChatMatchId);
+    const QString channel = tab == kChatTabSpectators && spectateOpen ? CHANNEL_SPECTATE
         : tab == kChatTabRoom && m_currentRoomId != 0 ? CHANNEL_ROOM
                                                       : CHANNEL_LOBBY;
     if (handleSlashCommand(channel, text)) { m_chatInput->clear(); return; }
@@ -7116,7 +7228,7 @@ void RollbackLobbyDialog::onChatSendClicked()
         return;
     }
     if (channel == QLatin1String(CHANNEL_SPECTATE))
-        sendSpectatorChat(text);
+        sendSpectatorChatTo(m_chatStreamShown, text);
     else if (channel == QLatin1String(CHANNEL_ROOM))
         sendRoomChat(text);
     else
@@ -7149,15 +7261,35 @@ void RollbackLobbyDialog::onChatMessageReceived(const LobbyClient::ChatMessage& 
         // A live replay's chat, shared by those watching it and the match's
         // players, shown in the Spectators tab. Lines that arrive after this client
         // left it are dropped.
-        const bool watching = m_spectatingMatchId != 0;
+        const QString line = lineFor(msg.message, m_client->isOnThisPc(msg.fromUserId));
+        if (msg.matchId != 0)
+        {
+            // The server names the stream: each keeps its own lines, and the
+            // tab shows the one picked.
+            const bool ownMatch = m_playerChatLive && msg.matchId == m_playerChatMatchId;
+            if (!ownMatch && !watchingStream(msg.matchId))
+                return;
+            appendSpectateChatLine(msg.matchId, line);
+            if (mentionsMe && msg.matchId == m_chatStreamShown)
+                noteMention(CHANNEL_SPECTATE, msg);
+            if (msg.matchId == m_spectatingMatchId)
+                emit spectatorChatReceived(msg.fromUsername, msg.message);
+            else if (m_viewerHost->has(msg.matchId))
+                m_viewerHost->chat(msg.matchId, msg.fromUsername, msg.message);
+            else
+                showSpectatorCommentOverGame(msg);
+            return;
+        }
+        // A server that doesn't name it has one stream per connection.
+        const bool watching = m_spectatingMatchId != 0 || m_viewerHost->count() > 0;
         if (!watching && !m_playerChatLive)
             return;
-        appendChatLine(CHANNEL_SPECTATE, lineFor(msg.message, m_client->isOnThisPc(msg.fromUserId)));
+        appendChatLine(CHANNEL_SPECTATE, line);
         if (mentionsMe)
             noteMention(CHANNEL_SPECTATE, msg);
-        if (watching)
+        if (m_spectatingMatchId != 0)
             emit spectatorChatReceived(msg.fromUsername, msg.message);
-        else
+        else if (m_playerChatLive)
             showSpectatorCommentOverGame(msg);
         return;
     }
@@ -7233,14 +7365,27 @@ void RollbackLobbyDialog::sendRoomChat(const QString& message)
 
 void RollbackLobbyDialog::sendSpectatorChat(const QString& message)
 {
-    if (!m_client || (m_spectatingMatchId == 0 && !m_playerChatLive))
+    // From the main window's game: its own stream, or the match it plays.
+    sendSpectatorChatTo(m_spectatingMatchId != 0 ? m_spectatingMatchId
+                        : m_playerChatLive ? m_playerChatMatchId : 0,
+                        message);
+}
+
+void RollbackLobbyDialog::sendSpectatorChatTo(quint64 matchId, const QString& message)
+{
+    if (!m_client || matchId == 0)
+        return;
+    const bool ownMatch = m_playerChatLive && matchId == m_playerChatMatchId;
+    if (!ownMatch && !watchingStream(matchId))
         return;
 
     const QString text = message.trimmed();
     if (text.isEmpty())
         return;
 
-    m_client->sendChat(CHANNEL_SPECTATE, text);
+    // Naming the stream lets a server keeping several per connection route
+    // the line; one that doesn't know the field ignores it.
+    m_client->sendChat(CHANNEL_SPECTATE, text, matchId);
 }
 
 LagReport RollbackLobbyDialog::lagReport(bool wholeMatch) const
@@ -7312,6 +7457,12 @@ void RollbackLobbyDialog::appendChatLine(const QString& channel, const QString& 
     {
         target = m_chatViewSpectate;
         tab = kChatTabSpectators;
+        // Kept with the stream the tab shows, so switching streams and back
+        // loses nothing.
+        QStringList& lines = m_spectateChatLines[m_chatStreamShown];
+        lines.append(text);
+        if (lines.size() > kSpectateChatKeep)
+            lines.removeFirst();
     }
     if (!target)
         return;
@@ -7325,6 +7476,11 @@ void RollbackLobbyDialog::appendChatLine(const QString& channel, const QString& 
 void RollbackLobbyDialog::appendChatSystemLine(const QString& channel, const QString& text,
                                                const QString& icon, Role role)
 {
+    appendChatLine(channel, chatSystemLineHtml(text, icon, role));
+}
+
+QString RollbackLobbyDialog::chatSystemLineHtml(const QString& text, const QString& icon, Role role) const
+{
     const Tokens& t = LobbyTheme::tokens();
     const auto ts = QDateTime::currentDateTime().toString("hh:mm");
     QString mark;
@@ -7333,9 +7489,9 @@ void RollbackLobbyDialog::appendChatSystemLine(const QString& channel, const QSt
         const QColor color = role == Role::Muted ? t.muted : LobbyTheme::roleColor(role);
         mark = chatIconHtml(icon, color, 13) + QStringLiteral("&nbsp;");
     }
-    appendChatLine(channel, QString("<span style='color:%1; font-size:9px;'>%2</span>&nbsp; %3"
-                                    "<i style='color:%1;'>%4</i>")
-        .arg(t.muted.name(), ts, mark, text));
+    return QString("<span style='color:%1; font-size:9px;'>%2</span>&nbsp; %3"
+                   "<i style='color:%1;'>%4</i>")
+        .arg(t.muted.name(), ts, mark, text);
 }
 
 bool RollbackLobbyDialog::handleSlashCommand(const QString& channel, const QString& text)
@@ -8090,11 +8246,17 @@ void RollbackLobbyDialog::launchSpectate(quint64 matchId, const QString& gameNam
 {
     m_spectatingMatchId = matchId;
     m_spectateStreamArmed = false; // wait for this subscribe's SPECTATE_BEGIN before accepting data
+    m_mainStreamState = StreamViewer::State::Connecting;
     m_client->startSpectate(matchId);
-    m_chatViewSpectate->clear();
+    m_streamTitles.insert(matchId, streamTitle(matchId));
+    // The main window's watch is the Spectators chat's until another is picked.
+    m_chatStreamPick = 0;
+    m_spectateChatLines.remove(matchId);
     setSpectatorChatVisible(true);
+    refreshSpectateChatView(true);
     emit spectateLaunch(matchId, gameName, romPath);
-    appendChatSystemLine(CHANNEL_SPECTATE, tr("Connecting to live replay…"), QStringLiteral("eye-line"));
+    appendSpectateSystemLine(matchId, tr("Connecting to live replay…"), QStringLiteral("eye-line"));
+    refreshWatchTracker();
     onRoomListChanged();
 }
 
@@ -8112,11 +8274,15 @@ void RollbackLobbyDialog::startPendingSpectate()
 void RollbackLobbyDialog::stopSpectating()
 {
     if (m_spectatingMatchId == 0) return;
+    const quint64 matchId = m_spectatingMatchId;
     m_client->stopSpectate(m_spectatingMatchId);
     m_spectatingMatchId = 0;
     m_spectateStreamArmed = false;
-    setSpectatorChatVisible(false);
+    m_spectateChatLines.remove(matchId);
+    m_streamTitles.remove(matchId);
+    refreshSpectatorChatAvailability();
     emit liveReplayViewerCountCleared();
+    refreshWatchTracker();
     onRoomListChanged();
 }
 
@@ -8130,12 +8296,33 @@ void RollbackLobbyDialog::setSpectatorChatVisible(bool visible)
     m_pendingMentions[kChatTabSpectators].clear();
     if (visible && m_chatSplitTab != kChatTabSpectators)
         m_chatTabs->setCurrentIndex(kChatTabSpectators);
+    refreshSpectateChatView();
     refreshSpectatorTab();
     refreshChatInput();
 }
 
+void RollbackLobbyDialog::refreshSpectatorChatAvailability()
+{
+    const bool needed = m_spectatingMatchId != 0 || m_playerChatMatchId != 0 ||
+                        (m_viewerHost && m_viewerHost->count() > 0);
+    if (needed != m_chatTabAvailable[kChatTabSpectators])
+        setSpectatorChatVisible(needed);
+    else
+        refreshSpectateChatView();
+}
+
 void RollbackLobbyDialog::onSpectateBegan(quint64 matchId, const QByteArray& manifest)
 {
+    if (m_viewerHost->has(matchId))
+    {
+        // Its window applies the manifest: cheats, saves and game options are
+        // per process, and this one may be watching or playing something else.
+        m_viewerHost->began(matchId, manifest);
+        appendSpectateSystemLine(matchId, tr("Watching — buffering the match…"));
+        if (m_client->spectatorChatSupported())
+            appendSpectateSystemLine(matchId, tr("The players can read this chat too."), QStringLiteral("eye-line"));
+        return;
+    }
     if (matchId != m_spectatingMatchId) return;
     if (m_spectateStreamArmed) return;
     // Use the same parser and session-only cheat set as players, before any
@@ -8150,13 +8337,18 @@ void RollbackLobbyDialog::onSpectateBegan(quint64 matchId, const QByteArray& man
     // The session boundary: everything on the wire before this is leftover from a
     // prior watch of this same match. Arm the stream now; keyframe + tail follow.
     m_spectateStreamArmed = true;
-    appendChatSystemLine(CHANNEL_SPECTATE, tr("Watching — buffering the match…"));
+    appendSpectateSystemLine(matchId, tr("Watching — buffering the match…"));
     if (m_client->spectatorChatSupported())
-        appendChatSystemLine(CHANNEL_SPECTATE, tr("The players can read this chat too."), QStringLiteral("eye-line"));
+        appendSpectateSystemLine(matchId, tr("The players can read this chat too."), QStringLiteral("eye-line"));
 }
 
 void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& bytes, int liveFrame, qint64 offset)
 {
+    if (m_viewerHost->has(matchId))
+    {
+        m_viewerHost->data(matchId, bytes, liveFrame, offset);
+        return;
+    }
     if (matchId != m_spectatingMatchId) return;
     if (!m_spectateStreamArmed) return; // stale chunk from a previous watch — drop it
     emit spectateStreamData(bytes, liveFrame, offset);
@@ -8164,6 +8356,11 @@ void RollbackLobbyDialog::onSpectateData(quint64 matchId, const QByteArray& byte
 
 void RollbackLobbyDialog::onSpectateKeyframe(quint64 matchId, int frame, const QByteArray& savestate)
 {
+    if (m_viewerHost->has(matchId))
+    {
+        m_viewerHost->keyframe(matchId, frame, savestate);
+        return;
+    }
     if (matchId != m_spectatingMatchId) return;
     if (!m_spectateStreamArmed) return; // stale keyframe from a previous watch — drop it
     emit spectateStreamKeyframe(frame, savestate);
@@ -8171,27 +8368,63 @@ void RollbackLobbyDialog::onSpectateKeyframe(quint64 matchId, int frame, const Q
 
 void RollbackLobbyDialog::onSpectateEnded(quint64 matchId, const QString& reason)
 {
+    if (m_viewerHost->has(matchId))
+    {
+        // Its window says so for a moment, then closes (onViewerWindowClosed).
+        m_viewerHost->ended(matchId, reason);
+        appendSpectateSystemLine(matchId, tr("The live replay ended."));
+        return;
+    }
     if (matchId != m_spectatingMatchId) return;
     m_spectatingMatchId = 0; // server already ended it; don't echo SPECTATE_STOP
-    setSpectatorChatVisible(false);
+    m_spectateChatLines.remove(matchId);
+    m_streamTitles.remove(matchId);
+    refreshSpectatorChatAvailability();
     emit liveReplayViewerCountCleared();
     emit spectateStreamClosed(reason);
+    refreshWatchTracker();
     onRoomListChanged();
+}
+
+QString RollbackLobbyDialog::spectateReasonText(const QString& reason, bool* known) const
+{
+    QString text;
+    if (reason == QLatin1String("not_broadcasting"))
+        text = tr("That live replay isn't available anymore.");
+    else if (reason == QLatin1String("ended"))
+        text = tr("That live replay just ended.");
+    else if (reason == QLatin1String("invalid_manifest"))
+        text = tr("The live replay's cheat settings are missing or invalid. The host and lobby server need to support spectator cheat sync.");
+    if (known != nullptr)
+        *known = !text.isEmpty();
+    return text.isEmpty() ? reason : text;
 }
 
 void RollbackLobbyDialog::onSpectateFailed(quint64 matchId, const QString& reason)
 {
+    if (m_viewerHost->has(matchId))
+    {
+        // Shown once here, not in a box per window. Nothing retries it: the
+        // lobby counts every refused start against this PC.
+        appendChatSystemLine(m_currentRoomId != 0 ? CHANNEL_ROOM : CHANNEL_LOBBY,
+                             tr("Couldn't watch %1: %2").arg(m_streamTitles.value(matchId), spectateReasonText(reason)),
+                             QStringLiteral("error-warning-line"), Role::Warn);
+        m_viewerHost->close(matchId);
+        return;
+    }
     if (matchId != m_spectatingMatchId) return;
     m_spectatingMatchId = 0;
-    setSpectatorChatVisible(false);
+    m_spectateChatLines.remove(matchId);
+    m_streamTitles.remove(matchId);
+    refreshSpectatorChatAvailability();
     emit liveReplayViewerCountCleared();
-    const QString human =
-        reason == "not_broadcasting" ? tr("That live replay isn't available anymore.") :
-        reason == "ended"            ? tr("That live replay just ended.") :
-        reason == "invalid_manifest" ? tr("The live replay's cheat settings are missing or invalid. The host and lobby server need to support spectator cheat sync.") :
-                                       tr("Couldn't watch: %1").arg(reason);
+    bool known = false;
+    QString human = spectateReasonText(reason, &known);
+    if (!known)
+        human = tr("Couldn't watch: %1").arg(reason);
     QMessageBox::information(this, tr("Live Replay"), human);
     emit spectateStreamClosed(reason);
+    refreshWatchTracker();
     onRoomListChanged();
 }
 
@@ -8199,6 +8432,9 @@ void RollbackLobbyDialog::onBroadcastViewerCount(quint64 matchId, int viewerCoun
 {
     // Cards update in place, so audience changes keep the scroll position.
     onRoomListChanged();
+    // A viewer window shows its own stream's audience.
+    if (m_viewerHost->has(matchId))
+        m_viewerHost->viewers(matchId, viewerCount);
     if (m_broadcasting && matchId == m_broadcastMatchId)
     {
         emit liveReplayViewerCountChanged(viewerCount, false);
@@ -8213,6 +8449,279 @@ void RollbackLobbyDialog::onBroadcastViewerCount(quint64 matchId, int viewerCoun
         // count as the broadcaster. They are playing, rather than spectating.
         emit liveReplayViewerCountChanged(viewerCount, false);
     }
+}
+
+// ── Viewer windows and the Watching strip ─────────────────────────────
+//
+// "Watch in New Window" plays a live replay in another copy of RMG-K (one game
+// per process), fed by this window's lobby connection through
+// StreamViewerHost. The strip under the top bar lists everything watched, the
+// main window's watch included.
+
+namespace
+{
+    // A game of this PC's own closes the viewer windows: an emulator running
+    // behind a rollback match costs it frames. The one switch for that.
+    constexpr bool kCloseViewerWindowsForOwnGame = true;
+} // namespace
+
+bool RollbackLobbyDialog::watchingStream(quint64 matchId) const
+{
+    return matchId != 0 && (matchId == m_spectatingMatchId || (m_viewerHost && m_viewerHost->has(matchId)));
+}
+
+QString RollbackLobbyDialog::streamTitle(quint64 matchId) const
+{
+    for (const auto& room : m_client->rooms())
+    {
+        if (room.matchId == matchId)
+            return room.playerNames.isEmpty() ? room.name : room.playerNames.join(tr(" vs "));
+    }
+    return m_streamTitles.value(matchId);
+}
+
+QString RollbackLobbyDialog::romPathForMatch(const LobbyClient::LobbyRoomSummary& room) const
+{
+    if (!room.romMd5.isEmpty())
+        return localRomPathForMd5(room.romMd5);
+    // A room without an MD5 goes by the game's name, as the main window would.
+    for (auto it = m_roms.constBegin(); it != m_roms.constEnd(); ++it)
+    {
+        if (QString::fromStdString(it.value().GoodName).compare(room.romName, Qt::CaseInsensitive) == 0)
+            return it.key();
+    }
+    return QString();
+}
+
+void RollbackLobbyDialog::openViewerWindow(const LobbyClient::LobbyRoomSummary& roomRef)
+{
+    // A copy: the message boxes below run an event loop.
+    const LobbyClient::LobbyRoomSummary room = roomRef;
+    if (m_viewerHost->count() >= StreamViewer::kMaxViewerWindows)
+    {
+        QMessageBox::information(this, tr("Too many windows"),
+            tr("You can watch up to %1 live replays in windows of their own at once. Close one to open another.")
+                .arg(StreamViewer::kMaxViewerWindows));
+        return;
+    }
+    const QString romPath = romPathForMatch(room);
+    if (romPath.isEmpty())
+    {
+        QMessageBox::warning(this, tr("ROM not found"),
+            QString(tr("You don't have the ROM this match is using (%1).\n\n"
+                    "Add it to your ROM directory and refresh the list, then try again."))
+                .arg(room.romName));
+        return;
+    }
+    // It would start this match in the main window once the game there closes.
+    if (m_pendingSpectate.matchId == room.matchId)
+        m_pendingSpectate = PendingSpectate{};
+
+    const QString title = streamTitle(room.matchId);
+    // Several games playing sound at once is noise: a new window starts
+    // muted while anything else is audible.
+    const bool mainAudible = CoreIsEmulationRunning() && !CoreIsVolumeMuted();
+    const bool startMuted = mainAudible || m_viewerHost->anyAudible();
+    QString error;
+    if (!m_viewerHost->open(room.matchId, title, room.romName, romPath, startMuted, &error))
+    {
+        QMessageBox::warning(this, tr("Live Replay"), error);
+        return;
+    }
+    m_client->startSpectate(room.matchId);
+    m_streamTitles.insert(room.matchId, title);
+    m_lastViewerStream = room.matchId;
+    m_spectateChatLines.remove(room.matchId);
+    const bool tabShown = m_chatTabAvailable[kChatTabSpectators];
+    appendSpectateSystemLine(room.matchId, tr("Opening %1 in a window of its own…").arg(title),
+                             QStringLiteral("external-link-line"));
+    // The tab comes up (and is picked) when it's the first stream; otherwise
+    // it stays on what it shows.
+    if (!tabShown)
+        setSpectatorChatVisible(true);
+    else
+        refreshSpectateChatView();
+    refreshWatchTracker();
+    onRoomListChanged();
+}
+
+void RollbackLobbyDialog::onViewerWindowClosed(quint64 matchId, const QString& failure)
+{
+    // Its window is gone, so the stream is too; the lobby may have ended it
+    // already.
+    if (m_client->isSpectating(matchId))
+        m_client->stopSpectate(matchId);
+    if (!failure.isEmpty())
+    {
+        appendChatSystemLine(m_currentRoomId != 0 ? CHANNEL_ROOM : CHANNEL_LOBBY,
+                             tr("Couldn't watch %1: %2").arg(m_streamTitles.value(matchId), failure),
+                             QStringLiteral("error-warning-line"), Role::Warn);
+    }
+    m_spectateChatLines.remove(matchId);
+    if (matchId != m_spectatingMatchId)
+        m_streamTitles.remove(matchId);
+    if (m_chatStreamPick == matchId)
+        m_chatStreamPick = 0;
+    if (m_lastViewerStream == matchId)
+        m_lastViewerStream = 0;
+    refreshSpectatorChatAvailability();
+    refreshWatchTracker();
+    onRoomListChanged();
+}
+
+void RollbackLobbyDialog::stopWatchingMatch(quint64 matchId)
+{
+    if (m_viewerHost->has(matchId))
+    {
+        // Off the stream at once; the window follows (onViewerWindowClosed).
+        if (m_client->isSpectating(matchId))
+            m_client->stopSpectate(matchId);
+        m_viewerHost->close(matchId);
+        return;
+    }
+    if (matchId != 0 && matchId == m_spectatingMatchId)
+    {
+        m_pendingSpectate = PendingSpectate{};
+        emit spectateStreamClosed(QStringLiteral("stopped"));
+    }
+}
+
+void RollbackLobbyDialog::focusStream(quint64 matchId)
+{
+    if (matchId != 0 && matchId == m_spectatingMatchId)
+        emit mainStreamWindowRequested();
+    else
+        m_viewerHost->raise(matchId);
+}
+
+void RollbackLobbyDialog::ownGameStarting()
+{
+    if (!kCloseViewerWindowsForOwnGame || m_viewerHost->count() == 0)
+        return;
+    for (const auto& stream : m_viewerHost->streams())
+        stopWatchingMatch(stream.matchId);
+    appendChatSystemLine(m_currentRoomId != 0 ? CHANNEL_ROOM : CHANNEL_LOBBY,
+                         tr("Your game is starting, so the live replay windows were closed: "
+                            "games running in the background cost a rollback match frames."),
+                         QStringLiteral("external-link-line"));
+}
+
+void RollbackLobbyDialog::setMainStreamState(StreamViewer::State state)
+{
+    if (m_mainStreamState == state)
+        return;
+    m_mainStreamState = state;
+    refreshWatchTracker();
+}
+
+void RollbackLobbyDialog::setMainStreamMuted(bool muted)
+{
+    if (m_mainStreamMuted == muted)
+        return;
+    m_mainStreamMuted = muted;
+    refreshWatchTracker();
+}
+
+void RollbackLobbyDialog::refreshWatchTracker()
+{
+    if (m_watchTracker == nullptr)
+        return;
+    QList<WatchEntryView> entries;
+    const quint64 shown = chatStream();
+    if (m_spectatingMatchId != 0)
+    {
+        WatchEntryView view;
+        view.matchId = m_spectatingMatchId;
+        view.title = m_streamTitles.value(m_spectatingMatchId, streamTitle(m_spectatingMatchId));
+        const auto room = std::find_if(m_client->rooms().cbegin(), m_client->rooms().cend(),
+            [this](const LobbyClient::LobbyRoomSummary& r) { return r.matchId == m_spectatingMatchId; });
+        if (room != m_client->rooms().cend())
+            view.game = room->romName;
+        view.state = m_mainStreamState;
+        view.muted = m_mainStreamMuted;
+        view.mainWindow = true;
+        view.selected = shown == m_spectatingMatchId;
+        entries.append(view);
+    }
+    for (const auto& stream : m_viewerHost->streams())
+    {
+        WatchEntryView view;
+        view.matchId = stream.matchId;
+        view.title = stream.title;
+        view.game = stream.game;
+        view.state = stream.state;
+        view.muted = stream.muted;
+        view.selected = shown == stream.matchId;
+        entries.append(view);
+    }
+    // Marking the chat's stream only means something with several to pick from.
+    if (entries.size() < 2)
+    {
+        for (WatchEntryView& view : entries)
+            view.selected = false;
+    }
+    m_watchTracker->setEntries(entries);
+}
+
+quint64 RollbackLobbyDialog::chatStream() const
+{
+    if (watchingStream(m_chatStreamPick))
+        return m_chatStreamPick;
+    // A player's own viewers come first: that chat is theirs to answer.
+    if (m_playerChatLive && m_playerChatMatchId != 0)
+        return m_playerChatMatchId;
+    if (m_spectatingMatchId != 0)
+        return m_spectatingMatchId;
+    if (watchingStream(m_lastViewerStream))
+        return m_lastViewerStream;
+    const auto streams = m_viewerHost ? m_viewerHost->streams() : QList<StreamViewerHost::StreamInfo>();
+    if (!streams.isEmpty())
+        return streams.last().matchId;
+    // A finished match's chat stays readable until the next.
+    return m_playerChatMatchId;
+}
+
+void RollbackLobbyDialog::refreshSpectateChatView(bool reload)
+{
+    if (m_chatViewSpectate == nullptr)
+        return;
+    const quint64 stream = chatStream();
+    if (stream != m_chatStreamShown || reload)
+    {
+        m_chatStreamShown = stream;
+        m_chatViewSpectate->clear();
+        // Clearing dropped the document's images; the lines need them back.
+        for (auto it = m_chatIcons.constBegin(); it != m_chatIcons.constEnd(); ++it)
+            m_chatViewSpectate->document()->addResource(QTextDocument::ImageResource, QUrl(it.key()), it.value());
+        for (const QString& line : m_spectateChatLines.value(stream))
+            m_chatViewSpectate->addLine(line);
+        m_pendingMentions[kChatTabSpectators].clear();
+        refreshMentionJump();
+    }
+    if (m_spectatorStrip)
+        m_spectatorStrip->setVisible(m_playerChatMatchId != 0 && m_chatStreamShown == m_playerChatMatchId);
+    refreshSpectatorTab();
+    refreshChatInput();
+    refreshWatchTracker();
+}
+
+void RollbackLobbyDialog::appendSpectateChatLine(quint64 matchId, const QString& html)
+{
+    if (matchId == m_chatStreamShown)
+    {
+        appendChatLine(CHANNEL_SPECTATE, html);
+        return;
+    }
+    // Another stream's: kept for when it's picked.
+    QStringList& lines = m_spectateChatLines[matchId];
+    lines.append(html);
+    if (lines.size() > kSpectateChatKeep)
+        lines.removeFirst();
+}
+
+void RollbackLobbyDialog::appendSpectateSystemLine(quint64 matchId, const QString& text, const QString& icon)
+{
+    appendSpectateChatLine(matchId, chatSystemLineHtml(text, icon, Role::Muted));
 }
 
 void RollbackLobbyDialog::abortMatchStart(const QString& reason)
@@ -8256,6 +8765,7 @@ void RollbackLobbyDialog::onMatchBegin(quint64 matchId, const QList<LobbyClient:
     // clear the pre-match settings and report this match as finished, leaving
     // us playing while the lobby shows us waiting to join.
     m_pendingSpectate = PendingSpectate{};
+    ownGameStarting();
     const bool wasWatching = m_spectatingMatchId != 0;
     if (wasWatching)
     {
@@ -8651,6 +9161,7 @@ void RollbackLobbyDialog::onMatchAdmitBegin(quint64 matchId, quint64 admitId, in
     if (joiner.userId == selfId)
     {
         m_lateJoin.role = LateJoinRole::Joiner;
+        ownGameStarting();
         // The game is about to take over the window. Whatever is open there
         // (say, a live replay of this match) closes first: its shutdown
         // clears the match settings the host sends, so they wait until it's gone.

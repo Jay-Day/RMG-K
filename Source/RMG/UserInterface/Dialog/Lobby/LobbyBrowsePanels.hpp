@@ -46,7 +46,8 @@ struct LiveMatchView
     bool hasRom = true;
     bool sameGame = false;    // matches the game selected in the picker
     bool watching = false;    // this client is watching this match
-    bool watchingOther = false; // ...or a different one
+    bool watchingInWindow = false; // ...in a viewer window of its own
+    bool watchingOther = false; // the main window is watching a different one
     bool inRoom = false;      // this client is seated in a room
     QList<Player> players;
     // The host's game settings, named for this client (the preset, the one
@@ -116,7 +117,10 @@ public:
 
 signals:
     void watchRequested(quint64 roomId);
-    void stopWatchingRequested();
+    // Watch in a viewer window of its own (the button beside Watch, the
+    // menu, Ctrl+double-click or a middle click).
+    void watchInWindowRequested(quint64 roomId);
+    void stopWatchingRequested(quint64 roomId);
     void joinRequested(quint64 roomId);
     void contextMenuRequested(quint64 roomId, const QPoint& globalPos);
     // A right-click on a player's name.

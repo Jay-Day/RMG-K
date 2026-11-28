@@ -124,6 +124,13 @@ shaders in binary form
 */
 bool ShaderStorage::saveShadersStorage(const graphics::Combiners & _combiners) const
 {
+	// RMG-K: a live replay viewer window reads the shader cache but leaves
+	// writing it to the main window, so several windows closing together
+	// never write the same files at once.
+	const char * readOnly = getenv("RMGK_READ_ONLY_USER_FILES");
+	if (readOnly != nullptr && readOnly[0] != '\0' && readOnly[0] != '0')
+		return true;
+
 	if (!_saveCombinerKeys(_combiners))
 		return false;
 

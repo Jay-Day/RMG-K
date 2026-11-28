@@ -13,6 +13,7 @@
 #include "LobbyTheme.hpp"
 #include "LagStats.hpp"
 #include "NetplaySaveDialogs.hpp"
+#include "UserInterface/StreamViewer/StreamViewerProtocol.hpp"
 
 #include <QDialog>
 #include <QHash>
@@ -24,6 +25,7 @@
 #include <QByteArray>
 #include <QMutex>
 #include <QPoint>
+#include <QPixmap>
 #include <QVariant>
 
 #include <RMG-Core/RomSettings.hpp>
@@ -49,6 +51,8 @@ class QButtonGroup;
 
 namespace UserInterface
 {
+class StreamViewerHost;
+
 namespace Dialog
 {
 
@@ -85,6 +89,7 @@ class StatusTag;
 class ToggleSwitch;
 class UndoToast;
 class UserAvatar;
+class WatchTracker;
 
 // Top-level rollback lobby UI. Owns a LobbyClient and renders presence /
 // rooms / chat. Modeless — opened from the main window menu.
@@ -121,6 +126,16 @@ public:
     // MainWindow calls this when a spectate playback session ends (emulation
     // stopped) so the server can drop us from the broadcast. Idempotent.
     void stopSpectating();
+
+    // How the main window's live replay is doing and whether it's muted, for
+    // the Watching strip.
+    void setMainStreamState(StreamViewer::State state);
+    void setMainStreamMuted(bool muted);
+
+    // A game of this PC's own is starting (a lobby match, a direct or a
+    // Kaillera session): the viewer windows close, since an emulator running
+    // behind a rollback match costs it frames. Says so in the chat.
+    void ownGameStarting();
 
     // Lag stats for the running rollback match (or the last one), built from
     // our own numbers and the other players' reports. /lagstat in the in-game
@@ -172,6 +187,9 @@ signals:
     // Persistent OSD audience badge. isSpectator selects the role-specific text.
     void liveReplayViewerCountChanged(int viewerCount, bool isSpectator);
     void liveReplayViewerCountCleared();
+    // The Watching strip's main-window entry: its speaker, and a click on it.
+    void mainStreamMuteToggleRequested();
+    void mainStreamWindowRequested();
 
     // Late join notices for the running game: a line in the OSD message
     // stack, the centered banner shown while the game holds for a joiner
@@ -205,6 +223,7 @@ private slots:
     void onCreateRoomClicked();
     void onRoomJoinRequested(quint64 roomId);
     void onMatchWatchRequested(quint64 roomId); // spectate a broadcast match
+    void onMatchWatchInWindowRequested(quint64 roomId); // ...in a viewer window of its own
     void onRoomCreateRequested();
     void onRoomCreated(quint64 roomId);
     void onRoomCreateFailed(const QString& reason);
@@ -400,6 +419,7 @@ private:
     void    appendChatSystemLine(const QString& channel, const QString& text,
                                  const QString& icon = QString(),
                                  LobbyTheme::Role role = LobbyTheme::Role::Muted);
+    QString chatSystemLineHtml(const QString& text, const QString& icon, LobbyTheme::Role role) const;
     // One line of chat. bodyHtml is from chatBodyHtml. mine marks this PC's own
     // lines in a private conversation.
     QString chatMessageHtml(const QString& time, quint64 userId, const QString& who, const QString& bodyHtml,
@@ -484,6 +504,40 @@ private:
     void beginSpectate(quint64 matchId, const QString& gameName, const QString& romMd5);
     void launchSpectate(quint64 matchId, const QString& gameName, const QString& romPath);
     void startPendingSpectate();
+
+    // ── Viewer windows and the Watching strip ──
+    // A watch request for a match. A match already being watched, in the
+    // main window or a window of its own, comes to the front instead.
+    void requestWatch(quint64 roomId, bool newWindow);
+    void openViewerWindow(const LobbyClient::LobbyRoomSummary& room);
+    // A viewer window is gone; failure is why, shown once in the chat.
+    void onViewerWindowClosed(quint64 matchId, const QString& failure);
+    // Closes whichever window shows that match.
+    void stopWatchingMatch(quint64 matchId);
+    void focusStream(quint64 matchId);
+    void refreshWatchTracker();
+    // Who's playing a match, for a stream's name: "Alice vs Bob".
+    QString streamTitle(quint64 matchId) const;
+    // The words for a reason watching failed; the reason itself when it
+    // isn't one this client knows (known says which).
+    QString spectateReasonText(const QString& reason, bool* known = nullptr) const;
+    bool watchingStream(quint64 matchId) const;
+    // The local ROM for a match's game, by MD5, else by name.
+    QString romPathForMatch(const LobbyClient::LobbyRoomSummary& room) const;
+
+    // Spectator chat keeps lines per stream, so the Spectators tab can show
+    // the one picked in the Watching strip and switch without losing any.
+    // The stream the tab shows (a watched match, or this player's own).
+    quint64 chatStream() const;
+    // Shows chatStream()'s lines if the tab shows another's (or anyway, to
+    // reload them).
+    void refreshSpectateChatView(bool reload = false);
+    // Adds a line to a stream's chat, and to the tab when it's shown.
+    void appendSpectateChatLine(quint64 matchId, const QString& html);
+    void appendSpectateSystemLine(quint64 matchId, const QString& text, const QString& icon = QString());
+    void sendSpectatorChatTo(quint64 matchId, const QString& message);
+    // The tab shows while anything has a spectators' chat.
+    void refreshSpectatorChatAvailability();
 
     // Shows the Spectators chat tab (and selects it) while watching a live
     // replay; hiding it returns the column to lobby chat.
@@ -910,6 +964,23 @@ private:
     // the stale data on the wire — so we drop every keyframe/data message until we
     // see the BEGIN for the current subscribe. Reset false in beginSpectate.
     bool       m_spectateStreamArmed = false;
+
+    // Live replays in windows of their own, each its own process.
+    StreamViewerHost* m_viewerHost = nullptr;
+    WatchTracker*     m_watchTracker = nullptr;
+    StreamViewer::State m_mainStreamState = StreamViewer::State::Connecting;
+    bool       m_mainStreamMuted = false;
+    // The stream picked in the Watching strip for the Spectators chat, and
+    // the viewer window opened or picked last; see chatStream().
+    quint64    m_chatStreamPick = 0;
+    quint64    m_lastViewerStream = 0;
+    quint64    m_chatStreamShown = 0; // whose lines m_chatViewSpectate holds
+    QHash<quint64, QStringList> m_spectateChatLines;
+    // Each watched stream's name, kept after its room leaves the list.
+    QHash<quint64, QString> m_streamTitles;
+    // Every icon put in a chat line, so a stream's lines can be shown again
+    // after the view was cleared (clearing drops a document's images).
+    mutable QHash<QString, QPixmap> m_chatIcons;
 
     // Seat rows (always 4 — slots beyond maxPlayers are hidden)
     SeatRow    m_seats[4];

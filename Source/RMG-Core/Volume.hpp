@@ -26,4 +26,8 @@ bool CoreDecreaseVolume(void);
 // attempts to toggle whether the audio is muted
 bool CoreToggleMuteVolume(void);
 
+// returns whether the audio is muted (a volume of 0 counts),
+// only meaningful while a game is running
+bool CoreIsVolumeMuted(void);
+
 #endif // CORE_VOLUME_HPP

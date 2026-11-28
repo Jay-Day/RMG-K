@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <string>
 #include <cstring>
+#include <cstdlib>
 
 //
 // Local Variables
@@ -167,11 +168,32 @@ CORE_EXPORT bool CoreInit(void)
     return true;
 }
 
+CORE_EXPORT void CoreSetUserFilesReadOnly(void)
+{
+    // The environment reaches what RMG-Core can't call into: the core's
+    // config writer and the graphics plugin's caches read the same variable.
+#ifdef _WIN32
+    _putenv_s(CoreReadOnlyUserFilesVariable, "1");
+#else
+    setenv(CoreReadOnlyUserFilesVariable, "1", 1);
+#endif
+}
+
+CORE_EXPORT bool CoreUserFilesReadOnly(void)
+{
+    const char* value = std::getenv(CoreReadOnlyUserFilesVariable);
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
 CORE_EXPORT void CoreShutdown(void)
 {
     CorePluginsShutdown();
 
-    CoreSaveRomHeaderAndSettingsCache();
+    // The ROM cache file belongs to the RMG-K that owns the user folders.
+    if (!CoreUserFilesReadOnly())
+    {
+        CoreSaveRomHeaderAndSettingsCache();
+    }
 
     m64p::Core.Shutdown();
 

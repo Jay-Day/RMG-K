@@ -35,6 +35,7 @@
 #include <RMG-Core/Kaillera.hpp>
 #include <RMG-Core/Cheats.hpp>
 #include <RMG-Core/Video.hpp>
+#include <RMG-Core/Core.hpp>
 
 #include <QGuiApplication>
 #include <QApplication>
@@ -1013,6 +1014,12 @@ static bool check_hotkeys(int Control)
 {
     std::lock_guard<std::recursive_mutex> lock(l_InputMutex);
     if (l_IsConfigGuiOpen) return false;
+    // A live replay viewer window (the one kind of process that doesn't write
+    // the user's files) leaves controller hotkeys to the main window: every
+    // open window sees the same button press, and one would save a state or
+    // quit in each.
+    static const bool viewerWindow = CoreUserFilesReadOnly();
+    if (viewerWindow) return false;
     InputProfile* profile = &l_InputProfiles[Control];
 
     int state = 0;
