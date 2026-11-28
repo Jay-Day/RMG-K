@@ -1008,6 +1008,10 @@ void RollbackLobbyDialog::buildUi()
     root->setSpacing(0);
 
     root->addWidget(buildLobbyView());
+
+    // The challenges corner floats over everything, the room window included.
+    m_challengeTray = new ChallengeTray(this);
+    m_challengeTray->setAnchor(m_challengesButton);
 }
 
 QWidget* RollbackLobbyDialog::buildLobbyView()
@@ -1024,7 +1028,7 @@ QWidget* RollbackLobbyDialog::buildLobbyView()
     m_panelLayout = new PanelLayout(container);
 
     // The browse view fills the stage. The room window floats over it, above a
-    // scrim that dims it; the challenge card and the undo toast float over both.
+    // scrim that dims it; the undo toast floats over both.
     m_stage = new QWidget(container);
     auto* stageLay = new QVBoxLayout(m_stage);
     stageLay->setContentsMargins(0, 0, 0, 0);
@@ -1046,10 +1050,6 @@ QWidget* RollbackLobbyDialog::buildLobbyView()
     connect(m_roomWindow, &RoomWindow::geometryChanged, this, [this]() {
         m_scrim->setWindowRect(m_roomWindow->geometry());
     });
-    m_challengeCard = new ChallengeCard(m_stage);
-    m_challengeCard->setVisible(false);
-    connect(m_challengeCard, &ChallengeCard::acceptClicked, this, [this]() { answerChallenge(true); });
-    connect(m_challengeCard, &ChallengeCard::declineClicked, this, [this]() { answerChallenge(false); });
     m_toast = new UndoToast(m_stage);
     connect(m_toast, &UndoToast::undoClicked, this, [this]() {
         if (!m_undoAction.isEmpty())
@@ -1132,6 +1132,13 @@ QWidget* RollbackLobbyDialog::buildMarquee()
 
     h->addStretch(1);
 
+    // The challenges corner opens from beside the account chip.
+    auto* corner = new QHBoxLayout;
+    corner->setSpacing(8);
+    m_challengesButton = new ChallengesButton(m_marquee);
+    m_challengesButton->setVisible(false);
+    corner->addWidget(m_challengesButton, 0, Qt::AlignVCenter);
+
     m_userChip = new LayoutButton(m_marquee);
     m_userChip->setObjectName("UserChip");
     m_userChip->setAutoDefault(false);
@@ -1175,7 +1182,8 @@ QWidget* RollbackLobbyDialog::buildMarquee()
     transparentForMouse(chevron);
     chip->addWidget(chevron);
     connect(m_userChip, &QPushButton::clicked, this, &RollbackLobbyDialog::showUserMenu);
-    h->addWidget(m_userChip, 0, Qt::AlignVCenter);
+    corner->addWidget(m_userChip, 0, Qt::AlignVCenter);
+    h->addLayout(corner);
 
     return m_marquee;
 }
@@ -1184,6 +1192,8 @@ void RollbackLobbyDialog::updateUserChip()
 {
     const bool connected = m_client->state() == LobbyClient::ConnectionState::Connected;
     m_userChip->setVisible(connected);
+    // Whether the server has challenges can change with the connection.
+    scheduleChallengeTrayRefresh();
     if (!connected)
         return;
 
@@ -1320,9 +1330,6 @@ QWidget* RollbackLobbyDialog::buildPlayBar()
     m_ticketValues[1] = second.value;
     m_ticketCaptions[1] = second.caption;
     ticketLay->addWidget(first.box);
-    m_ticketBars = new SignalBars(ticket);
-    m_ticketBars->hide();
-    ticketLay->addWidget(m_ticketBars, 0, Qt::AlignVCenter);
     ticketLay->addWidget(second.box);
 
     m_ticketLeave = new LobbyButton(tr("Leave Room"), LobbyButton::Kind::Danger, ticket);
@@ -2218,7 +2225,7 @@ QWidget* RollbackLobbyDialog::buildChatColumn()
     connect(m_privateChats, &PrivateChats::tabsChanged, this, &RollbackLobbyDialog::refreshChatSplit);
     connect(m_privateChats, &PrivateChats::userActivated, this, &RollbackLobbyDialog::showPlayerMenu);
     connect(m_privateChats, &PrivateChats::menuRequested, this, &RollbackLobbyDialog::showPlayerMenu);
-    connect(m_privateChats, &PrivateChats::challengeRequested, this, &RollbackLobbyDialog::startChallenge);
+    connect(m_privateChats, &PrivateChats::challengeRequested, this, [this](quint64 userId) { startChallenge(userId); });
 
     refreshChatTabIcons();
     refreshChatSplit();
@@ -3397,7 +3404,9 @@ void RollbackLobbyDialog::refreshPlayBar()
     };
 
     m_ticketLeave->setVisible(m_currentRoomId != 0);
-    m_ticketBars->setVisible(false);
+    refreshPlayBarButtons();
+    // The tray's cards and log go by much of what the play bar does.
+    scheduleChallengeTrayRefresh();
     if (m_currentRoomId != 0)
     {
         QString name = tr("Your room");
@@ -3433,43 +3442,6 @@ void RollbackLobbyDialog::refreshPlayBar()
         m_ticketAction->setText(tr("Cancel"));
         m_ticketAction->setKind(LobbyButton::Kind::Secondary);
         m_ticketAction->setIconName(QStringLiteral("close-line"));
-    }
-    else if (m_outgoingChallenge.id != 0)
-    {
-        setTicket(tr("Challenge sent"), t.accentInk, tr("Waiting for %1").arg(m_outgoingChallenge.toUsername),
-                  m_outgoingChallenge.romName.isEmpty() ? QString()
-                      : QStringLiteral(" · ") + m_outgoingChallenge.romName);
-        const qint64 left = m_outgoingChallenge.expiresAtMs - QDateTime::currentMSecsSinceEpoch();
-        // Their ping, measured once the lobby's ping check lands, estimated till then.
-        bool estimate = true;
-        const int pingMs = challengePingMs(m_outgoingChallenge, true, &estimate);
-        setValues(QString::number(std::max<qint64>(0, (left + 999) / 1000)), tr("seconds"),
-                  pingMs < 0 ? QString() : QString(estimate ? "~%1 ms" : "%1 ms").arg(pingMs),
-                  estimate ? tr("est. ping") : tr("ping"));
-        if (pingMs >= 0)
-        {
-            m_ticketBars->setPing(pingMs, estimate);
-            m_ticketBars->setVisible(true);
-        }
-        m_ticketBadge->setIconAndColors(QString(), t.accentInk, t.accentTint);
-        m_ticketBadge->setVisible(true);
-        m_ticketSpinner->setColors(t.accentTint, t.accentInk);
-        m_ticketSpinner->setVisible(true);
-        m_ticketAction->setText(tr("Cancel"));
-        m_ticketAction->setKind(LobbyButton::Kind::Secondary);
-        m_ticketAction->setIconName(QStringLiteral("close-line"));
-    }
-    else if (!m_challengeOutcome.title.isEmpty())
-    {
-        setTicket(m_challengeOutcome.title, m_challengeOutcome.color, QString(), m_challengeOutcome.detail);
-        setValues(QString(), QString(), QString(), QString());
-        m_ticketSpinner->setVisible(false);
-        m_ticketBadge->setVisible(true);
-        m_ticketBadge->setIconAndColors(m_challengeOutcome.icon, m_challengeOutcome.color,
-                                        LobbyTheme::mix(m_challengeOutcome.color, t.tint, 0.13));
-        m_ticketAction->setText(tr("OK"));
-        m_ticketAction->setKind(LobbyButton::Kind::Secondary);
-        m_ticketAction->setIconName(QString());
     }
     else if (m_quickMatchActive)
     {
@@ -3528,18 +3500,6 @@ void RollbackLobbyDialog::onPlayBarActionClicked()
     {
         cancelPendingPingCheck();
     }
-    else if (m_outgoingChallenge.id != 0)
-    {
-        // Not waiting for the reply: there's none if the challenge has already ended.
-        m_client->cancelChallenge(m_outgoingChallenge.id);
-        m_outgoingChallenge = LobbyClient::Challenge{};
-        refreshPlayBar();
-    }
-    else if (!m_challengeOutcome.title.isEmpty())
-    {
-        m_challengeOutcome.title.clear();
-        refreshPlayBar();
-    }
     else if (m_quickMatchActive)
     {
         m_client->quickMatchCancel();
@@ -3549,6 +3509,16 @@ void RollbackLobbyDialog::onPlayBarActionClicked()
         m_pendingSpectate = PendingSpectate{};
         emit spectateStreamClosed(QStringLiteral("stopped"));
     }
+}
+
+void RollbackLobbyDialog::refreshPlayBarButtons()
+{
+    if (!m_quickMatchBtn || !m_createRoomBtn || !m_client)
+        return;
+    const bool free = m_client->state() == LobbyClient::ConnectionState::Connected && m_currentRoomId == 0 &&
+                      m_outgoingChallenge.id == 0;
+    m_quickMatchBtn->setEnabled(free);
+    m_createRoomBtn->setEnabled(free && !m_quickMatchActive);
 }
 
 void RollbackLobbyDialog::updateServerMeta()
@@ -3590,10 +3560,14 @@ void RollbackLobbyDialog::onPresenceFull()
     refreshPlayerGroups();
     updateServerMeta();
     updateUserChip();
+    noteSelfPresence();
+    scheduleChallengeTrayRefresh();
 }
 
 void RollbackLobbyDialog::onUserAdded(quint64 userId)
 {
+    // Someone in the challenge log may be back.
+    scheduleChallengeTrayRefresh();
     const auto& users = m_client->users();
     auto it = users.constFind(userId);
     if (it == users.constEnd()) return;
@@ -3607,6 +3581,7 @@ void RollbackLobbyDialog::onUserAdded(quint64 userId)
 
 void RollbackLobbyDialog::onUserRemoved(quint64 userId)
 {
+    scheduleChallengeTrayRefresh();
     m_privateChats->markGone(userId);
     auto it = m_userItems.find(userId);
     if (it == m_userItems.end()) return;
@@ -3618,6 +3593,10 @@ void RollbackLobbyDialog::onUserRemoved(quint64 userId)
 
 void RollbackLobbyDialog::onUserUpdated(quint64 userId)
 {
+    // In a match or out of one, challenges on or off: the log's rows follow.
+    scheduleChallengeTrayRefresh();
+    if (userId == m_client->selfUserId())
+        noteSelfPresence();
     auto it = m_userItems.find(userId);
     if (it == m_userItems.end()) return;
     const auto& users = m_client->users();
@@ -4156,7 +4135,6 @@ void RollbackLobbyDialog::layoutStage()
     m_roomWindow->setVisible(open);
     m_scrim->raise();
     m_roomWindow->raise();
-    m_challengeCard->raise();
     m_toast->raise();
     positionStageOverlays();
 }
@@ -4180,12 +4158,33 @@ void RollbackLobbyDialog::refreshRoomTitleTip()
 
 void RollbackLobbyDialog::keyPressEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_Escape && m_challengeTray && m_challengeTray->isLogOpen())
+    {
+        closeChallengeLog();
+        return;
+    }
     if (event->key() == Qt::Key_Escape && roomWindowOpen())
     {
         switchToRoomsView();
         return;
     }
     QDialog::keyPressEvent(event);
+}
+
+void RollbackLobbyDialog::resizeEvent(QResizeEvent* event)
+{
+    QDialog::resizeEvent(event);
+    positionChallengeTray();
+}
+
+void RollbackLobbyDialog::positionChallengeTray()
+{
+    if (!m_challengeTray || !m_marquee)
+        return;
+    // Under the header and its port stripe, its right edge in line with the account chip's.
+    const int top = m_marquee->mapTo(this, QPoint(0, m_marquee->height())).y() + 10;
+    m_challengeTray->place(QPoint(width() - MARGIN_STAGE, top), width() - 2 * MARGIN_STAGE,
+                           height() - top - MARGIN_STAGE);
 }
 
 void RollbackLobbyDialog::clearServerRoomSnapshot()
@@ -6666,13 +6665,15 @@ void RollbackLobbyDialog::onPingMeasurementExpired(quint64 userId)
 
 void RollbackLobbyDialog::refreshPingViews(quint64 userId)
 {
-    // A challenge's ping on the play bar or on the card.
-    if (m_outgoingChallenge.id != 0 &&
-        (m_outgoingChallenge.pingPeerUserId == userId || m_outgoingChallenge.toUserId == userId))
-        refreshPlayBar();
-    if (!m_incomingChallenges.isEmpty() &&
-        (m_incomingChallenges.first().pingPeerUserId == userId || m_incomingChallenges.first().fromUserId == userId))
-        showNextChallenge();
+    // A challenge's ping on its card in the tray.
+    const bool outgoing = m_outgoingChallenge.id != 0 &&
+        (m_outgoingChallenge.pingPeerUserId == userId || m_outgoingChallenge.toUserId == userId);
+    const bool incoming = std::any_of(m_incomingChallenges.cbegin(), m_incomingChallenges.cend(),
+        [userId](const LobbyClient::Challenge& challenge) {
+            return challenge.pingPeerUserId == userId || challenge.fromUserId == userId;
+        });
+    if (outgoing || incoming)
+        scheduleChallengeTrayRefresh();
 
     // Refresh the lobby rows so the hover tooltip shows the fresh measurement:
     // this user's, and any others seated on the same connection.

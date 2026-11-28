@@ -980,6 +980,8 @@ void LobbyClient::onWsConnected()
     data["lateJoin"] = true;
     data["localPlayers"] = true;
     data["social"] = true;
+    // The lobby says which challenges it turned away while this PC played (CHALLENGE_MISSED).
+    data["challengeLog"] = true;
     data["spectatorChat"] = true;
     data["saveData"] = true;
     data["gameOptions"] = true;
@@ -1094,6 +1096,7 @@ void LobbyClient::handleEnvelope(const QJsonObject& env)
     else if (type == "CHALLENGE_SENT")       handleChallengeSent(data);
     else if (type == "CHALLENGE_INCOMING")   handleChallengeIncoming(data);
     else if (type == "CHALLENGE_RESULT")     handleChallengeResult(data);
+    else if (type == "CHALLENGE_MISSED")     handleChallengeMissed(data);
     else if (type == "CHALLENGE_GAMES_REPLY") handleChallengeGamesReply(data);
     else if (type == "PING_PROBE_REPLY")     handlePingProbeReply(data);
     else if (type == "PING_PROBE_INCOMING")  handlePingProbeIncoming(data);
@@ -4320,6 +4323,22 @@ void LobbyClient::handleChallengeResult(const QJsonObject& data)
     emit challengeEnded(challengeId,
                         static_cast<quint64>(data.value("toUserId").toDouble()),
                         data.value("result").toString());
+}
+
+void LobbyClient::handleChallengeMissed(const QJsonObject& data)
+{
+    const QJsonObject rom = data.value("rom").toObject();
+    Challenge c;
+    c.fromUserId = static_cast<quint64>(data.value("fromUserId").toDouble());
+    c.fromUsername = data.value("fromUsername").toString();
+    c.toUserId = static_cast<quint64>(data.value("toUserId").toDouble());
+    c.toUsername = data.value("toUsername").toString();
+    c.romName = rom.value("name").toString();
+    c.romMd5 = rom.value("md5").toString();
+    c.note = data.value("note").toString();
+    c.invite = data.value("invite").toBool();
+    c.roomName = data.value("roomName").toString();
+    emit challengeMissed(c, data.value("reason").toString());
 }
 
 void LobbyClient::handleChallengeGamesReply(const QJsonObject& data)

@@ -477,6 +477,10 @@ signals:
     void challengeIncoming(const LobbyClient::Challenge& challenge);
     // A challenge ended, or a send was refused (challengeId 0).
     void challengeEnded(quint64 challengeId, quint64 toUserId, const QString& result);
+    // The lobby turned away a challenge to this PC; reason "busy": it was in a
+    // match. It carries what CHALLENGE_INCOMING would have, without an id or a
+    // deadline. Lobbies that don't keep a challenge log never send it.
+    void challengeMissed(const LobbyClient::Challenge& challenge, const QString& reason);
     void sharedGamesReceived(quint64 toUserId, const QStringList& md5s);
 
     void pingProbeReply(quint64 targetUserId, const QString& endpoint);
@@ -589,6 +593,7 @@ private:
     void handleChallengeSent(const QJsonObject& data);
     void handleChallengeIncoming(const QJsonObject& data);
     void handleChallengeResult(const QJsonObject& data);
+    void handleChallengeMissed(const QJsonObject& data);
     void handleChallengeGamesReply(const QJsonObject& data);
     void handlePingProbeReply(const QJsonObject& data);
     void handleMatchBegin(const QJsonObject& data);

@@ -73,15 +73,14 @@ namespace
     constexpr int kOverlayCommentChars = 120;
     // How often one person can make this PC make a noise.
     constexpr qint64 kAlertIntervalMs = 30'000;
-    // How long the play bar shows how a challenge ended, if nobody clicks OK.
-    constexpr int kOutcomeMs = 8'000;
     // How long past its deadline to wait for the lobby to end a challenge.
     constexpr int kChallengeGraceMs = 3'000;
     constexpr int kMaxMentionRows = 5;
     // How long someone who wrote to us can be answered even with their private
     // messages off. The lobby keeps the same window.
     constexpr qint64 kPmReplyWindowMs = 10 * 60'000;
-    constexpr int kMaxCardWidth = 756;
+    // How many names the after-match summary lists before "and 2 more".
+    constexpr int kSummaryNames = 3;
 
     // The top of a player's menu: who this is and what they're up to.
     class PlayerMenuHeader : public QWidget
@@ -149,6 +148,26 @@ void RollbackLobbyDialog::connectSocialSignals()
     connect(m_client, &LobbyClient::challengeSent, this, &RollbackLobbyDialog::onChallengeSent);
     connect(m_client, &LobbyClient::challengeIncoming, this, &RollbackLobbyDialog::onChallengeIncoming);
     connect(m_client, &LobbyClient::challengeEnded, this, &RollbackLobbyDialog::onChallengeEnded);
+    connect(m_client, &LobbyClient::challengeMissed, this, &RollbackLobbyDialog::onChallengeMissed);
+
+    connect(m_challengesButton, &QPushButton::clicked, this, &RollbackLobbyDialog::toggleChallengeLog);
+    connect(m_challengeTray, &ChallengeTray::acceptClicked, this,
+            [this](quint64 challengeId) { answerChallenge(challengeId, true); });
+    connect(m_challengeTray, &ChallengeTray::declineClicked, this,
+            [this](quint64 challengeId) { answerChallenge(challengeId, false); });
+    connect(m_challengeTray, &ChallengeTray::cancelClicked, this, &RollbackLobbyDialog::cancelOutgoingChallenge);
+    connect(m_challengeTray, &ChallengeTray::summaryViewClicked, this, &RollbackLobbyDialog::openChallengeLog);
+    connect(m_challengeTray, &ChallengeTray::summaryDismissed, this, &RollbackLobbyDialog::dismissMissedChallengesSummary);
+    connect(m_challengeTray, &ChallengeTray::actionClicked, this, &RollbackLobbyDialog::onChallengeLogAction);
+    connect(m_challengeTray, &ChallengeTray::messageClicked, this, &RollbackLobbyDialog::onChallengeLogMessage);
+    connect(m_challengeTray, &ChallengeTray::logClosed, this, &RollbackLobbyDialog::onChallengeLogClosed);
+    connect(m_challengeTray, &ChallengeTray::clearClicked, this, [this]() {
+        ChallengeLog::session().clear();
+        m_freshLogKeys.clear();
+        refreshChallengeTray();
+    });
+    positionChallengeTray();
+
     connect(m_client, &LobbyClient::privateMessageFailed, this, &RollbackLobbyDialog::onPrivateMessageFailed);
     connect(m_client, &LobbyClient::modResult, this, &RollbackLobbyDialog::onModResult);
     connect(m_client, &LobbyClient::adminLoggedOut, this, [this]() {
@@ -190,10 +209,15 @@ void RollbackLobbyDialog::connectChatView(ChatView* view)
 
 void RollbackLobbyDialog::resetSocialState()
 {
+    // The challenges go with the session; the log stays for the app's.
     m_incomingChallenges.clear();
     m_outgoingChallenge = LobbyClient::Challenge{};
-    m_challengeOutcome.title.clear();
-    m_challengeCard->setVisible(false);
+    m_acceptedChallenge = LobbyClient::Challenge{};
+    m_selfPlaying = false;
+    m_challengeTray->clearOutcome();
+    if (m_challengeTray->isLogOpen())
+        closeChallengeLog();
+    refreshChallengeTray();
     m_privateChats->clear();
     m_lastPmLocal = 0;
     m_lastPmRemote = 0;
@@ -332,17 +356,7 @@ void RollbackLobbyDialog::showPlayerMenu(quint64 userId, const QPoint& globalPos
     if (social && !inMyRoom)
     {
         const QString title = m_currentRoomId != 0 ? tr("Invite to your room") : tr("Challenge…");
-        QString why;
-        if (!user.social)
-            why = tr("Needs an update");
-        else if (user.noChallenges)
-            why = tr("Not taking challenges");
-        else if (playing)
-            why = tr("In a match");
-        else if (inLiveMatch())
-            why = tr("You're playing");
-        else if (m_outgoingChallenge.id != 0)
-            why = tr("One at a time");
+        const QString why = challengeUnavailableReason(user);
         if (why.isEmpty())
         {
             connect(menu.addItem(QStringLiteral("sword-fill"), title), &QAction::triggered, this,
@@ -468,10 +482,13 @@ void RollbackLobbyDialog::showUserMenu()
             {
                 // Those already waiting are over too.
                 for (const auto& challenge : std::as_const(m_incomingChallenges))
+                {
                     m_client->respondToChallenge(challenge.id, false);
+                    logIncomingChallenge(challenge, ChallengeLogOutcome::YouDeclined);
+                }
                 m_incomingChallenges.clear();
-                showNextChallenge();
             }
+            refreshChallengeTray();
         });
         challengesLay->addWidget(challenges);
         menu.addLiveWidget(challengesRow);
@@ -655,7 +672,30 @@ void RollbackLobbyDialog::showIgnoredPlayers()
 //  Challenges
 // ──────────────────────────────────────────────────────────────────────
 
-void RollbackLobbyDialog::startChallenge(quint64 userId)
+QString RollbackLobbyDialog::challengeUnavailableReason(const LobbyClient::LobbyUser& user) const
+{
+    if (!user.social)
+        return tr("Needs an update");
+    if (user.noChallenges)
+        return tr("Not taking challenges");
+    if (user.state == QLatin1String("playing"))
+        return tr("In a match");
+    if (inLiveMatch())
+        return tr("You're playing");
+    if (m_outgoingChallenge.id != 0)
+        return tr("One at a time");
+    // An invite needs a free seat. How many it needs isn't known here: the
+    // lobby keeps how many players share a PC to itself.
+    if (m_currentRoomId != 0)
+    {
+        const auto room = m_client->rooms().constFind(m_currentRoomId);
+        if (room != m_client->rooms().constEnd() && room->maxPlayers > 0 && room->players >= room->maxPlayers)
+            return tr("Room is full");
+    }
+    return QString();
+}
+
+void RollbackLobbyDialog::startChallenge(quint64 userId, const QString& preferredMd5)
 {
     const auto found = m_client->users().constFind(userId);
     if (found == m_client->users().constEnd() || m_client->isOnThisPc(userId) || m_outgoingChallenge.id != 0)
@@ -665,6 +705,8 @@ void RollbackLobbyDialog::startChallenge(quint64 userId)
     if (m_currentRoomId != 0)
     {
         m_challengeTargetName = found->username;
+        m_challengeTargetGame = m_currentRoomGame;
+        m_challengeTargetMd5 = m_currentRoomMd5;
         m_client->sendChallenge(userId, QString(), QString(), QString(), false);
         return;
     }
@@ -698,7 +740,10 @@ void RollbackLobbyDialog::startChallenge(quint64 userId)
             games << game;
     }
 
-    auto* dialog = new ChallengeDialog(self, target, games, selectedBrowseRom().value("md5").toString(), this);
+    // Challenging someone back starts on the game they wanted, if this PC has it.
+    const QString selected = !preferredMd5.isEmpty() && !localRomPathForMd5(preferredMd5).isEmpty()
+        ? preferredMd5 : selectedBrowseRom().value("md5").toString();
+    auto* dialog = new ChallengeDialog(self, target, games, selected, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setCoverLookup([this](const QString& md5) { return coverPathForMd5(md5); });
     connect(m_client, &LobbyClient::sharedGamesReceived, dialog, [dialog, userId](quint64 to, const QStringList& md5s) {
@@ -708,6 +753,8 @@ void RollbackLobbyDialog::startChallenge(quint64 userId)
     const QString targetName = found->username;
     connect(dialog, &QDialog::accepted, this, [this, dialog, userId, targetName]() {
         m_challengeTargetName = targetName;
+        m_challengeTargetGame = dialog->romName();
+        m_challengeTargetMd5 = dialog->romMd5();
         m_client->sendChallenge(userId, dialog->romName(), dialog->romMd5(), dialog->note(), dialog->liveReplay());
     });
     m_client->requestSharedGames(userId);
@@ -717,7 +764,7 @@ void RollbackLobbyDialog::startChallenge(quint64 userId)
 
 void RollbackLobbyDialog::onChallengeSent(const LobbyClient::Challenge& challenge)
 {
-    m_challengeOutcome.title.clear();
+    m_challengeTray->clearOutcome();
     m_outgoingChallenge = challenge;
     expireChallengeLater(challenge.id, challenge.expiresAtMs);
     if (challenge.invite)
@@ -726,101 +773,124 @@ void RollbackLobbyDialog::onChallengeSent(const LobbyClient::Challenge& challeng
                              QStringLiteral("mail-send-line"));
     }
     refreshPlayBar();
+    refreshChallengeTray();
 }
 
 void RollbackLobbyDialog::onChallengeIncoming(const LobbyClient::Challenge& challenge)
 {
     // The sender just sees it go unanswered, so they can't tell they're ignored.
     // With challenges off, only an older lobby still sends them.
-    if (m_doNotDisturb || m_client->challengesOff() || isIgnored(challenge.fromUsername))
+    if (m_client->challengesOff() || isIgnored(challenge.fromUsername))
         return;
+    // With notifications off it goes in the log and nowhere else: no card, no
+    // sound, nothing over the game.
+    if (m_doNotDisturb)
+    {
+        logIncomingChallenge(challenge, ChallengeLogOutcome::WhileNotificationsOff);
+        return;
+    }
     m_incomingChallenges.append(challenge);
     expireChallengeLater(challenge.id, challenge.expiresAtMs);
     // Only one this PC shows gets measured: an ignored sender never gets an
     // ICE connection to it.
     m_client->measureChallengePing(challenge);
-    showNextChallenge();
+    refreshChallengeTray();
     alertFrom(challenge.fromUserId);
     // Shown only if a game is running: someone watching can't see the lobby behind it.
     emit overlayMessage(tr("%1 challenges you. Open the lobby to answer.").arg(challenge.fromUsername));
 }
 
-void RollbackLobbyDialog::showNextChallenge()
+void RollbackLobbyDialog::onChallengeMissed(const LobbyClient::Challenge& challenge, const QString& reason)
 {
-    if (m_incomingChallenges.isEmpty())
-    {
-        m_challengeCard->setVisible(false);
+    // Turned away while this PC played: only the badge and the log say so. No
+    // card, no sound, nothing over the game.
+    if ((!reason.isEmpty() && reason != QLatin1String("busy")) || m_client->challengesOff() ||
+        isIgnored(challenge.fromUsername))
         return;
-    }
-    const LobbyClient::Challenge& challenge = m_incomingChallenges.first();
+    logIncomingChallenge(challenge, ChallengeLogOutcome::WhilePlaying);
+}
+
+QList<ChallengeCardView> RollbackLobbyDialog::incomingChallengeViews()
+{
+    QList<ChallengeCardView> views;
     const auto& users = m_client->users();
+    for (const LobbyClient::Challenge& challenge : std::as_const(m_incomingChallenges))
+    {
+        ChallengeCardView view;
+        view.challengeId = challenge.id;
+        view.invite = challenge.invite;
+        view.fromName = challenge.fromUsername;
+        if (const auto from = users.constFind(challenge.fromUserId); from != users.constEnd())
+        {
+            view.fromCountry = from->anonymous ? QString() : from->country;
+            view.fromConnection = from->connection;
+            view.fromPingMs = challengePingMs(challenge, false, &view.fromPingEstimate);
+        }
 
-    ChallengeCardView view;
-    view.challengeId = challenge.id;
-    view.invite = challenge.invite;
-    view.fromName = challenge.fromUsername;
-    if (const auto from = users.constFind(challenge.fromUserId); from != users.constEnd())
-    {
-        view.fromCountry = from->anonymous ? QString() : from->country;
-        view.fromConnection = from->connection;
-        view.fromPingMs = challengePingMs(challenge, false, &view.fromPingEstimate);
-    }
+        // Everyone on this PC plays. Only this PC's screen ever says so.
+        const bool forSelf = challenge.toUserId == m_client->selfUserId();
+        QStringList others;
+        if (!forSelf)
+            others << lobbyUserName(m_client->selfUserId());
+        for (const auto& local : m_client->localPlayers())
+        {
+            if (local.userId != challenge.toUserId)
+                others << local.name;
+        }
+        if (!others.isEmpty())
+        {
+            const QString forWhom = forSelf ? tr("For you") : tr("For %1").arg(challenge.toUsername);
+            const QString alsoPlaying = others.size() == 1 ? tr("%1 plays too").arg(others.first())
+                                                           : tr("%1 play too").arg(others.join(QStringLiteral(", ")));
+            view.forDetail = forWhom + QStringLiteral(" · ") + alsoPlaying;
+        }
 
-    view.toName = challenge.toUsername;
-    const bool forSelf = challenge.toUserId == m_client->selfUserId();
-    view.toTag = forSelf ? tr("You") : tr("This PC");
-    if (const auto to = users.constFind(challenge.toUserId); to != users.constEnd())
-    {
-        view.toCountry = to->anonymous ? QString() : to->country;
-        view.toConnection = to->connection;
-        view.toDetail = ConnectionGlyph::displayName(to->connection);
-    }
-    // Everyone on this PC plays. Only this PC's screen ever says so.
-    QStringList others;
-    if (!forSelf)
-        others << lobbyUserName(m_client->selfUserId());
-    for (const auto& local : m_client->localPlayers())
-    {
-        if (local.userId != challenge.toUserId)
-            others << local.name;
-    }
-    if (!others.isEmpty())
-    {
-        view.toConnection.clear();
-        view.toDetail = others.size() == 1 ? tr("%1 plays too").arg(others.first())
-                                           : tr("%1 play too").arg(others.join(QStringLiteral(", ")));
-    }
+        view.roomPlayers = challenge.roomPlayers;
+        view.roomMaxPlayers = challenge.roomMaxPlayers;
+        view.game = challenge.romName;
+        view.coverPath = coverPathForMd5(challenge.romMd5);
+        view.gameDetail = challenge.invite ? challenge.roomName
+            : challenge.note.isEmpty() ? QString() : QStringLiteral("“%1”").arg(challenge.note);
+        view.expiresAtMs = challenge.expiresAtMs;
+        view.durationMs = 30'000;
 
-    view.roomPlayers = challenge.roomPlayers;
-    view.roomMaxPlayers = challenge.roomMaxPlayers;
-    view.game = challenge.romName;
-    view.coverPath = coverPathForMd5(challenge.romMd5);
-    view.gameDetail = challenge.invite ? tr("%1 invites you to their room").arg(challenge.fromUsername)
-        : challenge.note.isEmpty() ? QString() : QStringLiteral("“%1”").arg(challenge.note);
-    if (challenge.invite)
-        view.gameDetail = challenge.roomName;
-    view.waitingBehind = int(m_incomingChallenges.size()) - 1;
-    view.expiresAtMs = challenge.expiresAtMs;
+        view.canAccept = !localRomPathForMd5(challenge.romMd5).isEmpty();
+        if (!view.canAccept)
+            view.warning = tr("You don't have this game");
+        else if (m_currentRoomId != 0)
+        {
+            const auto room = m_client->rooms().constFind(m_currentRoomId);
+            view.warning = room != m_client->rooms().constEnd() ? tr("Accepting leaves %1").arg(room->name)
+                                                                : tr("Accepting leaves your room");
+        }
+        else if (m_quickMatchActive)
+            view.warning = tr("Accepting stops your search");
+        else if (m_spectatingMatchId != 0)
+            view.warning = tr("Accepting stops watching");
+        views << view;
+    }
+    return views;
+}
+
+OutgoingChallengeView RollbackLobbyDialog::outgoingChallengeView()
+{
+    OutgoingChallengeView view;
+    if (m_outgoingChallenge.id == 0)
+        return view;
+    view.challengeId = m_outgoingChallenge.id;
+    view.title = m_outgoingChallenge.invite ? tr("Invite sent") : tr("Challenge sent");
+    view.waitingFor = tr("Waiting for %1").arg(m_outgoingChallenge.toUsername);
+    view.toName = m_outgoingChallenge.toUsername;
+    const auto to = m_client->users().constFind(m_outgoingChallenge.toUserId);
+    if (to != m_client->users().constEnd() && !to->anonymous)
+        view.toCountry = to->country;
+    // Their ping, measured once the lobby's ping check lands, estimated till then.
+    view.pingMs = challengePingMs(m_outgoingChallenge, true, &view.pingEstimate);
+    view.game = m_outgoingChallenge.romName;
+    view.coverPath = coverPathForMd5(m_outgoingChallenge.romMd5);
+    view.expiresAtMs = m_outgoingChallenge.expiresAtMs;
     view.durationMs = 30'000;
-
-    view.canAccept = !localRomPathForMd5(challenge.romMd5).isEmpty();
-    if (!view.canAccept)
-        view.warning = tr("You don't have this game");
-    else if (m_currentRoomId != 0)
-    {
-        const auto room = m_client->rooms().constFind(m_currentRoomId);
-        view.warning = room != m_client->rooms().constEnd() ? tr("Accepting leaves %1").arg(room->name)
-                                                            : tr("Accepting leaves your room");
-    }
-    else if (m_quickMatchActive)
-        view.warning = tr("Accepting stops your search");
-    else if (m_spectatingMatchId != 0)
-        view.warning = tr("Accepting stops watching");
-
-    m_challengeCard->setView(view);
-    positionStageOverlays();
-    m_challengeCard->setVisible(true);
-    m_challengeCard->raise();
+    return view;
 }
 
 int RollbackLobbyDialog::challengePingMs(const LobbyClient::Challenge& challenge, bool outgoing, bool* estimate) const
@@ -839,21 +909,38 @@ int RollbackLobbyDialog::challengePingMs(const LobbyClient::Challenge& challenge
     return guess > 0 ? guess : -1;
 }
 
-void RollbackLobbyDialog::answerChallenge(bool accept)
+void RollbackLobbyDialog::answerChallenge(quint64 challengeId, bool accept)
 {
-    if (m_incomingChallenges.isEmpty())
+    const auto found = std::find_if(m_incomingChallenges.cbegin(), m_incomingChallenges.cend(),
+        [challengeId](const LobbyClient::Challenge& challenge) { return challenge.id == challengeId; });
+    if (found == m_incomingChallenges.cend())
         return;
-    const LobbyClient::Challenge challenge = m_incomingChallenges.takeFirst();
+    const LobbyClient::Challenge challenge = *found;
+    m_incomingChallenges.removeAt(int(found - m_incomingChallenges.cbegin()));
     if (accept)
     {
         stopWatchingForRoom();
         cancelPendingPingCheck();
-        m_acceptedChallengeId = challenge.id;
-        m_acceptedChallengeFrom = challenge.fromUsername;
-        m_acceptedChallengeInvite = challenge.invite;
+        // Logged once the lobby says whether it went ahead.
+        m_acceptedChallenge = challenge;
+    }
+    else
+    {
+        logIncomingChallenge(challenge, ChallengeLogOutcome::YouDeclined);
     }
     m_client->respondToChallenge(challenge.id, accept);
-    showNextChallenge();
+    refreshChallengeTray();
+}
+
+void RollbackLobbyDialog::cancelOutgoingChallenge()
+{
+    if (m_outgoingChallenge.id == 0)
+        return;
+    // Not waiting for the reply: there's none if the challenge has already ended.
+    m_client->cancelChallenge(m_outgoingChallenge.id);
+    m_outgoingChallenge = LobbyClient::Challenge{};
+    refreshPlayBar();
+    refreshChallengeTray();
 }
 
 // The lobby's word on how a challenge ended can go missing: its queue to this PC was
@@ -878,52 +965,47 @@ void RollbackLobbyDialog::stopWatchingForRoom()
     emit spectateStreamClosed(QStringLiteral("stopped"));
 }
 
-void RollbackLobbyDialog::setChallengeOutcome(const QString& title, const QString& detail, const QColor& color, const QString& icon)
-{
-    const int generation = m_challengeOutcome.generation + 1;
-    m_challengeOutcome = ChallengeOutcome{ title, detail, color, icon, generation };
-    refreshPlayBar();
-    QTimer::singleShot(kOutcomeMs, this, [this, generation]() {
-        if (m_challengeOutcome.generation != generation || m_challengeOutcome.title.isEmpty())
-            return;
-        m_challengeOutcome.title.clear();
-        refreshPlayBar();
-    });
-}
-
 void RollbackLobbyDialog::onChallengeEnded(quint64 challengeId, quint64 toUserId, const QString& result)
 {
-    const Tokens& t = LobbyTheme::tokens();
-
-    // One this PC was asked: the card goes, and that's the whole of it.
+    // One this PC was asked: the card goes, and the log says how it ended.
     for (int i = 0; i < m_incomingChallenges.size(); ++i)
     {
-        if (m_incomingChallenges.at(i).id == challengeId)
-        {
-            m_incomingChallenges.removeAt(i);
-            showNextChallenge();
-            return;
-        }
+        if (m_incomingChallenges.at(i).id != challengeId)
+            continue;
+        const LobbyClient::Challenge challenge = m_incomingChallenges.takeAt(i);
+        // Busy: this PC went into a match before answering.
+        ChallengeLogOutcome outcome = ChallengeLogOutcome::CouldNotGoAhead;
+        if (result == QLatin1String("timeout") || result == QLatin1String("busy"))
+            outcome = ChallengeLogOutcome::Missed;
+        else if (result == QLatin1String("cancelled"))
+            outcome = ChallengeLogOutcome::Withdrawn;
+        logIncomingChallenge(challenge, outcome);
+        refreshChallengeTray();
+        return;
     }
     const bool mine = challengeId != 0 && challengeId == m_outgoingChallenge.id;
     if (challengeId != 0 && !mine)
     {
         // This PC's answer got there first, and saying yes landed in the room.
-        if (challengeId == m_acceptedChallengeId)
+        if (challengeId == m_acceptedChallenge.id)
         {
-            const QString from = m_acceptedChallengeFrom.toHtmlEscaped();
+            const LobbyClient::Challenge accepted = m_acceptedChallenge;
+            m_acceptedChallenge = LobbyClient::Challenge{};
+            const QString from = accepted.fromUsername.toHtmlEscaped();
             if (result == QLatin1String("accepted"))
             {
                 appendChatSystemLine(CHANNEL_ROOM,
-                    (m_acceptedChallengeInvite ? tr("You accepted <b>%1</b>'s invite")
-                                               : tr("You accepted <b>%1</b>'s challenge")).arg(from),
+                    (accepted.invite ? tr("You accepted <b>%1</b>'s invite")
+                                     : tr("You accepted <b>%1</b>'s challenge")).arg(from),
                     QStringLiteral("sword-fill"));
+                logIncomingChallenge(accepted, ChallengeLogOutcome::YouAccepted);
             }
             else
             {
                 // Too late: they went into a match or left while this was on its way.
                 appendChatSystemLine(CHANNEL_LOBBY, tr("<b>%1</b>'s challenge can't go ahead any more.").arg(from),
                                      QStringLiteral("sword-fill"));
+                logIncomingChallenge(accepted, ChallengeLogOutcome::CouldNotGoAhead);
             }
         }
         return;
@@ -935,6 +1017,18 @@ void RollbackLobbyDialog::onChallengeEnded(quint64 challengeId, quint64 toUserId
     else if (name.isEmpty())
         name = lobbyUserName(toUserId);
     const bool invite = mine ? m_outgoingChallenge.invite : m_currentRoomId != 0;
+    ChallengeLogEntry entry;
+    entry.name = name;
+    entry.incoming = false;
+    entry.invite = invite;
+    entry.game = mine ? m_outgoingChallenge.romName : m_challengeTargetGame;
+    entry.md5 = mine ? m_outgoingChallenge.romMd5 : m_challengeTargetMd5;
+    if (invite)
+    {
+        const auto room = m_client->rooms().constFind(m_currentRoomId);
+        if (room != m_client->rooms().constEnd())
+            entry.roomName = room->name;
+    }
     if (mine)
         m_outgoingChallenge = LobbyClient::Challenge{};
 
@@ -945,98 +1039,404 @@ void RollbackLobbyDialog::onChallengeEnded(quint64 challengeId, quint64 toUserId
         appendChatSystemLine(CHANNEL_ROOM,
             (invite ? tr("<b>%1</b> accepted your invite") : tr("<b>%1</b> accepted your challenge")).arg(name.toHtmlEscaped()),
             QStringLiteral("sword-fill"));
+        logChallenge(entry, ChallengeLogOutcome::Accepted);
         refreshPlayBar();
+        refreshChallengeTray();
         return;
     }
+    // Called off from here, or one was already out: nothing to say or keep.
     if (result == QLatin1String("cancelled") || result == QLatin1String("pending"))
     {
         refreshPlayBar();
+        refreshChallengeTray();
         return;
     }
 
     QString title;
     QString detail;
-    QColor color = t.muted;
+    Role role = Role::Muted;
     QString icon = QStringLiteral("close-circle-line");
+    ChallengeLogOutcome outcome = ChallengeLogOutcome::Unavailable;
     if (result == QLatin1String("declined"))
     {
         title = tr("%1 declined").arg(name);
         detail = tr("You can challenge them again in a minute.");
+        outcome = ChallengeLogOutcome::Declined;
     }
     else if (result == QLatin1String("cooldown"))
     {
         title = tr("%1 declined a moment ago").arg(name);
         detail = tr("You can challenge them again in a minute.");
+        outcome = ChallengeLogOutcome::DeclinedRecently;
     }
     else if (result == QLatin1String("timeout"))
     {
         title = tr("No answer");
         detail = tr("%1 didn't answer in time.").arg(name);
         icon = QStringLiteral("time-line");
+        outcome = ChallengeLogOutcome::NoAnswer;
     }
     else if (result == QLatin1String("busy"))
     {
         title = tr("%1 is busy").arg(name);
         detail = tr("They've just started a match. You can watch it from Live now.");
-        color = t.warn;
+        role = Role::Warn;
         icon = QStringLiteral("gamepad-line");
+        outcome = ChallengeLogOutcome::InAMatch;
     }
     else if (result == QLatin1String("challenges_off"))
     {
         title = tr("%1 isn't taking challenges").arg(name);
         detail = tr("They turned challenges off. You can still send them a message.");
         icon = QStringLiteral("forbid-line");
+        outcome = ChallengeLogOutcome::NotTakingChallenges;
     }
     else if (result == QLatin1String("no_game"))
     {
         title = tr("%1 doesn't have that game").arg(name);
         detail = tr("Try a game you both have.");
-        color = t.warn;
+        role = Role::Warn;
         icon = QStringLiteral("error-warning-line");
+        outcome = ChallengeLogOutcome::NoGame;
     }
     else if (result == QLatin1String("blocked_note"))
     {
         title = tr("Message blocked");
         detail = tr("The chat filter blocked your message. Try again without it.");
-        color = t.warn;
+        role = Role::Warn;
         icon = QStringLiteral("error-warning-line");
+        outcome = ChallengeLogOutcome::NoteBlocked;
     }
     else if (result == QLatin1String("needs_update"))
     {
         title = tr("%1 needs an update").arg(name);
         detail = tr("Their version of RMG-K can't receive challenges.");
+        outcome = ChallengeLogOutcome::NeedsUpdate;
     }
     else if (result == QLatin1String("too_fast"))
     {
         title = tr("That's a lot of challenges");
         detail = tr("Try again in a moment.");
+        outcome = ChallengeLogOutcome::TooFast;
     }
     else
     {
         title = tr("Can't challenge right now");
         detail = tr("%1 can't take a challenge at the moment.").arg(name);
     }
+    logChallenge(entry, outcome);
 
-    // The play bar isn't on screen in a room, so a line of chat says it there.
+    // The room's chat says it too, where the room window covers the lobby.
     if (m_currentRoomId != 0)
-    {
         appendChatSystemLine(CHANNEL_ROOM, QStringLiteral("%1. %2").arg(title.toHtmlEscaped(), detail.toHtmlEscaped()), icon);
-        refreshPlayBar();
-        return;
-    }
-    setChallengeOutcome(title, detail, color, icon);
+    m_challengeTray->showOutcome(title, detail, role, icon);
+    refreshPlayBar();
+    refreshChallengeTray();
 }
 
 void RollbackLobbyDialog::positionStageOverlays()
 {
-    if (!m_stage || !m_challengeCard || !m_toast)
+    if (!m_stage || !m_toast)
         return;
-    const int available = m_stage->width();
-    const int cardWidth = std::min(kMaxCardWidth, available - 40);
-    m_challengeCard->setFixedWidth(cardWidth);
-    m_challengeCard->adjustSize();
-    m_challengeCard->move((available - cardWidth) / 2, 10);
     m_toast->move(14, m_stage->height() - m_toast->height() - 14);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  The challenges tray and its log
+// ──────────────────────────────────────────────────────────────────────
+
+void RollbackLobbyDialog::scheduleChallengeTrayRefresh()
+{
+    if (m_challengeTrayRefreshQueued)
+        return;
+    m_challengeTrayRefreshQueued = true;
+    QTimer::singleShot(0, this, &RollbackLobbyDialog::refreshChallengeTray);
+}
+
+void RollbackLobbyDialog::refreshChallengeTray()
+{
+    m_challengeTrayRefreshQueued = false;
+    if (!m_challengeTray || !m_challengesButton || !m_client)
+        return;
+    const bool available = m_client->state() == LobbyClient::ConnectionState::Connected && m_client->socialSupported();
+    m_challengesButton->setVisible(available);
+    m_challengesButton->setUnseen(unseenChallengeCount());
+    if (!available && m_challengeTray->isLogOpen())
+    {
+        m_challengeTray->setLogOpen(false);
+        m_challengesButton->setOpen(false);
+        m_freshLogKeys.clear();
+    }
+    m_challengeTray->setIncoming(incomingChallengeViews());
+    m_challengeTray->setOutgoing(outgoingChallengeView());
+    if (m_challengeTray->isLogOpen())
+        m_challengeTray->setLogRows(challengeLogRows());
+    m_challengeTray->setAvailable(available);
+}
+
+int RollbackLobbyDialog::unseenChallengeCount() const
+{
+    int unseen = 0;
+    for (const ChallengeLogEntry& entry : ChallengeLog::session().entries())
+    {
+        if (!isIgnored(entry.name))
+            unseen += entry.unseen;
+    }
+    return unseen;
+}
+
+QString RollbackLobbyDialog::challengeOutcomeText(ChallengeLogOutcome outcome, Role* role) const
+{
+    *role = Role::Muted;
+    switch (outcome)
+    {
+        case ChallengeLogOutcome::Missed:
+            *role = Role::Warn;
+            return tr("Missed");
+        case ChallengeLogOutcome::WhilePlaying:
+            *role = Role::Warn;
+            return tr("While you were playing");
+        case ChallengeLogOutcome::WhileNotificationsOff:
+            *role = Role::Warn;
+            return tr("While notifications were off");
+        case ChallengeLogOutcome::Withdrawn:
+            return tr("Withdrawn");
+        case ChallengeLogOutcome::YouDeclined:
+            return tr("You declined");
+        case ChallengeLogOutcome::YouAccepted:
+            *role = Role::Ok;
+            return tr("You accepted");
+        case ChallengeLogOutcome::CouldNotGoAhead:
+            return tr("Couldn't go ahead");
+        case ChallengeLogOutcome::Accepted:
+            *role = Role::Ok;
+            return tr("Accepted");
+        case ChallengeLogOutcome::Declined:
+            return tr("Declined");
+        case ChallengeLogOutcome::DeclinedRecently:
+            return tr("Declined a moment ago");
+        case ChallengeLogOutcome::NoAnswer:
+            return tr("No answer");
+        case ChallengeLogOutcome::InAMatch:
+            *role = Role::Warn;
+            return tr("In a match");
+        case ChallengeLogOutcome::NotTakingChallenges:
+            return tr("Not taking challenges");
+        case ChallengeLogOutcome::NoGame:
+            *role = Role::Warn;
+            return tr("Doesn't have the game");
+        case ChallengeLogOutcome::NoteBlocked:
+            *role = Role::Warn;
+            return tr("Message blocked");
+        case ChallengeLogOutcome::NeedsUpdate:
+            return tr("Needs an update");
+        case ChallengeLogOutcome::TooFast:
+            return tr("Too many challenges");
+        case ChallengeLogOutcome::Unavailable:
+            return tr("Couldn't challenge");
+    }
+    return QString();
+}
+
+QList<ChallengeLogRowView> RollbackLobbyDialog::challengeLogRows() const
+{
+    QList<ChallengeLogRowView> rows;
+    const bool inRoom = m_currentRoomId != 0;
+    const auto& users = m_client->users();
+    for (const ChallengeLogEntry& entry : ChallengeLog::session().entries())
+    {
+        if (isIgnored(entry.name))
+            continue;
+        ChallengeLogRowView row;
+        row.key = entry.key;
+        row.name = entry.name;
+        row.incoming = entry.incoming;
+        row.game = entry.game;
+        row.what = challengeOutcomeText(entry.outcome, &row.whatRole);
+        row.timeMs = entry.timeMs;
+        row.count = entry.count;
+        row.fresh = entry.unseen > 0 || m_freshLogKeys.contains(entry.key);
+        // From a room, the same button sends an invite to it.
+        row.action = inRoom ? tr("Invite") : entry.incoming ? tr("Challenge back") : tr("Challenge again");
+
+        // By name: ids change when people reconnect.
+        const quint64 userId = userIdForName(entry.name);
+        const auto user = users.constFind(userId);
+        if (userId == 0 || user == users.constEnd())
+        {
+            row.unavailable = tr("Offline");
+        }
+        else
+        {
+            row.country = user->anonymous ? QString() : user->country;
+            const bool here = m_client->isOnThisPc(userId);
+            if (here)
+                row.unavailable = tr("On this PC");
+            else if (inRoom && user->currentRoomId == m_currentRoomId)
+                row.unavailable = tr("In your room");
+            else
+                row.unavailable = challengeUnavailableReason(*user);
+            row.canMessage = !here && user->social && canMessage(*user);
+        }
+
+        QStringList tip;
+        if (entry.invite && !entry.roomName.isEmpty())
+            tip << tr("Room invite: %1").arg(entry.roomName);
+        if (!entry.game.isEmpty())
+            tip << entry.game;
+        if (!entry.forName.isEmpty())
+            tip << tr("For %1").arg(entry.forName);
+        tip << QDateTime::fromMSecsSinceEpoch(entry.timeMs).toString(QStringLiteral("hh:mm:ss"));
+        row.tip = tip.join(QLatin1Char('\n'));
+        rows << row;
+    }
+    return rows;
+}
+
+void RollbackLobbyDialog::logIncomingChallenge(const LobbyClient::Challenge& challenge, ChallengeLogOutcome outcome)
+{
+    ChallengeLogEntry entry;
+    entry.name = challenge.fromUsername;
+    entry.incoming = true;
+    entry.invite = challenge.invite;
+    entry.game = challenge.romName;
+    entry.md5 = challenge.romMd5;
+    entry.roomName = challenge.roomName;
+    if (challenge.toUserId != 0 && challenge.toUserId != m_client->selfUserId())
+        entry.forName = challenge.toUsername;
+    logChallenge(entry, outcome);
+}
+
+void RollbackLobbyDialog::logChallenge(ChallengeLogEntry entry, ChallengeLogOutcome outcome)
+{
+    if (entry.name.isEmpty() || isIgnored(entry.name))
+        return;
+    entry.outcome = outcome;
+    entry.timeMs = QDateTime::currentMSecsSinceEpoch();
+    // Seen as it happens only by someone looking at the open log.
+    const bool looking = m_challengeTray->isLogOpen() && isActiveWindow();
+    ChallengeLog::session().add(entry, looking);
+    scheduleChallengeTrayRefresh();
+}
+
+void RollbackLobbyDialog::toggleChallengeLog()
+{
+    if (m_challengeTray->isLogOpen())
+        closeChallengeLog();
+    else
+        openChallengeLog();
+}
+
+void RollbackLobbyDialog::openChallengeLog()
+{
+    // What nobody had seen stays marked while the log is open, and counts as seen now.
+    m_freshLogKeys.clear();
+    for (const ChallengeLogEntry& entry : ChallengeLog::session().entries())
+    {
+        if (entry.unseen > 0)
+            m_freshLogKeys.insert(entry.key);
+    }
+    ChallengeLog::session().markSeen();
+    dismissMissedChallengesSummary();
+    m_challengeTray->setLogOpen(true);
+    m_challengesButton->setOpen(true);
+    refreshChallengeTray();
+}
+
+void RollbackLobbyDialog::closeChallengeLog()
+{
+    m_challengeTray->setLogOpen(false);
+    onChallengeLogClosed();
+}
+
+void RollbackLobbyDialog::onChallengeLogClosed()
+{
+    m_challengesButton->setOpen(false);
+    m_freshLogKeys.clear();
+    refreshChallengeTray();
+}
+
+void RollbackLobbyDialog::onChallengeLogAction(quint64 key)
+{
+    const auto& entries = ChallengeLog::session().entries();
+    const auto entry = std::find_if(entries.cbegin(), entries.cend(),
+                                    [key](const ChallengeLogEntry& other) { return other.key == key; });
+    if (entry == entries.cend())
+        return;
+    const quint64 userId = userIdForName(entry->name);
+    const auto user = m_client->users().constFind(userId);
+    // The row's button only shows when this would work, but presence can change under a click.
+    if (userId == 0 || user == m_client->users().constEnd() || m_client->isOnThisPc(userId) ||
+        !challengeUnavailableReason(*user).isEmpty())
+    {
+        refreshChallengeTray();
+        return;
+    }
+    startChallenge(userId, entry->md5);
+}
+
+void RollbackLobbyDialog::onChallengeLogMessage(quint64 key)
+{
+    const auto& entries = ChallengeLog::session().entries();
+    const auto entry = std::find_if(entries.cbegin(), entries.cend(),
+                                    [key](const ChallengeLogEntry& other) { return other.key == key; });
+    if (entry == entries.cend())
+        return;
+    const quint64 userId = userIdForName(entry->name);
+    const auto user = m_client->users().constFind(userId);
+    if (userId == 0 || user == m_client->users().constEnd() || !user->social || !canMessage(*user))
+        return;
+    // The conversation opens in the chat, which the log may cover.
+    closeChallengeLog();
+    openPrivateMessage(userId);
+}
+
+void RollbackLobbyDialog::noteSelfPresence()
+{
+    const auto self = m_client->users().constFind(m_client->selfUserId());
+    const bool playing = self != m_client->users().constEnd() && self->state == QLatin1String("playing");
+    if (playing == m_selfPlaying)
+        return;
+    m_selfPlaying = playing;
+    if (playing)
+    {
+        m_playingSinceMs = QDateTime::currentMSecsSinceEpoch();
+        return;
+    }
+    showMissedChallengesSummary();
+}
+
+void RollbackLobbyDialog::showMissedChallengesSummary()
+{
+    // A summary still up from an earlier match takes in this one's too.
+    const qint64 since = m_missedSummarySinceMs != 0 ? m_missedSummarySinceMs : m_playingSinceMs;
+    int count = 0;
+    QStringList names;
+    for (const ChallengeLogEntry& entry : ChallengeLog::session().entries())
+    {
+        if (entry.unseen <= 0 || entry.timeMs < since || isIgnored(entry.name))
+            continue;
+        count += entry.unseen;
+        if (!names.contains(entry.name, Qt::CaseInsensitive))
+            names << entry.name;
+    }
+    if (count == 0)
+        return;
+    m_missedSummarySinceMs = since;
+    // The log lists them newest first; the summary goes in the order they came.
+    std::reverse(names.begin(), names.end());
+    const QString title = count == 1 ? tr("1 challenge while you were playing")
+                                     : tr("%1 challenges while you were playing").arg(count);
+    const QString who = names.size() <= kSummaryNames
+        ? names.join(QStringLiteral(", "))
+        : tr("%1 and %2 more").arg(names.mid(0, kSummaryNames).join(QStringLiteral(", "))).arg(names.size() - kSummaryNames);
+    m_challengeTray->setSummary(title, who);
+}
+
+void RollbackLobbyDialog::dismissMissedChallengesSummary()
+{
+    m_missedSummarySinceMs = 0;
+    m_challengeTray->setSummary(QString(), QString());
 }
 
 // ──────────────────────────────────────────────────────────────────────
