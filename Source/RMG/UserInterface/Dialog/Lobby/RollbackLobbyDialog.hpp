@@ -9,6 +9,7 @@
 
 #ifdef NETPLAY
 
+#include "LobbyChallengeTray.hpp"
 #include "LobbyClient.hpp"
 #include "LobbyTheme.hpp"
 #include "LagStats.hpp"
@@ -53,7 +54,6 @@ namespace Dialog
 {
 
 class CartridgeTile;
-class ChallengeCard;
 class ChatTabBar;
 class ChatView;
 class CountryFlag;
@@ -185,7 +185,9 @@ protected:
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
-    // Escape minimizes an open room before it closes the lobby.
+    void resizeEvent(QResizeEvent* event) override;
+    // Escape closes the challenge log, then minimizes an open room, before it
+    // closes the lobby.
     void keyPressEvent(QKeyEvent* event) override;
     // Clears the players-list selection when the user clicks empty space in it,
     // so a highlighted name can be dismissed by clicking off it.
@@ -352,17 +354,46 @@ private:
     void setIgnored(const QString& name, bool ignored);
     void showIgnoredPlayers();
 
-    // Challenges
-    void startChallenge(quint64 userId);
+    // Challenges. From a room, startChallenge sends an invite to it; otherwise
+    // it opens the challenge dialog with preferredMd5's game picked, if this PC
+    // has it.
+    void startChallenge(quint64 userId, const QString& preferredMd5 = QString());
     void onChallengeSent(const LobbyClient::Challenge& challenge);
     void onChallengeIncoming(const LobbyClient::Challenge& challenge);
     void onChallengeEnded(quint64 challengeId, quint64 toUserId, const QString& result);
-    void showNextChallenge();
-    void answerChallenge(bool accept);
+    void onChallengeMissed(const LobbyClient::Challenge& challenge, const QString& reason);
+    void answerChallenge(quint64 challengeId, bool accept);
+    void cancelOutgoingChallenge();
     void expireChallengeLater(quint64 challengeId, qint64 expiresAtMs);
-    void setChallengeOutcome(const QString& title, const QString& detail, const QColor& color, const QString& icon);
     void stopWatchingForRoom();
     void positionStageOverlays();
+    // Why this PC can't challenge user now (or invite them, from a room), in
+    // the few words a disabled item shows; empty when it can. The player menu
+    // and the challenge log go by the same rules.
+    QString challengeUnavailableReason(const LobbyClient::LobbyUser& user) const;
+
+    // The challenges tray (LobbyChallengeTray.hpp) and its log.
+    void refreshChallengeTray();
+    void scheduleChallengeTrayRefresh();
+    void positionChallengeTray();
+    QList<ChallengeCardView> incomingChallengeViews();
+    OutgoingChallengeView outgoingChallengeView();
+    QList<ChallengeLogRowView> challengeLogRows() const;
+    QString challengeOutcomeText(ChallengeLogOutcome outcome, LobbyTheme::Role* role) const;
+    // Adds an entry to the log, unless it's about someone ignored.
+    void logChallenge(ChallengeLogEntry entry, ChallengeLogOutcome outcome);
+    void logIncomingChallenge(const LobbyClient::Challenge& challenge, ChallengeLogOutcome outcome);
+    int unseenChallengeCount() const;
+    void toggleChallengeLog();
+    void openChallengeLog();
+    void closeChallengeLog();
+    void onChallengeLogClosed();
+    void onChallengeLogAction(quint64 key);
+    void onChallengeLogMessage(quint64 key);
+    // This PC came out of a match: the tray says who challenged it meanwhile.
+    void noteSelfPresence();
+    void showMissedChallengesSummary();
+    void dismissMissedChallengesSummary();
 
     // Private messages
     void openPrivateMessage(quint64 userId);
@@ -451,6 +482,9 @@ private:
     void    updateServerMeta();
     // The play bar's state: choosing a game, searching, watching, or in a room.
     void    refreshPlayBar();
+    // Quick Match and Create Room take a connection and no room; they wait
+    // while a challenge is out, and Create Room while searching.
+    void    refreshPlayBarButtons();
     void    onPlayBarActionClicked();
 
     // Delay is local to this player. Auto resolves from this client's direct
@@ -738,25 +772,26 @@ private:
     QHash<quint64, qint64> m_lastAlertMs; // per sender
 
     // ── Challenges ──
-    ChallengeCard* m_challengeCard = nullptr;
-    QList<LobbyClient::Challenge> m_incomingChallenges; // the first is on the card
+    ChallengesButton* m_challengesButton = nullptr;
+    ChallengeTray* m_challengeTray = nullptr;
+    bool         m_challengeTrayRefreshQueued = false;
+    QList<LobbyClient::Challenge> m_incomingChallenges; // oldest first, as the tray shows them
     LobbyClient::Challenge m_outgoingChallenge;         // id 0 when there's none
     QPointer<QDialog> m_challengeDialog;
     QPointer<QDialog> m_sanctionDialog;
+    // Who the last challenge went to, and its game, for a refusal that names neither.
     QString      m_challengeTargetName;
+    QString      m_challengeTargetGame;
+    QString      m_challengeTargetMd5;
     // What this PC last said yes to, for the line in the room chat once it's in.
-    quint64      m_acceptedChallengeId = 0;
-    QString      m_acceptedChallengeFrom;
-    bool         m_acceptedChallengeInvite = false;
-    struct ChallengeOutcome
-    {
-        QString title;
-        QString detail;
-        QColor color;
-        QString icon;
-        int generation = 0;
-    };
-    ChallengeOutcome m_challengeOutcome; // shown on the play bar until dismissed
+    LobbyClient::Challenge m_acceptedChallenge;
+    // Log entries nobody had seen when the log opened; they stay marked until it closes.
+    QSet<quint64> m_freshLogKeys;
+    // Whether the lobby has this PC in a match, since when, and since when the
+    // summary of what it missed counts.
+    bool         m_selfPlaying = false;
+    qint64       m_playingSinceMs = 0;
+    qint64       m_missedSummarySinceMs = 0;
 
     // ── Moderation ──
     UndoToast*   m_toast = nullptr;
@@ -786,7 +821,6 @@ private:
     QWidget*        m_ticketValueBoxes[2] = {};
     QLabel*         m_ticketValues[2] = {};
     QLabel*         m_ticketCaptions[2] = {};
-    SignalBars*     m_ticketBars   = nullptr; // a challenge's ping, beside its value
     LobbyButton*    m_ticketAction = nullptr;
     LobbyButton*    m_ticketLeave  = nullptr;
 

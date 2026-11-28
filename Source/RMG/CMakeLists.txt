@@ -139,6 +139,7 @@ if (NETPLAY)
         UserInterface/Dialog/Lobby/LobbyPanelLayout.cpp
         UserInterface/Dialog/Lobby/LobbyRoomWindow.cpp
         UserInterface/Dialog/Lobby/LobbySocialWidgets.cpp
+        UserInterface/Dialog/Lobby/LobbyChallengeTray.cpp
         UserInterface/Dialog/Lobby/LobbyPrivateChats.cpp
         UserInterface/Dialog/Lobby/LobbySocialDialogs.cpp
         UserInterface/Dialog/Lobby/LobbyConnectDialog.cpp

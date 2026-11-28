@@ -4503,10 +4503,6 @@ A local replay is saved only if Save replay is on.</source>
             <translation>%1から対戦の申し込みです。ロビーを開いて返答してください。</translation>
         </message>
         <message>
-            <source>You</source>
-            <translation>自分</translation>
-        </message>
-        <message>
             <source>%1 plays too</source>
             <translation>%1も参加します</translation>
         </message>
@@ -4697,14 +4693,6 @@ A local replay is saved only if Save replay is on.</source>
         <message>
             <source>Waiting for %1</source>
             <translation>%1の応答を待っています</translation>
-        </message>
-        <message>
-            <source>seconds</source>
-            <translation>秒</translation>
-        </message>
-        <message>
-            <source>OK</source>
-            <translation>OK</translation>
         </message>
         <message>
             <source>That room is private.</source>
@@ -5225,8 +5213,12 @@ A local replay is saved only if Save replay is on.</source>
             <translation>新たな挑戦者</translation>
         </message>
         <message>
-            <source>+%1 more</source>
-            <translation>他%1件</translation>
+            <source>Challenge from %1</source>
+            <translation>%1からの対戦の申し込み</translation>
+        </message>
+        <message>
+            <source>Room invite from %1</source>
+            <translation>%1からのルーム招待</translation>
         </message>
         <message>
             <source>%1 of %2 seats</source>
@@ -6726,14 +6718,6 @@ A local replay is saved only if Save replay is on.</source>
             <source>room limit</source>
             <translation>ルームの上限</translation>
         </message>
-        <message>
-            <source>ping</source>
-            <translation>Ping</translation>
-        </message>
-        <message>
-            <source>est. ping</source>
-            <translation>推定Ping</translation>
-        </message>
     </context>
     <context>
         <name>UserInterface::Dialog::GameSettingsDialog</name>
@@ -7157,6 +7141,159 @@ A local replay is saved only if Save replay is on.</source>
         <message>
             <source>Every player's game is changed for the match, and so is its replay. Custom... turns options on one by one, and saves them under a name.</source>
             <translation>対戦中は全プレイヤーのゲームがこの設定で変わり、リプレイも同じになります。「カスタム...」でオプションを1つずつオンにして、名前を付けて保存できます。</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::ChallengesButton</name>
+        <message>
+            <source>Challenges</source>
+            <translation>対戦の申し込み</translation>
+        </message>
+        <message>
+            <source>Challenges: %1 missed</source>
+            <translation>対戦の申し込み: 見逃し%1件</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::ChallengeTray</name>
+        <message>
+            <source>Challenge log</source>
+            <translation>対戦の申し込み履歴</translation>
+        </message>
+        <message>
+            <source>Challenges you send, get or miss show up here.</source>
+            <translation>送った・受けた・見逃した対戦の申し込みがここに表示されます。</translation>
+        </message>
+        <message>
+            <source>Clear log</source>
+            <translation>履歴を消去</translation>
+        </message>
+        <message>
+            <source>Cancel</source>
+            <translation>キャンセル</translation>
+        </message>
+        <message>
+            <source>Dismiss</source>
+            <translation>閉じる</translation>
+        </message>
+        <message>
+            <source>View</source>
+            <translation>見る</translation>
+        </message>
+        <message>
+            <source>Send a message</source>
+            <translation>メッセージを送る</translation>
+        </message>
+        <message>
+            <source>just now</source>
+            <translation>たった今</translation>
+        </message>
+        <message>
+            <source>%1 min ago</source>
+            <translation>%1分前</translation>
+        </message>
+    </context>
+    <context>
+        <name>UserInterface::Dialog::RollbackLobbyDialog</name>
+        <message>
+            <source>For you</source>
+            <translation>あなた宛</translation>
+        </message>
+        <message>
+            <source>For %1</source>
+            <translation>%1宛</translation>
+        </message>
+        <message>
+            <source>Invite sent</source>
+            <translation>招待を送りました</translation>
+        </message>
+        <message>
+            <source>Missed</source>
+            <translation>見逃し</translation>
+        </message>
+        <message>
+            <source>While you were playing</source>
+            <translation>プレイ中に届いた</translation>
+        </message>
+        <message>
+            <source>While notifications were off</source>
+            <translation>通知オフ中に届いた</translation>
+        </message>
+        <message>
+            <source>Withdrawn</source>
+            <translation>取り消されました</translation>
+        </message>
+        <message>
+            <source>You declined</source>
+            <translation>断りました</translation>
+        </message>
+        <message>
+            <source>You accepted</source>
+            <translation>受けました</translation>
+        </message>
+        <message>
+            <source>Couldn't go ahead</source>
+            <translation>開始できませんでした</translation>
+        </message>
+        <message>
+            <source>Accepted</source>
+            <translation>受けてもらえました</translation>
+        </message>
+        <message>
+            <source>Declined</source>
+            <translation>断られました</translation>
+        </message>
+        <message>
+            <source>Declined a moment ago</source>
+            <translation>先ほど断られました</translation>
+        </message>
+        <message>
+            <source>Doesn't have the game</source>
+            <translation>ゲームを持っていません</translation>
+        </message>
+        <message>
+            <source>Too many challenges</source>
+            <translation>申し込みが多すぎます</translation>
+        </message>
+        <message>
+            <source>Couldn't challenge</source>
+            <translation>申し込めませんでした</translation>
+        </message>
+        <message>
+            <source>Invite</source>
+            <translation>招待</translation>
+        </message>
+        <message>
+            <source>Challenge back</source>
+            <translation>対戦を申し込む</translation>
+        </message>
+        <message>
+            <source>Challenge again</source>
+            <translation>もう一度申し込む</translation>
+        </message>
+        <message>
+            <source>On this PC</source>
+            <translation>このPCのプレイヤー</translation>
+        </message>
+        <message>
+            <source>Room invite: %1</source>
+            <translation>ルーム招待: %1</translation>
+        </message>
+        <message>
+            <source>1 challenge while you were playing</source>
+            <translation>プレイ中に対戦の申し込みが1件</translation>
+        </message>
+        <message>
+            <source>%1 challenges while you were playing</source>
+            <translation>プレイ中に対戦の申し込みが%1件</translation>
+        </message>
+        <message>
+            <source>%1 and %2 more</source>
+            <translation>%1 他%2人</translation>
+        </message>
+        <message>
+            <source>Room is full</source>
+            <translation>満員</translation>
         </message>
     </context>
 </TS>
